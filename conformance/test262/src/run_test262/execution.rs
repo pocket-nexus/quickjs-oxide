@@ -24,7 +24,10 @@ use super::requirements::{
     load_exact_module_fixture, normalize_exact_dynamic_import_request,
     normalize_exact_module_request,
 };
-use super::{Variant, WorkerOptions, validate_relative_test_path};
+use super::{Engine, Variant, WorkerOptions, validate_relative_test_path};
+
+#[path = "new_core.rs"]
+mod new_core;
 
 pub(super) const WORKER_HOST_CAPABILITIES: HostCapabilities = HostCapabilities {
     agent: false,
@@ -238,6 +241,7 @@ pub(super) struct IsolatedWorkerOptions<'a> {
     pub(super) timeout: Duration,
     pub(super) allow_async_host: bool,
     pub(super) allow_agent_host: bool,
+    pub(super) engine: Engine,
 }
 
 pub(super) fn run_isolated_worker(
@@ -253,6 +257,7 @@ pub(super) fn run_isolated_worker(
         timeout,
         allow_async_host,
         allow_agent_host,
+        engine,
     } = options;
     let mut command = Command::new(executable);
     command
@@ -266,7 +271,9 @@ pub(super) fn run_isolated_worker(
         .arg("--admissions-sha256")
         .arg(admissions_sha256)
         .arg("--variant")
-        .arg(variant.name());
+        .arg(variant.name())
+        .arg("--engine")
+        .arg(engine.name());
     if allow_async_host {
         command.arg("--allow-async-host");
     }
@@ -414,6 +421,18 @@ pub(super) fn run_worker(options: &WorkerOptions) -> Result<WorkerResult, String
         return Err("unsupported test reached worker".to_owned());
     }
     let async_test = metadata.is_async();
+    if options.engine == Engine::NewCore {
+        return new_core::run_worker(new_core::NewCoreTest {
+            options,
+            admissions,
+            path: &path,
+            source,
+            metadata: &metadata,
+            exact_module,
+            exact_dynamic_import,
+            dynamic_import_policy,
+        });
+    }
 
     let runtime =
         Runtime::new_with_host_services(quickjs_oxide_host::SystemHostServices::default());
@@ -1399,6 +1418,7 @@ mod tests {
         ModuleLoadResult, ModuleLoader, Runtime, RuntimeError, Value,
     };
 
+    use super::Engine;
     use super::{
         ExactTest262ModuleLoader, ExceptionDiagnostic, authenticate_dynamic_import_bytecode,
         authenticate_dynamic_import_module_graph, classify_async_print_log, classify_completion,
@@ -1862,6 +1882,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: true,
+            engine: Engine::Current,
         })
         .unwrap_err();
         assert!(error.contains("rejected unaudited path"), "{error}");
@@ -1880,6 +1901,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: true,
+            engine: Engine::Current,
         })
         .unwrap_err();
         assert!(error.contains("source drifted"), "{error}");
@@ -1900,6 +1922,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: true,
+            engine: Engine::Current,
         })
         .unwrap_err();
 
@@ -1918,6 +1941,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: true,
+            engine: Engine::Current,
         })
         .unwrap_err();
 
@@ -1937,6 +1961,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: true,
+            engine: Engine::Current,
         })
         .unwrap_err();
 
@@ -1955,6 +1980,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: true,
+            engine: Engine::Current,
         })
         .unwrap_err();
         fs::remove_dir_all(suite).unwrap();
@@ -2002,6 +2028,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: true,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap_err();
         fs::remove_dir_all(suite).unwrap();
@@ -2053,6 +2080,7 @@ mod tests {
                 variant: Variant::Sloppy,
                 allow_async_host: false,
                 allow_agent_host: false,
+                engine: Engine::Current,
             })
             .unwrap();
             fs::remove_dir_all(suite).unwrap();
@@ -2269,6 +2297,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         });
         fs::remove_dir_all(suite).unwrap();
         let result = result.unwrap();
@@ -2301,6 +2330,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         });
         fs::remove_dir_all(suite).unwrap();
         let result = result.unwrap();
@@ -2335,6 +2365,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap_err();
         fs::remove_dir_all(suite).unwrap();
@@ -2368,6 +2399,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap_err();
         fs::remove_dir_all(suite).unwrap();
@@ -2410,6 +2442,7 @@ mod tests {
             variant: Variant::Sloppy,
             allow_async_host: true,
             allow_agent_host: false,
+            engine: Engine::Current,
         });
         fs::remove_dir_all(suite).unwrap();
         let result = result.unwrap();
@@ -2726,6 +2759,7 @@ new Promise(function () {});
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap();
         fs::remove_dir_all(suite).unwrap();
@@ -2761,6 +2795,7 @@ new Promise(function () {});
                 variant: Variant::Sloppy,
                 allow_async_host: false,
                 allow_agent_host: false,
+                engine: Engine::Current,
             })
             .unwrap_or_else(|error| panic!("run {relative}: {error}"));
             assert_eq!(result.outcome, "pass", "{relative}: {}", result.detail);
@@ -2801,6 +2836,7 @@ new Promise(function () {});
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap_err();
         assert_eq!(denied, "unsupported test reached worker");
@@ -2813,6 +2849,7 @@ new Promise(function () {});
             variant: Variant::Sloppy,
             allow_async_host: true,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap();
         fs::remove_dir_all(suite).unwrap();
@@ -2848,6 +2885,7 @@ new Promise(function () {});
             variant: Variant::Sloppy,
             allow_async_host: true,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap();
         fs::remove_dir_all(suite).unwrap();
@@ -2905,6 +2943,7 @@ if (r[Symbol.replace]("aa", "b") !== "ba") {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap();
         fs::remove_dir_all(suite).unwrap();
@@ -3212,6 +3251,7 @@ if (capped.length !== 2 || capped.codePointAt(0) !== 0x10FFFF) {
             variant: Variant::Sloppy,
             allow_async_host: false,
             allow_agent_host: false,
+            engine: Engine::Current,
         })
         .unwrap();
         fs::remove_dir_all(suite).unwrap();

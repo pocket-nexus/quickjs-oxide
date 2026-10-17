@@ -40,13 +40,17 @@ use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{
     Capture, CodeBuilder, CodeUnit, CodeUnitId, Handler, Opcode, ValidateError, flags,
 };
+use oxide_core::vm::compile::Compiler;
 use oxide_core::{HeapError, ObjectId, PropertyKey, Runtime, Value as CoreValue};
 
 use self::analysis::{Analysis, analyze};
-use crate::engine::code::bytecode::{ApplyKind, ArgumentsKind, DefineMethodKind, Instruction};
+use crate::engine::code::bytecode::{
+    ApplyKind, ArgumentsKind, DefineMethodKind, Instruction, IteratorCallKind, PrivateNameSource,
+};
 use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::code::function::metadata::{
-    ClosureSource, ClosureVariableName, ConstructorKind, EvalKind, FunctionKind,
+    ClosureSource, ClosureVariableKind, ClosureVariableName, ConstructorKind, EvalKind,
+    FunctionKind,
 };
 use crate::engine::value::{JsString, PrimitiveValue};
 
@@ -54,6 +58,8 @@ use crate::engine::value::{JsString, PrimitiveValue};
 pub(crate) enum LowerError {
     /// A construct outside the phase 2 surface (section 3.4).
     Unsupported(String),
+    /// A construct phase 0 made an early `SyntaxError` (`with`).
+    Syntax(String),
     /// The input broke an invariant the stack code guarantees.
     Internal(String),
     Heap(HeapError),
@@ -71,6 +77,7 @@ impl fmt::Display for LowerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             LowerError::Unsupported(construct) => write!(f, "unsupported: {construct}"),
+            LowerError::Syntax(message) => write!(f, "SyntaxError: {message}"),
             LowerError::Internal(message) => write!(f, "internal lowering error: {message}"),
             LowerError::Heap(error) => write!(f, "{error}"),
             LowerError::Invalid(error) => write!(f, "{error}"),
@@ -104,6 +111,15 @@ pub(crate) fn lower_script(
     runtime: &mut Runtime,
     script: &UnlinkedFunction,
 ) -> Result<LoweredScript, LowerError> {
+    lower_script_into(&mut runtime.compiler(), script)
+}
+
+/// [`lower_script`] into a runtime's [`Compiler`]: from the host before the
+/// program runs, or from a native compiling `eval` code while it runs.
+pub(crate) fn lower_script_into(
+    runtime: &mut Compiler<'_>,
+    script: &UnlinkedFunction,
+) -> Result<LoweredScript, LowerError> {
     // BigInt constants are heap records but not atoms: they stay on the root
     // stack until `instantiate` attaches the constant tables.
     let mark = runtime.heap_mut().roots().mark();
@@ -119,11 +135,173 @@ pub(crate) fn lower_script(
     result
 }
 
+/// Lowers a compiled module's function tree into `runtime` and describes
+/// its bindings, requests, imports and exports for the core's module
+/// records (phase 4, section 5.6); also returns the root unit.
+pub(crate) fn lower_module_tree_into(
+    runtime: &mut Compiler<'_>,
+    module: &crate::engine::code::module::UnlinkedModule,
+) -> Result<(oxide_core::vm::module::ModuleSource, CodeUnitId), LowerError> {
+    use crate::engine::code::module::{
+        ModuleExportTarget, ModuleImportName, ModuleLinkInitializerValue,
+    };
+    use oxide_core::vm::module as core;
+    let lowered = lower_script_into(runtime, module.function())?;
+    let function = module.function();
+    let text = |string: &JsString| String::from_utf16_lossy(&string_units(string));
+    let name = |name: &ModuleImportName| match name {
+        ModuleImportName::Name(name) => Some(text(name)),
+        ModuleImportName::Namespace => None,
+    };
+    let bindings = function
+        .closure_variables()
+        .iter()
+        .map(|variable| match variable.source {
+            ClosureSource::ModuleImport | ClosureSource::ModuleImportCollision => {
+                core::ModuleBinding::Import
+            }
+            ClosureSource::ModuleImportMeta => core::ModuleBinding::ImportMeta,
+            _ => core::ModuleBinding::Declaration {
+                lexical: variable.is_lexical,
+            },
+        })
+        .collect();
+    let requests = module
+        .requested_modules()
+        .iter()
+        .map(|request| core::ModuleRequest {
+            specifier: text(&request.specifier),
+            attributes: request
+                .attributes
+                .effective()
+                .unwrap_or(&[])
+                .iter()
+                .map(|attribute| (text(&attribute.key), text(&attribute.value)))
+                .collect(),
+        })
+        .collect();
+    let imports = module
+        .imports()
+        .iter()
+        .map(|import| core::ModuleImport {
+            request: import.request.0,
+            name: name(&import.import_name),
+            binding: import.closure_index,
+        })
+        .collect();
+    let exports = module
+        .exports()
+        .iter()
+        .map(|export| core::ModuleExport {
+            name: text(&export.export_name),
+            target: match &export.target {
+                ModuleExportTarget::Local { closure_index } => {
+                    core::ExportTarget::Local(*closure_index)
+                }
+                ModuleExportTarget::Indirect {
+                    request,
+                    import_name,
+                } => core::ExportTarget::Indirect {
+                    request: request.0,
+                    name: name(import_name),
+                },
+            },
+        })
+        .collect();
+    let star_exports = module
+        .star_exports()
+        .iter()
+        .map(|star| star.request.0)
+        .collect();
+    // A function constant's position among the root's children.
+    let child_of = |constant: u32| {
+        function.constants()[..constant as usize]
+            .iter()
+            .filter(|constant| constant.as_child().is_some())
+            .count() as u32
+    };
+    let initializers = module
+        .link_initializers()
+        .iter()
+        .map(|initializer| core::ModuleInitializer {
+            binding: initializer.closure_index,
+            function: match initializer.value {
+                ModuleLinkInitializerValue::Undefined => None,
+                ModuleLinkInitializerValue::Function {
+                    constant,
+                    inferred_name,
+                } => Some((child_of(constant), inferred_name.is_some())),
+            },
+        })
+        .collect();
+    let source = core::ModuleSource::Compiled {
+        function: lowered.function,
+        tables: core::ModuleTables {
+            bindings,
+            requests,
+            imports,
+            exports,
+            star_exports,
+            initializers,
+            has_top_level_await: module.has_top_level_await(),
+        },
+    };
+    Ok((source, lowered.root))
+}
+
+/// Whether a unit of the tree under `root` has an `import()` call.
+#[cfg(feature = "test262-host")]
+pub(crate) fn tree_has_import_call(
+    code: &oxide_core::bytecode::CodeStore,
+    root: CodeUnitId,
+) -> bool {
+    code.tree(root).into_iter().any(|unit| {
+        code.get(unit)
+            .code
+            .iter()
+            .any(|insn| insn.op == oxide_core::bytecode::Opcode::ImportCall)
+    })
+}
+
+/// The compare-jump taken exactly when `op` is not, if there is one.
+fn negated_jump(op: Opcode) -> Option<Opcode> {
+    use Opcode::*;
+    Some(match op {
+        JTrue => JFalse,
+        JFalse => JTrue,
+        JLt => JNlt,
+        JNlt => JLt,
+        JLte => JNlte,
+        JNlte => JLte,
+        JGt => JNgt,
+        JNgt => JGt,
+        JGte => JNgte,
+        JNgte => JGte,
+        JEq => JNeq,
+        JNeq => JEq,
+        JStrictEq => JStrictNeq,
+        JStrictNeq => JStrictEq,
+        JLtI => JNltI,
+        JNltI => JLtI,
+        JLteI => JNlteI,
+        JNlteI => JLteI,
+        JGtI => JNgtI,
+        JNgtI => JGtI,
+        JGteI => JNgteI,
+        JNgteI => JGteI,
+        JEqI => JNeqI,
+        JNeqI => JEqI,
+        JStrictEqI => JStrictNeqI,
+        JStrictNeqI => JStrictEqI,
+        _ => return None,
+    })
+}
+
 /// Lowers and publishes `function` after its children. `parent` is the
 /// parent's layout (`None` for the script), which places the parent's locals
 /// for this function's captures.
 fn lower_tree(
-    runtime: &mut Runtime,
+    runtime: &mut Compiler<'_>,
     function: &UnlinkedFunction,
     parent: Option<Layout>,
     constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
@@ -143,14 +321,15 @@ fn lower_tree(
 
 /// Lowers one function whose children are already published.
 fn lower_function(
-    runtime: &mut Runtime,
+    runtime: &mut Compiler<'_>,
     function: &UnlinkedFunction,
     parent: Option<Layout>,
     children: Vec<CodeUnitId>,
 ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
     check_surface(function)?;
     let analysis = analyze(function.code())?;
-    let mut lowerer = Lowerer::new(runtime, function, analysis, parent.is_none())?;
+    let is_script = parent.is_none() && !function.metadata().is_module;
+    let mut lowerer = Lowerer::new(runtime, function, analysis, is_script)?;
     lowerer.prologue()?;
     lowerer.body()?;
     lowerer.finish(parent, children)
@@ -168,6 +347,22 @@ struct Layout {
     window_locals: u32,
     spill: Option<(u32, u32)>,
     temp_base: u32,
+    /// The register a construction writes `new.target` into (phase 4,
+    /// section 4.5): a hidden local right after the parameters.
+    new_target: Option<u32>,
+}
+
+/// Whether a function reads `new.target`: the prologue's pseudo binding, a
+/// class constructor's check, or a derived constructor's implicit `super`.
+fn uses_new_target(function: &UnlinkedFunction) -> bool {
+    function.code().iter().any(|instruction| {
+        matches!(
+            instruction,
+            Instruction::PushNewTarget
+                | Instruction::CheckCtor
+                | Instruction::InitDerivedConstructor
+        )
+    })
 }
 
 /// Local registers past the window are named from here: `SPILLED + slot`.
@@ -176,7 +371,8 @@ const SPILLED: u32 = 1 << 20;
 impl Layout {
     fn of(function: &UnlinkedFunction, analysis: &Analysis) -> Result<Layout, LowerError> {
         let metadata = function.metadata();
-        let first_local = 1 + u32::from(metadata.argument_count);
+        let new_target = uses_new_target(function).then(|| 1 + u32::from(metadata.argument_count));
+        let first_local = 1 + u32::from(metadata.argument_count) + u32::from(new_target.is_some());
         let locals = u32::from(metadata.local_count);
         // One temporary above the deepest stack for scratch values.
         let temps = analysis.max_depth + 1;
@@ -187,6 +383,7 @@ impl Layout {
                 window_locals: locals,
                 spill: None,
                 temp_base: first_local + locals,
+                new_target,
             });
         }
         let window_locals = window
@@ -198,6 +395,7 @@ impl Layout {
             window_locals,
             spill: Some((spill, locals - window_locals)),
             temp_base: spill + 1,
+            new_target,
         })
     }
 
@@ -211,30 +409,23 @@ impl Layout {
     }
 }
 
-/// Rejects whole-function features outside the phase 2 surface.
+/// Rejects whole-function features outside the surface.
 fn check_surface(function: &UnlinkedFunction) -> Result<(), LowerError> {
-    let metadata = function.metadata();
-    let unsupported = if metadata.function_kind != FunctionKind::Normal {
-        Some("generators and async functions")
-    } else if metadata.constructor_kind == ConstructorKind::Derived
-        || metadata.class_initializer_kind.is_some()
-        || metadata.derived_this_local.is_some()
-        || metadata.needs_home_object
+    // Phase 0 dropped `with`: an early `SyntaxError`, as in strict code.
+    if function
+        .local_definitions()
+        .iter()
+        .any(|local| local.kind == ClosureVariableKind::WithObject)
     {
-        Some("classes")
-    } else if metadata.rest_pattern_start.is_some() {
-        Some("destructuring")
-    } else if function.parameter_environment().is_some() || metadata.pattern_argument_count > 0 {
-        Some("non-simple parameters")
-    } else if metadata.eval_kind != EvalKind::None {
-        // Eval code itself. A function that only contains a direct `eval`
-        // lowers: the call throws (section 5.5), so no dynamic binding can
-        // ever exist in its environment.
-        Some("eval")
-    } else if metadata.is_module {
-        Some("modules")
-    } else if metadata.active_function_local.is_some() {
-        Some("super")
+        return Err(LowerError::Syntax(
+            "with statements are not supported".into(),
+        ));
+    }
+    let metadata = function.metadata();
+    let unsupported = if metadata.eval_kind == EvalKind::Direct {
+        // Direct eval code: a direct `eval` runs as indirect eval (phase 0,
+        // section 5.5), so only indirect eval code is compiled.
+        Some("direct eval code")
     } else {
         None
     };
@@ -394,7 +585,6 @@ fn unsupported_instruction(instruction: &Instruction) -> LowerError {
         | I::PutSuperValue => "classes",
         I::CopyDataProperties | I::CopyDataPropertiesExcluded { .. } => "object spread",
         I::ForInStart | I::ForInNext => "for-in",
-        I::DefineMethod { .. } | I::DefineMethodComputed { .. } => "object literal methods",
         I::Import => "modules",
         _ => {
             let text = format!("{instruction:?}");
@@ -403,6 +593,17 @@ fn unsupported_instruction(instruction: &Instruction) -> LowerError {
         }
     };
     LowerError::unsupported(construct)
+}
+
+/// The `DefineMethod` flags of a stack-code method definition.
+fn method_flags(kind: DefineMethodKind, enumerable: bool) -> u32 {
+    use oxide_core::bytecode::opcode::method;
+    let kind = match kind {
+        DefineMethodKind::Method => 0,
+        DefineMethodKind::Getter => method::GETTER,
+        DefineMethodKind::Setter => method::SETTER,
+    };
+    kind | if enumerable { method::ENUMERABLE } else { 0 }
 }
 
 fn string_units(string: &JsString) -> Vec<u16> {
@@ -414,8 +615,8 @@ fn string_units(string: &JsString) -> Vec<u16> {
 /// forward, and only `SetLocalUninitialized` re-enters it).
 const CAPTURE_BIT: u32 = 1 << 31;
 
-struct Lowerer<'a> {
-    runtime: &'a mut Runtime,
+struct Lowerer<'a, 'c> {
+    runtime: &'a mut Compiler<'c>,
     function: &'a UnlinkedFunction,
     code: &'a [Instruction],
     analysis: Analysis,
@@ -446,9 +647,9 @@ struct Lowerer<'a> {
     this_keys: HashSet<u32>,
 }
 
-impl<'a> Lowerer<'a> {
+impl<'a, 'c> Lowerer<'a, 'c> {
     fn new(
-        runtime: &'a mut Runtime,
+        runtime: &'a mut Compiler<'c>,
         function: &'a UnlinkedFunction,
         analysis: Analysis,
         is_script: bool,
@@ -593,6 +794,39 @@ impl<'a> Lowerer<'a> {
         self.fixups.push((pc, target));
     }
 
+    /// A back edge from `pc` to a loop whose first lowered instruction is
+    /// a compare-jump out of it repeats that test, negated, as a jump to the
+    /// loop's body: an iteration runs one branch instead of a jump and the
+    /// test. The test reads registers only and the back edge is in the
+    /// test's handler regions, so the copy behaves as the original;
+    /// leaving the loop jumps to the test's exit unless that is next.
+    fn invert_back_edge(&mut self, pc: usize, target: usize) -> bool {
+        let Some(head) = self.labels[target] else {
+            return false;
+        };
+        let Some(&test) = self.builder.code().get(head as usize) else {
+            return false;
+        };
+        let Some(negated) = negated_jump(test.op) else {
+            return false;
+        };
+        let Some(&(_, exit)) = self.fixups.iter().find(|&&(at, _)| at == head) else {
+            return false;
+        };
+        if self.analysis.regions[pc] != self.analysis.regions[target] {
+            return false;
+        }
+        let mut repeat = test;
+        repeat.op = negated;
+        repeat.imm = head + 1;
+        self.emit(|b| b.raw(repeat));
+        let next = (pc + 1..self.code.len()).find(|&at| self.analysis.depth[at].is_some());
+        if next != Some(exit) {
+            self.emit_jump(|b| b.jump(Opcode::Jmp, 0), exit);
+        }
+        true
+    }
+
     fn mov(&mut self, dst: u32, src: u32) -> Result<(), LowerError> {
         if dst != src {
             let (dst, src) = (Self::r8(dst)?, Self::r8(src)?);
@@ -634,6 +868,7 @@ impl<'a> Lowerer<'a> {
     /// Makes the entry at `depth` canonical.
     fn materialize(&mut self, depth: usize) -> Result<(), LowerError> {
         let entry = self.stack[depth];
+        self.max_scratch = self.max_scratch.max(depth as u32 + 1);
         if !matches!(entry, Entry::Canon | Entry::Marker) {
             self.load(self.temp(depth), entry)?;
             self.stack[depth] = Entry::Canon;
@@ -696,6 +931,7 @@ impl<'a> Lowerer<'a> {
     fn push_result(&mut self, pc: u32) {
         let temp = self.temp(self.stack.len());
         self.stack.push(Entry::Canon);
+        self.max_scratch = self.max_scratch.max(self.stack.len() as u32);
         self.last_dest = Some((pc, temp));
     }
 
@@ -838,11 +1074,18 @@ impl<'a> Lowerer<'a> {
             .constants()
             .get(index as usize)
             .ok_or_else(|| LowerError::Internal(format!("constant {index} out of range")))?;
+        if let Some((cooked, raw)) = constant.as_template_object() {
+            let value = self.template_entry(cooked, raw)?;
+            let slot = self.pool.len() as u32;
+            self.pool.push(value);
+            self.pool_index.insert(index, slot);
+            return Ok(Entry::Const(slot));
+        }
         let Some(primitive) = constant.as_primitive() else {
             return Err(if constant.as_regexp().is_some() {
                 LowerError::unsupported("RegExp literals")
             } else {
-                LowerError::unsupported("template literals")
+                LowerError::unsupported("constant kind")
             });
         };
         let value = match primitive {
@@ -882,21 +1125,45 @@ impl<'a> Lowerer<'a> {
     // ---- function entry ----
 
     fn prologue(&mut self) -> Result<(), LowerError> {
+        // Section 4.3: an async function returns its promise; the body runs
+        // as a resumption from here.
+        if self.function.metadata().function_kind == FunctionKind::Async {
+            self.emit(|b| b.op(Opcode::AsyncStart));
+        }
         if let Some((spill, slots)) = self.layout.spill {
             let spill = Self::r8(spill)?;
             self.emit(|b| b.a_count(Opcode::NewSpill, spill, slots));
         }
         if self.is_script {
+            // Section 5.7: every name is checked before any binding is made.
+            let mut declarations = Vec::new();
+            let eval = self.global_flags();
             for index in 0..self.function.closure_variables().len() {
                 let variable = self.function.closure_variables()[index];
                 match variable.source {
                     ClosureSource::GlobalDeclaration => {
                         let key = self.closure_key(index as u16)?;
-                        self.emit(|b| b.key(Opcode::DeclareGlobal, key));
+                        let (check, declare) = match (variable.is_lexical, variable.is_const) {
+                            (false, _) => (Opcode::CheckGlobalVar, Opcode::DeclareGlobal),
+                            (true, false) => (Opcode::CheckGlobalLexical, Opcode::DeclareGlobalLet),
+                            (true, true) => {
+                                (Opcode::CheckGlobalLexical, Opcode::DeclareGlobalConst)
+                            }
+                        };
+                        let flags = if variable.kind == ClosureVariableKind::GlobalFunction {
+                            eval | oxide_core::bytecode::opcode::global::FUNCTION
+                        } else {
+                            eval
+                        };
+                        self.emit(|b| b.raw(oxide_core::Insn::new(check, 0, flags, 0, key.raw())));
+                        declarations.push((declare, flags, key));
                     }
                     ClosureSource::Global => {}
                     _ => return Err(LowerError::unsupported("script closure source")),
                 }
+            }
+            for (declare, flags, key) in declarations {
+                self.emit(|b| b.raw(oxide_core::Insn::new(declare, 0, flags, 0, key.raw())));
             }
         }
         let metadata = self.function.metadata();
@@ -948,7 +1215,9 @@ impl<'a> Lowerer<'a> {
                 // handler; every other entry is canonical.
                 let markers: Vec<usize> = self.analysis.regions[pc]
                     .iter()
-                    .map(|&region| self.analysis.catches[region as usize].marker_depth as usize)
+                    .map(|&region| self.analysis.catches[region as usize])
+                    .filter(|region| !region.iterator)
+                    .map(|region| region.marker_depth as usize)
                     .collect();
                 self.stack.clear();
                 for position in 0..depth as usize {
@@ -1007,7 +1276,7 @@ impl<'a> Lowerer<'a> {
             return Ok(1);
         }
         match *instruction {
-            I::Nop | I::SetName(_) | I::SetNameComputed => {}
+            I::Nop => {}
 
             // ---- pushes ----
             I::PushI32(value) => self.stack.push(Entry::Int(value)),
@@ -1068,12 +1337,14 @@ impl<'a> Lowerer<'a> {
                 let register = self.local_register(local);
                 self.spill_aliases(register)?;
                 self.checked.remove(&register);
-                let op = if self.captured_locals[local as usize] {
-                    Opcode::NewCellEmpty
+                // QuickJS's `set_loc_uninitialized` resets the slot a closure
+                // may already hold (a hoisted function's capture); a fresh
+                // binding comes from `close_loc`.
+                if self.captured_locals[local as usize] {
+                    self.on_local(register, true, false, |b, a| b.a(Opcode::ClearCell, a))?;
                 } else {
-                    Opcode::LoadEmpty
-                };
-                self.on_local(register, false, true, |b, a| b.a(op, a))?;
+                    self.on_local(register, false, true, |b, a| b.a(Opcode::LoadEmpty, a))?;
+                }
             }
             I::CloseLocal(local) => {
                 if self.captured_locals[local as usize] {
@@ -1154,7 +1425,7 @@ impl<'a> Lowerer<'a> {
                 let (_, [raw]) = self.pop_operands::<1>()?;
                 let object = self.operand(self.stack.len() - 1)?;
                 let converted = self.result_register()?;
-                let at = self.emit(|b| b.ab(Opcode::ToPropertyKey, converted, raw));
+                let at = self.emit(|b| b.abc(Opcode::ToPropertyKeyOf, converted, raw, object));
                 self.push_result(at);
                 let dst = self.result_register()?;
                 let at = self.emit(|b| b.abc(Opcode::GetElem, dst, object, converted));
@@ -1186,18 +1457,53 @@ impl<'a> Lowerer<'a> {
             }
             I::DefineMethod {
                 key,
-                kind: kind @ (DefineMethodKind::Getter | DefineMethodKind::Setter),
-                ..
+                kind,
+                enumerable,
             } => {
                 let key = self.name_key(key)?;
                 let (_, [function]) = self.pop_operands::<1>()?;
                 let object = self.operand(self.stack.len() - 1)?;
-                let op = if kind == DefineMethodKind::Getter {
-                    Opcode::DefineGetter
-                } else {
-                    Opcode::DefineSetter
-                };
-                self.emit(|b| b.ab_key(op, object, function, key));
+                let flags = method_flags(kind, enumerable);
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::DefineMethod,
+                        object,
+                        function,
+                        flags as u8,
+                        key.raw(),
+                    ))
+                });
+            }
+            I::DefineMethodComputed { kind, enumerable } => {
+                let (_, [key, function]) = self.pop_operands::<2>()?;
+                let object = self.operand(self.stack.len() - 1)?;
+                let flags = method_flags(kind, enumerable);
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::DefineMethodComputed,
+                        object,
+                        key,
+                        function,
+                        flags,
+                    ))
+                });
+            }
+            I::DefineFieldComputed => {
+                let (_, [key, value]) = self.pop_operands::<2>()?;
+                let object = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.abc(Opcode::DefineElem, object, key, value));
+            }
+            I::SetName(name) => {
+                let entry = self.pool_entry(name)?;
+                let scratch = self.scratch()?;
+                self.load(u32::from(scratch), entry)?;
+                let function = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.ab(Opcode::SetFunctionName, function, scratch));
+            }
+            I::SetNameComputed => {
+                let function = self.operand(self.stack.len() - 1)?;
+                let key = self.operand(self.stack.len() - 2)?;
+                self.emit(|b| b.ab(Opcode::SetFunctionName, function, key));
             }
             I::Delete => {
                 let (_, [object, key]) = self.pop_operands::<2>()?;
@@ -1251,6 +1557,19 @@ impl<'a> Lowerer<'a> {
             I::Dup1 => self.permute(2, &[0, 0, 1])?,
             I::Dup3 => self.permute(3, &[0, 1, 2, 0, 1, 2])?,
             I::Insert2 => self.permute(2, &[1, 0, 1])?,
+            // `o[k] = v` as a statement: the copy of `v` kept as the
+            // assignment's value is dropped right after the store, so the
+            // store takes the three operands where they are.
+            I::Insert3
+                if self.fusible(pc + 1)
+                    && self.fusible(pc + 2)
+                    && matches!(self.code[pc + 1], I::PutArrayEl)
+                    && matches!(self.code[pc + 2], I::Drop) =>
+            {
+                self.pc = pc + 1;
+                self.instruction(pc + 1)?;
+                return Ok(3);
+            }
             I::Insert3 => self.permute(3, &[2, 0, 1, 2])?,
             I::Insert4 => self.permute(4, &[3, 0, 1, 2, 3])?,
             I::Perm3 => self.permute(3, &[1, 0, 2])?,
@@ -1264,7 +1583,11 @@ impl<'a> Lowerer<'a> {
                 // A jump over unreachable code only is a fallthrough.
                 let target = target as usize;
                 let skipped = pc + 1..target;
-                if target <= pc || skipped.clone().any(|at| self.analysis.depth[at].is_some()) {
+                if target <= pc && self.invert_back_edge(pc, target) {
+                    // The loop's test repeated at its back edge.
+                } else if target <= pc
+                    || skipped.clone().any(|at| self.analysis.depth[at].is_some())
+                {
                     self.emit_jump(|b| b.jump(Opcode::Jmp, 0), target);
                 }
             }
@@ -1323,6 +1646,20 @@ impl<'a> Lowerer<'a> {
                 let (_, [value]) = self.pop_operands::<1>()?;
                 self.emit(|b| b.a(Opcode::Throw, value));
             }
+            I::Import => {
+                let (_, [specifier, options]) = self.pop_operands::<2>()?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.abc(Opcode::ImportCall, dst, specifier, options));
+                self.push_result(at);
+            }
+            I::InitializeModuleImportCollision(closure) => self.store_captured(closure, false)?,
+            I::ThrowDeleteSuper => {
+                let (_, _) = self.pop_operands::<3>()?;
+                let message =
+                    self.key(&JsString::from_static("unsupported reference to 'super'"))?;
+                self.emit(|b| b.key(Opcode::ThrowReference, message));
+                self.stack.push(Entry::Undefined);
+            }
             I::ThrowReadOnly(name) => {
                 let key = self.name_key(name)?;
                 self.emit(|b| b.key(Opcode::ThrowConstAssign, key));
@@ -1341,8 +1678,38 @@ impl<'a> Lowerer<'a> {
                 self.push_result(at);
             }
             I::PushNewTarget => {
+                let register = self.layout.new_target.ok_or_else(|| {
+                    LowerError::Internal("new.target without its register".into())
+                })?;
+                self.stack.push(Entry::Reg(register));
+            }
+            I::CheckCtor => {
+                let register = self
+                    .layout
+                    .new_target
+                    .ok_or_else(|| LowerError::Internal("CheckCtor without new.target".into()))?;
+                let register = Self::r8(register)?;
+                self.emit(|b| b.a(Opcode::CheckCtor, register));
+            }
+            I::ToObject => {
+                let (_, [value]) = self.pop_operands::<1>()?;
                 let dst = self.result_register()?;
-                let at = self.emit(|b| b.a(Opcode::LoadNewTarget, dst));
+                let at = self.emit(|b| b.ab(Opcode::ToObject, dst, value));
+                self.push_result(at);
+            }
+            I::SetProto => {
+                let (_, [value]) = self.pop_operands::<1>()?;
+                let object = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.ab(Opcode::SetProto, object, value));
+            }
+            I::PushActiveFunction => {
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a(Opcode::LoadFunction, dst));
+                self.push_result(at);
+            }
+            I::PushHomeObject => {
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a(Opcode::LoadHomeObject, dst));
                 self.push_result(at);
             }
             I::RegExp(index) => {
@@ -1379,17 +1746,423 @@ impl<'a> Lowerer<'a> {
                 };
                 self.call(op, 0, 3, true)?;
             }
-            I::Eval { argument_count, .. } => {
-                self.unsupported_eval(usize::from(argument_count) + 1)?
+            // A direct `eval` is a call of whatever `eval` resolves to, which
+            // runs as indirect eval (phase 0, section 5.5).
+            I::Eval { argument_count, .. } => self.call(Opcode::Call, argument_count, 1, true)?,
+            I::ApplyEval { .. } => {
+                // `CallSpread` takes the callee, `this` and the argument array.
+                let base = self.stack.len() - 2;
+                for depth in base..self.stack.len() {
+                    self.materialize(depth)?;
+                }
+                let (array, moved) = (
+                    Self::r8(self.temp(base + 1))?,
+                    Self::r8(self.temp(base + 2))?,
+                );
+                self.emit(|b| b.ab(Opcode::Mov, moved, array));
+                self.stack[base + 1] = Entry::Undefined;
+                self.push_canon(1);
+                self.call(Opcode::CallSpread, 0, 3, true)?;
             }
-            I::ApplyEval { .. } => self.unsupported_eval(2)?,
             // A function with a direct `eval` has no dynamic binding: the
             // eval throws before it could create one.
             I::VariableEnvironment | I::GetDynamicBinding { .. } => {
                 self.stack.push(Entry::Undefined)
             }
             I::HasDynamicBinding { .. } => self.stack.push(Entry::Bool(false)),
+            // Reached only past a `HasDynamicBinding`, which is false.
+            I::PutDynamicBinding { .. } => {
+                self.pop_operands::<1>()?;
+            }
+            I::DynamicEnvironmentObject(_) => self.stack.push(Entry::Undefined),
             I::DeleteDynamicBinding { .. } => self.stack.push(Entry::Bool(true)),
+
+            // ---- iteration (phase 4, section 4.2) ----
+            I::ForOfStart => {
+                let (depth, [iterable]) = self.pop_operands::<1>()?;
+                let record = Self::r8(self.temp(depth))?;
+                self.emit(|b| b.ab_int(Opcode::IterStart, record, iterable, 0));
+                self.push_canon(3);
+            }
+            I::IteratorStart => {
+                let (depth, [iterable]) = self.pop_operands::<1>()?;
+                let record = Self::r8(self.temp(depth))?;
+                self.emit(|b| b.ab_int(Opcode::IterStart, record, iterable, 1));
+                self.push_canon(3);
+            }
+            I::ForOfNext(offset) => {
+                let top = self.stack.len();
+                let record = top
+                    .checked_sub(3 + usize::from(offset))
+                    .ok_or_else(|| LowerError::Internal("ForOfNext without a record".into()))?;
+                let record = Self::r8(self.temp(record))?;
+                let value = Self::r8(self.temp(top))?;
+                let done = Self::r8(self.temp(top + 1))?;
+                self.emit(|b| b.abc(Opcode::IterNext, value, record, done));
+                self.push_canon(2);
+            }
+            I::IteratorClose => {
+                let base = self.record_base(3)?;
+                let record = Self::r8(self.temp(base))?;
+                self.emit(|b| b.a(Opcode::IterClose, record));
+                self.stack.truncate(base);
+            }
+            I::IteratorClosePreserve | I::IteratorDropPreserve | I::IteratorDetachPreserve => {
+                let region = self.innermost_iterator(pc)?;
+                let value = self.operand(self.stack.len() - 1)?;
+                let record = Self::r8(self.temp(region))?;
+                if matches!(instruction, I::IteratorClosePreserve) {
+                    self.emit(|b| b.a(Opcode::IterClose, record));
+                }
+                self.stack.truncate(region);
+                if matches!(instruction, I::IteratorDetachPreserve) {
+                    let moves = vec![
+                        (self.temp(region), u32::from(value)),
+                        (self.temp(region + 1), self.temp(region)),
+                    ];
+                    self.parallel_move(moves)?;
+                    self.push_canon(2);
+                } else {
+                    self.mov(self.temp(region), u32::from(value))?;
+                    self.push_canon(1);
+                }
+            }
+            I::IteratorNext => {
+                let top = self.stack.len();
+                let value = self.operand(top - 1)?;
+                let record = Self::r8(self.temp(top - 4))?;
+                let dst = Self::r8(self.temp(top - 1))?;
+                self.emit(|b| b.abc(Opcode::IterCallNext, dst, record, value));
+                self.stack[top - 1] = Entry::Canon;
+            }
+            I::IteratorCall(kind) => {
+                let top = self.stack.len();
+                let value = self.operand(top - 1)?;
+                let record = Self::r8(self.temp(top - 4))?;
+                let dst = Self::r8(self.temp(top - 1))?;
+                let kind = match kind {
+                    IteratorCallKind::ReturnWithValue => 0,
+                    IteratorCallKind::ThrowWithValue => 1,
+                    IteratorCallKind::ReturnWithoutValue => 2,
+                };
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::IterCall,
+                        dst,
+                        record,
+                        value,
+                        kind,
+                    ))
+                });
+                self.stack[top - 1] = Entry::Canon;
+                self.push_canon(1);
+            }
+            I::IteratorCheckObject => {
+                let value = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.a(Opcode::IterCheckObject, value));
+            }
+            I::ThrowIteratorMissingThrow => {
+                let message = self.key(&JsString::from_static(
+                    "iterator does not have a throw method",
+                ))?;
+                self.emit(|b| b.key(Opcode::ThrowType, message));
+            }
+
+            I::ForAwaitOfStart | I::AsyncIteratorStart => {
+                let (depth, [iterable]) = self.pop_operands::<1>()?;
+                let record = Self::r8(self.temp(depth))?;
+                self.emit(|b| b.ab(Opcode::IterStartAsync, record, iterable));
+                self.push_canon(3);
+            }
+            I::ForAwaitOfNext => {
+                let top = self.stack.len();
+                let record = Self::r8(self.temp(top - 3))?;
+                let dst = Self::r8(self.temp(top))?;
+                self.emit(|b| b.ab(Opcode::IterNextRaw, dst, record));
+                self.push_canon(1);
+            }
+            I::IteratorGetValueDone => {
+                let top = self.stack.len();
+                self.materialize(top - 1)?;
+                let result = Self::r8(self.temp(top - 1))?;
+                let record = Self::r8(self.temp(top - 4))?;
+                let done = Self::r8(self.temp(top))?;
+                self.emit(|b| b.abc(Opcode::IterResult, result, record, done));
+                self.push_canon(1);
+            }
+
+            // ---- suspension (section 4.3) ----
+            I::InitialYield => {
+                self.emit(|b| b.op(Opcode::InitialYield));
+            }
+            I::Yield | I::YieldStar | I::AsyncYieldStar => {
+                let op = if matches!(instruction, I::Yield) {
+                    Opcode::Yield
+                } else {
+                    Opcode::YieldStar
+                };
+                let top = self.stack.len();
+                self.materialize(top - 1)?;
+                let value = Self::r8(self.temp(top - 1))?;
+                self.materialize_all()?;
+                self.emit(|b| b.a(op, value));
+                self.push_canon(1);
+            }
+            I::Await => {
+                let top = self.stack.len();
+                self.materialize(top - 1)?;
+                let value = Self::r8(self.temp(top - 1))?;
+                self.materialize_all()?;
+                self.emit(|b| b.a(Opcode::Await, value));
+                self.stack[top - 1] = Entry::Canon;
+                self.last_dest = None;
+            }
+
+            // ---- classes (section 5.1) ----
+            I::DefineClass { name, has_heritage } => {
+                let key = self.name_key(name)?;
+                let base = self.stack.len() - 2;
+                self.materialize(base)?;
+                self.materialize(base + 1)?;
+                let (parent, closure) =
+                    (Self::r8(self.temp(base))?, Self::r8(self.temp(base + 1))?);
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::MakeClass,
+                        parent,
+                        closure,
+                        u8::from(has_heritage),
+                        key.raw(),
+                    ))
+                });
+            }
+            I::InstallClassInstanceInitializer => {
+                let (_, [initializer]) = self.pop_operands::<1>()?;
+                let top = self.stack.len();
+                let constructor = self.operand(top - 2)?;
+                let prototype = self.operand(top - 1)?;
+                self.emit(|b| b.abc(Opcode::InstallFields, constructor, prototype, initializer));
+            }
+            I::CallClassInstanceInitializer => {
+                let (_, [constructor]) = self.pop_operands::<1>()?;
+                let receiver = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.ab(Opcode::InitFields, receiver, constructor));
+            }
+            I::RunClassStaticInitializer => {
+                let (_, [initializer]) = self.pop_operands::<1>()?;
+                let constructor = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.ab(Opcode::RunStaticInit, constructor, initializer));
+            }
+            I::CallClassStaticBlock => {
+                let (_, [block]) = self.pop_operands::<1>()?;
+                self.emit(|b| b.a(Opcode::CallStaticBlock, block));
+            }
+            I::GetSuper => {
+                let (_, [home]) = self.pop_operands::<1>()?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.ab(Opcode::GetSuper, dst, home));
+                self.push_result(at);
+            }
+            I::GetSuperValue | I::GetSuperValueForCall => {
+                let base = self.stack.len() - 3;
+                for depth in base..self.stack.len() {
+                    self.materialize(depth)?;
+                }
+                let first = Self::r8(self.temp(base))?;
+                let for_call = matches!(instruction, I::GetSuperValueForCall);
+                let (dst, keep) = if for_call {
+                    (Self::r8(self.temp(base + 1))?, base + 1)
+                } else {
+                    (first, base)
+                };
+                self.emit(|b| b.ab_int(Opcode::GetSuperValue, dst, first, i32::from(for_call)));
+                self.stack.truncate(keep);
+                self.stack.push(Entry::Canon);
+            }
+            I::PutSuperValue => {
+                let base = self.stack.len() - 4;
+                for depth in base..self.stack.len() {
+                    self.materialize(depth)?;
+                }
+                let first = Self::r8(self.temp(base))?;
+                self.emit(|b| b.a(Opcode::PutSuperValue, first));
+                self.stack.truncate(base);
+            }
+            I::MarkSuperCall => {}
+            I::ConstructSuper(argc) => self.call(Opcode::New, argc, 2, true)?,
+            I::ApplySuper => self.call(Opcode::NewSpread, 0, 3, true)?,
+            I::InitDerivedConstructor => {
+                let new_target = self.new_target_register()?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.ab(Opcode::InitDerived, dst, new_target));
+                self.push_result(at);
+            }
+            I::InitializeDerivedLocal(local) => {
+                let register = self.local_register(local);
+                let (_, [value]) = self.pop_operands::<1>()?;
+                if self.captured_locals[local as usize] {
+                    let cell = self.cell_operand(register)?;
+                    self.emit(|b| b.ab(Opcode::InitThisCell, cell, value));
+                } else {
+                    let register = Self::r8(register)?;
+                    self.spill_aliases(u32::from(register))?;
+                    self.emit(|b| b.ab(Opcode::InitThis, register, value));
+                }
+            }
+            I::InitializeDerivedVarRef(closure) => {
+                let (_, [value]) = self.pop_operands::<1>()?;
+                self.emit(|b| b.a_capture(Opcode::InitThisCaptured, value, u32::from(closure)));
+            }
+            I::ReturnDerived(local) => {
+                let top = self.stack.len();
+                self.materialize(top - 1)?;
+                let value = Self::r8(self.temp(top - 1))?;
+                self.get_local(local, false)?;
+                let this = self.operand(self.stack.len() - 1)?;
+                self.stack.pop();
+                self.emit(|b| b.ab(Opcode::CheckDerivedReturn, value, this));
+                self.stack.pop();
+                self.emit(|b| b.a(Opcode::Return, value));
+            }
+
+            // ---- private names ----
+            I::InitializePrivateName(local) => {
+                let name = self.local_key(local)?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a_key(Opcode::NewPrivateName, dst, name));
+                self.push_result(at);
+                self.put_local(local, false, false)?;
+            }
+            I::InitializePrivateMethod(local) | I::InitializePrivateAccessor(local) => {
+                let top = self.stack.len();
+                let home = self.operand(top - 2)?;
+                let method = self.operand(top - 1)?;
+                self.emit(|b| b.ab(Opcode::SetHomeObject, method, home));
+                let name = self.local_key(local)?;
+                let prefix = match self.function.local_definitions()[usize::from(local)].kind {
+                    ClosureVariableKind::PrivateGetter
+                    | ClosureVariableKind::PrivateGetterSetter => 1,
+                    ClosureVariableKind::PrivateSetter => 2,
+                    _ => 0,
+                };
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::NamePrivateMethod,
+                        method,
+                        0,
+                        prefix,
+                        name.raw(),
+                    ))
+                });
+                self.put_local(local, false, false)?;
+            }
+            I::GetPrivateField(source) | I::GetPrivateField2(source) => {
+                let keep = matches!(instruction, I::GetPrivateField2(_));
+                let kind = self.private_kind(source)?;
+                self.load_private(source)?;
+                let (_, [name]) = self.pop_operands::<1>()?;
+                let target = self.operand(self.stack.len() - 1)?;
+                if !keep {
+                    self.stack.pop();
+                }
+                let dst = self.result_register()?;
+                let op = match kind {
+                    ClosureVariableKind::PrivateMethod => Opcode::GetPrivateMethod,
+                    ClosureVariableKind::PrivateGetter
+                    | ClosureVariableKind::PrivateGetterSetter => Opcode::CallPrivateGetter,
+                    ClosureVariableKind::PrivateSetter => {
+                        let message =
+                            self.key(&JsString::from_static("private class field has no getter"))?;
+                        self.emit(|b| b.key(Opcode::ThrowType, message));
+                        self.stack.push(Entry::Undefined);
+                        return Ok(1);
+                    }
+                    _ => Opcode::GetPrivate,
+                };
+                let at = self.emit(|b| b.abc(op, dst, target, name));
+                self.push_result(at);
+            }
+            I::PutPrivateField(source) | I::DefinePrivateField(source) => {
+                let define = matches!(instruction, I::DefinePrivateField(_));
+                let kind = self.private_kind(source)?;
+                self.load_private(source)?;
+                let (_, [value, name]) = self.pop_operands::<2>()?;
+                let target = self.operand(self.stack.len() - 1)?;
+                if !define {
+                    self.stack.pop();
+                }
+                let op = match kind {
+                    _ if define => Opcode::DefinePrivate,
+                    ClosureVariableKind::PrivateSetter => Opcode::CallPrivateSetter,
+                    ClosureVariableKind::PrivateField => Opcode::PutPrivate,
+                    _ => {
+                        let message =
+                            self.key(&JsString::from_static("private class field is read-only"))?;
+                        self.emit(|b| b.key(Opcode::ThrowType, message));
+                        return Ok(1);
+                    }
+                };
+                self.emit(|b| b.abc(op, target, value, name));
+            }
+            I::PrivateIn(source) => {
+                let kind = self.private_kind(source)?;
+                self.load_private(source)?;
+                let (_, [target, name]) = self.pop_operands::<2>()?;
+                let dst = self.result_register()?;
+                let op = if kind == ClosureVariableKind::PrivateField {
+                    Opcode::PrivateIn
+                } else {
+                    Opcode::PrivateBrandIn
+                };
+                let at = self.emit(|b| b.abc(op, dst, target, name));
+                self.push_result(at);
+            }
+
+            // ---- object spread and references (section 5.2) ----
+            I::CopyDataProperties => {
+                let (_, [source]) = self.pop_operands::<1>()?;
+                let target = self.operand(self.stack.len() - 1)?;
+                self.emit(|b| b.ab(Opcode::CopyData, target, source));
+            }
+            I::CopyDataPropertiesExcluded {
+                target_depth,
+                source_depth,
+                excluded_depth,
+            } => {
+                let top = self.stack.len();
+                let at = |depth: u8| top - 1 - usize::from(depth);
+                let target = self.operand(at(target_depth))?;
+                let source = self.operand(at(source_depth))?;
+                let excluded = self.operand(at(excluded_depth))?;
+                self.emit(|b| b.abc(Opcode::CopyDataExcluded, target, source, excluded));
+            }
+            I::GlobalReference(closure) => {
+                let key = self.closure_key(closure)?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| b.a_key(Opcode::GlobalRef, dst, key));
+                self.push_result(at);
+            }
+            I::GetRefValue(name) | I::GetRefValueUndef(name) => {
+                let key = self.name_key(name)?;
+                let undefined = u8::from(matches!(instruction, I::GetRefValueUndef(_)));
+                let environment = self.operand(self.stack.len() - 1)?;
+                let dst = self.result_register()?;
+                let at = self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::GetRef,
+                        dst,
+                        environment,
+                        undefined,
+                        key.raw(),
+                    ))
+                });
+                self.push_result(at);
+            }
+            I::PutRefValue(name) => {
+                let key = self.name_key(name)?;
+                let (_, [environment, value]) = self.pop_operands::<2>()?;
+                self.emit(|b| b.ab_key(Opcode::PutRef, environment, value, key));
+            }
 
             // ---- calls ----
             I::Call(argc) => self.call(Opcode::Call, argc, 1, true)?,
@@ -1529,19 +2302,99 @@ impl<'a> Lowerer<'a> {
         Ok(2)
     }
 
-    /// A direct `eval` call: throws `InternalError: unsupported: eval` when
-    /// reached. Its operands are dropped and its result is never read.
-    fn unsupported_eval(&mut self, operands: usize) -> Result<(), LowerError> {
-        let base = self
-            .stack
+    // ---- phase 4 helpers ----
+
+    /// Pushes `count` canonical entries (values an instruction wrote to the
+    /// temporaries at their depths).
+    fn push_canon(&mut self, count: usize) {
+        for _ in 0..count {
+            self.stack.push(Entry::Canon);
+        }
+        self.max_scratch = self.max_scratch.max(self.stack.len() as u32);
+        self.last_dest = None;
+    }
+
+    /// The depth of the iterator record that occupies the top `count`
+    /// entries.
+    fn record_base(&self, count: usize) -> Result<usize, LowerError> {
+        self.stack
             .len()
-            .checked_sub(operands)
-            .ok_or_else(|| LowerError::Internal("symbolic stack underflow".into()))?;
-        self.stack.truncate(base);
-        let message = self.key(&JsString::from_static("unsupported: eval"))?;
-        self.emit(|b| b.key(Opcode::ThrowInternal, message));
-        self.stack.push(Entry::Undefined);
-        Ok(())
+            .checked_sub(count)
+            .ok_or_else(|| LowerError::Internal("iterator record underflow".into()))
+    }
+
+    /// The depth of the innermost iterator record active at stack PC `pc`.
+    fn innermost_iterator(&self, pc: usize) -> Result<usize, LowerError> {
+        let region = *self.analysis.regions[pc]
+            .last()
+            .ok_or_else(|| LowerError::Internal("no iterator record".into()))?;
+        let region = self.analysis.catches[region as usize];
+        if !region.iterator {
+            return Err(LowerError::Internal("innermost region is a catch".into()));
+        }
+        Ok(region.marker_depth as usize)
+    }
+
+    fn new_target_register(&self) -> Result<u8, LowerError> {
+        let register = self
+            .layout
+            .new_target
+            .ok_or_else(|| LowerError::Internal("new.target without its register".into()))?;
+        Self::r8(register)
+    }
+
+    /// What a private name binding holds: a field's name, a method, an
+    /// accessor half.
+    fn private_kind(&self, source: PrivateNameSource) -> Result<ClosureVariableKind, LowerError> {
+        let kind = match source {
+            PrivateNameSource::Local(local) => self
+                .function
+                .local_definitions()
+                .get(usize::from(local))
+                .map(|definition| definition.kind),
+            PrivateNameSource::Closure(closure) => self
+                .function
+                .closure_variables()
+                .get(usize::from(closure))
+                .map(|variable| variable.kind),
+        };
+        kind.ok_or_else(|| LowerError::Internal("private name out of range".into()))
+    }
+
+    /// Pushes the value of a private name binding.
+    fn load_private(&mut self, source: PrivateNameSource) -> Result<(), LowerError> {
+        match source {
+            PrivateNameSource::Local(local) => self.get_local(local, false),
+            PrivateNameSource::Closure(closure) => self.load_captured(closure),
+        }
+    }
+
+    /// The frozen template object of a tagged template site: the cooked
+    /// strings (`undefined` for an invalid escape) with a frozen `raw` array
+    /// of the raw strings, built once per site and kept in the constant pool.
+    fn template_entry(
+        &mut self,
+        cooked: &[Option<JsString>],
+        raw: &[JsString],
+    ) -> Result<CoreValue, LowerError> {
+        let mut cooked_values = Vec::with_capacity(cooked.len());
+        for string in cooked {
+            cooked_values.push(match string {
+                Some(string) => self.atom_value(&string_units(string))?,
+                None => CoreValue::UNDEFINED,
+            });
+        }
+        let mut raw_values = Vec::with_capacity(raw.len());
+        for string in raw {
+            raw_values.push(self.atom_value(&string_units(string))?);
+        }
+        let object = self
+            .runtime
+            .template_object(&cooked_values, &raw_values)
+            .map_err(LowerError::Heap)?;
+        let value = CoreValue::object(object);
+        self.runtime.heap_mut().roots().push(value);
+        Ok(value)
     }
 
     // ---- bindings ----
@@ -1674,8 +2527,23 @@ impl<'a> Lowerer<'a> {
     fn global_write(&mut self, op: Opcode, closure: u16) -> Result<(), LowerError> {
         let key = self.closure_key(closure)?;
         let (_, [value]) = self.pop_operands::<1>()?;
-        self.emit(|b| b.a_key(op, value, key));
+        if op == Opcode::DefineGlobal {
+            let flags = self.global_flags();
+            self.emit(|b| b.raw(oxide_core::Insn::new(op, value, flags, 0, key.raw())));
+        } else {
+            self.emit(|b| b.a_key(op, value, key));
+        }
         Ok(())
+    }
+
+    /// The `global` flags of this code's declarations: `eval` code's
+    /// bindings are configurable.
+    fn global_flags(&self) -> u8 {
+        if self.function.metadata().eval_kind == EvalKind::None {
+            0
+        } else {
+            oxide_core::bytecode::opcode::global::EVAL
+        }
     }
 
     // ---- shuffles ----
@@ -1769,7 +2637,27 @@ impl<'a> Lowerer<'a> {
                 .ok_or_else(|| LowerError::Internal(format!("jump to {target} has no label")))?;
             self.builder.patch_target(at, label);
         }
-        let handlers = self.handlers()?;
+        // Section 4.2: an exception leaving an iterator record's range closes
+        // the iterator (unless it is done) and propagates. Each record gets a
+        // stub after the code, reached through its own handler entry.
+        let mut stubs = vec![None; self.analysis.catches.len()];
+        for (region, catch) in self.analysis.catches.iter().enumerate() {
+            if !catch.iterator {
+                continue;
+            }
+            let record = Self::r8(self.temp(catch.marker_depth as usize))?;
+            let thrown = catch.marker_depth + 3;
+            self.max_scratch = self.max_scratch.max(thrown + 1);
+            let thrown = Self::r8(self.temp(thrown as usize))?;
+            // The stub runs in the regions that enclose the record.
+            let start = self.builder.pc();
+            self.builder.ab(Opcode::IterCloseThrow, record, thrown);
+            self.origins.push(catch.opened_at);
+            self.builder.a(Opcode::Throw, thrown);
+            self.origins.push(catch.opened_at);
+            stubs[region] = Some((start, u16::from(thrown)));
+        }
+        let handlers = self.handlers(&stubs)?;
         for handler in handlers {
             self.builder.handler(handler);
         }
@@ -1778,39 +2666,84 @@ impl<'a> Lowerer<'a> {
         let register_count = self.temp_base + self.analysis.max_depth.max(self.max_scratch);
         let register_count = u16::try_from(register_count)
             .map_err(|_| LowerError::unsupported("functions with more than 65535 registers"))?;
+        let class_constructor = self
+            .code
+            .iter()
+            .any(|instruction| matches!(instruction, Instruction::CheckCtor));
         let mut unit_flags = 0;
         if metadata.strict {
             unit_flags |= flags::STRICT;
         }
-        if metadata.constructor_kind == ConstructorKind::Base {
-            unit_flags |= flags::CONSTRUCTOR;
+        match metadata.constructor_kind {
+            ConstructorKind::Base => unit_flags |= flags::CONSTRUCTOR,
+            ConstructorKind::Derived => unit_flags |= flags::CONSTRUCTOR | flags::DERIVED,
+            ConstructorKind::None => {}
+        }
+        if class_constructor {
+            unit_flags |= flags::CLASS_CONSTRUCTOR;
+        }
+        if self.layout.new_target.is_some() {
+            unit_flags |= flags::NEW_TARGET;
+        }
+        match metadata.function_kind {
+            FunctionKind::Normal => {}
+            FunctionKind::Generator => unit_flags |= flags::GENERATOR,
+            FunctionKind::Async => unit_flags |= flags::ASYNC,
+            FunctionKind::AsyncGenerator => unit_flags |= flags::GENERATOR | flags::ASYNC,
+        }
+        if metadata.has_prototype && !class_constructor {
+            unit_flags |= flags::PROTOTYPE;
         }
         if self.is_script {
             unit_flags |= flags::SCRIPT;
         }
+        if metadata.is_module {
+            unit_flags |= flags::MODULE;
+        }
+        if self.is_script && metadata.eval_kind != EvalKind::None {
+            unit_flags |= flags::EVAL;
+        }
         if self.code.iter().any(|instruction| {
             matches!(
                 instruction,
-                Instruction::Arguments(_) | Instruction::Rest(_)
+                Instruction::Arguments(_)
+                    | Instruction::Rest(_)
+                    | Instruction::InitDerivedConstructor
             )
         }) {
             unit_flags |= flags::ARGUMENTS;
+        }
+        if metadata.class_private_brand {
+            unit_flags |= flags::BRAND;
         }
         let this_slots = if metadata.constructor_kind == ConstructorKind::Base {
             self.this_keys.len() as u16
         } else {
             0
         };
+        let name_atom = match self.function.func_name() {
+            Some(name) if !name.is_empty() => {
+                Some(self.runtime.heap_mut().intern_units(&string_units(name))?)
+            }
+            _ => None,
+        };
+        let source = self
+            .function
+            .debug()
+            .and_then(|debug| debug.source.as_ref())
+            .filter(|_| !self.is_script)
+            .map(|bytes| String::from_utf8_lossy(bytes).into_owned().into_boxed_str());
         let captures = self.captures(parent)?;
         let name = self
             .function
             .func_name()
             .map(|name| String::from_utf16_lossy(&string_units(name)))
             .unwrap_or_default();
-        let unit = self.builder.finish(UnitLayout {
+        let positions = self.positions(self.builder.pc() as usize);
+        let mut unit = self.builder.finish(UnitLayout {
             register_count,
             parameter_count: metadata.argument_count,
-            local_count: metadata.local_count,
+            local_count: metadata.local_count + u16::from(self.layout.new_target.is_some()),
             flags: unit_flags,
             this_slots,
             constant_count: self.pool.len() as u32,
@@ -1819,8 +2752,53 @@ impl<'a> Lowerer<'a> {
             children,
             captures,
             name,
+            name_atom,
+            length: metadata.defined_argument_count,
+            source,
+            filename: self
+                .function
+                .debug()
+                .map(|debug| std::rc::Rc::from(debug.filename.to_utf8_lossy())),
         });
+        unit.debug.positions = positions;
         Ok((unit, self.pool))
+    }
+
+    /// The source position of each emitted instruction, from the front
+    /// end's table for the instruction it lowers, one entry per change.
+    fn positions(&self, len: usize) -> Box<[oxide_core::bytecode::SourcePosition]> {
+        let Some(table) = self
+            .function
+            .debug()
+            .and_then(|debug| debug.pc2line.as_ref())
+        else {
+            return Box::new([]);
+        };
+        let mut positions: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
+        for (pc, &origin) in self.origins.iter().take(len).enumerate() {
+            // `Pc2LineTable::lookup` scans; the entries are sorted by pc.
+            let after = table
+                .entries
+                .partition_point(|entry| entry.pc <= origin as u32);
+            let position = after
+                .checked_sub(1)
+                .map_or(table.definition, |at| table.entries[at].position);
+            let Some((line, column)) = position.one_based() else {
+                continue;
+            };
+            if positions
+                .last()
+                .is_some_and(|last| (last.line, last.column) == (line, column))
+            {
+                continue;
+            }
+            positions.push(oxide_core::bytecode::SourcePosition {
+                pc: pc as u32,
+                line,
+                column,
+            });
+        }
+        positions.into()
     }
 
     fn captures(&self, parent: Option<Layout>) -> Result<Vec<Capture>, LowerError> {
@@ -1849,10 +2827,15 @@ impl<'a> Lowerer<'a> {
                         Capture::Register(register(1 + u32::from(argument))?)
                     }
                     ClosureSource::ParentClosure(index) => Capture::Outer(index),
+                    // A module's bindings are cells its record supplies.
                     ClosureSource::Global
                     | ClosureSource::GlobalDeclaration
-                    | ClosureSource::ParentGlobal(_) => Capture::None,
-                    _ => return Err(LowerError::unsupported("modules")),
+                    | ClosureSource::ParentGlobal(_)
+                    | ClosureSource::ModuleDeclaration
+                    | ClosureSource::ModuleImport
+                    | ClosureSource::ModuleImportCollision
+                    | ClosureSource::ModuleImportMeta => Capture::None,
+                    _ => return Err(LowerError::unsupported("direct eval bindings")),
                 })
             })
             .collect()
@@ -1860,18 +2843,30 @@ impl<'a> Lowerer<'a> {
 
     /// One handler entry per run of register instructions inside a catch
     /// region, innermost regions first.
-    fn handlers(&self) -> Result<Vec<Handler>, LowerError> {
+    fn handlers(&self, stubs: &[Option<(u32, u16)>]) -> Result<Vec<Handler>, LowerError> {
         let mut entries = Vec::new();
         for (region, catch) in self.analysis.catches.iter().enumerate() {
+            let (target, register) = match stubs[region] {
+                Some(stub) => stub,
+                None => {
+                    let target = self.labels[catch.target]
+                        .ok_or_else(|| LowerError::Internal("catch target has no label".into()))?;
+                    let register =
+                        u16::try_from(self.temp(catch.marker_depth as usize)).map_err(|_| {
+                            LowerError::unsupported("functions with more than 65535 registers")
+                        })?;
+                    (target, register)
+                }
+            };
             let region = region as u32;
-            let target = self.labels[catch.target]
-                .ok_or_else(|| LowerError::Internal("catch target has no label".into()))?;
-            let register = u16::try_from(self.temp(catch.marker_depth as usize))
-                .map_err(|_| LowerError::unsupported("functions with more than 65535 registers"))?;
             let mut start = None;
             let mut nesting = 0;
             for (at, &origin) in self.origins.iter().enumerate() {
-                let regions = &self.analysis.regions[origin];
+                let regions = self
+                    .analysis
+                    .regions
+                    .get(origin)
+                    .map_or(&[][..], |r| &r[..]);
                 let inside = regions.iter().position(|&active| active == region);
                 match (inside, start) {
                     (Some(level), None) => {

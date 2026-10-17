@@ -8,7 +8,8 @@
 use std::mem;
 use std::time::{Duration, Instant};
 
-use super::object::{NONE, ObjectKind};
+use super::hash::FxHashMap;
+use super::object::{InternalTag, NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
 use crate::shape::STATIC_CELL;
 use crate::value::{Kind, ShapeId, Value};
@@ -37,6 +38,11 @@ impl RootStack {
     }
 
     #[inline]
+    /// Drops the last root.
+    pub fn pop_one(&mut self) {
+        self.values.pop();
+    }
+
     pub fn truncate(&mut self, mark: RootMark) {
         debug_assert!(mark.0 <= self.values.len(), "root mark above the stack");
         self.values.truncate(mark.0);
@@ -162,6 +168,11 @@ pub struct GcState {
     pub pauses: Vec<Duration>,
     mark_stack: Vec<Value>,
     shape_stack: Vec<ShapeId>,
+    /// Internal records with weak references reached by this collection.
+    weak: Vec<u32>,
+    /// The values of weak map entries whose key is not yet marked, by key:
+    /// marking the key pushes them (the ephemeron fixpoint in one pass).
+    ephemerons: FxHashMap<Value, Vec<Value>>,
     bytecode_stack: Vec<u32>,
     #[cfg(feature = "gc-stress")]
     pub stress: bool,
@@ -186,6 +197,8 @@ impl GcState {
             record_pauses: false,
             pauses: Vec::new(),
             mark_stack: Vec::new(),
+            weak: Vec::new(),
+            ephemerons: FxHashMap::default(),
             shape_stack: Vec::new(),
             bytecode_stack: Vec::new(),
             #[cfg(feature = "gc-stress")]
@@ -280,6 +293,7 @@ impl Heap {
             + self.cells.growth_bytes(need.cells)
             + self.payloads.functions.growth_bytes(need.functions)
             + self.payloads.bytecode.growth_bytes(need.bytecodes)
+            + self.payloads.internals.growth_bytes(need.internals)
             + values
     }
 
@@ -319,6 +333,7 @@ impl Heap {
         self.cells.clear_marks();
         self.payloads.functions.clear_marks();
         self.payloads.bytecode.clear_marks();
+        self.payloads.internals.clear_marks();
     }
 
     /// Marks everything reachable from the root set. A reference to a freed
@@ -329,6 +344,9 @@ impl Heap {
         stack.extend_from_slice(self.roots.stack.values());
         stack.extend(self.roots.handles.values());
         stack.extend_from_slice(&self.roots.fixed);
+        for job in &self.jobs {
+            job.trace(&mut stack);
+        }
         // Registers above `top` belong to returned frames and may name freed
         // records; a call clears its window before it can be marked again.
         let top = self.vm.top as usize;
@@ -343,8 +361,46 @@ impl Heap {
         for id in self.atoms.ids() {
             self.strings.mark(id.0);
         }
+        let mut shapes = mem::take(&mut self.gc.shape_stack);
+        shapes.extend(self.closure_shapes.iter().flatten());
+        shapes.extend(self.arguments_shapes.iter().flatten());
+        self.mark_shapes(&mut shapes, &mut stack);
+        self.gc.shape_stack = shapes;
         self.cells.mark(STATIC_CELL.0);
-        self.drain(&mut stack);
+        stack.extend_from_slice(&self.kept);
+        stack.extend_from_slice(&self.modules);
+        self.drain::<false>(&mut stack);
+        // Ephemerons: a weak map's value is live once its key is. Each weak
+        // map is scanned once: a live key's value is pushed, an unmarked
+        // key's waits in `ephemerons` until `drain` marks the key. Draining
+        // may reach further weak maps, scanned in the next round.
+        let mut scanned = 0;
+        loop {
+            let mut ephemerons = mem::take(&mut self.gc.ephemerons);
+            for position in scanned..self.gc.weak.len() {
+                let internal = self.payloads.internals.get(self.gc.weak[position]);
+                if internal.tag != InternalTag::WeakMap {
+                    continue;
+                }
+                for entry in internal.slots.chunks(2) {
+                    if entry[0].is_empty() || self.value_marked(entry[1]) {
+                        continue;
+                    }
+                    if self.value_marked(entry[0]) {
+                        stack.push(entry[1]);
+                    } else {
+                        ephemerons.entry(entry[0]).or_default().push(entry[1]);
+                    }
+                }
+            }
+            scanned = self.gc.weak.len();
+            self.gc.ephemerons = ephemerons;
+            if stack.is_empty() {
+                break;
+            }
+            self.drain::<true>(&mut stack);
+        }
+        self.gc.ephemerons.clear();
         // Cells owned by live prototypes; the table itself is weak.
         for (object, info) in &self.prototypes {
             if self.objects.is_marked(object.0)
@@ -357,7 +413,10 @@ impl Heap {
         self.gc.mark_stack = stack;
     }
 
-    fn drain(&mut self, stack: &mut Vec<Value>) {
+    /// Marks everything reachable from `stack`. With `EPHEMERONS`, marking
+    /// a key with waiting weak map values pushes them; the first pass has
+    /// none waiting and skips the check.
+    fn drain<const EPHEMERONS: bool>(&mut self, stack: &mut Vec<Value>) {
         let mut shapes = mem::take(&mut self.gc.shape_stack);
         while let Some(value) = stack.pop() {
             match value.kind() {
@@ -366,20 +425,54 @@ impl Heap {
                     if !self.objects.mark(index) {
                         continue;
                     }
+                    if EPHEMERONS
+                        && !self.gc.ephemerons.is_empty()
+                        && let Some(values) = self.gc.ephemerons.remove(&value)
+                    {
+                        stack.extend(values);
+                    }
                     let header = *self.objects.get(index);
-                    shapes.push(header.shape);
-                    self.mark_shapes(&mut shapes, stack);
+                    // Most objects share a shape already marked.
+                    if !self.shapes.is_marked(header.shape.0) {
+                        shapes.push(header.shape);
+                        self.mark_shapes(&mut shapes, stack);
+                    }
                     push_heap_values(stack, self.values.slice(header.slots()));
                     push_heap_values(stack, self.values.slice(header.elements()));
                     match header.kind {
                         ObjectKind::Scope | ObjectKind::Arguments if header.payload != NONE => {
                             stack.push(Value::object(crate::ObjectId(header.payload)));
                         }
+                        kind if kind.has_internal() => {
+                            if self.payloads.internals.mark(header.payload) {
+                                let internal = self.payloads.internals.get(header.payload);
+                                match internal.tag {
+                                    // Ephemerons and weak targets: section 3.4.
+                                    InternalTag::WeakMap
+                                    | InternalTag::WeakSet
+                                    | InternalTag::WeakRef => {
+                                        self.gc.weak.push(header.payload);
+                                    }
+                                    InternalTag::FinalizationRegistry => {
+                                        // The callback and each cell's held
+                                        // value are strong.
+                                        stack.push(internal.slots[0]);
+                                        for cell in internal.slots[1..].chunks(3) {
+                                            stack.push(cell[1]);
+                                        }
+                                        self.gc.weak.push(header.payload);
+                                    }
+                                    _ => push_heap_values(stack, &internal.slots),
+                                }
+                            }
+                        }
                         ObjectKind::Function => {
                             if self.payloads.functions.mark(header.payload) {
                                 let record = *self.payloads.functions.get(header.payload);
-                                if record.scope != NONE {
-                                    stack.push(Value::object(crate::ObjectId(record.scope)));
+                                for link in [record.scope, record.home_object, record.fields] {
+                                    if link != NONE {
+                                        stack.push(Value::object(crate::ObjectId(link)));
+                                    }
                                 }
                                 if record.bytecode != NONE {
                                     self.mark_bytecode(record.bytecode, stack);
@@ -390,11 +483,25 @@ impl Heap {
                     }
                 }
                 Kind::String => {
-                    self.strings.mark(value.as_string().unwrap().0);
+                    let index = value.as_string().unwrap().0;
+                    if self.strings.mark(index)
+                        && !self.ropes.is_empty()
+                        && self.strings.get(index).flat().is_none()
+                        && let Some(&(left, right)) = self.ropes.get(&index)
+                    {
+                        stack.push(Value::string(left));
+                        stack.push(Value::string(right));
+                    }
                 }
                 Kind::Symbol => {
                     let index = value.as_symbol().unwrap().0;
                     if self.symbols.mark(index) {
+                        if EPHEMERONS
+                            && !self.gc.ephemerons.is_empty()
+                            && let Some(values) = self.gc.ephemerons.remove(&value)
+                        {
+                            stack.extend(values);
+                        }
                         let description = self.symbols.get(index).description;
                         if description != NONE {
                             self.strings.mark(description);
@@ -468,7 +575,91 @@ impl Heap {
 
     /// The weak-table hook, run after marking: shape roots, transitions and
     /// prototype infos drop entries whose target died.
+    /// Whether `value` survives this collection (a primitive always does).
+    fn value_marked(&self, value: Value) -> bool {
+        match value.kind() {
+            Kind::Object => self.objects.is_marked(value.as_object().unwrap().0),
+            Kind::Symbol => self.symbols.is_marked(value.as_symbol().unwrap().0),
+            Kind::String => self.strings.is_marked(value.as_string().unwrap().0),
+            Kind::BigInt => self.bigints.is_marked(value.as_bigint().unwrap().0),
+            _ => true,
+        }
+    }
+
+    /// Clears the weak references to records about to be swept: dead keys
+    /// leave weak collections, dead targets leave `WeakRef`s, and a dead
+    /// registry target queues its cleanup job.
+    fn clear_weak(&mut self) {
+        let weak = mem::take(&mut self.gc.weak);
+        for &payload in &weak {
+            let tag = self.payloads.internals.get(payload).tag;
+            match tag {
+                InternalTag::WeakMap | InternalTag::WeakSet => {
+                    let internal = self.payloads.internals.get(payload);
+                    let width = if tag == InternalTag::WeakMap { 2 } else { 1 };
+                    let dead: Vec<usize> = internal
+                        .slots
+                        .chunks(width)
+                        .enumerate()
+                        .filter(|(_, entry)| !entry[0].is_empty() && !self.value_marked(entry[0]))
+                        .map(|(index, _)| index)
+                        .collect();
+                    let internal = self.payloads.internals.get_mut(payload);
+                    for entry in dead {
+                        super::table::tombstone(internal, entry);
+                    }
+                }
+                InternalTag::WeakRef => {
+                    let target = self.payloads.internals.get(payload).slots[0];
+                    if !self.value_marked(target) {
+                        self.payloads.internals.get_mut(payload).slots[0] = Value::UNDEFINED;
+                    }
+                }
+                InternalTag::FinalizationRegistry => {
+                    let internal = self.payloads.internals.get(payload);
+                    let callback = internal.slots[0];
+                    let mut jobs = Vec::new();
+                    let mut dead_targets = Vec::new();
+                    let mut dead_tokens = Vec::new();
+                    for (index, cell) in internal.slots[1..].chunks(3).enumerate() {
+                        if cell[0].is_empty() {
+                            continue;
+                        }
+                        if !self.value_marked(cell[0]) {
+                            dead_targets.push(index);
+                            jobs.push(crate::vm::jobs::Job::Call {
+                                function: callback,
+                                this: Value::UNDEFINED,
+                                args: vec![cell[1]],
+                            });
+                        } else if !cell[2].is_empty() && !self.value_marked(cell[2]) {
+                            dead_tokens.push(index);
+                        }
+                    }
+                    let internal = self.payloads.internals.get_mut(payload);
+                    for index in dead_targets {
+                        for slot in &mut internal.slots[1 + index * 3..4 + index * 3] {
+                            *slot = Value::EMPTY;
+                        }
+                    }
+                    for index in dead_tokens {
+                        internal.slots[3 + index * 3] = Value::EMPTY;
+                    }
+                    self.jobs.extend(jobs);
+                }
+                _ => {}
+            }
+        }
+        self.gc.weak = weak;
+        self.gc.weak.clear();
+    }
+
     fn process_weak(&mut self) {
+        self.clear_weak();
+        // A rope's halves are dropped once it dies or flattens.
+        let strings = &self.strings;
+        self.ropes
+            .retain(|&index, _| strings.is_marked(index) && strings.get(index).flat().is_none());
         let objects = &self.objects;
         self.prototypes.retain(|object, info| {
             if !objects.is_marked(object.0) {
@@ -518,8 +709,12 @@ impl Heap {
             values.free(bytecode.children);
         });
         freed += self.payloads.functions.sweep(|_, _| {});
+        freed += self.payloads.internals.sweep(|_, _| {});
         freed += self.shapes.sweep(|_, _| {});
-        freed += self.strings.sweep(|_, _| {});
+        let rope_bytes = &self.rope_bytes;
+        freed += self.strings.sweep(|_, record| {
+            rope_bytes.set(rope_bytes.get() - record.flattened_rope_bytes());
+        });
         freed += self.symbols.sweep(|_, _| {});
         freed += self.bigints.sweep(|_, _| {});
         freed += self.cells.sweep(|_, _| {});
@@ -557,6 +752,7 @@ impl Heap {
         check("cell", &self.cells);
         check("function", &self.payloads.functions);
         check("bytecode", &self.payloads.bytecode);
+        check("internal", &self.payloads.internals);
 
         let mut owner = vec![false; self.values.total_slots()];
         let mut claim = |range: super::values::Range, what: &str| {

@@ -463,6 +463,10 @@ fn function_constructor_uses_defining_realm_and_new_target_prototype() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn function_constructor_samples_strip_mode_and_keeps_parse_locations() {
     let (runtime, mut context) = test_context();
     let constructor = context.function_constructor().unwrap();

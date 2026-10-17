@@ -361,6 +361,10 @@ fn direct_eval_super_capability_is_explicit_and_independent_from_imports() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn nested_eval_in_derived_constructor_accepts_inner_private_fields() {
     let (_, mut context) = test_context();
     let source = r#"
@@ -458,6 +462,10 @@ fn compiler_preserves_authenticated_with_environment_relays() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn with_statements_execute_ordered_environment_and_reference_paths() {
     let (_, mut context) = test_context();
 
@@ -629,6 +637,10 @@ fn eval_compiler_rejects_incoherent_caller_variable_profiles() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn strict_script_direct_eval_uses_a_local_eval_declaration_target() {
     let script = compile_unlinked_script("'use strict'; eval('var x = 42; x')").unwrap();
     assert!(script.metadata().strict);

@@ -94,6 +94,10 @@ fn compiler_lowers_spread_calls_to_quickjs_apply_abis() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn runtime_executes_call_method_construct_and_direct_eval_spread() {
     assert_eq!(
         evaluate_in_context(

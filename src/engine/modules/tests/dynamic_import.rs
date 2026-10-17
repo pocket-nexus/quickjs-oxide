@@ -189,6 +189,10 @@ fn dynamic_import_assimilates_a_namespace_then_export() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn dynamic_import_internal_then_observes_species_and_ignored_capability() {
     let (runtime, mut context) = test_context();
     let (loader, _, _) = MapModuleLoader::new([("species.js", "export const ok = true;")]);
@@ -240,6 +244,10 @@ get: function () {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn dynamic_import_discards_internal_then_species_abrupt_completion() {
     let (runtime, mut context) = test_context();
     let (loader, _, _) = MapModuleLoader::new([("species-throw.js", "export const ok = true;")]);

@@ -112,6 +112,10 @@ fn class_name_scopes_in_parameter_initializers_are_not_body_lexicals() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn body_eval_after_default_parameters_keeps_parameter_bindings_visible() {
     assert_eq!(
         evaluate_in_context("(function(first, second = 1) { return eval('first + second'); })(41)",),
@@ -326,6 +330,10 @@ fn parameter_binding_patterns_execute_across_sync_function_forms() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn parameter_binding_patterns_follow_quickjs_scope_arguments_and_hoist_order() {
     assert_eq!(
         evaluate_in_context(
@@ -957,6 +965,10 @@ fn identifier_rest_parameters_publish_quickjs_length_and_entry_order() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn identifier_rest_with_direct_eval_uses_the_extended_entry_order() {
     let script =
         compile_unlinked_script("function f(...rest){ return eval('this.marker') + rest[0] }")

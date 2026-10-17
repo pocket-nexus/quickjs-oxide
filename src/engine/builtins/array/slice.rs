@@ -1124,6 +1124,10 @@ mod dense_slice_tests {
     use crate::engine::test_support::test_context;
     use crate::engine::value::Value;
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn dense_slice_preserves_species_holes_descriptors_and_owned_cells() {
         let (_, mut context) = test_context();
         let result = context.eval(r#"(() => {

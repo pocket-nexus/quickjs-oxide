@@ -35,6 +35,10 @@ checked-handles = []
 new-core-gc-stress = ["oxide-core/gc-stress"]
 # `oxide-run --ic-stats`: the new core's inline-cache counters.
 new-core-ic-stats = ["oxide-core/ic-stats"]
+# Phase 4, section 7.2: the current engine with the five behaviors the new
+# core drops switched off, for the one Test262 run that freezes the dropped
+# variants. Never in a release, never in the default gates.
+dropped-features-probe = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 oxide-regexp = { workspace = true, features = ["test-hooks"] }

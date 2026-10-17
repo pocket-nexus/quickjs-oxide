@@ -54,6 +54,34 @@ and rejection cohorts; and the dependency-free module local-binding family.
 the frozen `full_*_body_sha256` hashes; the scheduled `test262-full` job and the
 `test262-receipt` dispatch cover it.
 
+## The new core
+
+The new core (`oxide-core`, phase 4 of #122) runs the same vector through
+the same runner with `--engine new-core`, against its own spec,
+[`dev-support/test262/new-core.conf`](../dev-support/test262/new-core.conf):
+
+```sh
+./scripts/test262/test-test262.sh --spec dev-support/test262/new-core.conf --check
+./scripts/test262/test-test262.sh --spec dev-support/test262/new-core.conf --focused
+TEST262_WORKERS=2 ./scripts/test262/test-test262.sh \
+  --spec dev-support/test262/new-core.conf --full
+```
+
+The spec has the current engine's keys, the same profile, admissions and
+negative-diagnostic contracts, plus `engine=new-core` and the frozen
+dropped-variant list
+[`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv):
+the D = 1,897 variants that pass on the current engine and fail with the five
+behaviors phase 0 dropped switched off (`with`, direct `eval`, realms,
+`Symbol.species`, unscopables), produced by one full run of the current
+engine built with the hidden `dropped-features-probe` feature. The new core
+passes NEWPASS of the 83,562 QuickJS-scope variants, at least 83,304 − D, and
+every variant that passes on the current engine and fails on the new core is
+in D. CI checks the spec in `fast`, replays the focused vector on every pull
+request, and runs the full vector nightly (`new-core-test262-full`). The
+numbers and the reconciliation are in
+[the phase 4 results](performance/new-core-phase4-results.md#table-e-test262).
+
 ## Promotion
 
 Every spec key refers to in-tree data. When outcomes change, only frozen data

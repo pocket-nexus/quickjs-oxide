@@ -158,6 +158,15 @@ impl UnlinkedConstant {
         }
     }
 
+    /// Borrow a template-site payload, or return `None` for other constants.
+    #[must_use]
+    pub fn as_template_object(&self) -> Option<(&[Option<JsString>], &[JsString])> {
+        match &self.0 {
+            UnlinkedConstantKind::TemplateObject { cooked, raw } => Some((cooked, raw)),
+            _ => None,
+        }
+    }
+
     /// Consume a RegExp literal payload without cloning its matcher program.
     /// Non-RegExp constants are returned unchanged to preserve their private
     /// representation invariant for the ordinary publication path.

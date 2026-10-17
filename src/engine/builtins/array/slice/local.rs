@@ -126,6 +126,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(
+        feature = "dropped-features-probe",
+        ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+    )]
     fn slice_local_progress_preserves_species_proxy_order_and_throws() {
         let (_, mut context) = test_context();
         assert_script_true(

@@ -12,7 +12,14 @@ the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/
 phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md)
 and measured in [`docs/performance/new-core-phase2-results.md`](../docs/performance/new-core-phase2-results.md);
 phase 3 (inline caches, the V8 v7 slice and the go/no-go) is planned in
-[`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md).
+[`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md)
+and measured in [`docs/performance/new-core-phase3-results.md`](../docs/performance/new-core-phase3-results.md);
+phase 4 (the builtins, strings and the full language surface) is planned in
+[`docs/performance/new-core-phase4.md`](../docs/performance/new-core-phase4.md)
+and measured in [`docs/performance/new-core-phase4-results.md`](../docs/performance/new-core-phase4-results.md).
+As of phase 4 the core runs every construct the current compiler accepts
+except the five phase 0 dropped, all 37 suite programs, and Test262 on
+`run-test262 --engine new-core`.
 
 The crate has `#![forbid(unsafe_code)]` and one dependency, the
 regular-expression crate `oxide-regexp` (`regexp/`, phase 3 section 6.1),
@@ -31,9 +38,10 @@ lowering lives there); never the reverse.
 | `heap::gc` | root stack, handles, mark-sweep, trigger, stress mode, heap cap |
 | `shape` | transition tree, dictionary mode, validity cells |
 | `bytecode` | `Insn` (8 bytes), `Opcode` and its operand formats, `CodeUnit`, `CodeStore`, the builder, the publication validator, the disassembler |
-| `vm` | the register file and frame table, the main loop (`interp`), conversions and operators (`ops`, `number`, `bigint`), property access (`property`), errors and the leaf-native ABI (`error`, `native`) |
-| `builtins` | the realm's constructors, prototypes and globals as leaf natives (phase 3 M4), one file per builtin object |
-| `runtime` | `Runtime`: the heap, the code store beside it, the single realm and the host output |
+| `vm` | the register file and frame table, the main loop (`interp`), conversions and operators (`ops`, `number`, `bigint`), property access (`property`) and the internal methods by kind (`object`, `proxy`, `typed`, `arguments`), iteration (`iter`), suspension (`suspend`, `async_generator`), jobs and promises (`jobs`), classes (`class`), modules (`module`), the compile host (`compile`), errors and the native ABI (`error`, `native`) |
+| `builtins` | the realm's constructors, prototypes and globals as natives over the re-entrant `call` (phase 4, section 2), one file per builtin object, plus `$262` (`test262`, `agent`) |
+| `host` | the `Host` trait: output, clock and time zone (phase 4, section 6.3) |
+| `runtime` | `Runtime`: the heap, the code store beside it, the single realm and the host services |
 
 ## The rooting rule
 
@@ -310,3 +318,75 @@ check nothing.
   Rust's exactly rounded fixed-precision formatting, which is QuickJS's
   rounding, instead of big-integer arithmetic.
 - `oxide-run --gc-stats` prints the collector's statistics (Table D).
+
+## Phase 4 departures
+
+### The host boundary
+
+- `Host` holds the hooks a port must supply: `write`, `now_ms` and
+  `local_tz_offset_minutes`. Compilation, module loading and the agents'
+  script runner are function pointers on `Services` (`set_compiler`,
+  `set_module_host`, `set_script_runner`) that receive the runtime's
+  `Compiler`, rather than trait methods taking `&mut Runtime`: the host
+  object lives inside the runtime it would have to borrow. The front end
+  stays in the root crate either way.
+- No promise-rejection hook: the CLI reports an uncaught rejection of a
+  module's evaluation, and nothing else reads one. `import.meta` is an
+  empty object; no program or admitted Test262 test reads a property of it.
+- A test host reads a thrown value through `Runtime::thrown_summary`, which
+  takes `name`, `message` and `stack` from own data properties (the
+  prototype's `name`, then its `constructor`'s) without running
+  JavaScript, as the current engine's Test262 worker does.
+
+### Objects and the heap
+
+- The builtin kinds share one `ObjectKind::Builtin` with an `InternalTag`
+  and an `Internal` record (raw slots plus an `InternalData` payload: a
+  table, a buffer, a view, a suspended frame) in one side arena, instead
+  of an arena per kind. The wrappers, `Proxy`, `BoundFunction` and typed
+  arrays keep their own `ObjectKind`, because the slow paths dispatch on
+  it.
+- A rope's halves live in `Heap.ropes`, keyed by the record, so a
+  `StringRecord` stays at 40 bytes; a flattened or dead rope's entry is
+  dropped at the next collection.
+- Ephemerons mark in one pass: after the first drain, each weak map's
+  entry with an unmarked key waits in a map keyed by the key, and marking
+  the key pushes its values. The plan's rescan to a fixpoint took 25.7 s
+  for a 10⁵-deep chain of `WeakMap` entries (Test262's
+  `regress-1507322-deep-weakmap`); this takes 9 ms.
+- The pristine-array test of `IterStart` reads `%Array.prototype%[@@iterator]`
+  and `%ArrayIteratorPrototype%.next` and compares them with the
+  intrinsics, instead of a validity cell: two own-slot lookups, no
+  dependents list.
+
+### Errors
+
+- Errors get `stack` at construction, from the frame table and a sparse
+  `DebugInfo.positions` table (a line and column from an instruction on)
+  that the lowering derives from the front end's pc-to-source table. The
+  plan's per-instruction `DebugInfo.lines` was never filled and is gone.
+  The innermost frame's position is the instruction that called the
+  running native (`VmStack.native_site`, set by the out-of-line native
+  call); an error the loop itself throws has no position for that frame.
+  A JSON module's syntax error carries its position in the module.
+- `with` is an early `SyntaxError` raised by the lowering's surface check
+  (the front end, shared with the current engine, still parses it), so a
+  script or `eval` source that contains one fails before any of it runs.
+
+### The loop
+
+- New opcodes are appended at the end of `Opcode`: two inserted in the
+  middle shifted the discriminants, changed how LLVM grouped `run_at`'s
+  arms, and cost 1–6% of the instructions of every V8 v7 program.
+- `ToPropertyKeyOf a, b, c` is the key conversion of a compound element
+  assignment, which checks the base `c` before an object key converts; a
+  primitive key passes through inline like `ToPropertyKey`'s.
+- `ClearCell a` puts a captured lexical binding back in the TDZ when its
+  scope is entered again (QuickJS's `set_loc_uninitialized`), keeping the
+  cell that hoisted closures already hold; `CloseCell` still makes the
+  fresh binding of a loop iteration.
+- `GetSuperValue` and `IterStart` take their flag in `imm` (format
+  `ABInt`).
+- `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal` carry
+  `opcode::global` flags in `b`: a function declaration's
+  `CanDeclareGlobalFunction`, and `eval` code's configurable bindings.

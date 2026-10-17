@@ -1,39 +1,50 @@
 //! `Boolean`: `Boolean(v)` and `Boolean.prototype.toString` and `valueOf`.
 //! `new Boolean` makes a wrapper object, which is phase 4's.
 
-use super::{Native, install_constructor, methods, unsupported};
+use super::{Native, install_constructor, methods};
 use crate::heap::HeapError;
+use crate::heap::object::ObjectKind;
 use crate::runtime::Intrinsic;
 use crate::value::Value;
 use crate::vm::native::CallSite;
+use crate::vm::object as internal;
 use crate::vm::{Cx, Throw, error, ops};
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::BooleanPrototype);
-    install_constructor(cx, "Boolean", Native::BooleanConstructor, prototype)?;
+    let constructor = install_constructor(cx, Native::BooleanConstructor, prototype)?;
+    cx.set_intrinsic(Intrinsic::Boolean, constructor);
     methods(
         cx,
         prototype,
-        &[
-            ("toString", Native::BooleanToString),
-            ("valueOf", Native::BooleanValueOf),
-        ],
+        &[Native::BooleanToString, Native::BooleanValueOf],
     )
 }
 
+/// `Boolean(value)`; `new Boolean(value)` wraps it.
 pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    if site.construct {
-        return Err(unsupported(cx, "new Boolean"));
-    }
     let value = site.arg(cx, 0);
-    Ok(Value::bool(ops::to_boolean(cx.heap, value)))
+    let value = Value::bool(ops::to_boolean(cx.heap, value));
+    if !site.construct {
+        return Ok(value);
+    }
+    let prototype =
+        internal::prototype_from_constructor(cx, site.new_target, Intrinsic::BooleanPrototype)?;
+    internal::wrap(cx, ObjectKind::BooleanWrapper, value, prototype).map(Value::object)
 }
 
+/// `thisBooleanValue`: a boolean or a wrapper.
 fn this_boolean(cx: &mut Cx<'_>, site: &CallSite) -> Result<bool, Throw> {
-    match site.this(cx).as_bool() {
-        Some(value) => Ok(value),
-        None => Err(error::type_error(cx, "not a boolean")),
+    let this = site.this(cx);
+    if let Some(value) = this.as_bool() {
+        return Ok(value);
     }
+    if let Some(object) = this.as_object()
+        && cx.heap.object_kind(object) == ObjectKind::BooleanWrapper
+    {
+        return Ok(cx.heap.internal_slot(object, 0).as_bool().unwrap());
+    }
+    Err(error::type_error(cx, "not a boolean"))
 }
 
 pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {

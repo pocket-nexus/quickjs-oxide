@@ -140,6 +140,46 @@ pub(crate) fn pow(base: f64, exponent: f64) -> f64 {
     base.powf(exponent)
 }
 
+/// Decodes an IEEE-754 binary16 (QuickJS `cutils.h::fromfp16`): the half
+/// payload placed in a binary64 and scaled by 2^1008, which keeps signed
+/// zero, the infinities and the NaN sign.
+pub(crate) fn from_float16_bits(value: u16) -> f64 {
+    let mut magnitude = u32::from(value & 0x7fff);
+    if magnitude >= 0x7c00 {
+        magnitude += 0x1f_8000;
+    }
+    let bits =
+        (u64::from(value >> 15) << 63) | (u64::from(magnitude) << (f64::MANTISSA_DIGITS - 11));
+    const SCALE_2_POW_1008: f64 = f64::from_bits(0x7ef0_0000_0000_0000);
+    f64::from_bits(bits) * SCALE_2_POW_1008
+}
+
+/// Encodes a binary64 as binary16 (QuickJS `cutils.h::tofp16`): nearest,
+/// ties to even; overflow is infinity; NaN keeps its sign with payload 1.
+pub(crate) fn to_float16_bits(value: f64) -> u16 {
+    let bits = value.to_bits();
+    let sign = ((bits >> 63) << 15) as u16;
+    let mut magnitude = bits & 0x7fff_ffff_ffff_ffff;
+    let encoded = if magnitude > 0x7ff0_0000_0000_0000 {
+        0x7c01
+    } else if magnitude < 0x3f10_0000_0000_0000 {
+        if magnitude <= 0x3e60_0000_0000_0000 {
+            0
+        } else {
+            let shift = (1051 - (magnitude >> 52)) as u32;
+            magnitude = (1_u64 << 52) | (magnitude & ((1_u64 << 52) - 1));
+            let addend = ((magnitude >> shift) & 1) + ((1_u64 << (shift - 1)) - 1);
+            (magnitude + addend) >> shift
+        }
+    } else {
+        magnitude -= 0x3f00_0000_0000_0000;
+        let addend = ((magnitude >> (52 - 10)) & 1) + ((1_u64 << (52 - 11)) - 1);
+        let rounded = (magnitude + addend) >> (52 - 10);
+        if rounded > 0x7c00 { 0x7c00 } else { rounded }
+    };
+    encoded as u16 | sign
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

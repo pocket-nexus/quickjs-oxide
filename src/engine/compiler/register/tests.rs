@@ -73,7 +73,7 @@ fn locals_are_read_in_place_and_results_retarget_into_locals() {
             "JNgtI p0, 0, @5",
             "AddI l0, l0, 1",
             "SubI p0, p0, 1",
-            "Jmp @1",
+            "JGtI p0, 0, @2",
             "Return l0",
         ]
     );
@@ -85,8 +85,8 @@ fn a_counted_loop_is_a_compare_jump_and_an_increment() {
         "function work(n) { var sum = 0; for (var i = 0; i < n; i++) sum = sum + i; return sum; }",
         "work",
     );
-    // Two dispatches per iteration besides the body: the fused compare-jump
-    // and the backward jump; `i++` is one increment in place.
+    // One dispatch per iteration besides the body: the back edge repeats
+    // the fused compare-jump, negated; `i++` is one increment in place.
     assert_eq!(
         code,
         [
@@ -95,7 +95,7 @@ fn a_counted_loop_is_a_compare_jump_and_an_increment() {
             "JNlt l1, p0, @6",
             "Add l0, l0, l1",
             "Inc l1, l1",
-            "Jmp @2",
+            "JLt l1, p0, @3",
             "Return l0",
         ]
     );
@@ -302,25 +302,22 @@ fn handler_resumes_above_live_operands() {
     );
 }
 
+/// The constructs phase 3 declined lower from phase 4 on; only eval code and
+/// modules are still declined (until M7).
 #[test]
-fn unsupported_constructs_are_reported_not_mislowered() {
-    for (source, construct) in [
-        ("function* g() { yield 1; }", "generators"),
-        ("class C {}", "classes"),
-        ("for (const x of [1]) {}", "iterators"),
-        ("var o = { ...{ a: 1 } };", "object spread"),
-        ("function f({ a }) { return a; }", "non-simple parameters"),
-        (
-            "var f = function () { return { m() {} }; };",
-            "object literal methods",
-        ),
+fn phase4_surface_lowers() {
+    for source in [
+        "function* g() { yield 1; }",
+        "class C {}",
+        "for (const x of [1]) {}",
+        "var o = { ...{ a: 1 } };",
+        "function f({ a }) { return a; }",
+        "var f = function () { return { m() {} }; };",
+        "async function f() { await 1; }",
+        "class D extends Object { #p = 1; m() { return super.m; } }",
     ] {
-        match lower(source) {
-            Err(LowerError::Unsupported(found)) => {
-                assert!(found.contains(construct), "{source}: {found}");
-            }
-            Err(other) => panic!("{source}: {other}"),
-            Ok(_) => panic!("{source}: lowered"),
+        if let Err(error) = lower(source) {
+            panic!("{source}: {error}");
         }
     }
 }
@@ -384,7 +381,8 @@ fn corpus_lowers_or_is_reported_unsupported() {
                     );
                 }
             }
-            Err(LowerError::Unsupported(construct)) => {
+            // `with` is the early `SyntaxError` of phase 0.
+            Err(LowerError::Unsupported(construct) | LowerError::Syntax(construct)) => {
                 unsupported += 1;
                 *reasons.entry(construct).or_insert(0) += 1;
             }
@@ -449,4 +447,34 @@ fn print_probe_disassembly() {
             println!("{unit}");
         }
     }
+}
+
+#[test]
+#[ignore = "scratch dump"]
+fn scratch_dump_stack_code() {
+    let source = std::env::var("DUMP_SOURCE").unwrap();
+    let script = crate::engine::compiler::compile_unlinked_script(&source).unwrap();
+    fn dump(function: &crate::engine::code::function::UnlinkedFunction, depth: usize) {
+        let pad = "  ".repeat(depth);
+        println!(
+            "{pad}== {:?} meta {:?}",
+            function.func_name(),
+            function.metadata()
+        );
+        for (i, v) in function.closure_variables().iter().enumerate() {
+            println!("{pad}  closure {i}: {v:?}");
+        }
+        for (i, l) in function.local_definitions().iter().enumerate() {
+            println!("{pad}  local {i}: {l:?}");
+        }
+        for (i, insn) in function.code().iter().enumerate() {
+            println!("{pad}  {i:4} {insn:?}");
+        }
+        for c in function.constants() {
+            if let Some(child) = c.as_child() {
+                dump(child, depth + 1);
+            }
+        }
+    }
+    dump(&script, 0);
 }

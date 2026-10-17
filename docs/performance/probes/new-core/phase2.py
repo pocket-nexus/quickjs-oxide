@@ -53,8 +53,35 @@ TABLE_B = {
                     "print(work(N));\n",
 }
 
+# Phase 4, section 10, Table B: the probes of the new surface.
+TABLE_PHASE4 = {
+    "for_of_array": "var a=[1,2,3,4,5,6,7,8];\n"
+                    "function work(n){ var s=0; for (var i=0;i<n;i++){ for (var x of a) s+=x; } return s; }\n"
+                    "print(work(N));\n",
+    "spread_call": "function f(a,b,c){ return a+b+c; } var args=[1,2,3];\n"
+                   "function work(n){ var s=0; for (var i=0;i<n;i++){ s+=f(...args); } return s; }\n"
+                   "print(work(N));\n",
+    "class_method": "class C { constructor(){ this.v=1; } m(){ return this.v; } } var o=new C();\n"
+                    "function work(n){ var s=0; for (var i=0;i<n;i++){ s+=o.m(); } return s; }\n"
+                    "print(work(N));\n",
+    "generator_next": "function* g(){ for (;;) yield 1; } var it=g();\n"
+                      "function work(n){ var s=0; for (var i=0;i<n;i++){ s+=it.next().value; } return s; }\n"
+                      "print(work(N));\n",
+    "typed_write": "var t=new Float64Array(1024);\n"
+                   "function work(n){ for (var i=0;i<n;i++){ t[i&1023]=i; } return t[0]; }\n"
+                   "print(work(N));\n",
+    "map_get": "var m=new Map(); for (var k=0;k<64;k++) m.set(k,k);\n"
+               "function work(n){ var s=0; for (var i=0;i<n;i++){ s+=m.get(i&63); } return s; }\n"
+               "print(work(N));\n",
+    "string_build": "function work(n){ var s=''; for (var i=0;i<n;i++){ s+='x'; } return s.length; }\n"
+                    "print(work(N));\n",
+    "sort_cmp": "function cmp(x,y){ return x-y; }\n"
+                "function work(n){ var s=0; for (var i=0;i<n;i++){ var a=[3,1,2,5,4]; a.sort(cmp); s+=a[0]; } return s; }\n"
+                "print(work(N));\n",
+}
+
 # Iterations at N; the slow probes (exceptions, BigInt) run fewer.
-ITERATIONS = {"tdz": 20000, "type_error": 20000, "bigint_64": 20000}
+ITERATIONS = {"tdz": 20000, "type_error": 20000, "bigint_64": 20000, "sort_cmp": 50000}
 DEFAULT_N = 200000
 
 
@@ -66,6 +93,7 @@ def fixed_source(name: str) -> str:
 def sources() -> dict:
     probes = {name: fixed_source(name) for name in TABLE_A}
     probes.update(TABLE_B)
+    probes.update(TABLE_PHASE4)
     return probes
 
 

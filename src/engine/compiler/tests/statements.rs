@@ -34,6 +34,10 @@ fn script_roots_enable_annex_b_html_comments_without_stealing_decrement() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn direct_and_indirect_eval_roots_enable_annex_b_html_comments() {
     assert_eq!(
         evaluate_in_context(

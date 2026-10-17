@@ -61,10 +61,21 @@ pub(crate) fn to_boolean(heap: &Heap, value: Value) -> bool {
             number != 0.0 && !number.is_nan()
         }
         Kind::Undefined | Kind::Null | Kind::Empty => false,
-        Kind::String => !heap.string(value.as_string().unwrap()).repr.is_empty(),
+        Kind::String => heap.string_len(value.as_string().unwrap()) != 0,
         Kind::BigInt => !heap.bigint(value.as_bigint().unwrap()).limbs.is_empty(),
-        Kind::Object | Kind::Symbol => true,
+        Kind::Object => !is_html_dda(heap, value),
+        Kind::Symbol => true,
     }
+}
+
+/// Whether `value` is Test262's `IsHTMLDDA` object.
+#[inline]
+pub(crate) fn is_html_dda(heap: &Heap, value: Value) -> bool {
+    heap.html_dda
+        && value.as_object().is_some_and(|object| {
+            heap.object_kind(object) == crate::ObjectKind::Builtin
+                && heap.internal_tag(object) == crate::heap::object::InternalTag::HtmlDda
+        })
 }
 
 #[inline(never)]
@@ -79,7 +90,9 @@ pub(crate) fn type_of(cx: &Cx<'_>, value: Value) -> Value {
         Kind::Symbol => names.symbol,
         Kind::BigInt => names.bigint,
         Kind::Object => {
-            if is_callable(cx.heap, value) {
+            if is_html_dda(cx.heap, value) {
+                names.undefined
+            } else if is_callable(cx.heap, value) {
                 names.function
             } else {
                 names.object
@@ -92,7 +105,7 @@ pub(crate) fn type_of(cx: &Cx<'_>, value: Value) -> Value {
 // ---- strings ----
 
 pub(crate) fn units(heap: &Heap, string: StringId) -> Vec<u16> {
-    heap.string(string).repr.units().collect()
+    heap.string(string).repr().units().collect()
 }
 
 pub(crate) fn string_text(heap: &Heap, value: Value) -> String {
@@ -100,11 +113,11 @@ pub(crate) fn string_text(heap: &Heap, value: Value) -> String {
 }
 
 fn string_eq(heap: &Heap, a: StringId, b: StringId) -> bool {
-    a == b || heap.string(a).repr == heap.string(b).repr
+    a == b || heap.string(a).repr() == heap.string(b).repr()
 }
 
 fn string_cmp(heap: &Heap, a: StringId, b: StringId) -> Ordering {
-    let (a, b) = (&heap.string(a).repr, &heap.string(b).repr);
+    let (a, b) = (&heap.string(a).repr(), &heap.string(b).repr());
     a.units().cmp(b.units())
 }
 
@@ -122,15 +135,35 @@ pub(crate) fn alloc_units(cx: &mut Cx<'_>, units: &[u16]) -> Result<Value, Throw
         .map_err(|error| heap_error(cx, error))
 }
 
+/// The shortest concatenation made a rope.
+const ROPE_MIN: usize = 64;
+
+/// QuickJS's `JS_STRING_LEN_MAX`.
+pub(crate) const MAX_STRING_LEN: usize = (1 << 30) - 1;
+
 /// `a + b` for two strings.
+///
+/// A result of at least [`ROPE_MIN`] units is a rope (section 3.3); a
+/// shorter one is copied, which keeps short keys flat.
 pub(crate) fn concat(cx: &mut Cx<'_>, a: StringId, b: StringId) -> Result<Value, Throw> {
-    let (left, right) = (&cx.heap.string(a).repr, &cx.heap.string(b).repr);
-    if right.is_empty() {
+    let (left_len, right_len) = (cx.heap.string_len(a), cx.heap.string_len(b));
+    if right_len == 0 {
         return Ok(Value::string(a));
     }
-    if left.is_empty() {
+    if left_len == 0 {
         return Ok(Value::string(b));
     }
+    if left_len + right_len >= ROPE_MIN {
+        if left_len + right_len > MAX_STRING_LEN {
+            return Err(error::range_error(cx, "invalid string length"));
+        }
+        return cx
+            .heap
+            .alloc_rope(a, b)
+            .map(Value::string)
+            .map_err(|error| heap_error(cx, error));
+    }
+    let (left, right) = (cx.heap.string(a).repr(), cx.heap.string(b).repr());
     // Two one-byte strings join as bytes; the result is canonical as is.
     if let (StringRepr::OneByte(left), StringRepr::OneByte(right)) = (left, right) {
         let mut joined = Vec::with_capacity(left.len() + right.len());
@@ -168,6 +201,41 @@ pub(crate) fn to_primitive(cx: &mut Cx<'_>, value: Value, hint: Hint) -> Result<
 }
 
 fn to_primitive_object(cx: &mut Cx<'_>, object: ObjectId, hint: Hint) -> Result<Value, Throw> {
+    let names = cx.realm.names;
+    // `@@toPrimitive` first (Date and Symbol prototypes have one).
+    let key = crate::runtime::WellKnown::key(cx.realm.symbols.to_primitive);
+    let exotic = match property::lookup(cx.heap, &names, object, key) {
+        property::Lookup::Miss => Value::UNDEFINED,
+        property::Lookup::Hit(property::Found::Data(value)) => value,
+        _ => property::get(cx, Value::object(object), key)?,
+    };
+    if !exotic.is_undefined() && !exotic.is_null() {
+        if !is_callable(cx.heap, exotic) {
+            return Err(error::type_error(
+                cx,
+                "Symbol.toPrimitive is not a function",
+            ));
+        }
+        let hint = match hint {
+            Hint::Default => names.default,
+            Hint::Number => names.number,
+            Hint::String => names.string,
+        };
+        let result = super::call(cx, exotic, Value::object(object), &[Value::string(hint)])?;
+        if result.as_object().is_some() {
+            return Err(error::type_error(cx, "toPrimitive"));
+        }
+        return Ok(result);
+    }
+    ordinary_to_primitive(cx, object, hint)
+}
+
+/// `OrdinaryToPrimitive(object, hint)`.
+pub(crate) fn ordinary_to_primitive(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    hint: Hint,
+) -> Result<Value, Throw> {
     let names = cx.realm.names;
     let order = if hint == Hint::String {
         [names.to_string, names.value_of]
@@ -247,7 +315,7 @@ pub(crate) fn to_number(cx: &mut Cx<'_>, value: Value) -> Result<f64, Throw> {
         Kind::Null => Ok(0.0),
         Kind::Bool => Ok(if value == Value::TRUE { 1.0 } else { 0.0 }),
         Kind::String => {
-            let repr = &cx.heap.string(value.as_string().unwrap()).repr;
+            let repr = &cx.heap.string(value.as_string().unwrap()).repr();
             Ok(number::parse(&repr.units().collect::<Vec<_>>()))
         }
         Kind::Symbol => Err(error::type_error(cx, "cannot convert symbol to number")),
@@ -591,6 +659,14 @@ pub(crate) fn strict_eq(heap: &Heap, x: Value, y: Value) -> bool {
     x == y
 }
 
+/// `SameValueZero` over the heap.
+pub(crate) fn same_value_zero_heap(heap: &Heap, x: Value, y: Value) -> bool {
+    if let (Some(a), Some(b)) = (x.as_f64(), y.as_f64()) {
+        return a == b || (a.is_nan() && b.is_nan());
+    }
+    strict_eq(heap, x, y)
+}
+
 /// `IsLooselyEqual`.
 #[inline(never)]
 pub(crate) fn loose_eq(cx: &mut Cx<'_>, x: Value, y: Value) -> Result<bool, Throw> {
@@ -600,6 +676,8 @@ pub(crate) fn loose_eq(cx: &mut Cx<'_>, x: Value, y: Value) -> Result<bool, Thro
     }
     use Class as C;
     Ok(match (kx, ky) {
+        (C::Nullish, C::Object) => is_html_dda(cx.heap, y),
+        (C::Object, C::Nullish) => is_html_dda(cx.heap, x),
         (C::Nullish, _) | (_, C::Nullish) => false,
         (C::Number, C::String) => {
             let b = to_number(cx, y)?;
@@ -669,18 +747,78 @@ fn class(value: Value) -> Class {
     }
 }
 
-/// `x instanceof f` (`OrdinaryHasInstance`; no `Symbol.hasInstance` in
-/// phase 2).
+/// `x instanceof f`: `f[Symbol.hasInstance]` when it is not the intrinsic
+/// one, else `OrdinaryHasInstance`.
 #[inline(never)]
 pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, Throw> {
+    let Some(function) = f.as_object() else {
+        return Err(error::type_error(cx, "invalid 'instanceof' right operand"));
+    };
+    // A constructor closure with its cached shape: `prototype` is its third
+    // slot and `@@hasInstance` the intrinsic one (below).
+    let shape = cx.heap.shape_of(function);
+    if cx.heap.closure_shapes.contains(&Some(shape))
+        && cx.heap.shape(shape).width == 3
+        && cx.heap.prototype_of_shape(shape)
+            == Some(
+                cx.realm
+                    .intrinsic(crate::runtime::Intrinsic::FunctionPrototype),
+            )
+        && let Some(prototype) = cx.heap.get_slot(function, 2).as_object()
+    {
+        let Some(object) = x.as_object() else {
+            return Ok(false);
+        };
+        return inherits(cx, f, object, prototype);
+    }
+    let key = crate::runtime::WellKnown::key(cx.realm.symbols.has_instance);
+    // A closure with only its own `length`, `name` and `prototype` inherits
+    // `@@hasInstance` from `%Function.prototype%` (non-writable and
+    // non-configurable there): no lookup needed.
+    let function_prototype = cx
+        .realm
+        .intrinsic(crate::runtime::Intrinsic::FunctionPrototype);
+    let plain_closure = cx.heap.object_kind(function) == crate::ObjectKind::Function
+        && cx.heap.prototype_of(function) == Some(function_prototype)
+        && cx
+            .heap
+            .closure_shapes
+            .contains(&Some(cx.heap.shape_of(function)));
+    let handler = if plain_closure {
+        Value::UNDEFINED
+    } else {
+        match property::lookup(cx.heap, &cx.realm.names, function, key) {
+            property::Lookup::Hit(property::Found::Data(handler)) => handler,
+            property::Lookup::Miss => Value::UNDEFINED,
+            _ => property::get(cx, f, key)?,
+        }
+    };
+    let intrinsic = plain_closure
+        || handler.as_object().is_some_and(|handler| {
+            cx.heap.object_kind(handler) == crate::ObjectKind::Function
+                && cx.heap.function_record(handler).native
+                    == crate::builtins::Native::FunctionHasInstance.index()
+        });
+    if !intrinsic && !handler.is_undefined() && !handler.is_null() {
+        if !is_callable(cx.heap, handler) {
+            return Err(error::type_error(
+                cx,
+                "Symbol.hasInstance is not a function",
+            ));
+        }
+        let result = super::call(cx, handler, f, &[x])?;
+        return Ok(to_boolean(cx.heap, result));
+    }
     if !is_callable(cx.heap, f) {
         return Err(error::type_error(cx, "invalid 'instanceof' right operand"));
     }
-    let Some(mut object) = x.as_object() else {
+    let Some(object) = x.as_object() else {
         return Ok(false);
     };
+    if cx.heap.object_kind(function) != crate::ObjectKind::Function {
+        return super::object::ordinary_has_instance(cx, f, x);
+    }
     let names = cx.realm.names;
-    let function = f.as_object().unwrap();
     // The constructor's own data `prototype` is read straight from its slot
     // (phase 3 M5, on Earley-Boyer's `instanceof` tests).
     let prototype = match cx.heap.lookup_own(function, Names::key(names.prototype)) {
@@ -695,13 +833,30 @@ pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, T
             "operand 'prototype' property is not an object",
         ));
     };
-    while let Some(next) = cx.heap.prototype_of(object) {
+    inherits(cx, f, object, prototype)
+}
+
+/// Whether `prototype` is on the chain of `object` (a proxy on the way
+/// hands the rest to `OrdinaryHasInstance`).
+#[inline]
+fn inherits(
+    cx: &mut Cx<'_>,
+    f: Value,
+    mut object: ObjectId,
+    prototype: ObjectId,
+) -> Result<bool, Throw> {
+    loop {
+        if cx.heap.object_kind(object) == crate::ObjectKind::Proxy {
+            return super::object::ordinary_has_instance(cx, f, Value::object(object));
+        }
+        let Some(next) = cx.heap.prototype_of(object) else {
+            return Ok(false);
+        };
         if next == prototype {
             return Ok(true);
         }
         object = next;
     }
-    Ok(false)
 }
 
 /// `key in object`.
@@ -711,5 +866,5 @@ pub(crate) fn has_property(cx: &mut Cx<'_>, key: Value, object: Value) -> Result
         return Err(error::type_error(cx, "invalid 'in' operand"));
     };
     let key = to_property_key(cx, key)?;
-    Ok(property::has(cx.heap, &cx.realm.names, target, key))
+    property::has(cx, target, key)
 }

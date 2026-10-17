@@ -132,17 +132,42 @@ pub struct Handler {
 
 pub mod flags {
     /// Strict-mode code: `this` is not coerced.
-    pub const STRICT: u8 = 1 << 0;
+    pub const STRICT: u16 = 1 << 0;
     /// The function may be called with `new`.
-    pub const CONSTRUCTOR: u8 = 1 << 1;
+    pub const CONSTRUCTOR: u16 = 1 << 1;
     /// An arrow function: `this` is lexical, never a constructor.
-    pub const ARROW: u8 = 1 << 2;
+    pub const ARROW: u16 = 1 << 2;
     /// A script body.
-    pub const SCRIPT: u8 = 1 << 3;
+    pub const SCRIPT: u16 = 1 << 3;
     /// The function reads its actual arguments past its parameters
     /// (`arguments` or a rest parameter): entering it keeps the extra
     /// arguments above its registers.
-    pub const ARGUMENTS: u8 = 1 << 4;
+    pub const ARGUMENTS: u16 = 1 << 4;
+    /// The function reads `new.target` (phase 4, section 4.5): its first
+    /// local, right after the parameters, receives it when it is entered by
+    /// a construction.
+    pub const NEW_TARGET: u16 = 1 << 5;
+    /// A class constructor: calling it without `new` throws.
+    pub const CLASS_CONSTRUCTOR: u16 = 1 << 6;
+    /// A derived class constructor: no receiver is created; `this` is bound
+    /// by `super()`.
+    pub const DERIVED: u16 = 1 << 7;
+    /// A generator function.
+    pub const GENERATOR: u16 = 1 << 8;
+    /// An async function (with `GENERATOR`, an async generator).
+    pub const ASYNC: u16 = 1 << 9;
+    /// `MakeClosure` gives the function a `prototype` object (an ordinary
+    /// function or a generator; class constructors get theirs from
+    /// `MakeClass`).
+    pub const PROTOTYPE: u16 = 1 << 10;
+    /// Module code.
+    pub const MODULE: u16 = 1 << 11;
+    /// A class field or static initializer that brands its receiver with its
+    /// home object's private-method brand before it runs.
+    pub const BRAND: u16 = 1 << 12;
+    /// The root of `eval` code: `import()` in it resolves against the code
+    /// that called `eval`.
+    pub const EVAL: u16 = 1 << 13;
 }
 
 /// Where a closure created by `MakeClosure` gets one captured cell, read in
@@ -167,8 +192,30 @@ pub const NO_SPILL: u16 = u16::MAX;
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct DebugInfo {
     pub name: Box<str>,
-    /// The source line of each instruction, or empty.
-    pub lines: Box<[u32]>,
+    /// The script or module the function belongs to, for `import()`.
+    pub filename: Option<std::rc::Rc<str>>,
+    /// Where the instructions came from, sorted by `pc`: each entry holds
+    /// for its instruction and the ones after it up to the next. Empty when
+    /// the producer recorded none.
+    pub positions: Box<[SourcePosition]>,
+}
+
+/// A one-based source line and column, from instruction `pc` on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SourcePosition {
+    pub pc: u32,
+    pub line: u32,
+    pub column: u32,
+}
+
+impl DebugInfo {
+    /// The line and column of the instruction at `pc`, as QuickJS's
+    /// `find_line_num` reads its table: the last entry at or before it.
+    pub fn position(&self, pc: u32) -> Option<(u32, u32)> {
+        let after = self.positions.partition_point(|entry| entry.pc <= pc);
+        let entry = self.positions[..after].last()?;
+        Some((entry.line, entry.column))
+    }
 }
 
 /// The compiled form of one function.
@@ -183,7 +230,7 @@ pub struct CodeUnit {
     pub register_count: u16,
     pub parameter_count: u16,
     pub local_count: u16,
-    pub flags: u8,
+    pub flags: u16,
     /// Distinct `this.x =` names in a constructor body: the slots `New`
     /// reserves on the receiver (section 3.3).
     pub this_slots: u16,
@@ -206,6 +253,12 @@ pub struct CodeUnit {
     /// creates it; `LoadCaptured` indexes them.
     pub captures: Box<[Capture]>,
     pub debug: DebugInfo,
+    /// The function's `name` (an atom, so a strong root), or `None` for `""`.
+    pub name_atom: Option<crate::value::StringId>,
+    /// The function's `length`.
+    pub length: u16,
+    /// The function's source text, for `Function.prototype.toString`.
+    pub source: Option<Box<str>>,
 }
 
 impl CodeUnit {
@@ -221,60 +274,150 @@ impl CodeUnit {
     }
 
     #[inline]
-    pub const fn has(&self, flag: u8) -> bool {
+    pub const fn has(&self, flag: u16) -> bool {
         self.flags & flag != 0
     }
 }
 
+/// Marks a [`CodeUnitId`] in the dynamic store (section 5.5).
+const DYNAMIC: u32 = 1 << 31;
+/// Units in the first dynamic chunk; each next chunk holds twice as many.
+const FIRST_CHUNK: u32 = 64;
+const CHUNKS: usize = 25;
+
+/// One chunk of the dynamic store: write-once cells, allocated whole.
+type DynamicChunk = Box<[std::cell::OnceCell<CodeUnit>]>;
+
 /// Every published code unit. It lives in the runtime beside the heap, not in
-/// it, so the main loop can hold `&[Insn]` across heap calls. Append-only in
-/// phase 2: code units are never collected.
-#[derive(Default)]
+/// it, so the main loop can hold `&[Insn]` across heap calls. Append-only:
+/// code units are never collected.
+///
+/// Units published before the program runs go in `units` through `&mut`;
+/// units compiled at run time (`eval`, the `Function` constructors) are
+/// published through `&self` while the loop holds the store, into chunks of
+/// write-once cells that never move, so every `&CodeUnit` stays valid.
 pub struct CodeStore {
     units: Vec<CodeUnit>,
+    dynamic: Box<[std::cell::OnceCell<DynamicChunk>]>,
+    dynamic_len: std::cell::Cell<u32>,
     /// Cache entries reserved by the units so far.
-    ic_len: u32,
+    ic_len: std::cell::Cell<u32>,
+}
+
+impl Default for CodeStore {
+    fn default() -> Self {
+        CodeStore {
+            units: Vec::new(),
+            dynamic: (0..CHUNKS).map(|_| std::cell::OnceCell::new()).collect(),
+            dynamic_len: std::cell::Cell::new(0),
+            ic_len: std::cell::Cell::new(0),
+        }
+    }
+}
+
+/// The chunk and position of dynamic unit `index`.
+#[inline]
+fn locate(index: u32) -> (usize, usize) {
+    let chunk = (index / FIRST_CHUNK + 1).ilog2();
+    let start = FIRST_CHUNK * ((1 << chunk) - 1);
+    (chunk as usize, (index - start) as usize)
 }
 
 impl CodeStore {
+    fn reserve_caches(&self, unit: &mut CodeUnit) {
+        unit.ic_base = self.ic_len.get();
+        self.ic_len.set(
+            self.ic_len
+                .get()
+                .checked_add(unit.ic_count)
+                .expect("cache store overflow"),
+        );
+    }
+
     /// Validates `unit`, gives it the next `ic_count` cache entries and
     /// appends it.
     pub fn publish(&mut self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        validate::validate(&unit, &self.units)?;
-        let id = u32::try_from(self.units.len()).expect("code store overflow");
-        unit.ic_base = self.ic_len;
-        self.ic_len = self
-            .ic_len
-            .checked_add(unit.ic_count)
-            .expect("cache store overflow");
+        validate::validate(&unit, &|id| self.lookup(id))?;
+        let id = u32::try_from(self.units.len())
+            .ok()
+            .filter(|&id| id < DYNAMIC)
+            .expect("code store overflow");
+        self.reserve_caches(&mut unit);
         self.units.push(unit);
         Ok(CodeUnitId(id))
     }
 
+    /// [`CodeStore::publish`] while the store is shared (code compiled at
+    /// run time).
+    pub fn publish_shared(&self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
+        validate::validate(&unit, &|id| self.lookup(id))?;
+        let index = self.dynamic_len.get();
+        let (chunk, offset) = locate(index);
+        let cells = self.dynamic[chunk].get_or_init(|| {
+            (0..(FIRST_CHUNK << chunk))
+                .map(|_| std::cell::OnceCell::new())
+                .collect()
+        });
+        self.reserve_caches(&mut unit);
+        if cells[offset].set(unit).is_err() {
+            unreachable!("a fresh dynamic slot");
+        }
+        self.dynamic_len.set(index + 1);
+        Ok(CodeUnitId(index | DYNAMIC))
+    }
+
+    fn lookup(&self, id: CodeUnitId) -> Option<&CodeUnit> {
+        if id.0 & DYNAMIC == 0 {
+            return self.units.get(id.0 as usize);
+        }
+        let index = id.0 & !DYNAMIC;
+        if index >= self.dynamic_len.get() {
+            return None;
+        }
+        let (chunk, offset) = locate(index);
+        self.dynamic[chunk].get()?[offset].get()
+    }
+
     /// Cache entries the published units hold.
     pub fn ic_len(&self) -> u32 {
-        self.ic_len
+        self.ic_len.get()
     }
 
     #[inline]
     pub fn get(&self, id: CodeUnitId) -> &CodeUnit {
-        &self.units[id.0 as usize]
+        if id.0 & DYNAMIC == 0 {
+            return &self.units[id.0 as usize];
+        }
+        self.get_dynamic(id)
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn get_dynamic(&self, id: CodeUnitId) -> &CodeUnit {
+        self.lookup(id).expect("a published unit")
     }
 
     pub fn len(&self) -> usize {
-        self.units.len()
+        self.units.len() + self.dynamic_len.get() as usize
     }
 
-    /// Every unit with its id, in publication order.
+    /// Every unit with its id, in publication order (the dynamic ones last).
     pub fn units(&self) -> impl Iterator<Item = (CodeUnitId, &CodeUnit)> {
+        let dynamic = (0..self.dynamic_len.get()).map(|index| {
+            (
+                CodeUnitId(index | DYNAMIC),
+                self.get(CodeUnitId(index | DYNAMIC)),
+            )
+        });
         self.units
             .iter()
             .enumerate()
             .map(|(index, unit)| (CodeUnitId(index as u32), unit))
+            .chain(dynamic)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.units.is_empty()
+        self.len() == 0
     }
 
     /// `id` and its descendants in pre-order: the order in which
@@ -292,9 +435,8 @@ impl CodeStore {
 
     /// Bytes held by the instructions and handler tables.
     pub fn bytes(&self) -> usize {
-        self.units
-            .iter()
-            .map(|unit| {
+        self.units()
+            .map(|(_, unit)| {
                 size_of::<CodeUnit>()
                     + unit.code.len() * size_of::<Insn>()
                     + unit.handlers.len() * size_of::<Handler>()

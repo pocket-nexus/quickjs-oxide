@@ -6,6 +6,7 @@
 //! temporary Rust [`Context`] handle is dropped.
 
 use crate::engine::api::context::Context;
+use crate::engine::api::error::NativeErrorKind;
 use crate::engine::api::runtime::Runtime;
 use crate::engine::api::runtime_error::RuntimeError;
 use crate::engine::builtins::native::NativeFunctionId;
@@ -210,6 +211,22 @@ impl Runtime {
                 "Test262 createRealm received a constructor invocation",
             ));
         };
+        // phase 4, section 7.2: the new core has no realms to create.
+        if cfg!(feature = "dropped-features-probe") {
+            let realm = self
+                .0
+                .state
+                .borrow()
+                .active_frames
+                .last()
+                .ok_or(RuntimeError::Invariant(
+                    "Test262 createRealm ran without an active frame",
+                ))?
+                .realm;
+            return self
+                .new_native_error_jsvalue(realm, NativeErrorKind::Type, "realms are not supported")
+                .map(Completion::Throw);
+        }
         let mut child = self.new_context()?;
         let object_262 = child.install_test262_host()?;
         drop(child);

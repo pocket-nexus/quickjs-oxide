@@ -301,7 +301,11 @@ fn the_register_limit_is_a_stack_overflow() {
 #[test]
 fn error_kinds_have_their_prototypes() {
     let mut runtime = runtime();
-    for kind in ErrorKind::ALL {
+    // `AggregateError` takes its errors first.
+    for kind in ErrorKind::ALL
+        .into_iter()
+        .filter(|&kind| kind != ErrorKind::Aggregate)
+    {
         let name = key(&mut runtime, kind.name());
         let message = key(&mut runtime, "m");
         let root = publish(&mut runtime, layout(4), |b| {

@@ -14,8 +14,10 @@ use super::number;
 use super::ops::{self, Arith, Relation, Unary};
 use super::property;
 use super::regexp;
+use super::typed;
 use super::{Cx, Frame, SPAN, Throw, frame_flags};
 use crate::builtins::Native;
+use crate::bytecode::opcode::global as global_flags;
 use crate::bytecode::{Capture, CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, flags};
 use crate::heap::Heap;
 use crate::heap::atom::PropertyKey;
@@ -59,6 +61,12 @@ fn callee(heap: &Heap, value: Value) -> Callee {
 /// them (section 5.1).
 #[inline]
 fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
+    enter_frame(cx, unit, frame)
+}
+
+/// [`enter`], inlined into the loop's call.
+#[inline(always)]
+fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
     let base = frame.base as usize;
     let argc = frame.argc as usize;
     let parameters = unit.parameter_count as usize;
@@ -77,10 +85,26 @@ fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
         let this = registers[base];
         if this.is_undefined() || this.is_null() {
             registers[base] = Value::object(cx.realm.global());
+        } else if this.as_object().is_none() {
+            box_receiver(cx, base, end)?;
         }
     }
     cx.heap.vm.frames.push(frame);
     cx.heap.vm.top = end as u32;
+    Ok(())
+}
+
+/// A sloppy function's primitive receiver becomes its wrapper object; the
+/// window is rooted for the allocation.
+#[cold]
+#[inline(never)]
+fn box_receiver(cx: &mut Cx<'_>, base: usize, end: usize) -> Result<(), Throw> {
+    let top = cx.heap.vm.top;
+    cx.heap.vm.top = top.max(end as u32);
+    let this = cx.heap.vm.registers[base];
+    let result = super::object::to_object(cx, this);
+    cx.heap.vm.top = top;
+    cx.heap.vm.registers[base] = Value::object(result?);
     Ok(())
 }
 
@@ -141,6 +165,11 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
             return property::define_accessor(cx, object, insn.key(), function, setter, flags);
         }
         Opcode::NewSpill => (insn.a, new_spill(cx, insn.imm)?),
+        Opcode::ClearCell => {
+            let cell = cell(reg(cx, insn.a));
+            cx.heap.scope_set(cell, 0, 0, Value::EMPTY);
+            return Ok(());
+        }
         Opcode::LoadSlot => {
             let spill = cell(reg(cx, insn.b));
             (insn.a, cx.heap.scope_get(spill, 0, insn.imm))
@@ -176,10 +205,176 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
             let message = property::key_text(cx.heap, insn.key());
             return Err(error::throw(cx, ErrorKind::Internal, &message));
         }
+        Opcode::CheckCtor => {
+            if reg(cx, insn.a).is_undefined() {
+                return Err(error::type_error(
+                    cx,
+                    "class constructors must be invoked with 'new'",
+                ));
+            }
+            return Ok(());
+        }
+        Opcode::ToObject => {
+            let value = reg(cx, insn.b);
+            let object = super::object::to_object(cx, value)?;
+            (insn.a, Value::object(object))
+        }
+        Opcode::SetProto => {
+            let (object, prototype) = (reg(cx, insn.a), reg(cx, insn.b));
+            let object = object.as_object().expect("an object");
+            if prototype.as_object().is_some() || prototype.is_null() {
+                super::object::ordinary_set_prototype_of(cx, object, prototype)?;
+            }
+            return Ok(());
+        }
+        Opcode::DefineMethod => {
+            let (object, function) = (reg(cx, insn.a), reg(cx, insn.b));
+            let object = object.as_object().expect("an object");
+            return define_method(cx, object, insn.key(), function, u32::from(insn.c));
+        }
+        Opcode::DefineMethodComputed => {
+            let (object, key, function) = (reg(cx, insn.a), reg(cx, insn.b), reg(cx, insn.c));
+            let object = object.as_object().expect("an object");
+            let key = ops::to_property_key(cx, key)?;
+            return define_method(cx, object, key, function, insn.imm);
+        }
+        Opcode::SetFunctionName => {
+            let (function, key) = (reg(cx, insn.a), reg(cx, insn.b));
+            let Some(function) = function.as_object() else {
+                return Ok(());
+            };
+            let key = ops::to_property_key(cx, key)?;
+            return set_function_name(cx, function, key, "", false);
+        }
+        Opcode::ThrowType => {
+            let message = property::key_text(cx.heap, insn.key());
+            return Err(error::type_error(cx, &message));
+        }
+        Opcode::ThrowReference => {
+            let message = property::key_text(cx.heap, insn.key());
+            return Err(error::throw(cx, ErrorKind::Reference, &message));
+        }
+        Opcode::ImportCall => {
+            let (specifier, options) = (reg(cx, insn.b), reg(cx, insn.c));
+            (
+                insn.a,
+                super::module::import(cx, frame.function, specifier, options)?,
+            )
+        }
+        Opcode::LoadHomeObject => {
+            let home = cx.heap.function_record(frame.function).home_object;
+            let home = if home == NONE {
+                Value::UNDEFINED
+            } else {
+                Value::object(ObjectId(home))
+            };
+            (insn.a, home)
+        }
         _ => unreachable!("{} is not a rare form", insn.op.name()),
     };
     cx.heap.vm.registers[base + register as usize] = value;
     Ok(())
+}
+
+/// `DefineMethod`: a method, getter or setter of a literal or a class,
+/// with `object` as its home object and its name from the key.
+#[inline(never)]
+pub(super) fn define_method(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    function: Value,
+    method_flags: u32,
+) -> Result<(), Throw> {
+    use crate::bytecode::opcode::method;
+    let function_object = function.as_object().expect("a method closure");
+    if cx.heap.object_kind(function_object) == ObjectKind::Function {
+        cx.heap.function_record_mut(function_object).home_object = object.index();
+    }
+    let prefix = if method_flags & method::GETTER != 0 {
+        "get "
+    } else if method_flags & method::SETTER != 0 {
+        "set "
+    } else {
+        ""
+    };
+    set_function_name(cx, function_object, key, prefix, true)?;
+    let enumerable = method_flags & method::ENUMERABLE != 0;
+    let descriptor = if method_flags & method::GETTER != 0 {
+        super::object::Descriptor {
+            get: Some(function),
+            enumerable: Some(enumerable),
+            configurable: Some(true),
+            ..Default::default()
+        }
+    } else if method_flags & method::SETTER != 0 {
+        super::object::Descriptor {
+            set: Some(function),
+            enumerable: Some(enumerable),
+            configurable: Some(true),
+            ..Default::default()
+        }
+    } else {
+        super::object::Descriptor::data(function, true, enumerable, true)
+    };
+    super::object::define_property_or_throw(cx, object, key, &descriptor)
+}
+
+/// `SetFunctionName(function, key, prefix)`: the key's text (a symbol's
+/// description in brackets) after `prefix`. Unless `always`, only a
+/// function whose `name` is absent or empty is named.
+#[inline(never)]
+pub(crate) fn set_function_name(
+    cx: &mut Cx<'_>,
+    function: ObjectId,
+    key: PropertyKey,
+    prefix: &str,
+    always: bool,
+) -> Result<(), Throw> {
+    let names = cx.realm.names;
+    let name_key = Names::key(names.name);
+    // The common case: an anonymous closure named by an atom. Its own
+    // `name` slot holds the empty atom with the attributes the definition
+    // gives, so the slot takes the atom as is.
+    if prefix.is_empty()
+        && let crate::heap::atom::KeyKind::String(id) = key.kind()
+        && let Some((slot, flags)) = cx.heap.lookup_own(function, name_key)
+        && flags == PropertyFlags::data(false, false, true)
+        && cx.heap.get_slot(function, slot) == Value::string(names.empty)
+    {
+        cx.heap.set_slot(function, slot, Value::string(id));
+        return Ok(());
+    }
+    if !always {
+        match super::object::ordinary_get_own(cx, function, name_key) {
+            None => {}
+            Some(descriptor)
+                if descriptor
+                    .value
+                    .and_then(Value::as_string)
+                    .is_some_and(|name| cx.heap.string_len(name) == 0) => {}
+            Some(_) => return Ok(()),
+        }
+    }
+    let mut text: Vec<u16> = prefix.encode_utf16().collect();
+    match key.kind() {
+        crate::heap::atom::KeyKind::Index(index) => text.extend(index.to_string().encode_utf16()),
+        crate::heap::atom::KeyKind::String(id) => text.extend(cx.heap.string(id).repr().units()),
+        crate::heap::atom::KeyKind::Symbol(symbol) => {
+            if let Some(description) = cx.heap.symbol_description(symbol) {
+                text.push(u16::from(b'['));
+                text.extend(cx.heap.string(description).repr().units());
+                text.push(u16::from(b']'));
+            }
+        }
+    }
+    let name = crate::builtins::string_units(cx, &text)?;
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(name);
+    let descriptor = super::object::Descriptor::data(name, false, false, true);
+    let result = super::object::define_property_or_throw(cx, function, name_key, &descriptor);
+    cx.heap.roots().truncate(mark);
+    result
 }
 
 /// Rewrites a call of `Function.prototype.call` or `apply` (section 5.2):
@@ -195,11 +390,11 @@ fn rewrite_call(
     mut function: Value,
     mut this: Value,
     mut argc: usize,
-) -> Result<(Callee, usize, Value, usize), Throw> {
+) -> Result<(Callee, Value, usize, Value, usize), Throw> {
     loop {
         let target = callee(cx.heap, function);
         let Callee::Native(native @ (Native::FunctionCall | Native::FunctionApply)) = target else {
-            return Ok((target, window, this, argc));
+            return Ok((target, function, window, this, argc));
         };
         function = this;
         window += 1;
@@ -216,7 +411,8 @@ fn rewrite_call(
 /// Calls a native with its `this` in register `at` and its arguments after
 /// it. The arguments may reach past the caller's registers (an `apply`), so
 /// they are made roots for the call; the caller restores `top`.
-#[inline(never)]
+#[inline]
+#[allow(clippy::too_many_arguments)]
 fn call_native(
     cx: &mut Cx<'_>,
     native: Native,
@@ -224,10 +420,12 @@ fn call_native(
     this: Value,
     argc: usize,
     construct: bool,
+    function: Value,
+    new_target: Value,
 ) -> Result<Value, Throw> {
-    if !construct {
-        cx.heap.vm.registers[at] = this;
-    }
+    // A construction's window holds new.target in its first register;
+    // a native constructor reads it from the site instead.
+    cx.heap.vm.registers[at] = this;
     let end = (at + 1 + argc) as u32;
     cx.heap.vm.top = cx.heap.vm.top.max(end);
     native::call(
@@ -238,8 +436,134 @@ fn call_native(
             args: at + 1,
             argc,
             construct,
+            function,
+            new_target,
         },
     )
+}
+
+/// A construction's receiver and `new.target` for a bytecode callee
+/// (section 4.5): a derived constructor starts without one. `site` is the
+/// `New` instruction's cache, used only when `new.target` is the callee.
+#[inline(never)]
+fn construct_this(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    function: Value,
+    unit: &CodeUnit,
+    at: usize,
+    site: Option<usize>,
+) -> Result<(Value, Value), Throw> {
+    if !unit.has(flags::CONSTRUCTOR) {
+        return Err(error::type_error(cx, "not a constructor"));
+    }
+    let new_target = cx.heap.vm.registers[at];
+    if unit.has(flags::DERIVED) {
+        return Ok((Value::UNDEFINED, new_target));
+    }
+    let site = site.filter(|_| new_target == function);
+    let receiver = construct_receiver(cx, object, new_target, unit.this_slots, site)?;
+    Ok((receiver, new_target))
+}
+
+/// `ToPropertyKeyOf`'s conversion of an object key: a `null` or
+/// `undefined` base throws first.
+#[inline(never)]
+fn to_property_key_of(cx: &mut Cx<'_>, key: Value, base: Value) -> Result<PropertyKey, Throw> {
+    if base.is_null() || base.is_undefined() {
+        let base = if base.is_null() { "null" } else { "undefined" };
+        return Err(error::type_error(
+            cx,
+            &format!("cannot read property of {base}"),
+        ));
+    }
+    ops::to_property_key(cx, key)
+}
+
+/// A call or construction from the loop of a callee that is not bytecode:
+/// a native, an exotic callable, or neither.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn call_other(
+    cx: &mut Cx<'_>,
+    target: Callee,
+    function: Value,
+    at: usize,
+    this: Value,
+    argc: usize,
+    construct: bool,
+    pc: usize,
+) -> Result<Value, Throw> {
+    let new_target = if construct {
+        cx.heap.vm.registers[at]
+    } else {
+        Value::UNDEFINED
+    };
+    match target {
+        Callee::Native(native) if !construct || native.is_constructor() => {
+            let site = (cx.heap.vm.frames.len() as u32, pc as u32);
+            let saved = std::mem::replace(&mut cx.heap.vm.native_site, site);
+            let result = call_native(cx, native, at, this, argc, construct, function, new_target);
+            cx.heap.vm.native_site = saved;
+            result
+        }
+        Callee::Native(_) => Err(error::type_error(cx, "not a constructor")),
+        _ => {
+            let callable = function.as_object().is_some_and(|object| {
+                let flag = if construct {
+                    crate::heap::object::flags::CONSTRUCTOR
+                } else {
+                    crate::heap::object::flags::CALLABLE
+                };
+                cx.heap.header(object).has(flag)
+            });
+            if !callable {
+                return Err(error::type_error(
+                    cx,
+                    if construct {
+                        "not a constructor"
+                    } else {
+                        "not a function"
+                    },
+                ));
+            }
+            call_exotic(cx, function, at, this, argc, construct, new_target)
+        }
+    }
+}
+
+/// A call or construction of a callable that is neither bytecode nor a
+/// native (a bound function or a proxy), from the loop: the arguments are
+/// copied out of the window and the callee runs through the re-entrant
+/// entry points.
+#[cold]
+#[inline(never)]
+fn call_exotic(
+    cx: &mut Cx<'_>,
+    function: Value,
+    at: usize,
+    this: Value,
+    argc: usize,
+    construct: bool,
+    new_target: Value,
+) -> Result<Value, Throw> {
+    let end = (at + 1 + argc) as u32;
+    cx.heap.vm.top = cx.heap.vm.top.max(end);
+    let args: Vec<Value> = cx.heap.vm.registers[at + 1..at + 1 + argc].to_vec();
+    if construct {
+        super::construct(cx, function, &args, new_target)
+    } else {
+        super::call(cx, function, this, &args)
+    }
+}
+
+/// Writes `new.target` into the register a unit that reads it reserves:
+/// its first local, right after the parameters (section 4.5).
+#[inline]
+fn write_new_target(cx: &mut Cx<'_>, base: usize, unit: &CodeUnit, new_target: Value) {
+    if unit.has(flags::NEW_TARGET) {
+        cx.heap.vm.registers[base + 1 + unit.parameter_count as usize] = new_target;
+    }
 }
 
 /// Runs `function` with `this` in `registers[base]` and `argc` arguments
@@ -280,9 +604,164 @@ pub(super) fn call_from_rust(
                 args: base + 1,
                 argc,
                 construct: false,
+                function,
+                new_target: Value::UNDEFINED,
             },
         ),
-        Callee::NotCallable => Err(error::type_error(cx, "not a function")),
+        Callee::NotCallable => call_exotic_from_rust(cx, function, base, argc),
+    }
+}
+
+/// [`call_from_rust`] for a bound function or a callable proxy.
+#[inline(never)]
+fn call_exotic_from_rust(
+    cx: &mut Cx<'_>,
+    function: Value,
+    base: usize,
+    argc: usize,
+) -> Result<Value, Throw> {
+    let Some(object) = function.as_object() else {
+        return Err(not_a_function(cx, function));
+    };
+    let this = cx.heap.vm.registers[base];
+    match cx.heap.object_kind(object) {
+        ObjectKind::BoundFunction => {
+            if !cx.heap.vm.enter_native() {
+                return Err(error::stack_overflow(cx));
+            }
+            let internal = cx.heap.internal(object);
+            let target = internal.slots[0];
+            let bound_this = internal.slots[1];
+            let mut args = internal.slots[2..].to_vec();
+            args.extend_from_slice(&cx.heap.vm.registers[base + 1..base + 1 + argc]);
+            let result = super::call(cx, target, bound_this, &args);
+            cx.heap.vm.leave_native();
+            result
+        }
+        ObjectKind::Proxy
+            if cx
+                .heap
+                .header(object)
+                .has(crate::heap::object::flags::CALLABLE) =>
+        {
+            let args = cx.heap.vm.registers[base + 1..base + 1 + argc].to_vec();
+            super::proxy::call(cx, object, this, &args)
+        }
+        // Test262's `IsHTMLDDA` returns `null`.
+        _ if super::ops::is_html_dda(cx.heap, function) => Ok(Value::NULL),
+        _ => Err(not_a_function(cx, function)),
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn not_a_function(cx: &mut Cx<'_>, _function: Value) -> Throw {
+    error::type_error(cx, "not a function")
+}
+
+/// Constructs `function` with `argc` arguments from `registers[base + 1]`
+/// (register `base` is free for the receiver) and `new_target`;
+/// [`super::construct`] put them there.
+pub(super) fn construct_from_rust(
+    cx: &mut Cx<'_>,
+    function: Value,
+    base: usize,
+    argc: usize,
+    new_target: Value,
+) -> Result<Value, Throw> {
+    match callee(cx.heap, function) {
+        Callee::Bytecode(object, bytecode) => {
+            let store: &CodeStore = cx.code;
+            let unit_id = cx.heap.bytecode_unit(bytecode);
+            let unit = store.get(unit_id);
+            if !unit.has(flags::CONSTRUCTOR) {
+                return Err(error::type_error(cx, "not a constructor"));
+            }
+            let receiver = if unit.has(flags::DERIVED) {
+                Value::UNDEFINED
+            } else {
+                let prototype = super::object::prototype_from_constructor(
+                    cx,
+                    new_target,
+                    Intrinsic::ObjectPrototype,
+                )?;
+                alloc_receiver(cx, Value::object(prototype), u32::from(unit.this_slots))?
+            };
+            cx.heap.vm.registers[base] = receiver;
+            let frame = Frame {
+                unit: unit_id,
+                function: object,
+                bytecode,
+                base: base as u32,
+                return_pc: 0,
+                return_dst: 0,
+                argc: argc as u32,
+                flags: frame_flags::ENTRY | frame_flags::CONSTRUCT,
+            };
+            if !cx.heap.vm.enter_native() {
+                return Err(error::stack_overflow(cx));
+            }
+            let result = enter(cx, unit, frame).and_then(|()| {
+                write_new_target(cx, base, unit, new_target);
+                run(cx)
+            });
+            cx.heap.vm.leave_native();
+            result
+        }
+        Callee::Native(native) if native.is_constructor() => native::call(
+            cx,
+            native,
+            CallSite {
+                this: base,
+                args: base + 1,
+                argc,
+                construct: true,
+                function,
+                new_target,
+            },
+        ),
+        Callee::Native(_) => Err(error::type_error(cx, "not a constructor")),
+        Callee::NotCallable => construct_exotic(cx, function, base, argc, new_target),
+    }
+}
+
+/// [`construct_from_rust`] for a bound function or a proxy.
+#[inline(never)]
+fn construct_exotic(
+    cx: &mut Cx<'_>,
+    function: Value,
+    base: usize,
+    argc: usize,
+    new_target: Value,
+) -> Result<Value, Throw> {
+    let Some(object) = function.as_object().filter(|&object| {
+        cx.heap
+            .header(object)
+            .has(crate::heap::object::flags::CONSTRUCTOR)
+    }) else {
+        return Err(error::type_error(cx, "not a constructor"));
+    };
+    let args = cx.heap.vm.registers[base + 1..base + 1 + argc].to_vec();
+    match cx.heap.object_kind(object) {
+        ObjectKind::BoundFunction => {
+            if !cx.heap.vm.enter_native() {
+                return Err(error::stack_overflow(cx));
+            }
+            let internal = cx.heap.internal(object);
+            let target = internal.slots[0];
+            let mut all = internal.slots[2..].to_vec();
+            all.extend_from_slice(&args);
+            let new_target = if new_target == function {
+                target
+            } else {
+                new_target
+            };
+            let result = super::construct(cx, target, &all, new_target);
+            cx.heap.vm.leave_native();
+            result
+        }
+        ObjectKind::Proxy => super::proxy::construct(cx, object, &args, new_target),
+        _ => Err(error::type_error(cx, "not a constructor")),
     }
 }
 
@@ -377,35 +856,152 @@ fn make_closure(
             cx.heap.roots().push(Value::object(scope.object()));
             Some(scope)
         };
-        let prototype = cx.realm.intrinsic(Intrinsic::FunctionPrototype);
-        let function = cx
-            .heap
-            .alloc_closure(Some(prototype), scope, child)
-            .map_err(|error| error::heap_error(cx, error))?;
-        if child_unit.has(flags::CONSTRUCTOR) {
-            cx.heap.roots().push(Value::object(function));
-            let names = cx.realm.names;
-            let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
-            let heap = &mut *cx.heap;
-            let instance = heap
-                .alloc_object(ObjectKind::Ordinary, Some(object_prototype), 1)
-                .and_then(|instance| {
+        closure_function(cx, child, child_unit, scope).map(Value::object)
+    })();
+    cx.heap.roots().truncate(mark);
+    result
+}
+
+/// The function object of a closure over `scope` for bytecode record
+/// `child` of unit `child_unit`, with its `length`, `name` and `prototype`;
+/// rooted.
+fn closure_function(
+    cx: &mut Cx<'_>,
+    child: BytecodeId,
+    child_unit: &CodeUnit,
+    scope: Option<ScopeId>,
+) -> Result<ObjectId, Throw> {
+    let generator = child_unit.has(flags::GENERATOR);
+    let asynchronous = child_unit.has(flags::ASYNC);
+    let (prototype, cache) = match (generator, asynchronous) {
+        (false, false) if child_unit.has(flags::PROTOTYPE) => (Intrinsic::FunctionPrototype, 1),
+        (false, false) => (Intrinsic::FunctionPrototype, 0),
+        (false, true) => (Intrinsic::AsyncFunctionPrototype, 2),
+        (true, false) => (Intrinsic::GeneratorFunctionPrototype, 3),
+        (true, true) => (Intrinsic::AsyncGeneratorFunctionPrototype, 4),
+    };
+    let function_prototype = cx.realm.intrinsic(prototype);
+    let function = cx
+        .heap
+        .alloc_closure(Some(function_prototype), scope, child)
+        .map_err(|error| error::heap_error(cx, error))?;
+    cx.heap.roots().push(Value::object(function));
+    if child_unit.has(flags::CONSTRUCTOR) {
+        cx.heap
+            .set_object_flag(function, crate::heap::object::flags::CONSTRUCTOR);
+    }
+    let names = cx.realm.names;
+    let name = Value::string(child_unit.name_atom.unwrap_or(names.empty));
+    let length = Value::int32(i32::from(child_unit.length));
+    // The `prototype` object, created before the shape is applied so the
+    // function stays in a consistent state at the safepoint.
+    let instance = if child_unit.has(flags::PROTOTYPE) {
+        let object_prototype = cx.realm.intrinsic(match (generator, asynchronous) {
+            (true, false) => Intrinsic::GeneratorPrototype,
+            (true, true) => Intrinsic::AsyncGeneratorPrototype,
+            _ => Intrinsic::ObjectPrototype,
+        });
+        let heap = &mut *cx.heap;
+        let instance = heap
+            .alloc_object(ObjectKind::Ordinary, Some(object_prototype), 1)
+            .and_then(|instance| {
+                if !generator {
                     heap.add_property(
                         instance,
                         Names::key(names.constructor),
                         PropertyFlags::data(true, false, true),
                         Value::object(function),
                     )?;
-                    heap.add_property(
-                        function,
-                        Names::key(names.prototype),
-                        PropertyFlags::data(true, false, false),
-                        Value::object(instance),
-                    )
-                });
-            instance.map_err(|error| error::heap_error(cx, error))?;
+                }
+                Ok(instance)
+            })
+            .map_err(|error| error::heap_error(cx, error))?;
+        // Rooted like the function: the shape's slow path allocates.
+        cx.heap.roots().push(Value::object(instance));
+        Some(Value::object(instance))
+    } else {
+        None
+    };
+    let values = [length, name, instance.unwrap_or(Value::UNDEFINED)];
+    let count = if instance.is_some() { 3 } else { 2 };
+    match cx.heap.closure_shapes[cache] {
+        Some(shape) if cx.heap.prototype_of_shape(shape) == Some(function_prototype) => {
+            cx.heap
+                .apply_closure_shape(function, shape, &values[..count]);
         }
-        Ok(Value::object(function))
+        _ => {
+            let heap = &mut *cx.heap;
+            let mut result = crate::builtins::define_name_length(
+                heap,
+                &names,
+                function,
+                name,
+                child_unit.length.into(),
+            );
+            if let (Ok(()), Some(instance)) = (result, instance) {
+                result = heap.add_property(
+                    function,
+                    Names::key(names.prototype),
+                    PropertyFlags::data(true, false, false),
+                    instance,
+                );
+            }
+            result.map_err(|error| error::heap_error(cx, error))?;
+            if !cx.heap.is_dictionary(function) {
+                cx.heap.closure_shapes[cache] = Some(cx.heap.shape_of(function));
+            }
+        }
+    }
+    Ok(function)
+}
+
+/// A closure for child `index` of `root`'s unit whose captures are all of
+/// `root`'s own (a module's hoisted function declarations, created while
+/// linking).
+pub(crate) fn closure_over_captures(
+    cx: &mut Cx<'_>,
+    root: ObjectId,
+    index: u32,
+) -> Result<ObjectId, Throw> {
+    let store: &CodeStore = cx.code;
+    let bytecode = cx
+        .heap
+        .function_bytecode(root)
+        .expect("a bytecode function");
+    let unit = store.get(cx.heap.bytecode_unit(bytecode));
+    let child = cx.heap.bytecode_child(bytecode, index);
+    let child_unit = store.get(unit.children[index as usize]);
+    let mark = cx.heap.roots().mark();
+    let result = (|| {
+        let scope = if child_unit.captures.is_empty() {
+            None
+        } else {
+            let count = child_unit.captures.len() as u32;
+            let scope = cx
+                .heap
+                .alloc_scope(None, count)
+                .map_err(|error| error::heap_error(cx, error))?;
+            let captures = cx.heap.function_scope(root);
+            for (slot, capture) in child_unit.captures.iter().enumerate() {
+                let value = match (*capture, captures) {
+                    (Capture::Outer(outer), Some(captures)) => {
+                        cx.heap.scope_get(captures, 0, u32::from(outer))
+                    }
+                    (Capture::None, _) => Value::UNDEFINED,
+                    _ => {
+                        return Err(error::throw(
+                            cx,
+                            ErrorKind::Internal,
+                            "a hoisted function captures a local",
+                        ));
+                    }
+                };
+                cx.heap.scope_set(scope, 0, slot as u32, value);
+            }
+            cx.heap.roots().push(Value::object(scope.object()));
+            Some(scope)
+        };
+        closure_function(cx, child, child_unit, scope)
     })();
     cx.heap.roots().truncate(mark);
     result
@@ -416,14 +1012,23 @@ fn make_closure(
 /// A hit is a shape compare on the constructor and a load of its `prototype`
 /// slot, read live; a miss looks it up and refills the entry with the
 /// constructor's static `this.x =` count.
-#[inline(never)]
+#[inline]
 fn construct_receiver(
     cx: &mut Cx<'_>,
     constructor: ObjectId,
+    new_target: Value,
     this_slots: u16,
     site: Option<usize>,
 ) -> Result<Value, Throw> {
     let Some(site) = site else {
+        if new_target != Value::object(constructor) {
+            let prototype = super::object::prototype_from_constructor(
+                cx,
+                new_target,
+                Intrinsic::ObjectPrototype,
+            )?;
+            return alloc_receiver(cx, Value::object(prototype), u32::from(this_slots));
+        }
         let names = cx.realm.names;
         let prototype = property::get_value(cx, constructor, Names::key(names.prototype))?;
         return alloc_receiver(cx, prototype, u32::from(this_slots));
@@ -524,29 +1129,59 @@ fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
     }
 }
 
-/// `GetGlobal` and `GetGlobalOrUndefined` past the cache (section 2.4): an
-/// own data property of the global object fills the entry with the global
-/// generation; anything else (an accessor, a global found on
+/// `GetGlobal` and `GetGlobalOrUndefined` past the cache (section 2.4): a
+/// binding of the global lexical environment (section 5.7) first, then an
+/// own data property of the global object; both fill the entry with the
+/// global generation and the holder. A lexical binding in the TDZ throws
+/// and is not cached; anything else (an accessor, a global found on
 /// `%Object.prototype%`) is read uncached.
 #[inline(never)]
 fn get_global(cx: &mut Cx<'_>, insn: Insn, site: usize) -> Result<Value, Throw> {
     let key = insn.key();
     let global = cx.realm.global();
+    let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
     let heap = &*cx.heap;
-    if let Some((slot, property)) = heap.lookup_own(global, key)
-        && !property.has(PropertyFlags::ACCESSOR)
-    {
-        let value = heap.get_slot(global, slot);
-        let entry = global_entry(heap, slot, property);
-        let filled = insn.site() != Some(GLOBAL_NO_SITE) && cx.heap.ics.record(site, entry);
-        cx.heap.ics.count_miss(site, filled);
-        return Ok(value);
+    for holder in [lexical, global] {
+        if let Some((slot, property)) = heap.lookup_own(holder, key)
+            && !property.has(PropertyFlags::ACCESSOR)
+        {
+            let value = heap.get_slot(holder, slot);
+            if value.is_empty() {
+                cx.heap.ics.count_miss(site, false);
+                return Err(key_error(
+                    cx,
+                    ErrorKind::Reference,
+                    insn,
+                    "",
+                    " is not initialized",
+                ));
+            }
+            let entry = global_entry(heap, holder, slot, property);
+            let filled = insn.site() != Some(GLOBAL_NO_SITE) && cx.heap.ics.record(site, entry);
+            cx.heap.ics.count_miss(site, filled);
+            return Ok(value);
+        }
     }
     cx.heap.ics.count_miss(site, false);
-    match property::find(cx.heap, &cx.realm.names, global, key) {
-        Some(found) => property::value_of(cx, Some(found), Value::object(global)),
-        None if insn.op == Opcode::GetGlobalOrUndefined => Ok(Value::UNDEFINED),
-        None => Err(key_error(
+    match property::lookup(cx.heap, &cx.realm.names, global, key) {
+        property::Lookup::Hit(found) => property::value_of(cx, Some(found), Value::object(global)),
+        property::Lookup::Exotic(holder) => {
+            if super::object::has_property(cx, holder, key)? {
+                super::object::get(cx, holder, key, Value::object(global))
+            } else if insn.op == Opcode::GetGlobalOrUndefined {
+                Ok(Value::UNDEFINED)
+            } else {
+                Err(key_error(
+                    cx,
+                    ErrorKind::Reference,
+                    insn,
+                    "'",
+                    "' is not defined",
+                ))
+            }
+        }
+        property::Lookup::Miss if insn.op == Opcode::GetGlobalOrUndefined => Ok(Value::UNDEFINED),
+        property::Lookup::Miss => Err(key_error(
             cx,
             ErrorKind::Reference,
             insn,
@@ -556,8 +1191,9 @@ fn get_global(cx: &mut Cx<'_>, insn: Insn, site: usize) -> Result<Value, Throw> 
     }
 }
 
-/// `SetGlobal` past the cache: the uncached write, then a fill when the
-/// global is an own writable data property of the global object.
+/// `SetGlobal` past the cache: a lexical binding first (its TDZ and
+/// `const` checked), else the uncached write to the global object; then a
+/// fill when the binding is writable data.
 #[inline(never)]
 fn set_global(
     cx: &mut Cx<'_>,
@@ -568,7 +1204,29 @@ fn set_global(
 ) -> Result<(), Throw> {
     let key = insn.key();
     let global = cx.realm.global();
-    if strict && !property::has(cx.heap, &cx.realm.names, global, key) {
+    let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
+    if let Some((slot, property)) = cx.heap.lookup_own(lexical, key) {
+        if cx.heap.get_slot(lexical, slot).is_empty() {
+            cx.heap.ics.count_miss(site, false);
+            return Err(key_error(
+                cx,
+                ErrorKind::Reference,
+                insn,
+                "",
+                " is not initialized",
+            ));
+        }
+        if !property.has(PropertyFlags::WRITABLE) {
+            cx.heap.ics.count_miss(site, false);
+            return Err(key_error(cx, ErrorKind::Type, insn, "'", "' is read-only"));
+        }
+        cx.heap.set_slot(lexical, slot, value);
+        let entry = global_entry(cx.heap, lexical, slot, property);
+        let filled = insn.site() != Some(GLOBAL_NO_SITE) && cx.heap.ics.record(site, entry);
+        cx.heap.ics.count_miss(site, filled);
+        return Ok(());
+    }
+    if strict && !property::has(cx, global, key)? {
         return Err(key_error(
             cx,
             ErrorKind::Reference,
@@ -585,7 +1243,7 @@ fn set_global(
                 && property.has(PropertyFlags::WRITABLE)
                 && !property.has(PropertyFlags::ACCESSOR) =>
         {
-            let entry = global_entry(heap, slot, property);
+            let entry = global_entry(heap, global, slot, property);
             heap.ics.record(site, entry)
         }
         _ => false,
@@ -594,33 +1252,147 @@ fn set_global(
     Ok(())
 }
 
-fn global_entry(heap: &Heap, slot: u32, property: PropertyFlags) -> IcEntry {
+/// A global entry: the generation, the slot, the flags and the holder (the
+/// global object or the lexical environment).
+fn global_entry(heap: &Heap, holder: ObjectId, slot: u32, property: PropertyFlags) -> IcEntry {
     IcEntry {
         w0: heap.global_generation,
         w1: slot,
         w2: u32::from(property.bits()),
-        w3: NONE,
+        w3: holder.index(),
     }
 }
 
-/// Defines a script-level declaration on the global object.
+/// Initializes a script-level binding (`PutVarInit`): a lexical binding
+/// leaving its TDZ, or a `var` or function on the global object.
 #[inline(never)]
 fn define_global(
     cx: &mut Cx<'_>,
     key: PropertyKey,
     value: Value,
     overwrite: bool,
+    configurable: bool,
 ) -> Result<(), Throw> {
+    let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
+    if let Some((slot, _)) = cx.heap.lookup_own(lexical, key) {
+        cx.heap.set_slot(lexical, slot, value);
+        return Ok(());
+    }
     let global = cx.realm.global();
     let heap = &mut *cx.heap;
-    if let Some((slot, _)) = heap.lookup_own(global, key) {
+    if let Some((slot, property)) = heap.lookup_own(global, key) {
         if overwrite {
-            heap.set_slot(global, slot, value);
+            if property.has(PropertyFlags::ACCESSOR) || property.has(PropertyFlags::CONFIGURABLE) {
+                // `CreateGlobalFunctionBinding` over a configurable property.
+                let descriptor = super::object::Descriptor::data(value, true, true, configurable);
+                super::object::define_property_or_throw(cx, global, key, &descriptor)?;
+            } else {
+                heap.set_slot(global, slot, value);
+            }
         }
         return Ok(());
     }
-    heap.add_property(global, key, PropertyFlags::data(true, true, false), value)
-        .map_err(|error| error::heap_error(cx, error))
+    if !heap
+        .header(global)
+        .has(crate::heap::object::flags::EXTENSIBLE)
+    {
+        let message = format!("cannot define variable '{}'", property::key_text(heap, key));
+        return Err(error::type_error(cx, &message));
+    }
+    heap.add_property(
+        global,
+        key,
+        PropertyFlags::data(true, true, configurable),
+        value,
+    )
+    .map_err(|error| error::heap_error(cx, error))
+}
+
+/// `delete name` of a global: a lexical binding is not deletable.
+#[inline(never)]
+fn delete_global(cx: &mut Cx<'_>, key: PropertyKey) -> Result<Value, Throw> {
+    let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
+    if cx.heap.lookup_own(lexical, key).is_some() {
+        return Ok(Value::FALSE);
+    }
+    let global = Value::object(cx.realm.global());
+    property::delete(cx, global, key, false).map(Value::bool)
+}
+
+/// The declaration forms and checks of a script's prologue (section 5.7).
+#[inline(never)]
+fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
+    let key = insn.key();
+    let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
+    let global = cx.realm.global();
+    match insn.op {
+        Opcode::DeclareGlobal => {
+            let configurable = insn.b & global_flags::EVAL != 0;
+            define_global(cx, key, Value::UNDEFINED, false, configurable)
+        }
+        Opcode::DeclareGlobalLet | Opcode::DeclareGlobalConst => {
+            let writable = insn.op == Opcode::DeclareGlobalLet;
+            cx.heap
+                .add_property(
+                    lexical,
+                    key,
+                    PropertyFlags::data(writable, true, false),
+                    Value::EMPTY,
+                )
+                .map_err(|error| error::heap_error(cx, error))
+        }
+        Opcode::CheckGlobalVar => {
+            if cx.heap.lookup_own(lexical, key).is_some() {
+                return Err(key_error(
+                    cx,
+                    ErrorKind::Syntax,
+                    insn,
+                    "redeclaration of '",
+                    "'",
+                ));
+            }
+            let declarable = match cx.heap.lookup_own(global, key) {
+                None => cx
+                    .heap
+                    .header(global)
+                    .has(crate::heap::object::flags::EXTENSIBLE),
+                Some(_) if insn.b & global_flags::FUNCTION == 0 => true,
+                Some((_, property)) => {
+                    property.has(PropertyFlags::CONFIGURABLE)
+                        || (!property.has(PropertyFlags::ACCESSOR)
+                            && property.has(PropertyFlags::WRITABLE)
+                            && property.has(PropertyFlags::ENUMERABLE))
+                }
+            };
+            if !declarable {
+                return Err(key_error(
+                    cx,
+                    ErrorKind::Type,
+                    insn,
+                    "cannot define variable '",
+                    "'",
+                ));
+            }
+            Ok(())
+        }
+        _ => {
+            let restricted = cx.heap.lookup_own(lexical, key).is_some()
+                || cx
+                    .heap
+                    .lookup_own(global, key)
+                    .is_some_and(|(_, property)| !property.has(PropertyFlags::CONFIGURABLE));
+            if restricted {
+                return Err(key_error(
+                    cx,
+                    ErrorKind::Syntax,
+                    insn,
+                    "redeclaration of '",
+                    "'",
+                ));
+            }
+            Ok(())
+        }
+    }
 }
 
 /// The cache site of a global form, in `b | c << 8`.
@@ -640,12 +1412,36 @@ fn window(registers: &mut [Value], base: usize) -> &mut Window {
         .expect("a reserved window")
 }
 
-/// Runs the top frame until the entry frame returns.
+/// Runs the top frame from its start until the entry frame returns.
+fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
+    run_at(cx, 0)
+}
+
+/// Starts a resumed entry frame (section 4.3) by throwing `thrown` at the
+/// instruction before `pc`: its handler takes it, or the frame is popped
+/// and the throw returned.
+pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<Value, Throw> {
+    let frame = *cx.heap.vm.frames.last().expect("an entry frame");
+    let unit = cx.code.get(frame.unit);
+    let at = pc.saturating_sub(1);
+    if let Some(handler) = unit
+        .handlers
+        .iter()
+        .find(|handler| handler.start as usize <= at && at < handler.end as usize)
+    {
+        cx.heap.vm.registers[frame.base as usize + handler.register as usize] = thrown;
+        return run_at(cx, handler.target as usize);
+    }
+    cx.heap.vm.frames.pop();
+    Err(Throw(thrown))
+}
+
+/// Runs the top frame from instruction `pc` until the entry frame returns.
 ///
 /// `regs` is the running frame's window. It borrows the register file, so
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
-fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
+pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     let store: &CodeStore = cx.code;
     let mut frame = *cx.heap.vm.frames.last().expect("an entry frame");
     let mut unit: &CodeUnit = store.get(frame.unit);
@@ -653,7 +1449,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
     let mut base = frame.base as usize;
     let mut strict = unit.has(flags::STRICT);
     let mut ic_base = unit.ic_base as usize;
-    let mut pc = 0usize;
+    let mut pc = start;
 
     macro_rules! window {
         () => {
@@ -816,13 +1612,21 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     let x = reg!(insn.b);
                     set!('dispatch, insn.a, ops::type_of(cx, x))
                 }
-                Opcode::ToPropertyKey => {
+                // A primitive key converts without side effects: the base
+                // check of `ToPropertyKeyOf` is left to the read.
+                Opcode::ToPropertyKey | Opcode::ToPropertyKeyOf => {
                     let x = reg!(insn.b);
                     if x.is_int32() || x.as_string().is_some() || x.as_symbol().is_some() {
                         reg!(insn.a) = x;
                         continue 'dispatch;
                     }
-                    write!('dispatch, insn.a, ops::to_property_key(cx, x).map(PropertyKey::to_value))
+                    let result = if insn.op == Opcode::ToPropertyKey {
+                        ops::to_property_key(cx, x)
+                    } else {
+                        let base = reg!(insn.c);
+                        to_property_key_of(cx, x, base)
+                    };
+                    write!('dispatch, insn.a, result.map(PropertyKey::to_value))
                 }
                 Opcode::IsUndefinedOrNull => {
                     let x = reg!(insn.b);
@@ -1071,7 +1875,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 }
                 Opcode::DefineField => {
                     let (object, value) = (reg!(insn.a), reg!(insn.b));
-                    let object = object.as_object().expect("a literal object");
+                    let object = object.as_object().expect("an object");
                     property::define(cx, object, insn.key(), value)
                 }
                 Opcode::DeleteField => {
@@ -1089,9 +1893,14 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                         if !element.is_empty() {
                             set!('dispatch, insn.a, element)
                         }
+                        // Section 4.4: a typed array's element.
+                        if cx.heap.object_kind(target) == ObjectKind::TypedArray
+                            && let Some(element) = typed::fast_get(cx.heap, target, index as u32)
+                        {
+                            set!('dispatch, insn.a, element)
+                        }
                     }
-                    let result = ops::to_property_key(cx, key)
-                        .and_then(|key| property::get(cx, object, key));
+                    let result = property::get_computed(cx, object, key);
                     write!('dispatch, insn.a, result)
                 }
                 Opcode::SetElem => {
@@ -1107,9 +1916,21 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                         let length = match header.kind {
                             ObjectKind::Array => header.payload,
                             ObjectKind::Ordinary => elements.len,
+                            ObjectKind::TypedArray => {
+                                if typed::fast_set(cx.heap, target, index as u32, value) {
+                                    regs = window!();
+                                    continue 'dispatch;
+                                }
+                                0
+                            }
                             _ => 0,
                         };
-                        if (index as u32) < elements.len.min(length) {
+                        // A hole defers to the chain unless no prototype
+                        // can intercept it.
+                        if (index as u32) < elements.len.min(length)
+                            && (cx.heap.holes_writable()
+                                || !cx.heap.values.get(elements, index as u32).is_empty())
+                        {
                             cx.heap.values.set(elements, index as u32, value);
                             regs = window!();
                             continue 'dispatch;
@@ -1120,7 +1941,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 }
                 Opcode::DefineElem => {
                     let (object, key, value) = (reg!(insn.a), reg!(insn.b), reg!(insn.c));
-                    let object = object.as_object().expect("a literal object");
+                    let object = object.as_object().expect("an object");
                     ops::to_property_key(cx, key)
                         .and_then(|key| property::define(cx, object, key, value))
                 }
@@ -1137,8 +1958,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     let site = ic_base + global_site(insn);
                     let entry = cx.heap.ics.entries[site];
                     if entry.w0 == cx.heap.global_generation {
-                        let global = cx.realm.global();
-                        let start = cx.heap.objects.get(global.index()).slots_start;
+                        let start = cx.heap.objects.get(entry.w3).slots_start;
                         reg!(insn.a) = cx.heap.values.get_at(start + entry.w1);
                         cx.heap.ics.count_hit(IcKind::Global);
                         continue 'dispatch;
@@ -1152,8 +1972,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     if entry.w0 == cx.heap.global_generation
                         && entry.w2 & u32::from(PropertyFlags::WRITABLE) != 0
                     {
-                        let global = cx.realm.global();
-                        let start = cx.heap.objects.get(global.index()).slots_start;
+                        let start = cx.heap.objects.get(entry.w3).slots_start;
                         cx.heap.values.set_at(start + entry.w1, value);
                         cx.heap.ics.count_hit(IcKind::Global);
                         continue 'dispatch;
@@ -1162,15 +1981,15 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 }
                 Opcode::DefineGlobal => {
                     let value = reg!(insn.a);
-                    define_global(cx, insn.key(), value, true)
+                    let configurable = insn.b & global_flags::EVAL != 0;
+                    define_global(cx, insn.key(), value, true, configurable)
                 }
-                Opcode::DeclareGlobal => define_global(cx, insn.key(), Value::UNDEFINED, false),
-                Opcode::DeleteGlobal => {
-                    let global = Value::object(cx.realm.global());
-                    write!('dispatch, insn.a,
-                        property::delete(cx, global, insn.key(), false).map(Value::bool)
-                    )
-                }
+                Opcode::DeclareGlobal
+                | Opcode::DeclareGlobalLet
+                | Opcode::DeclareGlobalConst
+                | Opcode::CheckGlobalVar
+                | Opcode::CheckGlobalLexical => declare_global(cx, insn),
+                Opcode::DeleteGlobal => write!('dispatch, insn.a, delete_global(cx, insn.key())),
 
                 // ---- captured bindings ----
                 Opcode::NewCell => {
@@ -1223,6 +2042,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 Opcode::DefineGetter
                 | Opcode::DefineSetter
                 | Opcode::NewSpill
+                | Opcode::ClearCell
                 | Opcode::LoadSlot
                 | Opcode::StoreSlot
                 | Opcode::NewArguments
@@ -1231,7 +2051,56 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                 | Opcode::NewRegExp
                 | Opcode::ForInStart
                 | Opcode::AppendSpread
-                | Opcode::ThrowInternal => rare_op(cx, &frame, unit, insn),
+                | Opcode::ThrowInternal
+                | Opcode::CheckCtor
+                | Opcode::LoadHomeObject
+                | Opcode::ToObject
+                | Opcode::SetProto
+                | Opcode::DefineMethod
+                | Opcode::DefineMethodComputed
+                | Opcode::SetFunctionName
+                | Opcode::ThrowType
+                | Opcode::ThrowReference
+                | Opcode::ImportCall => rare_op(cx, &frame, unit, insn),
+                Opcode::IterStart
+                | Opcode::IterNext
+                | Opcode::IterClose
+                | Opcode::IterCloseThrow
+                | Opcode::IterCallNext
+                | Opcode::IterCall
+                | Opcode::IterCheckObject
+                | Opcode::IterStartAsync
+                | Opcode::IterNextRaw
+                | Opcode::IterResult => super::iter::iter_op(cx, &frame, insn),
+                Opcode::MakeClass
+                | Opcode::InstallFields
+                | Opcode::InitFields
+                | Opcode::RunStaticInit
+                | Opcode::CallStaticBlock
+                | Opcode::GetSuper
+                | Opcode::GetSuperValue
+                | Opcode::PutSuperValue
+                | Opcode::InitDerived
+                | Opcode::InitThis
+                | Opcode::InitThisCell
+                | Opcode::InitThisCaptured
+                | Opcode::CheckDerivedReturn
+                | Opcode::NewPrivateName
+                | Opcode::SetHomeObject
+                | Opcode::NamePrivateMethod
+                | Opcode::GetPrivate
+                | Opcode::PutPrivate
+                | Opcode::DefinePrivate
+                | Opcode::PrivateIn
+                | Opcode::GetPrivateMethod
+                | Opcode::CallPrivateGetter
+                | Opcode::CallPrivateSetter
+                | Opcode::PrivateBrandIn
+                | Opcode::CopyData
+                | Opcode::CopyDataExcluded
+                | Opcode::GlobalRef
+                | Opcode::GetRef
+                | Opcode::PutRef => super::class::class_op(cx, &frame, unit, insn),
                 Opcode::ForInNext => {
                     let iterator = reg!(insn.b);
                     match property::for_in_next(cx, iterator) {
@@ -1280,7 +2149,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                         Opcode::New | Opcode::CallSpread | Opcode::NewSpread => (b, b + 1),
                         _ => (b + 1, b + 1),
                     };
-                    let function = reg!(callee_register);
+                    let mut function = reg!(callee_register);
                     let mut this = match insn.op {
                         Opcode::CallMethod | Opcode::TailCallMethod => reg!(b),
                         Opcode::CallSpread => reg!(b + 1),
@@ -1303,7 +2172,7 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     {
                         match rewrite_call(cx, base, window, function, this, argc) {
                             Ok(rewritten) => {
-                                (target, window, this, argc) = rewritten;
+                                (target, function, window, this, argc) = rewritten;
                             }
                             Err(throw) => break 'op Err(throw),
                         }
@@ -1312,15 +2181,19 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                         Callee::Bytecode(object, bytecode) => {
                             let unit_id: CodeUnitId = cx.heap.bytecode_unit(bytecode);
                             let callee_unit = store.get(unit_id);
+                            let mut new_target = Value::UNDEFINED;
                             if construct {
-                                if !callee_unit.has(flags::CONSTRUCTOR) {
-                                    break 'op Err(error::type_error(cx, "not a constructor"));
-                                }
                                 let site =
                                     (insn.op == Opcode::New).then(|| ic_base + insn.imm as usize);
-                                let slots = callee_unit.this_slots;
-                                match construct_receiver(cx, object, slots, site) {
-                                    Ok(receiver) => this = receiver,
+                                match construct_this(
+                                    cx,
+                                    object,
+                                    function,
+                                    callee_unit,
+                                    base + window,
+                                    site,
+                                ) {
+                                    Ok(pair) => (this, new_target) = pair,
                                     Err(throw) => break 'op Err(throw),
                                 }
                             }
@@ -1342,17 +2215,28 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                                 argc: argc as u32,
                                 flags: frame_flags,
                             };
-                            if let Err(throw) = enter(cx, callee_unit, callee_frame) {
+                            if let Err(throw) = enter_frame(cx, callee_unit, callee_frame) {
                                 break 'op Err(throw);
+                            }
+                            if construct {
+                                write_new_target(cx, base + window, callee_unit, new_target);
                             }
                             load_frame!();
                             pc = 0;
                             regs = window!();
                             continue 'dispatch;
                         }
-                        Callee::Native(native) if !construct || native.is_constructor() => {
-                            let result =
-                                call_native(cx, native, base + window, this, argc, construct);
+                        other => {
+                            let result = call_other(
+                                cx,
+                                other,
+                                function,
+                                base + window,
+                                this,
+                                argc,
+                                construct,
+                                pc - 1,
+                            );
                             cx.heap.vm.top = frame_end(&frame, unit);
                             match result {
                                 Ok(value) if tail => match finish_return(cx, value) {
@@ -1368,15 +2252,6 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                                 Err(throw) => Err(throw),
                             }
                         }
-                        Callee::Native(_) => Err(error::type_error(cx, "not a constructor")),
-                        Callee::NotCallable => Err(error::type_error(
-                            cx,
-                            if construct {
-                                "not a constructor"
-                            } else {
-                                "not a function"
-                            },
-                        )),
                     }
                 }
                 Opcode::Return | Opcode::ReturnUndefined => {
@@ -1385,6 +2260,24 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     } else {
                         Value::UNDEFINED
                     };
+                    // A plain call's frame (not an entry, a construction or
+                    // a tail call) returns to the frame below, loaded once.
+                    if frame.flags == 0 {
+                        cx.heap.vm.frames.pop();
+                        let caller = *cx.heap.vm.frames.last().expect("a caller");
+                        let caller_unit = store.get(caller.unit);
+                        raise_top(cx, frame_end(&caller, caller_unit));
+                        cx.heap.vm.registers[frame.return_dst as usize] = value;
+                        pc = frame.return_pc as usize;
+                        frame = caller;
+                        unit = caller_unit;
+                        code = &unit.code;
+                        base = frame.base as usize;
+                        strict = unit.has(flags::STRICT);
+                        ic_base = unit.ic_base as usize;
+                        regs = window!();
+                        continue 'dispatch;
+                    }
                     match finish_return(cx, value) {
                         Returned::Exit(value) => return Ok(value),
                         Returned::Resume(resume) => {
@@ -1396,6 +2289,22 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
                     }
                 }
                 Opcode::Throw => Err(Throw(reg!(insn.a))),
+
+                // ---- suspension (section 4.3), out of line ----
+                Opcode::InitialYield
+                | Opcode::AsyncStart
+                | Opcode::Yield
+                | Opcode::YieldStar
+                | Opcode::Await => match suspend_op(cx, &frame, unit, insn, pc) {
+                    Ok(Returned::Exit(value)) => return Ok(value),
+                    Ok(Returned::Resume(resume)) => {
+                        load_frame!();
+                        pc = resume as usize;
+                        regs = window!();
+                        continue 'dispatch;
+                    }
+                    Err(throw) => Err(throw),
+                },
             }
         };
 
@@ -1530,7 +2439,7 @@ impl Test {
     /// `null` or `undefined` against anything (phase 3 M5, on Richards'
     /// `x == null` tests). `None` for the rest.
     #[inline(always)]
-    fn quick(self, x: Value, y: Value) -> Option<bool> {
+    fn quick(self, heap: &Heap, x: Value, y: Value) -> Option<bool> {
         // Kept out of the comparison arms (it is called from `slow`), whose
         // size the hot numeric loops are sensitive to.
         if matches!(self, Test::Relation(_)) {
@@ -1541,7 +2450,13 @@ impl Test {
         }
         let nullish = |value: Value| value.is_undefined() || value.is_null();
         match self {
-            Test::Loose if nullish(x) || nullish(y) => Some(nullish(x) && nullish(y)),
+            // Against `null` or `undefined`, an object is equal only if it
+            // is `IsHTMLDDA`.
+            Test::Loose if nullish(x) || nullish(y) => Some(
+                (nullish(x) || ops::is_html_dda(heap, x))
+                    && (nullish(y) || ops::is_html_dda(heap, y)),
+            ),
+            Test::Loose if nullish(x) && nullish(y) => Some(true),
             // Different bits: equal only between numbers, strings or
             // BigInts of equal value.
             Test::Strict
@@ -1560,7 +2475,7 @@ impl Test {
 
     #[inline(never)]
     fn slow(self, cx: &mut Cx<'_>, x: Value, y: Value) -> Result<bool, Throw> {
-        if let Some(holds) = self.quick(x, y) {
+        if let Some(holds) = self.quick(cx.heap, x, y) {
             return Ok(holds);
         }
         match self {
@@ -1700,6 +2615,82 @@ enum Returned {
     Exit(Value),
     /// The caller is on top again and resumes at this index.
     Resume(u32),
+}
+
+/// The suspension opcodes (section 4.3). Each saves the running frame into
+/// its activation record and leaves it: `InitialYield` returns the new
+/// generator to the caller, `AsyncStart` runs the body and returns the
+/// promise, `Yield`, `YieldStar` and `Await` leave the nested loop of the
+/// resumption (their frame is its entry frame).
+#[inline(never)]
+fn suspend_op(
+    cx: &mut Cx<'_>,
+    frame: &Frame,
+    unit: &CodeUnit,
+    insn: Insn,
+    pc: usize,
+) -> Result<Returned, Throw> {
+    use super::suspend;
+    use crate::heap::object::InternalTag;
+    match insn.op {
+        Opcode::InitialYield => {
+            let asynchronous = unit.has(flags::ASYNC);
+            let prototype = suspend::generator_prototype(cx, frame.function, asynchronous)?;
+            let (tag, aux) = if asynchronous {
+                (InternalTag::AsyncGenerator, Value::UNDEFINED)
+            } else {
+                (InternalTag::Generator, Value::UNDEFINED)
+            };
+            let record = suspend::new_record(cx, tag, prototype, frame.function, aux)?;
+            suspend::save_frame(cx, frame, unit, pc as u32, record, suspend::START);
+            Ok(finish_return(cx, Value::object(record)))
+        }
+        Opcode::AsyncStart => {
+            let prototype = cx.realm.intrinsic(Intrinsic::PromisePrototype);
+            let promise = super::jobs::new_promise(cx, prototype)?;
+            cx.heap.roots().push(Value::object(promise));
+            let object_prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
+            let record = suspend::new_record(
+                cx,
+                InternalTag::AsyncFunction,
+                object_prototype,
+                frame.function,
+                Value::object(promise),
+            );
+            cx.heap.roots().pop_one();
+            let record = record?;
+            suspend::save_frame(cx, frame, unit, pc as u32, record, suspend::START);
+            let done = cx.heap.vm.frames.pop().expect("the async frame");
+            cx.heap.vm.top = done.base;
+            let promise = suspend::start_async(cx, record)?;
+            if done.flags & frame_flags::ENTRY != 0 {
+                return Ok(Returned::Exit(promise));
+            }
+            let caller = *cx.heap.vm.frames.last().expect("a caller");
+            let caller_unit = cx.code.get(caller.unit);
+            raise_top(cx, frame_end(&caller, caller_unit));
+            cx.heap.vm.registers[done.return_dst as usize] = promise;
+            Ok(Returned::Resume(done.return_pc))
+        }
+        Opcode::Yield | Opcode::YieldStar => {
+            let record = *cx.heap.vm.active.last().expect("a running generator");
+            let value = cx.heap.vm.registers[frame.base as usize + insn.a as usize];
+            suspend::save_frame(cx, frame, unit, pc as u32, record, suspend::YIELD);
+            Ok(finish_return(cx, value))
+        }
+        _ => {
+            let value = cx.heap.vm.registers[frame.base as usize + insn.a as usize];
+            suspend::await_value(cx, value)?;
+            let record = *cx
+                .heap
+                .vm
+                .active
+                .last()
+                .expect("a running async activation");
+            suspend::save_frame(cx, frame, unit, pc as u32, record, suspend::AWAIT);
+            Ok(finish_return(cx, Value::UNDEFINED))
+        }
+    }
 }
 
 /// Pops the returning frame (and the frames a tail call returns through),

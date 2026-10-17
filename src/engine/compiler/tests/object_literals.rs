@@ -376,6 +376,10 @@ fn object_literal_arrow_super_relays_lexical_this_and_home_object() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn object_literal_direct_eval_super_relays_authenticated_home_object() {
     let script = compile_unlinked_script(
         "({method(){return eval('super.value')},get read(){return eval('super.value')},set write(value){eval('super.value=value')},arrow(){return()=>eval('super.value')}})",

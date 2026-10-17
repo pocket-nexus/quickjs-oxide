@@ -1,10 +1,12 @@
-//! Flat string records. Ropes come in phase 4.
+//! String records: flat, or a rope (phase 4, section 3.3).
 //!
-//! The representation is canonical: a string whose code units all fit in one
-//! byte is always `OneByte`, so two records with equal content have equal
-//! representations.
+//! The flat representation is canonical: a string whose code units all fit
+//! in one byte is always `OneByte`, so two records with equal content have
+//! equal representations. A rope is a concatenation of two strings that
+//! flattens on the first use of its units ([`super::Heap::string`]); its
+//! length and width are known without flattening.
 
-use std::cell::Cell;
+use std::cell::{Cell, OnceCell};
 
 use super::arena::Record;
 use super::object::NONE;
@@ -102,7 +104,12 @@ pub fn content_hash(units: impl Iterator<Item = u16>) -> u32 {
 }
 
 pub struct StringRecord {
-    pub repr: StringRepr,
+    /// The units; unset while the record is an unflattened rope (whose
+    /// halves are in `Heap::ropes`).
+    flat: OnceCell<StringRepr>,
+    len: u32,
+    one_byte: bool,
+    born_rope: bool,
     /// Computed on first use; 0 means not yet computed.
     hash: Cell<u32>,
     pub is_atom: bool,
@@ -111,14 +118,72 @@ pub struct StringRecord {
     pub array_index: u32,
 }
 
+const _: () = assert!(size_of::<StringRecord>() <= 40);
+
 impl StringRecord {
     pub fn new(repr: StringRepr) -> Self {
+        let len = repr.len() as u32;
+        let one_byte = matches!(repr, StringRepr::OneByte(_));
         StringRecord {
-            repr,
+            flat: OnceCell::from(repr),
+            len,
+            one_byte,
+            born_rope: false,
             hash: Cell::new(0),
             is_atom: false,
             array_index: NONE,
         }
+    }
+
+    /// A rope `len` units long; the heap records its halves.
+    pub fn rope(len: u32, one_byte: bool) -> Self {
+        StringRecord {
+            flat: OnceCell::new(),
+            len,
+            one_byte,
+            born_rope: true,
+            hash: Cell::new(0),
+            is_atom: false,
+            array_index: NONE,
+        }
+    }
+
+    /// The units. A rope reached through [`super::Heap::string`] is flat.
+    #[inline]
+    pub fn repr(&self) -> &StringRepr {
+        self.flat.get().expect("a flattened string")
+    }
+
+    pub(crate) fn flat(&self) -> Option<&StringRepr> {
+        self.flat.get()
+    }
+
+    pub(crate) fn set_flat(&self, repr: StringRepr) {
+        let _ = self.flat.set(repr);
+    }
+
+    /// The bytes a flattened rope holds, which the heap counts (the arena
+    /// counted the rope as empty).
+    pub(crate) fn flattened_rope_bytes(&self) -> usize {
+        match self.flat.get() {
+            Some(flat) if self.born_rope => flat.content_bytes(),
+            _ => 0,
+        }
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    pub fn is_one_byte(&self) -> bool {
+        self.one_byte
     }
 
     pub fn hash(&self) -> u32 {
@@ -126,7 +191,7 @@ impl StringRecord {
         if cached != 0 {
             return cached;
         }
-        let hash = self.repr.content_hash().max(1);
+        let hash = self.repr().content_hash().max(1);
         self.hash.set(hash);
         hash
     }
@@ -138,7 +203,10 @@ impl Record for StringRecord {
     }
 
     fn extra_bytes(&self) -> usize {
-        self.repr.content_bytes()
+        match self.flat.get() {
+            Some(flat) if !self.born_rope => flat.content_bytes(),
+            _ => 0,
+        }
     }
 }
 

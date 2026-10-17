@@ -63,6 +63,10 @@ fn slice_and_subarray_publish_the_quickjs_surface_and_basic_results() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn slice_matches_quickjs_species_reentrancy_and_raw_copy_contracts() {
     let (_, mut context) = test_context();
 
@@ -225,6 +229,10 @@ fn slice_matches_quickjs_species_reentrancy_and_raw_copy_contracts() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn subarray_matches_quickjs_view_species_and_detached_contracts() {
     let (_, mut context) = test_context();
 
@@ -352,6 +360,10 @@ fn subarray_matches_quickjs_view_species_and_detached_contracts() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn slice_and_subarray_default_species_use_the_method_defining_realm() {
     let runtime = Runtime::new();
     let mut defining = runtime.new_context().expect("create context");

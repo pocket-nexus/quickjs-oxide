@@ -623,6 +623,10 @@ fn tail_invocation_throws_use_the_activation_backtrace_and_catch_path() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn eval_opcode_gates_original_identity_and_preserves_fallback_arguments() {
     assert_js(
         r#"(function(){var a=3;var direct=eval("a+1");return direct===4&&(function(eval){return eval(2,5);})(function(a,b){return a+b;})===7;})()"#,
@@ -630,6 +634,10 @@ fn eval_opcode_gates_original_identity_and_preserves_fallback_arguments() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn string_direct_eval_forwards_environment_and_lazily_normalizes_this() {
     assert_js(r#"(function(){var x=1;var o={};return eval(o)===o&&eval("x=5; x")===5&&x===5;})()"#);
 }
@@ -659,6 +667,10 @@ fn to_object_boxes_primitives_and_rejects_nullish_values() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn dynamic_environment_opcodes_forward_sources_strictness_and_stack_values() {
     assert_js(r#"(function(){var x=1,o={x:4};with(o){x+=2;}return o.x===6&&x===1;})()"#);
 }

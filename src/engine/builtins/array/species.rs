@@ -34,6 +34,10 @@ impl SpeciesStep {
         source: &ObjectRef,
         length: u64,
     ) -> Result<Self, RuntimeError> {
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            return allocate(runtime, realm, length);
+        }
         match runtime.internal_is_array_jsvalue(realm, &JsValue::Object(source.object_id()))? {
             NativeConversion::Throw(value) => Ok(Self::Complete(Completion::Throw(value))),
             NativeConversion::Value(false) => allocate(runtime, realm, length),

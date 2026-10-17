@@ -140,6 +140,10 @@ impl BufferSliceResume {
     ) -> Result<BufferSliceStep, RuntimeError> {
         let count = u32::try_from((end - start).max(0))
             .map_err(|_| RuntimeError::Invariant("validated Buffer slice length overflowed u32"))?;
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            return self.default(runtime, start, count);
+        }
         Ok(BufferSliceStep::Read {
             object: self.0.source.try_clone()?,
             key: runtime

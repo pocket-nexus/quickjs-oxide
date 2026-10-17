@@ -132,7 +132,7 @@ impl AtomTable {
         repr: &StringRepr,
         hash: u32,
     ) -> Option<StringId> {
-        let matches = |id: &StringId| strings.get(id.0).repr == *repr;
+        let matches = |id: &StringId| strings.get(id.0).flat() == Some(repr);
         let bucket = *self.buckets.get(&hash)?;
         if bucket & OVERFLOW == 0 {
             let id = StringId(bucket);

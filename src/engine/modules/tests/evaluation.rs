@@ -131,6 +131,10 @@ fn module_evaluation_cache_owns_symbol_atoms_until_the_cache_dies() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn direct_eval_uses_module_live_cells_without_leaking_eval_var() {
     let (_, mut context) = test_context();
     let module = context

@@ -10,11 +10,18 @@ use std::collections::VecDeque;
 use super::LowerError;
 use crate::engine::code::bytecode::Instruction;
 
-/// One `Catch` instruction: the stack depth of its marker and its handler.
+/// One `Catch` instruction: the stack depth of its marker and its handler;
+/// or one iterator record (`ForOfStart` and friends, phase 4 section 4.2):
+/// the depth of its three slots, and no handler of its own (the lowering
+/// adds one that closes the iterator and rethrows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) struct CatchRegion {
     pub(super) marker_depth: u32,
     pub(super) target: usize,
+    pub(super) iterator: bool,
+    /// The instruction that opens the region; the regions active there
+    /// enclose it.
+    pub(super) opened_at: usize,
 }
 
 pub(super) struct Analysis {
@@ -79,15 +86,41 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
                 let region = regions
                     .pop()
                     .ok_or_else(|| internal("catch region underflow"))?;
+                if analysis.catches[region as usize].iterator {
+                    return Err(internal("NipCatch over an iterator record"));
+                }
                 next = analysis.catches[region as usize].marker_depth + 1;
             }
-            Instruction::ForOfStart
-            | Instruction::ForAwaitOfStart
-            | Instruction::IteratorClose
+            Instruction::ForOfStart | Instruction::ForAwaitOfStart => {
+                if catch_ids[pc] == u32::MAX {
+                    catch_ids[pc] = analysis.catches.len() as u32;
+                    analysis.catches.push(CatchRegion {
+                        marker_depth: remaining,
+                        target: usize::MAX,
+                        iterator: true,
+                        opened_at: pc,
+                    });
+                }
+                regions.push(catch_ids[pc]);
+            }
+            Instruction::IteratorClose
             | Instruction::IteratorClosePreserve
             | Instruction::IteratorDropPreserve
             | Instruction::IteratorDetachPreserve => {
-                return Err(LowerError::unsupported("iterators"));
+                let region = regions
+                    .pop()
+                    .ok_or_else(|| internal("iterator region underflow"))?;
+                let region = analysis.catches[region as usize];
+                if !region.iterator {
+                    return Err(internal("iterator cleanup over a catch region"));
+                }
+                match instruction {
+                    Instruction::IteratorClosePreserve | Instruction::IteratorDropPreserve => {
+                        next = region.marker_depth + 1;
+                    }
+                    Instruction::IteratorDetachPreserve => next = region.marker_depth + 2,
+                    _ => {}
+                }
             }
             _ => {}
         }
@@ -123,6 +156,8 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
                     analysis.catches.push(CatchRegion {
                         marker_depth: depth,
                         target: t,
+                        iterator: false,
+                        opened_at: pc,
                     });
                 }
                 worklist.push_back((t, next, regions.clone()));

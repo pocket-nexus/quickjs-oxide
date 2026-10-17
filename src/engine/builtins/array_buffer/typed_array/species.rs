@@ -333,6 +333,10 @@ impl TypedSpeciesStep {
         realm: ContextId,
         input: SpeciesInput,
     ) -> Result<Self, RuntimeError> {
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            return TypedSpeciesResume::selected(runtime, realm, input, JsValue::Undefined);
+        }
         Ok(Self::Read {
             object: input.source.try_clone()?,
             key: runtime

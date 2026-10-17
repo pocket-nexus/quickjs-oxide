@@ -12,8 +12,6 @@ use crate::vm::ic::{FIELD_NO_SITE, GLOBAL_NO_SITE, IcKind};
 pub struct CodeBuilder {
     code: Vec<Insn>,
     handlers: Vec<Handler>,
-    lines: Vec<u32>,
-    line: u32,
 }
 
 impl CodeBuilder {
@@ -27,11 +25,6 @@ impl CodeBuilder {
         self.code.len() as u32
     }
 
-    /// The source line recorded for instructions emitted from now on.
-    pub fn set_line(&mut self, line: u32) {
-        self.line = line;
-    }
-
     #[track_caller]
     fn push(&mut self, format: Format, insn: Insn) -> u32 {
         debug_assert_eq!(
@@ -42,7 +35,6 @@ impl CodeBuilder {
         );
         let pc = self.pc();
         self.code.push(insn);
-        self.lines.push(self.line);
         pc
     }
 
@@ -200,8 +192,12 @@ impl CodeBuilder {
             captures: layout.captures.into(),
             debug: DebugInfo {
                 name: layout.name.into(),
-                lines: self.lines.into(),
+                filename: layout.filename,
+                positions: Box::new([]),
             },
+            name_atom: layout.name_atom,
+            length: layout.length,
+            source: layout.source,
         }
     }
 }
@@ -250,7 +246,7 @@ pub struct UnitLayout {
     pub register_count: u16,
     pub parameter_count: u16,
     pub local_count: u16,
-    pub flags: u8,
+    pub flags: u16,
     pub this_slots: u16,
     pub constant_count: u32,
     pub spill_register: Option<u16>,
@@ -258,4 +254,12 @@ pub struct UnitLayout {
     pub children: Vec<CodeUnitId>,
     pub captures: Vec<Capture>,
     pub name: String,
+    /// The function's `name` property (an atom), or `None` for `""`.
+    pub name_atom: Option<crate::value::StringId>,
+    /// The function's `length` property.
+    pub length: u16,
+    /// The function's source text, for `Function.prototype.toString`.
+    pub source: Option<Box<str>>,
+    /// The script or module the function belongs to.
+    pub filename: Option<std::rc::Rc<str>>,
 }

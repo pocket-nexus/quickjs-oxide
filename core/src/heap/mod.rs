@@ -9,11 +9,13 @@
 pub mod arena;
 pub mod atom;
 pub mod bigint;
+pub mod buffer;
 pub mod gc;
 pub(crate) mod hash;
 pub mod object;
 pub mod string;
 pub mod symbol;
+pub mod table;
 pub mod values;
 
 use std::fmt;
@@ -24,7 +26,8 @@ use self::bigint::BigIntRecord;
 use self::gc::{GcState, Handles, HeapLimits, RootStack, Roots};
 use self::hash::FxHashMap;
 use self::object::{
-    FunctionBytecode, FunctionRecord, NONE, ObjectHeader, ObjectKind, PayloadArenas, flags,
+    FunctionBytecode, FunctionRecord, Internal, InternalData, InternalTag, NONE, ObjectHeader,
+    ObjectKind, PayloadArenas, flags,
 };
 use self::string::{StringRecord, StringRepr};
 use self::symbol::SymbolRecord;
@@ -78,6 +81,7 @@ pub(crate) struct Need {
     pub cells: usize,
     pub functions: usize,
     pub bytecodes: usize,
+    pub internals: usize,
     /// Up to two value-heap ranges.
     pub values: [u32; 2],
     /// Bytes owned outside the arenas (string contents, limbs).
@@ -96,6 +100,7 @@ impl Need {
             + self.bigints * size_of::<BigIntRecord>()
             + self.functions * size_of::<FunctionRecord>()
             + self.bytecodes * size_of::<FunctionBytecode>()
+            + self.internals * size_of::<Internal>()
             + (values::class_len(self.values[0]) + values::class_len(self.values[1])) as usize * 8
             + self.extra
     }
@@ -105,6 +110,19 @@ pub struct Heap {
     pub(crate) objects: Arena<ObjectHeader>,
     pub(crate) shapes: Arena<Shape>,
     pub(crate) strings: Arena<StringRecord>,
+    /// `WeakRef` targets kept alive until the current job ends (section 3.4).
+    pub(crate) kept: Vec<Value>,
+    /// Every module record (section 5.6): modules live as long as the
+    /// runtime.
+    pub(crate) modules: Vec<Value>,
+    /// Bytes of flattened ropes (the arena counts a rope as empty).
+    pub(crate) rope_bytes: std::cell::Cell<usize>,
+    /// Each unflattened rope's two halves, by string index (kept out of
+    /// [`StringRecord`], which every string pays for).
+    pub(crate) ropes: FxHashMap<u32, (StringId, StringId)>,
+    /// Whether `$262.IsHTMLDDA` exists, so ToBoolean of an object skips
+    /// looking for it otherwise.
+    pub(crate) html_dda: bool,
     pub(crate) symbols: Arena<SymbolRecord>,
     pub(crate) bigints: Arena<BigIntRecord>,
     pub(crate) cells: Arena<ValidityCell>,
@@ -129,7 +147,26 @@ pub struct Heap {
     /// bumped by every insert, remove and reflag of its properties, never by
     /// a value write. A global cache entry hits while it is unchanged.
     pub(crate) global_generation: u32,
+    /// No object used as a prototype has an index property or is exotic
+    /// (phase 4, section 3.1): a write into an element hole cannot meet an
+    /// inherited setter or read-only index, so the loop's dense write may
+    /// fill it. Cleared for good the first time that stops holding.
+    pub(crate) holes_writable: bool,
+    /// The shapes `MakeClosure` gives a new function (`length`, `name`, and
+    /// `prototype` for the third), per function kind: learned from the first
+    /// closure of each kind and marked as roots (phase 4, section 3.2).
+    pub(crate) closure_shapes: [Option<ShapeId>; CLOSURE_SHAPES],
+    /// The shapes of a new `arguments` object (`length`, `@@iterator`,
+    /// `callee`), sloppy then strict: learned from the first of each and
+    /// marked as roots.
+    pub(crate) arguments_shapes: [Option<ShapeId>; 2],
+    /// The job queue (phase 4, section 5.4): roots until each runs.
+    pub(crate) jobs: std::collections::VecDeque<crate::vm::jobs::Job>,
 }
+
+/// The function kinds with a cached closure shape: plain, with a
+/// `prototype`, async, generator, async generator.
+pub(crate) const CLOSURE_SHAPES: usize = 5;
 
 impl Default for Heap {
     fn default() -> Self {
@@ -143,6 +180,11 @@ impl Heap {
             objects: Arena::new(),
             shapes: Arena::new(),
             strings: Arena::new(),
+            kept: Vec::new(),
+            modules: Vec::new(),
+            rope_bytes: std::cell::Cell::new(0),
+            ropes: FxHashMap::default(),
+            html_dda: false,
             symbols: Arena::new(),
             bigints: Arena::new(),
             cells: Arena::new(),
@@ -157,6 +199,10 @@ impl Heap {
             vm: VmStack::default(),
             ics: IcStore::default(),
             global_generation: 0,
+            holes_writable: true,
+            closure_shapes: [None; CLOSURE_SHAPES],
+            arguments_shapes: [None; 2],
+            jobs: std::collections::VecDeque::new(),
         };
         let cell = heap.cells.alloc(ValidityCell { valid: true });
         debug_assert_eq!(cell, STATIC_CELL.0);
@@ -206,11 +252,13 @@ impl Heap {
         self.objects.bytes()
             + self.shapes.bytes()
             + self.strings.bytes()
+            + self.rope_bytes.get()
             + self.symbols.bytes()
             + self.bigints.bytes()
             + self.cells.bytes()
             + self.payloads.functions.bytes()
             + self.payloads.bytecode.bytes()
+            + self.payloads.internals.bytes()
             + self.values.bytes()
     }
 
@@ -219,11 +267,13 @@ impl Heap {
         self.objects.used_bytes()
             + self.shapes.used_bytes()
             + self.strings.used_bytes()
+            + self.rope_bytes.get()
             + self.symbols.used_bytes()
             + self.bigints.used_bytes()
             + self.cells.used_bytes()
             + self.payloads.functions.used_bytes()
             + self.payloads.bytecode.used_bytes()
+            + self.payloads.internals.used_bytes()
             + self.values.used_slots() * 8
     }
 
@@ -311,7 +361,108 @@ impl Heap {
             }
             ObjectKind::Function => panic!("function objects are created by alloc_function"),
             ObjectKind::Free => panic!("ObjectKind::Free is the poison value"),
+            _ => panic!("{kind:?} objects are created by alloc_internal"),
         }
+    }
+
+    /// An object of a kind with internal slots (phase 4, section 3.2): an
+    /// [`Internal`] record holding `slots` (rooted for the call) and `data`,
+    /// with room for `slot_capacity` named properties. `extra_flags` adds
+    /// `CALLABLE` and `CONSTRUCTOR` for the callable kinds.
+    #[allow(clippy::too_many_arguments)]
+    pub fn alloc_internal(
+        &mut self,
+        kind: ObjectKind,
+        tag: InternalTag,
+        prototype: Option<ObjectId>,
+        slot_capacity: u32,
+        slots: &[Value],
+        data: InternalData,
+        extra_flags: u8,
+    ) -> Result<ObjectId, HeapError> {
+        debug_assert!(kind.has_internal());
+        let mut keep = Vec::with_capacity(slots.len() + 1);
+        keep.push(prototype.map_or(Value::UNDEFINED, Value::object));
+        keep.extend_from_slice(slots);
+        let need = Need {
+            objects: 1,
+            shapes: 1,
+            internals: 1,
+            values: [slot_capacity, 0],
+            extra: slots.len() * 8,
+            ..Need::default()
+        };
+        self.safepoint(&need, &keep)?;
+        let shape = self.root_shape(prototype, kind);
+        let range = self.values.alloc(slot_capacity);
+        let payload = self.payloads.internals.alloc(Internal {
+            tag,
+            slots: slots.to_vec(),
+            data,
+        });
+        let header = ObjectHeader::new(
+            kind,
+            shape,
+            range,
+            Range::EMPTY,
+            payload,
+            flags::EXTENSIBLE | extra_flags,
+        );
+        Ok(ObjectId(self.objects.alloc(header)))
+    }
+
+    /// The internal record of an object of a kind with internal slots.
+    #[inline]
+    pub fn internal(&self, object: ObjectId) -> &Internal {
+        let header = self.objects.get(object.0);
+        debug_assert!(header.kind.has_internal(), "{:?}", header.kind);
+        self.payloads.internals.get(header.payload)
+    }
+
+    #[inline]
+    pub fn internal_mut(&mut self, object: ObjectId) -> &mut Internal {
+        let header = self.objects.get(object.0);
+        debug_assert!(header.kind.has_internal(), "{:?}", header.kind);
+        self.payloads.internals.get_mut(header.payload)
+    }
+
+    /// The tag of a [`ObjectKind::Builtin`] object, or `None` for any other.
+    #[inline]
+    pub fn internal_tag(&self, object: ObjectId) -> InternalTag {
+        let header = self.objects.get(object.0);
+        if header.kind.has_internal() {
+            self.payloads.internals.get(header.payload).tag
+        } else {
+            InternalTag::None
+        }
+    }
+
+    #[inline]
+    pub fn internal_slot(&self, object: ObjectId, slot: usize) -> Value {
+        self.internal(object).slots[slot]
+    }
+
+    #[inline]
+    pub fn set_internal_slot(&mut self, object: ObjectId, slot: usize, value: Value) {
+        self.internal_mut(object).slots[slot] = value;
+    }
+
+    /// Appends `value` to the internal slots of `object` (a collection's
+    /// entries, a promise's reactions), charging the growth to the trigger.
+    pub fn push_internal_slot(&mut self, object: ObjectId, value: Value) -> Result<(), HeapError> {
+        let internal = self.internal(object);
+        if internal.slots.len() == internal.slots.capacity() {
+            let extra = internal.slots.capacity().max(4) * 8;
+            self.safepoint(
+                &Need {
+                    extra,
+                    ..Need::default()
+                },
+                &[Value::object(object), value],
+            )?;
+        }
+        self.internal_mut(object).slots.push(value);
+        Ok(())
     }
 
     /// The common path: a transition-tree root shape, no payload.
@@ -490,7 +641,61 @@ impl Heap {
         if header.kind == ObjectKind::Array && index >= header.payload {
             header.payload = index + 1;
         }
+        if header.has(flags::USED_AS_PROTOTYPE) {
+            self.holes_writable = false;
+        }
         Ok(())
+    }
+
+    /// Moves every element of `object` into a named property with an index
+    /// key and marks it [`flags::SPARSE`] (phase 4, section 3.1), so element
+    /// attributes and extensibility follow the ordinary rules. The element
+    /// range is freed.
+    pub fn make_sparse(&mut self, object: ObjectId) -> Result<(), HeapError> {
+        let header = *self.objects.get(object.0);
+        if header.has(flags::SPARSE) {
+            return Ok(());
+        }
+        let elements = header.elements();
+        let count = if header.kind == ObjectKind::Array {
+            header.payload.min(elements.len)
+        } else {
+            elements.len
+        };
+        let mut index = 0;
+        while index < count {
+            let value = self
+                .values
+                .get(self.objects.get(object.0).elements(), index);
+            if !value.is_empty() {
+                let key = PropertyKey::index(index).ok_or(HeapError::OutOfMemory)?;
+                // The element stays in the range (so rooted) until the range
+                // is freed below.
+                self.add_property(object, key, crate::shape::PropertyFlags::DEFAULT, value)?;
+            }
+            index += 1;
+        }
+        let header = self.objects.get_mut(object.0);
+        let elements = header.elements();
+        header.set_elements(Range::EMPTY);
+        header.flags |= flags::SPARSE;
+        self.values.free(elements);
+        Ok(())
+    }
+
+    /// Records that a write into an element hole may meet an inherited index
+    /// property from now on (`Heap::holes_writable`).
+    #[inline]
+    pub(crate) fn note_prototype_index(&mut self, object: ObjectId) {
+        if self.holes_writable && self.objects.get(object.0).has(flags::USED_AS_PROTOTYPE) {
+            self.holes_writable = false;
+        }
+    }
+
+    /// Whether a write into an element hole may skip the prototype chain.
+    #[inline]
+    pub fn holes_writable(&self) -> bool {
+        self.holes_writable
     }
 
     pub fn push_element(&mut self, array: ObjectId, value: Value) -> Result<(), HeapError> {
@@ -559,6 +764,17 @@ impl Heap {
         prototype: Option<ObjectId>,
         scope: Option<ScopeId>,
     ) -> Result<ObjectId, HeapError> {
+        self.alloc_function_with(prototype, scope, 2)
+    }
+
+    /// [`Heap::alloc_function`] with room for `slot_capacity` properties
+    /// (`length`, `name` and a constructor's `prototype`).
+    pub fn alloc_function_with(
+        &mut self,
+        prototype: Option<ObjectId>,
+        scope: Option<ScopeId>,
+        slot_capacity: u32,
+    ) -> Result<ObjectId, HeapError> {
         let scope_value = scope.map_or(Value::UNDEFINED, |scope| Value::object(scope.object()));
         let mark = self.roots.stack.mark();
         self.roots.stack.push(scope_value);
@@ -566,17 +782,41 @@ impl Heap {
             functions: 1,
             ..Need::default()
         };
-        let result = self.alloc_object_with(ObjectKind::Function, prototype, 0, 0, NONE, need);
+        let result = self.alloc_object_with(
+            ObjectKind::Function,
+            prototype,
+            slot_capacity,
+            0,
+            NONE,
+            need,
+        );
         self.roots.stack.truncate(mark);
         let object = result?;
         let record = FunctionRecord {
             scope: scope.map_or(NONE, |scope| scope.0),
             bytecode: NONE,
             native: NONE,
+            home_object: NONE,
+            fields: NONE,
         };
         let payload = self.payloads.functions.alloc(record);
         self.objects.get_mut(object.0).payload = payload;
         Ok(object)
+    }
+
+    pub(crate) fn function_record_mut(&mut self, function: ObjectId) -> &mut FunctionRecord {
+        let header = self.objects.get(function.0);
+        debug_assert_eq!(header.kind, ObjectKind::Function);
+        self.payloads.functions.get_mut(header.payload)
+    }
+
+    /// Sets the captures of a function made without them (a module's root,
+    /// whose environment is made after it is compiled).
+    pub(crate) fn set_function_scope(&mut self, function: ObjectId, scope: ScopeId) {
+        let header = self.objects.get(function.0);
+        debug_assert_eq!(header.kind, ObjectKind::Function);
+        let payload = header.payload;
+        self.payloads.functions.get_mut(payload).scope = scope.0;
     }
 
     pub fn function_scope(&self, function: ObjectId) -> Option<ScopeId> {
@@ -679,7 +919,7 @@ impl Heap {
         scope: Option<ScopeId>,
         bytecode: BytecodeId,
     ) -> Result<ObjectId, HeapError> {
-        let function = self.alloc_function(prototype, scope)?;
+        let function = self.alloc_function_with(prototype, scope, 3)?;
         debug_assert!(self.payloads.bytecode.is_live(bytecode.0));
         let payload = self.objects.get(function.0).payload;
         self.payloads.functions.get_mut(payload).bytecode = bytecode.0;
@@ -692,10 +932,40 @@ impl Heap {
         prototype: Option<ObjectId>,
         native: u32,
     ) -> Result<ObjectId, HeapError> {
-        let function = self.alloc_function(prototype, None)?;
+        self.alloc_native_closure(prototype, native, None)
+    }
+
+    /// A host function object with captured state: `data` (an object whose
+    /// internal slots the native reads, rooted by the function) is held in
+    /// the function record's scope.
+    pub fn alloc_native_closure(
+        &mut self,
+        prototype: Option<ObjectId>,
+        native: u32,
+        data: Option<ObjectId>,
+    ) -> Result<ObjectId, HeapError> {
+        let function = self.alloc_function(prototype, data.map(|data| ScopeId(data.0)))?;
         let payload = self.objects.get(function.0).payload;
         self.payloads.functions.get_mut(payload).native = native;
         Ok(function)
+    }
+
+    /// Gives a fresh object a cached shape `shape` and its slot values: no
+    /// transition lookups (`MakeClosure`'s and `NewArguments`' fast path).
+    pub(crate) fn apply_closure_shape(
+        &mut self,
+        function: ObjectId,
+        shape: ShapeId,
+        values: &[Value],
+    ) {
+        let header = self.objects.get_mut(function.0);
+        debug_assert_eq!(self.shapes.get(shape.0).width as usize, values.len());
+        debug_assert!(header.slots().len as usize >= values.len());
+        header.shape = shape;
+        let slots = header.slots();
+        for (slot, &value) in values.iter().enumerate() {
+            self.values.set(slots, slot as u32, value);
+        }
     }
 
     /// The function record of a `Function` object.
@@ -748,7 +1018,7 @@ impl Heap {
     fn alloc_string_record(&mut self, record: StringRecord) -> Result<StringId, HeapError> {
         let need = Need {
             strings: 1,
-            extra: record.repr.content_bytes(),
+            extra: record.flat().map_or(0, StringRepr::content_bytes),
             ..Need::default()
         };
         self.safepoint(&need, &[])?;
@@ -765,6 +1035,11 @@ impl Heap {
         self.objects.get_mut(object.0).flags |= flag;
     }
 
+    /// Clears an object flag (`flags::EXTENSIBLE`).
+    pub(crate) fn clear_object_flag(&mut self, object: ObjectId, flag: u8) {
+        self.objects.get_mut(object.0).flags &= !flag;
+    }
+
     /// A string that is not an atom.
     pub fn alloc_string(&mut self, text: &str) -> Result<StringId, HeapError> {
         self.alloc_string_record(StringRecord::new(StringRepr::from_text(text)))
@@ -774,12 +1049,88 @@ impl Heap {
         self.alloc_string_record(StringRecord::new(StringRepr::from_units(units)))
     }
 
+    /// The record of `id`, flattened if it was a rope.
+    #[inline]
     pub fn string(&self, id: StringId) -> &StringRecord {
-        self.strings.get(id.0)
+        let record = self.strings.get(id.0);
+        if record.flat().is_none() {
+            self.flatten(id, record);
+        }
+        record
+    }
+
+    /// The length of `id` without flattening it.
+    #[inline]
+    pub fn string_len(&self, id: StringId) -> usize {
+        self.strings.get(id.0).len()
+    }
+
+    /// Whether every unit of `id` fits in a byte, without flattening it.
+    #[inline]
+    pub fn string_is_one_byte(&self, id: StringId) -> bool {
+        self.strings.get(id.0).is_one_byte()
+    }
+
+    /// Flattens a rope in place: an explicit stack walks the tree left to
+    /// right, so a left-deep rope of any depth flattens without recursion.
+    #[cold]
+    #[inline(never)]
+    fn flatten(&self, id: StringId, record: &StringRecord) {
+        let halves = |id: StringId| self.ropes.get(&id.0).copied();
+        let (left, right) = halves(id).expect("a rope");
+        let mut stack = vec![right, left];
+        let repr = if record.is_one_byte() {
+            let mut bytes = Vec::with_capacity(record.len());
+            while let Some(id) = stack.pop() {
+                let part = self.strings.get(id.0);
+                match (part.flat(), halves(id)) {
+                    (Some(StringRepr::OneByte(flat)), _) => bytes.extend_from_slice(flat),
+                    (Some(StringRepr::TwoByte(_)), _) => unreachable!("a one-byte rope"),
+                    (None, Some((left, right))) => {
+                        stack.push(right);
+                        stack.push(left);
+                    }
+                    (None, None) => unreachable!("a string with neither units nor halves"),
+                }
+            }
+            StringRepr::OneByte(bytes.into())
+        } else {
+            let mut units = Vec::with_capacity(record.len());
+            while let Some(id) = stack.pop() {
+                let part = self.strings.get(id.0);
+                match (part.flat(), halves(id)) {
+                    (Some(flat), _) => units.extend(flat.units()),
+                    (None, Some((left, right))) => {
+                        stack.push(right);
+                        stack.push(left);
+                    }
+                    (None, None) => unreachable!("a string with neither units nor halves"),
+                }
+            }
+            StringRepr::TwoByte(units.into())
+        };
+        self.rope_bytes
+            .set(self.rope_bytes.get() + repr.content_bytes());
+        record.set_flat(repr);
+    }
+
+    /// The concatenation of `left` and `right` as a rope (`len` units).
+    pub fn alloc_rope(&mut self, left: StringId, right: StringId) -> Result<StringId, HeapError> {
+        let len = self.string_len(left) + self.string_len(right);
+        let one_byte = self.string_is_one_byte(left) && self.string_is_one_byte(right);
+        let need = Need {
+            strings: 1,
+            ..Need::default()
+        };
+        self.safepoint(&need, &[Value::string(left), Value::string(right)])?;
+        let record = StringRecord::rope(len as u32, one_byte);
+        let id = self.strings.alloc(record);
+        self.ropes.insert(id, (left, right));
+        Ok(StringId(id))
     }
 
     pub fn string_text(&self, id: StringId) -> String {
-        self.strings.get(id.0).repr.to_rust_string()
+        self.string(id).repr().to_rust_string()
     }
 
     fn intern_repr(&mut self, repr: StringRepr) -> Result<StringId, HeapError> {
@@ -811,11 +1162,11 @@ impl Heap {
 
     /// The atom with the content of `string` (itself, if it is one).
     pub fn intern_string(&mut self, string: StringId) -> Result<StringId, HeapError> {
-        let record = self.strings.get(string.0);
+        let record = self.string(string);
         if record.is_atom {
             return Ok(string);
         }
-        let repr = record.repr.clone();
+        let repr = record.repr().clone();
         self.intern_repr(repr)
     }
 

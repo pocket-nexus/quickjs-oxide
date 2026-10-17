@@ -725,6 +725,174 @@ fn digit_value(unit: u16) -> Option<u32> {
     }
 }
 
+// ---- toFixed, toExponential, toPrecision (phase 4, section 6.1 row 5) ----
+
+/// The largest digit count `toFixed`, `toExponential` and `toPrecision`
+/// accept.
+pub const MAX_DIGITS: i32 = 100;
+
+/// `value * radix^scale`, rounded to the nearest integer, ties away from
+/// zero (QuickJS's `JS_RNDNA` for fixed digit counts).
+fn round_scaled_away(significand: u64, binary_exponent: i32, scale: i32) -> Big {
+    let (mut numerator, shift) = fraction(significand, binary_exponent);
+    let divisor = if scale >= 0 {
+        numerator = must(numerator.mul(&radix_power(10, scale)));
+        Divisor::new(10, shift, 0)
+    } else {
+        Divisor::new(10, shift, scale.unsigned_abs())
+    };
+    let quotient = divisor.floor_div(&numerator);
+    let remainder = must(numerator.sub(&must(quotient.mul(&divisor.value))));
+    if shl(&remainder, 1).cmp(&divisor.value) != Ordering::Less {
+        must(quotient.add(&Big::from_u64(1)))
+    } else {
+        quotient
+    }
+}
+
+/// `digits` significant decimal digits of a non-negative finite value,
+/// rounded ties away.
+fn fixed_significant(value: f64, digits: i32) -> DigitSequence {
+    if value == 0.0 {
+        return DigitSequence {
+            mantissa: Big::zero(),
+            digits,
+            exponent: 1,
+        };
+    }
+    let (significand, binary_exponent) = decompose(value);
+    let mut exponent = radix_exponent(significand, binary_exponent, 10, value);
+    loop {
+        let mantissa = round_scaled_away(significand, binary_exponent, digits - exponent);
+        if mantissa.cmp(&radix_power(10, digits)) == Ordering::Less {
+            return DigitSequence {
+                mantissa,
+                digits,
+                exponent,
+            };
+        }
+        exponent += 1;
+    }
+}
+
+fn non_finite(value: f64) -> Option<String> {
+    if value.is_nan() {
+        Some("NaN".into())
+    } else if value == f64::INFINITY {
+        Some("Infinity".into())
+    } else if value == f64::NEG_INFINITY {
+        Some("-Infinity".into())
+    } else {
+        None
+    }
+}
+
+fn signed(body: String, negative: bool) -> String {
+    if negative { format!("-{body}") } else { body }
+}
+
+fn exponential(sequence: &DigitSequence) -> String {
+    let digits = padded_digits(sequence, 10);
+    let mut out = String::with_capacity(digits.len() + 8);
+    out.push_str(&digits[..1]);
+    if digits.len() > 1 {
+        out.push('.');
+        out.push_str(&digits[1..]);
+    }
+    let exponent = sequence.exponent - 1;
+    out.push('e');
+    out.push(if exponent < 0 { '-' } else { '+' });
+    out.push_str(&exponent.abs().to_string());
+    out
+}
+
+fn positional(sequence: &DigitSequence) -> String {
+    let digits = padded_digits(sequence, 10);
+    let exponent = sequence.exponent;
+    if exponent <= 0 {
+        let mut out = String::from("0.");
+        out.extend(std::iter::repeat_n('0', (-exponent) as usize));
+        out.push_str(&digits);
+        out
+    } else if exponent as usize >= digits.len() {
+        let mut out = digits;
+        let zeros = exponent as usize - out.len();
+        out.extend(std::iter::repeat_n('0', zeros));
+        out
+    } else {
+        let mut out = digits;
+        out.insert(exponent as usize, '.');
+        out
+    }
+}
+
+/// `Number.prototype.toFixed`; the digit count is validated by the caller.
+pub fn to_fixed(value: f64, fraction_digits: i32) -> String {
+    if let Some(special) = non_finite(value) {
+        return special;
+    }
+    if value.abs() >= 1e21 {
+        return to_string_radix(value, 10);
+    }
+    let negative = value.is_sign_negative() && value != 0.0;
+    let magnitude = value.abs();
+    let mut digits = if magnitude == 0.0 {
+        "0".to_owned()
+    } else {
+        let (significand, binary_exponent) = decompose(magnitude);
+        big_digits(
+            &round_scaled_away(significand, binary_exponent, fraction_digits),
+            10,
+        )
+    };
+    if fraction_digits > 0 {
+        let fraction = fraction_digits as usize;
+        if digits.len() <= fraction {
+            let mut padded = String::from("0.");
+            padded.extend(std::iter::repeat_n('0', fraction - digits.len()));
+            padded.push_str(&digits);
+            digits = padded;
+        } else {
+            digits.insert(digits.len() - fraction, '.');
+        }
+    }
+    signed(digits, negative)
+}
+
+/// `Number.prototype.toExponential`: `None` asks for the shortest digits.
+pub fn to_exponential(value: f64, fraction_digits: Option<i32>) -> String {
+    if let Some(special) = non_finite(value) {
+        return special;
+    }
+    let negative = value.is_sign_negative() && value != 0.0;
+    let magnitude = value.abs();
+    let sequence = match fraction_digits {
+        Some(digits) => fixed_significant(magnitude, digits + 1),
+        None if magnitude == 0.0 => DigitSequence {
+            mantissa: Big::zero(),
+            digits: 1,
+            exponent: 1,
+        },
+        None => shortest_sequence(magnitude, 10),
+    };
+    signed(exponential(&sequence), negative)
+}
+
+/// `Number.prototype.toPrecision` with a validated precision.
+pub fn to_precision(value: f64, precision: i32) -> String {
+    if let Some(special) = non_finite(value) {
+        return special;
+    }
+    let negative = value.is_sign_negative() && value != 0.0;
+    let sequence = fixed_significant(value.abs(), precision);
+    let body = if sequence.exponent <= -6 || sequence.exponent > precision {
+        exponential(&sequence)
+    } else {
+        positional(&sequence)
+    };
+    signed(body, negative)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

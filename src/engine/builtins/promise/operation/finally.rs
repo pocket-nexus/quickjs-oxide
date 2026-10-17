@@ -97,6 +97,19 @@ pub(super) fn start(
             return capability::error(runtime, realm, "not an object");
         };
         let receiver = ObjectRef::from_borrowed_handle(runtime.clone(), *receiver_id)?;
+        // phase 4, section 7.2: the new core drops Symbol.species.
+        if cfg!(feature = "dropped-features-probe") {
+            let inputs = FinallyInputs {
+                runtime: runtime.clone(),
+                receiver,
+                callback: runtime.dup_jsvalue(argument)?,
+            };
+            let promise = runtime.promise_realm_data(realm)?.constructor;
+            let promise = crate::engine::vm::call::ConstructorRef::from_validated_object(
+                ObjectRef::from_borrowed_handle(runtime.clone(), promise)?,
+            );
+            return handlers(runtime, realm, inputs, Some(promise));
+        }
         return Ok({
             let inputs = FinallyInputs {
                 runtime: runtime.clone(),

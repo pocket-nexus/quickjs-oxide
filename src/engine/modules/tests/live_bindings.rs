@@ -268,6 +268,10 @@ fn default_class_declarations_keep_tdz_and_name_before_static_initializers() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn imported_mutable_cell_has_an_immutable_importer_view() {
     let runtime = Runtime::new();
     let (loader, _, _) = MapModuleLoader::new([(

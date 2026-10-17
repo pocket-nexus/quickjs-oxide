@@ -226,6 +226,26 @@ impl Dictionary {
         Some(slot)
     }
 
+    /// Gives `key` new flags of a different width, keeping its place in the
+    /// entry order: its old slots are freed and new ones taken. Returns the
+    /// new slot.
+    fn reslot(&mut self, key: PropertyKey, flags: PropertyFlags) -> Option<u32> {
+        let index = *self.map.get(&key)? as usize;
+        let old = self.entries[index];
+        self.free_slots
+            .extend(old.slot..old.slot + old.flags.width());
+        let slot = match self.free_slots.pop() {
+            Some(slot) if flags.width() == 1 => slot,
+            free => {
+                self.free_slots.extend(free);
+                self.next_slot += flags.width();
+                self.next_slot - flags.width()
+            }
+        };
+        self.entries[index] = DictEntry { key, flags, slot };
+        Some(slot)
+    }
+
     fn set_flags(&mut self, key: PropertyKey, flags: PropertyFlags) -> bool {
         match self.map.get(&key) {
             Some(&index) => {
@@ -459,6 +479,10 @@ impl Heap {
         self.shapes.get(shape.0)
     }
 
+    pub(crate) fn prototype_of_shape(&self, shape: ShapeId) -> Option<ObjectId> {
+        self.shapes.get(shape.0).prototype
+    }
+
     pub fn shape_of(&self, object: ObjectId) -> ShapeId {
         self.objects.get(object.0).shape
     }
@@ -551,6 +575,9 @@ impl Heap {
         flags: PropertyFlags,
         values: [Value; 2],
     ) -> Result<(), HeapError> {
+        if let KeyKind::Index(_) = key.kind() {
+            self.note_prototype_index(object);
+        }
         // Fast path: a known transition and free slots. A transition for
         // `key` proves the current shape lacks it (shapes are immutable), so
         // no duplicate check, and nothing is allocated.
@@ -800,6 +827,65 @@ impl Heap {
         Ok(true)
     }
 
+    /// Replaces an own property's flags and values, keeping its place in the
+    /// key order. A change between data and accessor moves the object to
+    /// dictionary mode. `values` are rooted for the call.
+    pub fn reshape_property(
+        &mut self,
+        object: ObjectId,
+        key: PropertyKey,
+        flags: PropertyFlags,
+        values: [Value; 2],
+    ) -> Result<(), HeapError> {
+        let (_, old) = self.lookup_own(object, key).expect("an own property");
+        let mark = self.roots.stack.mark();
+        self.roots.stack.push(values[0]);
+        self.roots.stack.push(values[1]);
+        let result = (|| {
+            if old.width() == flags.width() {
+                self.set_property_flags(object, key, flags)?;
+            } else {
+                if !self.is_dictionary(object) {
+                    self.enter_dictionary(object, &[])?;
+                }
+                let header = *self.objects.get(object.0);
+                let dictionary = self
+                    .shapes
+                    .get_mut(header.shape.0)
+                    .dictionary
+                    .as_deref_mut()
+                    .expect("dictionary shape");
+                let slot = dictionary.reslot(key, flags).expect("present key");
+                let end = slot + flags.width();
+                let slots = header.slots();
+                if end > slots.len {
+                    let new_len = (slots.len * 2).max(end).max(4);
+                    self.safepoint(
+                        &Need {
+                            values: [new_len, 0],
+                            ..Need::default()
+                        },
+                        &[Value::object(object)],
+                    )?;
+                    let slots = self.values.grow(slots, new_len);
+                    self.objects.get_mut(object.0).set_slots(slots);
+                }
+                self.dictionary_changed(object);
+                if header.has(flags::USED_AS_PROTOTYPE) {
+                    self.invalidate(object);
+                }
+            }
+            let (slot, _) = self.lookup_own(object, key).expect("an own property");
+            self.set_slot(object, slot, values[0]);
+            if flags.width() == 2 {
+                self.set_slot(object, slot + 1, values[1]);
+            }
+            Ok(())
+        })();
+        self.roots.stack.truncate(mark);
+        result
+    }
+
     /// Gives a transition-tree object the shape reached from the root for
     /// `(prototype, kind)` by adding `entries` in order. Slots keep their
     /// positions.
@@ -917,6 +1003,28 @@ impl Heap {
             .collect()
     }
 
+    /// Whether `object` has an element or a named property with an index
+    /// key.
+    fn has_index_property(&self, object: ObjectId) -> bool {
+        let header = self.objects.get(object.0);
+        let elements = header.elements();
+        if self
+            .values
+            .slice(elements)
+            .iter()
+            .any(|value| !value.is_empty())
+        {
+            return true;
+        }
+        self.shape_entries(header.shape)
+            .iter()
+            .any(|(key, _, _)| match key.kind() {
+                KeyKind::Index(_) => true,
+                KeyKind::String(id) => self.strings.get(id.0).array_index != NONE,
+                KeyKind::Symbol(_) => false,
+            })
+    }
+
     // ---- prototypes and validity cells ----
 
     /// Flags `prototype` as used as a prototype and registers it with its own
@@ -927,6 +1035,14 @@ impl Heap {
             return;
         }
         header.flags |= flags::USED_AS_PROTOTYPE;
+        let kind = header.kind;
+        if self.holes_writable
+            && (kind.is_exotic()
+                || matches!(kind, ObjectKind::Arguments)
+                || self.has_index_property(prototype))
+        {
+            self.holes_writable = false;
+        }
         self.prototypes.entry(prototype).or_default();
         if let Some(parent) = self.prototype_of(prototype) {
             self.ensure_prototype(parent);

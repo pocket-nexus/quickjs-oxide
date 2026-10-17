@@ -42,8 +42,8 @@ impl RegExpStore {
         if let Some(&index) = self.index.get(&(source, flags)) {
             return Ok(index);
         }
-        let pattern: Vec<u16> = heap.string(source).repr.units().collect();
-        let flag_units: Vec<u16> = heap.string(flags).repr.units().collect();
+        let pattern: Vec<u16> = heap.string(source).repr().units().collect();
+        let flag_units: Vec<u16> = heap.string(flags).repr().units().collect();
         let program = oxide_regexp::compile(&pattern, &flag_units)
             .map_err(|error| oxide_regexp::javascript_compile_error_message(&error).to_owned())?;
         self.records.push(RegExpRecord { source, flags });
@@ -93,11 +93,26 @@ pub(crate) fn regexp_object(
     source: StringId,
     flags: StringId,
 ) -> Result<Value, Throw> {
-    let program = match cx.regexps.intern(cx.heap, source, flags) {
-        Ok(program) => program,
-        Err(message) => return Err(error::throw(cx, ErrorKind::Syntax, &message)),
-    };
     let prototype = cx.realm.intrinsic(Intrinsic::RegExpPrototype);
+    regexp_object_with(cx, source, flags, prototype)
+}
+
+/// The program for `(source, flags)`: a `SyntaxError` when invalid.
+pub(crate) fn program(cx: &mut Cx<'_>, source: StringId, flags: StringId) -> Result<u32, Throw> {
+    match cx.regexps.intern(cx.heap, source, flags) {
+        Ok(program) => Ok(program),
+        Err(message) => Err(error::throw(cx, ErrorKind::Syntax, &message)),
+    }
+}
+
+/// [`regexp_object`] with `prototype` (a subclass's, from `new.target`).
+pub(crate) fn regexp_object_with(
+    cx: &mut Cx<'_>,
+    source: StringId,
+    flags: StringId,
+    prototype: crate::value::ObjectId,
+) -> Result<Value, Throw> {
+    let program = program(cx, source, flags)?;
     let names = cx.realm.names;
     let heap = &mut *cx.heap;
     let object = heap
@@ -112,7 +127,17 @@ pub(crate) fn regexp_object(
             )?;
             Ok(object)
         });
-    object
-        .map(Value::object)
-        .map_err(|error| error::heap_error(cx, error))
+    let object = object.map_err(|error| error::heap_error(cx, error))?;
+    if prototype == cx.realm.intrinsic(Intrinsic::RegExpPrototype)
+        && cx.realm.regexp_instance_shape.get().is_none()
+    {
+        let (slot, _) = cx
+            .heap
+            .lookup_own(object, Names::key(names.last_index))
+            .expect("lastIndex");
+        cx.realm
+            .regexp_instance_shape
+            .set(Some((cx.heap.shape_of(object), slot)));
+    }
+    Ok(Value::object(object))
 }

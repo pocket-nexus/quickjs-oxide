@@ -162,6 +162,16 @@ impl ValueHeap {
         self.values[(range.start + slot) as usize] = value;
     }
 
+    /// The value at `slot` of `range`, or `Value::EMPTY` past its end.
+    #[inline]
+    pub fn get_or_empty(&self, range: Range, slot: u32) -> Value {
+        if slot < range.len {
+            self.get(range, slot)
+        } else {
+            Value::EMPTY
+        }
+    }
+
     /// An absolute slot; callers check the range in debug builds.
     #[inline]
     pub fn get_at(&self, index: u32) -> Value {

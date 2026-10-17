@@ -9,14 +9,25 @@
 //! a safepoint marks `registers[..top]` and every frame's function.
 
 pub(crate) mod arguments;
+pub(crate) mod async_generator;
 pub(crate) mod bigint;
+pub(crate) mod class;
+pub mod compile;
 pub(crate) mod error;
 pub mod ic;
 mod interp;
+pub(crate) mod iter;
+pub(crate) mod jobs;
+pub mod module;
 pub mod native;
 pub(crate) mod number;
+pub(crate) mod object;
 pub(crate) mod ops;
 pub(crate) mod property;
+pub(crate) mod proxy;
+pub(crate) mod suspend;
+pub(crate) mod typed;
+pub(crate) mod waiter;
 // Not called yet: `Number.prototype.toString` and the parsers land with the
 // phase 3 builtins. Public for the root crate's differential test.
 #[doc(hidden)]
@@ -101,6 +112,12 @@ pub struct VmStack {
     /// The native stack address at the outermost re-entry, for
     /// [`VmStack::enter_native`].
     pub(crate) native_base: usize,
+    /// The frame count and instruction index of the call running the
+    /// current native, for the backtrace of an error it creates.
+    pub(crate) native_site: (u32, u32),
+    /// The suspendable activations running, innermost last (phase 4,
+    /// section 4.3): where `Yield` and `Await` save their frame.
+    pub(crate) active: Vec<ObjectId>,
 }
 
 impl Default for VmStack {
@@ -113,6 +130,8 @@ impl Default for VmStack {
             limit: DEFAULT_STACK_LIMIT,
             nesting: 0,
             native_base: 0,
+            native_site: (u32::MAX, 0),
+            active: Vec::new(),
         }
     }
 }
@@ -180,29 +199,65 @@ pub enum Output {
     Capture(String),
 }
 
-/// Host state the natives reach.
-#[derive(Debug)]
-pub struct Host {
+/// Runtime state the natives reach beside the heap: output, the random
+/// stream, the symbol registry, and the embedder's [`Host`](crate::host::Host).
+pub struct Services {
     pub output: Output,
+    /// The embedder's hooks (phase 4, section 6.3).
+    pub(crate) hooks: Box<dyn crate::host::Host>,
     /// `Math.random`'s xorshift64* state; never zero.
     random_state: u64,
+    /// `Symbol.for`'s registry: content to symbol. Registered symbols are
+    /// fixed roots.
+    pub(crate) symbol_registry: crate::heap::hash::FxHashMap<Vec<u16>, crate::SymbolId>,
+    /// Whether `Atomics.wait` may block this agent.
+    pub can_block: bool,
+    /// The embedder's compiler (section 6.3).
+    pub(crate) compile: Option<compile::CompileFn>,
+    /// The embedder's module loader (section 6.3).
+    pub(crate) module_host: Option<module::ModuleHost>,
+    /// The module records by normalized name.
+    pub(crate) modules: crate::heap::hash::FxHashMap<String, ObjectId>,
+    /// The embedder's script runner, for `$262.agent.start`.
+    pub(crate) script_runner: Option<crate::builtins::agent::ScriptRunner>,
+    /// The agents this (main) agent started.
+    pub(crate) agent_hub: Option<std::sync::Arc<crate::builtins::agent::AgentHub>>,
+    /// This runtime as an agent of another.
+    pub(crate) agent: Option<crate::builtins::agent::AgentSelf>,
 }
 
-impl Default for Host {
+impl std::fmt::Debug for Services {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Services")
+            .field("output", &self.output)
+            .finish()
+    }
+}
+
+impl Default for Services {
     fn default() -> Self {
         // QuickJS seeds from the clock; programs that compare output replace
         // `Math.random`, as the benchmark harness does.
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(1, |elapsed| elapsed.as_nanos() as u64);
-        Host {
+        Services {
             output: Output::default(),
+            hooks: Box::new(crate::host::SystemHost),
             random_state: seed.max(1),
+            symbol_registry: Default::default(),
+            can_block: true,
+            compile: None,
+            module_host: None,
+            modules: Default::default(),
+            script_runner: None,
+            agent_hub: None,
+            agent: None,
         }
     }
 }
 
-impl Host {
+impl Services {
     pub(crate) fn random_state(&self) -> u64 {
         self.random_state
     }
@@ -226,8 +281,16 @@ pub(crate) struct Cx<'a> {
     pub heap: &'a mut Heap,
     pub code: &'a CodeStore,
     pub realm: &'a Realm,
-    pub host: &'a mut Host,
+    pub host: &'a mut Services,
     pub regexps: &'a mut regexp::RegExpStore,
+}
+
+impl Cx<'_> {
+    /// Records an intrinsic the builtins created, as a fixed root.
+    pub(crate) fn set_intrinsic(&mut self, intrinsic: crate::Intrinsic, object: ObjectId) {
+        self.heap.add_fixed_root(Value::object(object));
+        self.realm.record_intrinsic(intrinsic, object);
+    }
 }
 
 /// Calls `function` with `this` and `args` and runs it to completion. The
@@ -253,6 +316,30 @@ pub(crate) fn call(
     // (a register or a property of a rooted object) until the frame names it.
     cx.heap.vm.top = end as u32;
     let result = interp::call_from_rust(cx, function, base, args.len());
+    cx.heap.vm.top = saved_top;
+    result
+}
+
+/// `Construct(function, args, new_target)`: runs a constructor to
+/// completion. Re-entrant like [`call`]; the arguments need no rooting.
+pub(crate) fn construct(
+    cx: &mut Cx<'_>,
+    function: Value,
+    args: &[Value],
+    new_target: Value,
+) -> Result<Value, Throw> {
+    let base = cx.heap.vm.top as usize;
+    let end = base + 1 + args.len();
+    if !cx.heap.vm.reserve(end) {
+        return Err(error::stack_overflow(cx));
+    }
+    let saved_top = cx.heap.vm.top;
+    let registers = &mut cx.heap.vm.registers;
+    registers[base] = Value::UNDEFINED;
+    registers[base + 1..end].copy_from_slice(args);
+    cx.heap.vm.top = end as u32;
+    // `new_target` is held by the caller, like `function`.
+    let result = interp::construct_from_rust(cx, function, base, args.len(), new_target);
     cx.heap.vm.top = saved_top;
     result
 }

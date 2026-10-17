@@ -5,6 +5,10 @@ use crate::engine::test_support::test_context;
 use crate::engine::value::{JsValue, Value};
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn published_bindings_keep_capture_eval_and_argument_aliases_live() {
     for (source, expected) in [
         (
@@ -64,6 +68,10 @@ fn published_resume_keeps_captured_cells_live_through_finally() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn published_lexical_writes_preserve_tdz_const_and_iteration_lifetimes() {
     for source in [
         "(function(){let x=1; x=4; return x===4;})()",
@@ -84,6 +92,10 @@ fn published_lexical_writes_preserve_tdz_const_and_iteration_lifetimes() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn published_eval_reuses_topology_but_observes_live_scope_and_super() {
     for source in [
         "(function(a){let x=2; const f=()=>eval('x+=a'); f(); return x===5;})(3)",
@@ -102,6 +114,10 @@ fn published_eval_reuses_topology_but_observes_live_scope_and_super() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "dropped-features-probe",
+    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
+)]
 fn repeated_closure_creation_reuses_cells_without_erasing_their_metadata() {
     for source in [
         "(function(){let x=1; let a=()=>x; let b=()=>++x; return b()===2&&a()===2;})()",

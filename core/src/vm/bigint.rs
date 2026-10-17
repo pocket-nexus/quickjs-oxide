@@ -11,6 +11,7 @@ pub(crate) struct Big {
     pub limbs: Vec<u64>,
 }
 
+#[derive(Debug)]
 pub(crate) enum BigError {
     DivisionByZero,
     NegativeExponent,

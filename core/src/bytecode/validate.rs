@@ -33,7 +33,8 @@ pub enum ValidateErrorKind {
     /// Two handler ranges overlap without nesting, or an enclosing handler
     /// precedes one nested in it.
     HandlerNesting,
-    /// The line table is neither empty nor one entry per instruction.
+    /// The position table is out of `pc` order or names a `pc` past the
+    /// code.
     LineTable,
     /// An arrow function marked as a constructor.
     Flags,
@@ -67,9 +68,12 @@ fn fail<T>(at: Option<u32>, kind: ValidateErrorKind) -> Result<T, ValidateError>
     Err(ValidateError { at, kind })
 }
 
-/// Checks every operand of `unit`. `published` are the units already in the
-/// store; children must be among them.
-pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateError> {
+/// Checks every operand of `unit`. `published` finds the units already in
+/// the store; children must be among them.
+pub fn validate<'a>(
+    unit: &CodeUnit,
+    published: &dyn Fn(super::CodeUnitId) -> Option<&'a CodeUnit>,
+) -> Result<(), ValidateError> {
     use ValidateErrorKind as E;
     let len = unit.code.len() as u32;
     let registers = unit.register_count as u32;
@@ -85,11 +89,16 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
     if unit.has(flags::ARROW) && unit.has(flags::CONSTRUCTOR) {
         return fail(None, E::Flags);
     }
-    if !unit.debug.lines.is_empty() && unit.debug.lines.len() != unit.code.len() {
+    let positions = &unit.debug.positions;
+    if positions.windows(2).any(|pair| pair[0].pc >= pair[1].pc)
+        || positions
+            .last()
+            .is_some_and(|last| last.pc as usize >= unit.code.len())
+    {
         return fail(None, E::LineTable);
     }
     for (index, &child) in unit.children.iter().enumerate() {
-        let Some(child_unit) = published.get(child.0 as usize) else {
+        let Some(child_unit) = published(child) else {
             return fail(Some(index as u32), E::UnpublishedChild(child.0));
         };
         for capture in &child_unit.captures {
