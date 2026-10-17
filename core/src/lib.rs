@@ -9,11 +9,13 @@
 pub mod builtins;
 pub mod bytecode;
 pub mod heap;
+pub mod host;
 pub mod runtime;
 pub mod shape;
 pub mod value;
 pub mod vm;
 
+pub use builtins::agent::ScriptRunner;
 pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode};
 pub use heap::atom::{KeyKind, PropertyKey};
 pub use heap::gc::{Handle, HeapLimits, RootMark};

@@ -18,10 +18,12 @@ pub enum ErrorKind {
     Syntax,
     Type,
     Internal,
+    Uri,
+    Aggregate,
 }
 
 impl ErrorKind {
-    pub const ALL: [ErrorKind; 7] = [
+    pub const ALL: [ErrorKind; 9] = [
         ErrorKind::Error,
         ErrorKind::Eval,
         ErrorKind::Range,
@@ -29,6 +31,8 @@ impl ErrorKind {
         ErrorKind::Syntax,
         ErrorKind::Type,
         ErrorKind::Internal,
+        ErrorKind::Uri,
+        ErrorKind::Aggregate,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -40,6 +44,8 @@ impl ErrorKind {
             ErrorKind::Syntax => "SyntaxError",
             ErrorKind::Type => "TypeError",
             ErrorKind::Internal => "InternalError",
+            ErrorKind::Uri => "URIError",
+            ErrorKind::Aggregate => "AggregateError",
         }
     }
 
@@ -52,6 +58,8 @@ impl ErrorKind {
             ErrorKind::Syntax => Intrinsic::SyntaxErrorPrototype,
             ErrorKind::Type => Intrinsic::TypeErrorPrototype,
             ErrorKind::Internal => Intrinsic::InternalErrorPrototype,
+            ErrorKind::Uri => Intrinsic::UriErrorPrototype,
+            ErrorKind::Aggregate => Intrinsic::AggregateErrorPrototype,
         }
     }
 }

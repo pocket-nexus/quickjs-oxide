@@ -302,25 +302,22 @@ fn handler_resumes_above_live_operands() {
     );
 }
 
+/// The constructs phase 3 declined lower from phase 4 on; only eval code and
+/// modules are still declined (until M7).
 #[test]
-fn unsupported_constructs_are_reported_not_mislowered() {
-    for (source, construct) in [
-        ("function* g() { yield 1; }", "generators"),
-        ("class C {}", "classes"),
-        ("for (const x of [1]) {}", "iterators"),
-        ("var o = { ...{ a: 1 } };", "object spread"),
-        ("function f({ a }) { return a; }", "non-simple parameters"),
-        (
-            "var f = function () { return { m() {} }; };",
-            "object literal methods",
-        ),
+fn phase4_surface_lowers() {
+    for source in [
+        "function* g() { yield 1; }",
+        "class C {}",
+        "for (const x of [1]) {}",
+        "var o = { ...{ a: 1 } };",
+        "function f({ a }) { return a; }",
+        "var f = function () { return { m() {} }; };",
+        "async function f() { await 1; }",
+        "class D extends Object { #p = 1; m() { return super.m; } }",
     ] {
-        match lower(source) {
-            Err(LowerError::Unsupported(found)) => {
-                assert!(found.contains(construct), "{source}: {found}");
-            }
-            Err(other) => panic!("{source}: {other}"),
-            Ok(_) => panic!("{source}: lowered"),
+        if let Err(error) = lower(source) {
+            panic!("{source}: {error}");
         }
     }
 }
@@ -449,4 +446,34 @@ fn print_probe_disassembly() {
             println!("{unit}");
         }
     }
+}
+
+#[test]
+#[ignore = "scratch dump"]
+fn scratch_dump_stack_code() {
+    let source = std::env::var("DUMP_SOURCE").unwrap();
+    let script = crate::engine::compiler::compile_unlinked_script(&source).unwrap();
+    fn dump(function: &crate::engine::code::function::UnlinkedFunction, depth: usize) {
+        let pad = "  ".repeat(depth);
+        println!(
+            "{pad}== {:?} meta {:?}",
+            function.func_name(),
+            function.metadata()
+        );
+        for (i, v) in function.closure_variables().iter().enumerate() {
+            println!("{pad}  closure {i}: {v:?}");
+        }
+        for (i, l) in function.local_definitions().iter().enumerate() {
+            println!("{pad}  local {i}: {l:?}");
+        }
+        for (i, insn) in function.code().iter().enumerate() {
+            println!("{pad}  {i:4} {insn:?}");
+        }
+        for c in function.constants() {
+            if let Some(child) = c.as_child() {
+                dump(child, depth + 1);
+            }
+        }
+    }
+    dump(&script, 0);
 }

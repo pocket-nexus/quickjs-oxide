@@ -27,7 +27,7 @@ fn unit(registers: u16, build: impl FnOnce(&mut CodeBuilder)) -> CodeUnit {
 }
 
 fn validate(unit: &CodeUnit) -> Result<(), ValidateErrorKind> {
-    oxide_core::bytecode::validate::validate(unit, &[]).map_err(|error| error.kind)
+    oxide_core::bytecode::validate::validate(unit, &|_| None).map_err(|error| error.kind)
 }
 
 #[test]
@@ -357,24 +357,40 @@ fn validator_rejects_each_malformation() {
     let mut unpublished = unit_returning();
     unpublished.children = vec![CodeStore::default().publish(unit_returning()).unwrap()].into();
     assert_eq!(
-        oxide_core::bytecode::validate::validate(&unpublished, &[]).map_err(|e| e.kind),
+        oxide_core::bytecode::validate::validate(&unpublished, &|_| None).map_err(|e| e.kind),
         Err(E::UnpublishedChild(0))
     );
     assert_eq!(
-        oxide_core::bytecode::validate::validate(&unpublished, &[unit_returning()]),
+        {
+            let published = [unit_returning()];
+            oxide_core::bytecode::validate::validate(&unpublished, &|id: oxide_core::CodeUnitId| {
+                published.get(id.index() as usize)
+            })
+        },
         Ok(())
     );
     let mut capturing = unit_returning();
     capturing.captures = vec![Capture::Register(1)].into();
     assert_eq!(
-        oxide_core::bytecode::validate::validate(&unpublished, &[capturing.clone()])
-            .map_err(|e| e.kind),
+        {
+            let published = [capturing.clone()];
+            oxide_core::bytecode::validate::validate(&unpublished, &|id: oxide_core::CodeUnitId| {
+                published.get(id.index() as usize)
+            })
+        }
+        .map_err(|e| e.kind),
         Err(E::ChildCapture(1)),
         "the parent has one register"
     );
     capturing.captures = vec![Capture::Outer(0)].into();
     assert_eq!(
-        oxide_core::bytecode::validate::validate(&unpublished, &[capturing]).map_err(|e| e.kind),
+        {
+            let published = [capturing];
+            oxide_core::bytecode::validate::validate(&unpublished, &|id: oxide_core::CodeUnitId| {
+                published.get(id.index() as usize)
+            })
+        }
+        .map_err(|e| e.kind),
         Err(E::ChildCapture(0)),
         "the parent has no captures"
     );

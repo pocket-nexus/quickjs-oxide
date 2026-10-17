@@ -12,7 +12,13 @@ use oxide_core::heap::gc::HeapLimits;
 use crate::engine::api::error::Error;
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::compiler::compile_unlinked_script_bytes_with_filename;
-use crate::engine::compiler::register::{LowerError, lower_script};
+use crate::engine::compiler::register::{LowerError, lower_script, lower_script_into};
+use crate::engine::compiler::{
+    EvalCompileContext, compile_unlinked_eval_source_with_filename,
+    compile_unlinked_script_source_with_filename,
+};
+use crate::source::SourceText;
+use oxide_core::vm::compile::{CompileError, CompileKind, CompileRequest, Compiler};
 
 /// Whether this build has the new core's stress collector
 /// (`new-core-gc-stress`), which `--gc-stress` needs.
@@ -36,6 +42,29 @@ pub struct NewCoreOptions {
     pub gc_stress: Option<u32>,
     /// The heap cap in bytes; `None` for none.
     pub heap_cap: Option<usize>,
+    /// Define the Test262 host object `$262` (`--test262`).
+    pub test262: bool,
+    /// Forbid `Atomics.wait` from blocking (`--cannot-block`, Test262's
+    /// `CanBlockIsFalse`).
+    pub cannot_block: bool,
+    /// Run the last file as a module (`--module`), the others as scripts.
+    pub module: bool,
+    /// The clock and the local time zone (section 6.3); `None` is the system
+    /// clock in UTC.
+    pub services: Option<std::rc::Rc<dyn crate::engine::host::HostServices>>,
+}
+
+/// The core's host hooks over the engine's host services.
+struct ServicesHost(std::rc::Rc<dyn crate::engine::host::HostServices>);
+
+impl oxide_core::host::Host for ServicesHost {
+    fn now_ms(&mut self) -> f64 {
+        self.0.now_millis() as f64
+    }
+
+    fn local_tz_offset_minutes(&mut self, utc_ms: f64) -> i32 {
+        self.0.timezone_offset_minutes(utc_ms as i64)
+    }
 }
 
 #[derive(Debug)]
@@ -89,10 +118,25 @@ fn runtime(options: &NewCoreOptions) -> Result<Runtime, NewCoreError> {
     let mut runtime =
         Runtime::new(limits).map_err(|error| NewCoreError::Internal(error.to_string()))?;
     configure_stress(&mut runtime, options.gc_stress)?;
+    if let Some(services) = &options.services {
+        runtime.set_host(Box::new(ServicesHost(services.clone())));
+    }
     runtime.heap_mut().gc_mut().record_pauses = options.gc_stats;
+    runtime.set_can_block(!options.cannot_block);
+    runtime.set_compiler(compile_for_core);
     runtime
         .install_print()
         .map_err(|error| NewCoreError::Internal(error.to_string()))?;
+    if options.test262 {
+        runtime
+            .install_test262_host()
+            .map_err(|error| NewCoreError::Internal(error.to_string()))?;
+        runtime.set_script_runner(run_agent_script);
+    }
+    runtime.set_module_host(oxide_core::vm::module::ModuleHost {
+        normalize: normalize_module,
+        load: load_module,
+    });
     Ok(runtime)
 }
 
@@ -124,17 +168,258 @@ fn lower(
     Ok(lower_script(runtime, &script)?)
 }
 
+/// The core's compile host (phase 4, section 6.3): `eval` code, the
+/// `Function` constructors' source and `$262.evalScript`, compiled by the
+/// front end and lowered into the running runtime.
+fn compile_for_core(
+    compiler: &mut Compiler<'_>,
+    request: &CompileRequest<'_>,
+) -> Result<oxide_core::ObjectId, CompileError> {
+    let failure = |kind: oxide_core::ErrorKind, message: String| CompileError { kind, message };
+    let source = SourceText::try_from_utf16(request.source.iter().copied())
+        .map_err(|error| failure(oxide_core::ErrorKind::Range, error.to_string()))?;
+    let compiled = match request.kind {
+        CompileKind::Script => compile_unlinked_script_source_with_filename(
+            &source,
+            request.filename,
+            DebugInfoMode::Full,
+        ),
+        CompileKind::IndirectEval => compile_unlinked_eval_source_with_filename(
+            &source,
+            request.filename,
+            DebugInfoMode::Full,
+            EvalCompileContext::indirect(),
+        ),
+    };
+    let script = compiled.map_err(|error| {
+        let kind = match error.kind() {
+            crate::engine::api::error::ErrorKind::Syntax => oxide_core::ErrorKind::Syntax,
+            crate::engine::api::error::ErrorKind::Range => oxide_core::ErrorKind::Range,
+            crate::engine::api::error::ErrorKind::Reference => oxide_core::ErrorKind::Reference,
+            crate::engine::api::error::ErrorKind::Type => oxide_core::ErrorKind::Type,
+            _ => oxide_core::ErrorKind::Internal,
+        };
+        failure(kind, error.message().to_owned())
+    })?;
+    let lowered = lower_script_into(compiler, &script)
+        .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))?;
+    Ok(lowered.function)
+}
+
+thread_local! {
+    /// The main file under `--test262`, for the loader's relative names.
+    static MAIN_FILE: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// QuickJS's `js_module_normalize_name`: a specifier starting with `.`
+/// resolves against the referrer's directory; any other is a name as is.
+fn normalize_module(
+    referrer: &str,
+    specifier: &str,
+    attributes: &[(String, String)],
+) -> Result<String, CompileError> {
+    let _ = attributes;
+    if !specifier.starts_with('.') {
+        return Ok(specifier.to_owned());
+    }
+    let mut directory = match referrer.rfind('/') {
+        Some(slash) => referrer[..slash].to_owned(),
+        None => String::new(),
+    };
+    let mut rest = specifier;
+    loop {
+        if let Some(next) = rest.strip_prefix("./") {
+            rest = next;
+        } else if let Some(next) = rest.strip_prefix("../") {
+            if directory.is_empty() {
+                break;
+            }
+            let last = directory.rfind('/').map_or(0, |slash| slash + 1);
+            let component = &directory[last..];
+            if component == "." || component == ".." {
+                break;
+            }
+            directory.truncate(last.saturating_sub(1));
+            rest = next;
+        } else {
+            break;
+        }
+    }
+    if directory.is_empty() {
+        Ok(rest.to_owned())
+    } else {
+        Ok(format!("{directory}/{rest}"))
+    }
+}
+
+/// QuickJS's `js_module_loader`: the file named `name`, as JSON for a
+/// `.json` name or a `type: "json"` attribute, else as a module.
+fn load_module(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    attributes: &[(String, String)],
+) -> Result<oxide_core::vm::module::ModuleSource, CompileError> {
+    let failure = |kind: oxide_core::ErrorKind, message: String| CompileError { kind, message };
+    // As QuickJS's `run-test262` loader does, a name without a directory is
+    // relative to the main file's.
+    let relative;
+    let name = match MAIN_FILE.with(|main| main.borrow().clone()) {
+        Some(main) if !name.contains('/') => match main.rfind('/') {
+            Some(slash) => {
+                relative = format!("{}/{name}", &main[..slash]);
+                relative.as_str()
+            }
+            None => name,
+        },
+        _ => name,
+    };
+    let source = std::fs::read(name).map_err(|_| {
+        failure(
+            oxide_core::ErrorKind::Reference,
+            format!("could not load module filename '{name}'"),
+        )
+    })?;
+    let json = attributes
+        .iter()
+        .any(|(key, value)| key == "type" && (value == "json" || value == "json5"));
+    if json || name.ends_with(".json") {
+        let text = String::from_utf8_lossy(&source);
+        return Ok(oxide_core::vm::module::ModuleSource::Json(
+            text.encode_utf16().collect(),
+        ));
+    }
+    let module_name = crate::engine::value::JsString::try_from_utf8(name)
+        .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))?;
+    let module =
+        crate::engine::compiler::compile_unlinked_module_bytes_with_name_and_attribute_checker(
+            &source,
+            module_name,
+            DebugInfoMode::Full,
+            None,
+        )
+        .map_err(|error| match error {
+            crate::engine::compiler::ModuleCompileFailure::Engine(error) => {
+                failure(core_error_kind(&error), error.message().to_owned())
+            }
+            crate::engine::compiler::ModuleCompileFailure::Host => failure(
+                oxide_core::ErrorKind::Type,
+                "import attribute rejected".into(),
+            ),
+        })?;
+    crate::engine::compiler::register::lower_module_into(compiler, &module)
+        .map_err(|error| failure(oxide_core::ErrorKind::Internal, error.to_string()))
+}
+
+fn core_error_kind(error: &Error) -> oxide_core::ErrorKind {
+    match error.kind() {
+        crate::engine::api::error::ErrorKind::Syntax => oxide_core::ErrorKind::Syntax,
+        crate::engine::api::error::ErrorKind::Range => oxide_core::ErrorKind::Range,
+        crate::engine::api::error::ErrorKind::Reference => oxide_core::ErrorKind::Reference,
+        crate::engine::api::error::ErrorKind::Type => oxide_core::ErrorKind::Type,
+        _ => oxide_core::ErrorKind::Internal,
+    }
+}
+
+/// Runs the module named `name` and its jobs; an uncaught rejection of its
+/// evaluation is the failure.
+fn run_module_file(runtime: &mut Runtime, name: &str) -> Result<(), NewCoreError> {
+    let uncaught = |runtime: &mut Runtime, thrown: oxide_core::Value| {
+        let handle = runtime.hold(thrown);
+        let text = runtime
+            .display(thrown)
+            .unwrap_or_else(|_| "exception while printing the exception".into());
+        runtime.release(handle);
+        NewCoreError::Uncaught(text)
+    };
+    let promise = runtime
+        .run_module(name)
+        .map_err(|thrown| uncaught(runtime, thrown.0))?;
+    let handle = runtime.hold(promise);
+    let jobs = runtime.run_jobs();
+    let state = runtime.promise_state(promise);
+    runtime.release(handle);
+    if let Err(thrown) = jobs {
+        return Err(uncaught(runtime, thrown.0));
+    }
+    match state {
+        Some((2, reason)) => Err(uncaught(runtime, reason)),
+        _ => Ok(()),
+    }
+}
+
+/// `$262.agent.start`'s runner: an agent's script and then its jobs.
+fn run_agent_script(runtime: &mut Runtime, source: &str) -> Result<(), String> {
+    let lowered =
+        lower(runtime, source.as_bytes(), "<agent>").map_err(|error| error.to_string())?;
+    let function = oxide_core::Value::object(lowered.function);
+    let handle = runtime.hold(function);
+    let mut result = runtime.run_script(lowered.function);
+    runtime.release(handle);
+    if result.is_ok() {
+        result = runtime.run_jobs().map(|()| oxide_core::Value::UNDEFINED);
+    }
+    result.map(drop).map_err(|thrown| {
+        runtime
+            .display(thrown.0)
+            .unwrap_or_else(|_| "exception while printing the exception".into())
+    })
+}
+
 /// Compiles, lowers and runs `source`; `print` writes to stdout.
 pub fn run(source: &[u8], filename: &str, options: &NewCoreOptions) -> Result<(), NewCoreError> {
+    run_scripts(&[(source.to_vec(), filename.to_owned())], options)
+}
+
+/// Runs `scripts` in order as separate scripts of one realm, draining the
+/// job queue after each (section 5.4); stops at the first that fails.
+pub fn run_scripts(
+    scripts: &[(Vec<u8>, String)],
+    options: &NewCoreOptions,
+) -> Result<(), NewCoreError> {
     if options.ic_stats && !IC_STATS_AVAILABLE {
         return Err(NewCoreError::IcStatsUnavailable);
     }
     let mut runtime = runtime(options)?;
-    let lowered = lower(&mut runtime, source, filename)?;
-    let function = oxide_core::Value::object(lowered.function);
-    let handle = runtime.hold(function);
-    let result = runtime.run_script(lowered.function);
-    runtime.release(handle);
+    let mut outcome = Ok(());
+    let (scripts_to_run, module) = match scripts.split_last() {
+        Some((last, rest)) if options.module => (rest, Some(last)),
+        _ => (scripts, None),
+    };
+    if options.test262 {
+        MAIN_FILE.with(|main| *main.borrow_mut() = scripts.last().map(|(_, name)| name.clone()));
+    }
+    let scripts = scripts_to_run;
+    for (source, filename) in scripts {
+        let lowered = match lower(&mut runtime, source, filename) {
+            Ok(lowered) => lowered,
+            Err(error) => {
+                outcome = Err(error);
+                break;
+            }
+        };
+        let function = oxide_core::Value::object(lowered.function);
+        let handle = runtime.hold(function);
+        let mut result = runtime.run_script(lowered.function);
+        runtime.release(handle);
+        if result.is_ok() {
+            result = runtime.run_jobs().map(|()| oxide_core::Value::UNDEFINED);
+        }
+        if let Err(thrown) = result {
+            let handle = runtime.hold(thrown.0);
+            let text = runtime
+                .display(thrown.0)
+                .unwrap_or_else(|_| "exception while printing the exception".into());
+            runtime.release(handle);
+            outcome = Err(NewCoreError::Uncaught(text));
+            break;
+        }
+    }
+    if outcome.is_ok()
+        && let Some((_, filename)) = module
+    {
+        outcome = run_module_file(&mut runtime, filename);
+    }
+    runtime.join_agents();
     if options.ic_stats
         && let Some(report) = runtime.ic_report(10)
     {
@@ -143,17 +428,7 @@ pub fn run(source: &[u8], filename: &str, options: &NewCoreOptions) -> Result<()
     if options.gc_stats {
         eprint!("{}", gc_report(&runtime));
     }
-    match result {
-        Ok(_) => Ok(()),
-        Err(thrown) => {
-            let handle = runtime.hold(thrown.0);
-            let text = runtime
-                .display(thrown.0)
-                .unwrap_or_else(|_| "exception while printing the exception".into());
-            runtime.release(handle);
-            Err(NewCoreError::Uncaught(text))
-        }
-    }
+    outcome
 }
 
 /// The collector's statistics: Table D of the phase 3 plan.

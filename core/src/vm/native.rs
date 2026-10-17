@@ -1,22 +1,27 @@
-//! The native ABI: leaf host functions that read their receiver and
-//! arguments from the register file by index (phase 2, section 4.3). The
-//! natives themselves are the realm's builtins (`crate::builtins`). Natives
-//! that call back into JavaScript for their own work are phase 4's
-//! Step/Resume machines; the ones here only convert their arguments, which
-//! may call a user `toString` through the re-entrant [`call`](super::call).
+//! The native ABI (phase 4, section 2): host functions that read their
+//! receiver and arguments from the register file by index and call back
+//! into JavaScript through the re-entrant [`call`](super::call) and
+//! [`construct`](super::construct) as straight-line Rust. A native roots
+//! what it holds across an allocation or a call on the root stack, which is
+//! cut back when it returns. The natives themselves are the realm's
+//! builtins (`crate::builtins`).
 
 use super::{Cx, Throw};
 use crate::builtins::Native;
 use crate::value::Value;
 
 /// Where a native finds its receiver (register `this`) and its arguments
-/// (`argc` registers from `args`), and whether `new` called it.
+/// (`argc` registers from `args`), whether `new` called it and with which
+/// `new.target`, and the function object called (whose record holds a
+/// native closure's data).
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct CallSite {
     pub this: usize,
     pub args: usize,
     pub argc: usize,
     pub construct: bool,
+    pub function: Value,
+    pub new_target: Value,
 }
 
 impl CallSite {
@@ -32,6 +37,37 @@ impl CallSite {
         } else {
             Value::UNDEFINED
         }
+    }
+
+    /// The arguments as a slice of the register file.
+    #[inline]
+    pub fn args<'a>(&self, cx: &'a Cx<'_>) -> &'a [Value] {
+        &cx.heap.vm.registers[self.args..self.args + self.argc]
+    }
+
+    /// The arguments copied out (they stay rooted in their registers).
+    pub fn arg_list(&self, cx: &Cx<'_>) -> Vec<Value> {
+        self.args(cx).to_vec()
+    }
+
+    /// Internal slot `slot` of the called native closure's data object.
+    pub fn data(&self, cx: &Cx<'_>, slot: usize) -> Value {
+        let function = self.function.as_object().expect("a native closure");
+        let data = cx
+            .heap
+            .function_scope(function)
+            .expect("a native closure's data");
+        cx.heap.internal_slot(data.object(), slot)
+    }
+
+    /// Sets internal slot `slot` of the called native closure's data object.
+    pub fn set_data(&self, cx: &mut Cx<'_>, slot: usize, value: Value) {
+        let function = self.function.as_object().expect("a native closure");
+        let data = cx
+            .heap
+            .function_scope(function)
+            .expect("a native closure's data");
+        cx.heap.set_internal_slot(data.object(), slot, value);
     }
 }
 

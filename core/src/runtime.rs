@@ -3,32 +3,42 @@
 
 use crate::PropertyKey;
 use crate::bytecode::{self, CodeStore, CodeUnit, CodeUnitId, ValidateError};
-use crate::heap::BytecodeTemplate;
 use crate::heap::atom::KeyKind;
 use crate::heap::gc::{Handle, HeapLimits};
-use crate::heap::hash::FxHashMap;
 use crate::heap::object::ObjectKind;
 use crate::heap::{Heap, HeapError};
-use crate::value::{ObjectId, ScopeId, StringId, Value};
+use crate::value::{ObjectId, ScopeId, StringId, SymbolId, Value};
 use crate::vm::regexp::RegExpStore;
-use crate::vm::{Cx, ErrorKind, Host, Output, Throw, VmStack};
+use crate::vm::{Cx, ErrorKind, Output, Services, Throw, VmStack};
 
-/// Intrinsic objects held by the realm. Phase 1 created the prototypes the
-/// object kinds need; phase 2 adds the error prototypes the loop throws
-/// with. Builtins are ported in phase 4.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
-pub enum Intrinsic {
+macro_rules! intrinsics {
+    ($($(#[$doc:meta])* $name:ident,)*) => {
+        /// Intrinsic objects held by the realm: the prototypes and the
+        /// constructors the natives and the loop name. Each is a fixed root.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        #[repr(u8)]
+        pub enum Intrinsic {
+            $($(#[$doc])* $name,)*
+        }
+
+        impl Intrinsic {
+            pub const ALL: &'static [Intrinsic] = &[$(Intrinsic::$name,)*];
+            pub const COUNT: usize = Intrinsic::ALL.len();
+        }
+    };
+}
+
+intrinsics! {
     ObjectPrototype,
     FunctionPrototype,
     ArrayPrototype,
-    /// The prototype of string receivers (phase 3 fills it with the
-    /// `String.prototype` methods in M4).
     StringPrototype,
-    /// The prototype of regular-expression objects.
     RegExpPrototype,
     NumberPrototype,
     BooleanPrototype,
+    SymbolPrototype,
+    BigIntPrototype,
+    DatePrototype,
     ErrorPrototype,
     EvalErrorPrototype,
     RangeErrorPrototype,
@@ -36,78 +46,226 @@ pub enum Intrinsic {
     SyntaxErrorPrototype,
     TypeErrorPrototype,
     InternalErrorPrototype,
+    UriErrorPrototype,
+    AggregateErrorPrototype,
     /// A preallocated `InternalError: out of memory`, thrown when the heap
     /// cannot allocate the error itself.
     OutOfMemoryError,
+    /// `%ThrowTypeError%`.
+    ThrowTypeError,
+    Object,
+    Function,
+    Array,
+    String,
+    Number,
+    Boolean,
+    Symbol,
+    BigInt,
+    RegExp,
+    Date,
+    Promise,
+    Proxy,
+    Eval,
+    IteratorPrototype,
+    AsyncIteratorPrototype,
+    ArrayIteratorPrototype,
+    StringIteratorPrototype,
+    MapIteratorPrototype,
+    SetIteratorPrototype,
+    RegExpStringIteratorPrototype,
+    IteratorHelperPrototype,
+    IteratorConcatPrototype,
+    Iterator,
+    WrapForValidIteratorPrototype,
+    AsyncFromSyncIteratorPrototype,
+    /// `%GeneratorFunction.prototype%`.
+    GeneratorFunctionPrototype,
+    /// `%GeneratorFunction.prototype.prototype%`.
+    GeneratorPrototype,
+    AsyncFunctionPrototype,
+    AsyncGeneratorFunctionPrototype,
+    AsyncGeneratorPrototype,
+    GeneratorFunction,
+    AsyncFunction,
+    AsyncGeneratorFunction,
+    PromisePrototype,
+    MapPrototype,
+    SetPrototype,
+    WeakMapPrototype,
+    WeakSetPrototype,
+    WeakRefPrototype,
+    FinalizationRegistryPrototype,
+    ArrayBufferPrototype,
+    SharedArrayBufferPrototype,
+    DataViewPrototype,
+    TypedArray,
+    TypedArrayPrototype,
+    Int8ArrayPrototype,
+    Uint8ArrayPrototype,
+    Uint8ClampedArrayPrototype,
+    Int16ArrayPrototype,
+    Uint16ArrayPrototype,
+    Int32ArrayPrototype,
+    Uint32ArrayPrototype,
+    Float16ArrayPrototype,
+    Float32ArrayPrototype,
+    Float64ArrayPrototype,
+    BigInt64ArrayPrototype,
+    BigUint64ArrayPrototype,
+    Int8Array,
+    Uint8Array,
+    Uint8ClampedArray,
+    Int16Array,
+    Uint16Array,
+    Int32Array,
+    Uint32Array,
+    Float16Array,
+    Float32Array,
+    Float64Array,
+    BigInt64Array,
+    BigUint64Array,
+    ArrayBuffer,
+    /// `Array.prototype.values`, which is also `arguments[@@iterator]`.
+    ArrayValues,
+    /// The global lexical environment's dictionary (section 5.7).
+    GlobalLexical,
 }
 
-impl Intrinsic {
-    pub const COUNT: usize = 15;
+macro_rules! names {
+    ($($field:ident: $text:expr,)*) => {
+        /// Atoms the loop and the natives name: property names they read
+        /// themselves and the `typeof` results. Atoms are strong roots, so
+        /// they stay valid.
+        #[derive(Clone, Copy, Debug)]
+        pub(crate) struct Names {
+            $(pub $field: StringId,)*
+        }
+
+        impl Names {
+            fn new(heap: &mut Heap) -> Result<Names, HeapError> {
+                Ok(Names {
+                    $($field: heap.intern($text)?,)*
+                })
+            }
+        }
+    };
 }
 
-/// Atoms the loop names: property names it reads itself and the `typeof`
-/// results. Atoms are strong roots, so they stay valid.
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct Names {
-    pub length: StringId,
-    pub callee: StringId,
-    pub last_index: StringId,
-    pub index: StringId,
-    pub input: StringId,
-    pub groups: StringId,
-    pub prototype: StringId,
-    pub constructor: StringId,
-    pub message: StringId,
-    pub name: StringId,
-    pub value_of: StringId,
-    pub to_string: StringId,
-    pub undefined: StringId,
-    pub null: StringId,
-    pub true_: StringId,
-    pub false_: StringId,
-    pub object: StringId,
-    pub boolean: StringId,
-    pub number: StringId,
-    pub string: StringId,
-    pub symbol: StringId,
-    pub function: StringId,
-    pub bigint: StringId,
-    pub empty: StringId,
+names! {
+    length: "length",
+    callee: "callee",
+    caller: "caller",
+    arguments: "arguments",
+    last_index: "lastIndex",
+    index: "index",
+    indices: "indices",
+    input: "input",
+    groups: "groups",
+    prototype: "prototype",
+    constructor: "constructor",
+    message: "message",
+    name: "name",
+    cause: "cause",
+    errors: "errors",
+    value_of: "valueOf",
+    to_string: "toString",
+    to_json: "toJSON",
+    undefined: "undefined",
+    null: "null",
+    true_: "true",
+    false_: "false",
+    object: "object",
+    boolean: "boolean",
+    number: "number",
+    string: "string",
+    symbol: "symbol",
+    function: "function",
+    bigint: "bigint",
+    empty: "",
+    value: "value",
+    writable: "writable",
+    enumerable: "enumerable",
+    configurable: "configurable",
+    get: "get",
+    set: "set",
+    next: "next",
+    done: "done",
+    return_: "return",
+    throw: "throw",
+    then: "then",
+    proto: "__proto__",
+    raw: "raw",
+    join: "join",
+    default: "default",
+    flags: "flags",
+    source: "source",
+    exec: "exec",
+    size: "size",
+    iterator_tag: "Iterator",
+    resolve: "resolve",
+    reject: "reject",
+    promise: "promise",
+    status: "status",
+    reason: "reason",
+    fulfilled: "fulfilled",
+    rejected: "rejected",
 }
 
 impl Names {
-    fn new(heap: &mut Heap) -> Result<Names, HeapError> {
-        Ok(Names {
-            length: heap.intern("length")?,
-            callee: heap.intern("callee")?,
-            last_index: heap.intern("lastIndex")?,
-            index: heap.intern("index")?,
-            input: heap.intern("input")?,
-            groups: heap.intern("groups")?,
-            prototype: heap.intern("prototype")?,
-            constructor: heap.intern("constructor")?,
-            message: heap.intern("message")?,
-            name: heap.intern("name")?,
-            value_of: heap.intern("valueOf")?,
-            to_string: heap.intern("toString")?,
-            undefined: heap.intern("undefined")?,
-            null: heap.intern("null")?,
-            true_: heap.intern("true")?,
-            false_: heap.intern("false")?,
-            object: heap.intern("object")?,
-            boolean: heap.intern("boolean")?,
-            number: heap.intern("number")?,
-            string: heap.intern("string")?,
-            symbol: heap.intern("symbol")?,
-            function: heap.intern("function")?,
-            bigint: heap.intern("bigint")?,
-            empty: heap.intern("")?,
-        })
-    }
-
     #[inline]
     pub fn key(id: StringId) -> PropertyKey {
         PropertyKey::atom(id)
+    }
+}
+
+macro_rules! well_known {
+    ($($field:ident: $text:expr,)*) => {
+        /// The well-known symbols (`Symbol.iterator`, …), fixed roots.
+        #[derive(Clone, Copy, Debug)]
+        pub(crate) struct WellKnown {
+            $(pub $field: SymbolId,)*
+        }
+
+        impl WellKnown {
+            fn new(heap: &mut Heap) -> Result<WellKnown, HeapError> {
+                Ok(WellKnown {
+                    $($field: {
+                        let description = heap.intern($text)?;
+                        let symbol = heap.alloc_symbol(Some(description), false)?;
+                        heap.add_fixed_root(Value::symbol(symbol));
+                        symbol
+                    },)*
+                })
+            }
+
+            /// Every well-known symbol with its property name on `Symbol`.
+            pub fn all(&self) -> Vec<(&'static str, SymbolId)> {
+                vec![$((&$text["Symbol.".len()..], self.$field),)*]
+            }
+        }
+    };
+}
+
+well_known! {
+    async_iterator: "Symbol.asyncIterator",
+    has_instance: "Symbol.hasInstance",
+    is_concat_spreadable: "Symbol.isConcatSpreadable",
+    iterator: "Symbol.iterator",
+    match_: "Symbol.match",
+    match_all: "Symbol.matchAll",
+    replace: "Symbol.replace",
+    search: "Symbol.search",
+    species: "Symbol.species",
+    split: "Symbol.split",
+    to_primitive: "Symbol.toPrimitive",
+    to_string_tag: "Symbol.toStringTag",
+    unscopables: "Symbol.unscopables",
+}
+
+impl WellKnown {
+    #[inline]
+    pub fn key(id: SymbolId) -> PropertyKey {
+        PropertyKey::symbol(id)
     }
 }
 
@@ -115,8 +273,20 @@ impl Names {
 /// roots of the heap.
 pub struct Realm {
     global: ObjectId,
-    intrinsics: [ObjectId; Intrinsic::COUNT],
+    /// Cells so the builtins can record the intrinsics they create while the
+    /// realm is shared (installation runs with a `Cx`); each is a fixed root.
+    intrinsics: [std::cell::Cell<ObjectId>; Intrinsic::COUNT],
     pub(crate) names: Names,
+    pub(crate) symbols: WellKnown,
+    /// The private key under which a home object keeps its class's brand
+    /// (section 5.1).
+    pub(crate) brand: SymbolId,
+    /// `%RegExp.prototype%`'s flag accessors as installed, for the `flags`
+    /// getter's fast path.
+    pub(crate) regexp_flags: std::cell::Cell<Option<crate::builtins::RegExpFlagCache>>,
+    /// The shape of a fresh `%RegExp%` instance (only `lastIndex`) and the
+    /// slot of `lastIndex`.
+    pub(crate) regexp_instance_shape: std::cell::Cell<Option<(crate::value::ShapeId, u32)>>,
 }
 
 impl Realm {
@@ -127,7 +297,12 @@ impl Realm {
 
     #[inline]
     pub fn intrinsic(&self, intrinsic: Intrinsic) -> ObjectId {
-        self.intrinsics[intrinsic as usize]
+        self.intrinsics[intrinsic as usize].get()
+    }
+
+    /// Records an intrinsic; the caller makes it a fixed root.
+    pub(crate) fn record_intrinsic(&self, intrinsic: Intrinsic, object: ObjectId) {
+        self.intrinsics[intrinsic as usize].set(object);
     }
 }
 
@@ -137,7 +312,7 @@ pub struct Runtime {
     /// code across heap calls (phase 2, section 2).
     code: CodeStore,
     realm: Realm,
-    host: Host,
+    pub(crate) host: Services,
     /// The regular-expression programs (phase 3, section 5.3): append-only,
     /// beside the heap like the code store.
     regexps: RegExpStore,
@@ -159,7 +334,8 @@ impl Runtime {
             crate::builtins::Native::FunctionPrototype.index(),
         )?;
         let function_prototype = root(&mut heap, function_prototype);
-        let array_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        // `%Array.prototype%` is itself an array (of length 0).
+        let array_prototype = heap.alloc_array(Some(object_prototype), 0)?;
         let array_prototype = root(&mut heap, array_prototype);
         let string_prototype =
             heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
@@ -167,15 +343,39 @@ impl Runtime {
         let regexp_prototype =
             heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         let regexp_prototype = root(&mut heap, regexp_prototype);
-        let number_prototype =
-            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        // `%Number.prototype%` and `%Boolean.prototype%` are wrappers of 0
+        // and `false`; `%String.prototype%` stays ordinary (its exotic
+        // indices would be empty), so the string-receiver cache keeps it.
+        let number_prototype = heap.alloc_internal(
+            ObjectKind::NumberWrapper,
+            crate::heap::object::InternalTag::None,
+            Some(object_prototype),
+            4,
+            &[Value::int32(0)],
+            Default::default(),
+            0,
+        )?;
         let number_prototype = root(&mut heap, number_prototype);
-        let boolean_prototype =
-            heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
+        let boolean_prototype = heap.alloc_internal(
+            ObjectKind::BooleanWrapper,
+            crate::heap::object::InternalTag::None,
+            Some(object_prototype),
+            4,
+            &[Value::FALSE],
+            Default::default(),
+            0,
+        )?;
         let boolean_prototype = root(&mut heap, boolean_prototype);
         let global = heap.alloc_object(ObjectKind::GlobalObject, Some(object_prototype), 16)?;
         let global = root(&mut heap, global);
+        // The global lexical environment (section 5.7): a dictionary like the
+        // global object, sharing its generation.
+        let lexical = heap.alloc_object(ObjectKind::GlobalObject, None, 16)?;
+        let lexical = root(&mut heap, lexical);
         let names = Names::new(&mut heap)?;
+        let symbols = WellKnown::new(&mut heap)?;
+        let brand = heap.alloc_symbol(None, true)?;
+        heap.add_fixed_root(Value::symbol(brand));
         let mut intrinsics = [object_prototype; Intrinsic::COUNT];
         intrinsics[Intrinsic::FunctionPrototype as usize] = function_prototype;
         intrinsics[Intrinsic::ArrayPrototype as usize] = array_prototype;
@@ -183,6 +383,7 @@ impl Runtime {
         intrinsics[Intrinsic::RegExpPrototype as usize] = regexp_prototype;
         intrinsics[Intrinsic::NumberPrototype as usize] = number_prototype;
         intrinsics[Intrinsic::BooleanPrototype as usize] = boolean_prototype;
+        intrinsics[Intrinsic::GlobalLexical as usize] = lexical;
         let error_prototype = heap.alloc_object(ObjectKind::Ordinary, Some(object_prototype), 4)?;
         intrinsics[Intrinsic::ErrorPrototype as usize] = root(&mut heap, error_prototype);
         for kind in ErrorKind::ALL {
@@ -194,14 +395,18 @@ impl Runtime {
         }
         let realm = Realm {
             global,
-            intrinsics,
+            intrinsics: intrinsics.map(std::cell::Cell::new),
             names,
+            symbols,
+            brand,
+            regexp_flags: std::cell::Cell::new(None),
+            regexp_instance_shape: std::cell::Cell::new(None),
         };
         let mut runtime = Runtime {
             heap,
             code: CodeStore::default(),
             realm,
-            host: Host::default(),
+            host: Services::default(),
             regexps: RegExpStore::default(),
         };
         let out_of_memory = crate::builtins::install(&mut runtime.cx())?;
@@ -223,7 +428,7 @@ impl Runtime {
 
     pub(crate) fn set_intrinsic(&mut self, intrinsic: Intrinsic, object: ObjectId) {
         self.heap.add_fixed_root(Value::object(object));
-        self.realm.intrinsics[intrinsic as usize] = object;
+        self.realm.record_intrinsic(intrinsic, object);
     }
 
     pub fn regexps(&self) -> &RegExpStore {
@@ -234,8 +439,19 @@ impl Runtime {
         &self.realm
     }
 
-    pub fn host(&mut self) -> &mut Host {
+    pub fn host(&mut self) -> &mut Services {
         &mut self.host
+    }
+
+    /// Whether `Atomics.wait` may block (Test262's `CanBlockIsFalse`
+    /// clears it).
+    pub fn set_can_block(&mut self, can_block: bool) {
+        self.host.can_block = can_block;
+    }
+
+    /// Installs the embedder's hooks (section 6.3).
+    pub fn set_host(&mut self, hooks: Box<dyn crate::host::Host>) {
+        self.host.hooks = hooks;
     }
 
     /// Sends `print` output to a buffer; [`Runtime::take_output`] returns it.
@@ -251,6 +467,11 @@ impl Runtime {
         }
     }
 
+    /// Defines the Test262 host object `$262` on the global object.
+    pub fn install_test262_host(&mut self) -> Result<(), HeapError> {
+        crate::builtins::test262::install(&mut self.cx())
+    }
+
     /// Defines the qjs `print` host function on the global object.
     pub fn install_print(&mut self) -> Result<(), HeapError> {
         crate::builtins::install_print(&mut self.cx())
@@ -261,6 +482,17 @@ impl Runtime {
     pub fn run_script(&mut self, script: ObjectId) -> Result<Value, Throw> {
         let global = Value::object(self.realm.global);
         self.call(Value::object(script), global, &[])
+    }
+
+    /// Runs pending jobs until the queue is empty (section 5.4); the host
+    /// calls it at its boundary. A job that throws stops the drain.
+    pub fn run_jobs(&mut self) -> Result<(), Throw> {
+        crate::vm::jobs::run_jobs(&mut self.cx())
+    }
+
+    /// Whether jobs are pending.
+    pub fn has_pending_jobs(&self) -> bool {
+        !self.heap.jobs.is_empty()
     }
 
     /// Calls `function`; the result or the thrown value is unrooted. The
@@ -323,40 +555,19 @@ impl Runtime {
         root: CodeUnitId,
         constants: &[&[Value]],
     ) -> Result<ObjectId, HeapError> {
-        let order = self.code.tree(root);
-        assert_eq!(order.len(), constants.len(), "one constant table per unit");
-        let position: FxHashMap<CodeUnitId, u32> = order
-            .iter()
-            .enumerate()
-            .map(|(index, &unit)| (unit, index as u32))
-            .collect();
-        let children: Vec<Vec<u32>> = order
-            .iter()
-            .map(|&id| {
-                let unit = self.code.get(id);
-                unit.children.iter().map(|child| position[child]).collect()
-            })
-            .collect();
-        let tree: Vec<BytecodeTemplate<'_>> = order
-            .iter()
-            .zip(constants)
-            .zip(&children)
-            .map(|((&unit, &constants), children)| {
-                assert_eq!(
-                    constants.len(),
-                    self.code.get(unit).constant_count as usize,
-                    "constant table length"
-                );
-                BytecodeTemplate {
-                    unit,
-                    constants,
-                    children,
-                }
-            })
-            .collect();
-        let prototype = self.intrinsic(Intrinsic::FunctionPrototype);
-        self.heap
-            .alloc_bytecode_function(Some(prototype), None, &tree)
+        self.compiler().instantiate(root, constants)
+    }
+
+    /// The heap, the code store and the realm, for a compilation before the
+    /// program runs (section 5.5).
+    pub fn compiler(&mut self) -> crate::vm::compile::Compiler<'_> {
+        crate::vm::compile::Compiler::owned(&mut self.heap, &mut self.code, &self.realm)
+    }
+
+    /// Installs the embedder's compiler, for `eval`, the `Function`
+    /// constructors and `$262.evalScript` (section 6.3).
+    pub fn set_compiler(&mut self, compile: crate::vm::compile::CompileFn) {
+        self.host.compile = Some(compile);
     }
 
     /// The inline-cache report of section 2.6, when the counters exist (the
@@ -450,6 +661,17 @@ impl Runtime {
 
     pub fn intrinsic(&self, intrinsic: Intrinsic) -> ObjectId {
         self.realm.intrinsic(intrinsic)
+    }
+
+    /// A tagged template's site object (phase 4, section 5.2): a frozen
+    /// array of the cooked strings with a frozen `raw` array of the raw
+    /// ones. The values need no rooting (atoms and `undefined`).
+    pub fn template_object(
+        &mut self,
+        cooked: &[Value],
+        raw: &[Value],
+    ) -> Result<ObjectId, HeapError> {
+        self.compiler().template_object(cooked, raw)
     }
 
     /// An ordinary object inheriting from `%Object.prototype%`.

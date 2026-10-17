@@ -79,7 +79,7 @@ fn measure(heap: &Heap) -> Size {
     let table = heap.atom_table();
     let content: usize = table
         .ids()
-        .map(|id| heap.string(id).repr.content_bytes())
+        .map(|id| heap.string(id).repr().content_bytes())
         .sum();
     Size {
         atoms: table.len(),

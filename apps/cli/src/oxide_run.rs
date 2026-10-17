@@ -1,11 +1,13 @@
 //! `oxide-run`: runs a script on the new core (#122, phase 2, section 5).
 //!
 //! ```text
-//! oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] FILE
+//! oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] [--test262] [--cannot-block] [--module] FILE...
 //! ```
 //!
-//! The script is compiled with the engine's front end, lowered to register
-//! code and run with `print` on the global object. An uncaught exception
+//! Each script is compiled with the engine's front end, lowered to register
+//! code and run with `print` on the global object; several files run in
+//! order as separate scripts of one realm, and the job queue drains after
+//! each. An uncaught exception
 //! prints its string to stderr; a construct outside the phase 2 surface
 //! prints `unsupported: <construct>`; both exit with status 1. `--gc-stress`
 //! needs a build with the `new-core-gc-stress` feature; `--ic-stats`, which
@@ -16,18 +18,24 @@ use std::process::ExitCode;
 
 use quickjs_oxide::engine::api::new_core::{self, NewCoreOptions};
 
-const USAGE: &str = "usage: oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] FILE";
+const USAGE: &str = "usage: oxide-run [--disassemble] [--gc-stress=N] [--heap-cap-mib N] [--ic-stats] [--gc-stats] [--test262] [--cannot-block] [--module] FILE...";
 
 struct Arguments {
-    file: String,
+    /// The scripts, run in order as separate scripts of one realm.
+    files: Vec<String>,
     disassemble: bool,
     options: NewCoreOptions,
 }
 
 fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
-    let mut file = None;
+    let mut files = Vec::new();
     let mut disassemble = false;
-    let mut options = NewCoreOptions::default();
+    let mut options = NewCoreOptions {
+        services: Some(std::rc::Rc::new(
+            quickjs_oxide_host::SystemHostServices::default(),
+        )),
+        ..NewCoreOptions::default()
+    };
     while let Some(arg) = args.next() {
         if arg == "--disassemble" {
             disassemble = true;
@@ -42,6 +50,12 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             options.ic_stats = true;
         } else if arg == "--gc-stats" {
             options.gc_stats = true;
+        } else if arg == "--test262" {
+            options.test262 = true;
+        } else if arg == "--cannot-block" {
+            options.cannot_block = true;
+        } else if arg == "--module" {
+            options.module = true;
         } else if arg == "--heap-cap-mib" {
             let value = args.next().ok_or("--heap-cap-mib needs a value")?;
             let mib: usize = value
@@ -50,12 +64,15 @@ fn parse(mut args: impl Iterator<Item = String>) -> Result<Arguments, String> {
             options.heap_cap = Some(mib << 20);
         } else if arg.starts_with('-') && arg != "-" {
             return Err(format!("unknown option {arg}"));
-        } else if file.replace(arg).is_some() {
-            return Err("only one file".into());
+        } else {
+            files.push(arg);
         }
     }
+    if files.is_empty() {
+        return Err("no file".into());
+    }
     Ok(Arguments {
-        file: file.ok_or("no file")?,
+        files,
         disassemble,
         options,
     })
@@ -73,17 +90,21 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let source = match std::fs::read(&arguments.file) {
-        Ok(source) => source,
-        Err(error) => {
-            eprintln!("oxide-run: {}: {error}", arguments.file);
-            return ExitCode::from(2);
+    let mut sources = Vec::new();
+    for file in &arguments.files {
+        match std::fs::read(file) {
+            Ok(source) => sources.push((source, file.clone())),
+            Err(error) => {
+                eprintln!("oxide-run: {file}: {error}");
+                return ExitCode::from(2);
+            }
         }
-    };
+    }
     let result = if arguments.disassemble {
-        new_core::disassemble(&source, &arguments.file).map(|text| print!("{text}"))
+        let (source, file) = sources.last().expect("a file");
+        new_core::disassemble(source, file).map(|text| print!("{text}"))
     } else {
-        new_core::run(&source, &arguments.file, &arguments.options)
+        new_core::run_scripts(&sources, &arguments.options)
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

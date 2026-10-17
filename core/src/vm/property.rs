@@ -60,20 +60,46 @@ fn slot_value(heap: &Heap, object: ObjectId, slot: u32, property: PropertyFlags)
     }
 }
 
-/// `key` on `object` or its prototypes.
+/// The outcome of a heap-only walk of a prototype chain.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Lookup {
+    Hit(Found),
+    Miss,
+    /// The walk met an exotic object (section 3.1): the lookup continues
+    /// through `vm::object`'s internal methods from this holder.
+    Exotic(ObjectId),
+}
+
+/// `key` on `object` or its prototypes, as far as the heap alone answers.
 #[inline]
-pub(crate) fn find(
-    heap: &Heap,
-    names: &Names,
-    object: ObjectId,
-    key: PropertyKey,
-) -> Option<Found> {
+pub(crate) fn lookup(heap: &Heap, names: &Names, object: ObjectId, key: PropertyKey) -> Lookup {
     let mut current = object;
     loop {
-        if let Some(found) = own(heap, names, current, key) {
-            return Some(found);
+        if heap.object_kind(current).is_exotic() {
+            return Lookup::Exotic(current);
         }
-        current = heap.prototype_of(current)?;
+        if let Some(found) = own(heap, names, current, key) {
+            return Lookup::Hit(found);
+        }
+        match heap.prototype_of(current) {
+            Some(prototype) => current = prototype,
+            None => return Lookup::Miss,
+        }
+    }
+}
+
+/// `[[Get]]` of `key` on `object` for `receiver`.
+#[inline]
+fn get_from(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    receiver: Value,
+) -> Result<Value, Throw> {
+    match lookup(cx.heap, &cx.realm.names, object, key) {
+        Lookup::Hit(found) => value_of(cx, Some(found), receiver),
+        Lookup::Miss => Ok(Value::UNDEFINED),
+        Lookup::Exotic(holder) => super::object::get(cx, holder, key, receiver),
     }
 }
 
@@ -108,8 +134,7 @@ pub(crate) fn get_value(
     object: ObjectId,
     key: PropertyKey,
 ) -> Result<Value, Throw> {
-    let found = find(cx.heap, &cx.realm.names, object, key);
-    value_of(cx, found, Value::object(object))
+    get_from(cx, object, key, Value::object(object))
 }
 
 pub(crate) fn length_value(length: u32) -> Value {
@@ -126,13 +151,13 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
         Kind::Object => receiver.as_object().unwrap(),
         Kind::String => {
             let id = receiver.as_string().unwrap();
-            let length = cx.heap.string(id).repr.len();
+            let length = cx.heap.string_len(id);
             match key.kind() {
                 KeyKind::String(name) if name == cx.realm.names.length => {
                     return Ok(length_value(length as u32));
                 }
                 KeyKind::Index(index) if (index as usize) < length => {
-                    let unit = cx.heap.string(id).repr.unit(index as usize);
+                    let unit = cx.heap.string(id).repr().unit(index as usize);
                     let string = cx
                         .heap
                         .intern_units(&[unit])
@@ -144,6 +169,8 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
         }
         Kind::Number | Kind::Int32 => cx.realm.intrinsic(Intrinsic::NumberPrototype),
         Kind::Bool => cx.realm.intrinsic(Intrinsic::BooleanPrototype),
+        Kind::Symbol => cx.realm.intrinsic(Intrinsic::SymbolPrototype),
+        Kind::BigInt => cx.realm.intrinsic(Intrinsic::BigIntPrototype),
         Kind::Undefined | Kind::Null => {
             let message = format!(
                 "cannot read property '{}' of {}",
@@ -158,8 +185,7 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
         }
         _ => cx.realm.intrinsic(Intrinsic::ObjectPrototype),
     };
-    let found = find(cx.heap, &cx.realm.names, object, key);
-    value_of(cx, found, receiver)
+    get_from(cx, object, key, receiver)
 }
 
 /// `GetField`'s miss path (phase 3, section 2.2): a probe of a polymorphic
@@ -220,7 +246,7 @@ pub(crate) fn get_cached(
     // An array's or a string's `length` caches as the `LENGTH_TAG` entry.
     if fill && matches!(key.kind(), KeyKind::String(id) if id == names.length) {
         let length = match receiver.kind() {
-            Kind::String => Some(cx.heap.string(receiver.as_string().unwrap()).repr.len()),
+            Kind::String => Some(cx.heap.string_len(receiver.as_string().unwrap())),
             Kind::Object
                 if cx.heap.object_kind(receiver.as_object().unwrap()) == ObjectKind::Array =>
             {
@@ -251,6 +277,10 @@ pub(crate) fn get_cached(
     let heap = &*cx.heap;
     let mut holder = start;
     let walked = loop {
+        if heap.object_kind(holder).is_exotic() {
+            cx.heap.ics.count_miss(site, false);
+            return get(cx, receiver, key);
+        }
         if !named && heap.object_kind(holder) == ObjectKind::Array {
             break Err(Some(Found::Data(length_value(heap.array_length(holder)))));
         }
@@ -433,12 +463,28 @@ fn is_plain_data(property: PropertyFlags) -> bool {
     property.has(PropertyFlags::WRITABLE) && !property.has(PropertyFlags::ACCESSOR)
 }
 
-/// Whether an element write at `index` stays in the dense range.
+/// Whether an element write at `index` stays in the dense range: the object
+/// is not sparse and the index is under 1,024 or at most four times, and at
+/// most 64 Ki elements, past its range (so a fill from the top index down
+/// stays dense, and writes at doubling indices go sparse instead of growing
+/// the range without bound).
+#[inline]
+pub(crate) fn dense_index(heap: &Heap, object: ObjectId, index: u32) -> bool {
+    let header = heap.header(object);
+    if header.has(flags::SPARSE) || !header.kind.has_elements() {
+        return false;
+    }
+    let len = header.elements().len;
+    let reach = len
+        .max(256)
+        .saturating_mul(4)
+        .min(len.saturating_add(1 << 16));
+    index < reach
+}
+
 #[inline]
 fn dense(heap: &Heap, object: ObjectId, index: u32) -> bool {
-    let header = heap.header(object);
-    let reach = header.elements().len.max(8).saturating_mul(4);
-    index < reach
+    dense_index(heap, object, index)
 }
 
 /// `receiver[key] = value`.
@@ -467,14 +513,36 @@ pub(crate) fn set(
         _ => {
             // A setter on the primitive's prototype chain still runs.
             let prototype = match receiver.kind() {
-                Kind::String => cx.realm.intrinsic(Intrinsic::StringPrototype),
+                Kind::String => {
+                    // A string's own indices and `length` are read-only.
+                    let length = cx.heap.string_len(receiver.as_string().unwrap());
+                    let own = match key.kind() {
+                        KeyKind::Index(index) => (index as usize) < length,
+                        KeyKind::String(id) => id == cx.realm.names.length,
+                        KeyKind::Symbol(_) => false,
+                    };
+                    if own {
+                        return read_only(cx, key, strict);
+                    }
+                    cx.realm.intrinsic(Intrinsic::StringPrototype)
+                }
                 Kind::Number | Kind::Int32 => cx.realm.intrinsic(Intrinsic::NumberPrototype),
                 Kind::Bool => cx.realm.intrinsic(Intrinsic::BooleanPrototype),
+                Kind::Symbol => cx.realm.intrinsic(Intrinsic::SymbolPrototype),
+                Kind::BigInt => cx.realm.intrinsic(Intrinsic::BigIntPrototype),
                 _ => cx.realm.intrinsic(Intrinsic::ObjectPrototype),
             };
-            if let Some(Found::Accessor(_, setter)) = find(cx.heap, &cx.realm.names, prototype, key)
-            {
-                return call_setter(cx, setter, receiver, value, key, strict);
+            match lookup(cx.heap, &cx.realm.names, prototype, key) {
+                Lookup::Hit(Found::Accessor(_, setter)) => {
+                    return call_setter(cx, setter, receiver, value, key, strict);
+                }
+                Lookup::Exotic(holder) => {
+                    let done = super::object::set(cx, holder, key, value, receiver)?;
+                    if done || !strict {
+                        return Ok(());
+                    }
+                }
+                _ => {}
             }
             if strict {
                 let message = format!("cannot create property '{}'", key_text(cx.heap, key));
@@ -494,23 +562,59 @@ pub(crate) fn set_on(
     strict: bool,
 ) -> Result<(), Throw> {
     let heap = &mut *cx.heap;
+    let header = *heap.header(object);
+    if header.kind.is_exotic() {
+        return generic_set(cx, object, key, value, strict);
+    }
     match key.kind() {
         KeyKind::Index(index) => {
             if let Some(cell) = super::arguments::mapped_cell(heap, object, index) {
-                heap.scope_set(cell, 0, 0, value);
-                return Ok(());
+                let writable = heap
+                    .lookup_own(object, key)
+                    .is_none_or(|(_, flags)| flags.has(PropertyFlags::WRITABLE));
+                if writable {
+                    heap.scope_set(cell, 0, 0, value);
+                    return Ok(());
+                }
+                return read_only(cx, key, strict);
             }
-            if heap.lookup_own(object, key).is_none() && dense(heap, object, index) {
-                // An inherited setter or read-only index on a prototype is
-                // phase 4's: elements are written directly.
+            if !heap.get_element(object, index).is_empty() {
+                // An existing element is writable data.
+                return heap
+                    .set_element(object, index, value)
+                    .map_err(|_| error::oom(cx.realm));
+            }
+            // A new element: no inherited setter or read-only index may
+            // intervene, the object must be extensible, and an array's
+            // length writable past its end.
+            if heap.lookup_own(object, key).is_none()
+                && dense(heap, object, index)
+                && header.has(flags::EXTENSIBLE)
+                && heap.holes_writable()
+                && !(header.kind == ObjectKind::Array
+                    && header.has(flags::LENGTH_READONLY)
+                    && index >= header.payload)
+            {
                 return heap
                     .set_element(object, index, value)
                     .map_err(|_| error::oom(cx.realm));
             }
         }
         KeyKind::String(id) if id == cx.realm.names.length => {
-            if heap.object_kind(object) == ObjectKind::Array {
-                return set_length(cx, object, value);
+            if header.kind == ObjectKind::Array {
+                // `OrdinarySet` fails on a read-only `length` before any
+                // conversion; a writable one goes through `ArraySetLength`.
+                if header.has(flags::LENGTH_READONLY) {
+                    return read_only(cx, key, strict);
+                }
+                let descriptor = super::object::Descriptor {
+                    value: Some(value),
+                    ..Default::default()
+                };
+                if !super::object::array_set_length(cx, object, &descriptor)? {
+                    return read_only(cx, key, strict);
+                }
+                return Ok(());
             }
         }
         _ => {}
@@ -527,14 +631,35 @@ pub(crate) fn set_on(
         return read_only(cx, key, strict);
     }
     // An inherited setter runs; an inherited read-only property blocks the
-    // write.
+    // write; an exotic prototype decides itself.
     let mut current = heap.prototype_of(object);
     while let Some(prototype) = current {
-        if let Some((slot, property)) = heap.lookup_own(prototype, key) {
-            if property.has(PropertyFlags::ACCESSOR) {
-                let setter = heap.get_slot(prototype, slot + 1);
-                return call_setter(cx, setter, Value::object(object), value, key, strict);
+        let kind = heap.object_kind(prototype);
+        if kind.is_exotic() {
+            return generic_set(cx, object, key, value, strict);
+        }
+        let inherited = match key.kind() {
+            KeyKind::Index(index) if !heap.get_element(prototype, index).is_empty() => {
+                Some(PropertyFlags::DEFAULT)
             }
+            KeyKind::Index(index)
+                if super::arguments::mapped_cell(heap, prototype, index).is_some() =>
+            {
+                Some(PropertyFlags::DEFAULT)
+            }
+            KeyKind::String(id) if id == cx.realm.names.length && kind == ObjectKind::Array => {
+                let readonly = heap.header(prototype).has(flags::LENGTH_READONLY);
+                Some(PropertyFlags::data(!readonly, false, false))
+            }
+            _ => match heap.lookup_own(prototype, key) {
+                Some((slot, property)) if property.has(PropertyFlags::ACCESSOR) => {
+                    let setter = heap.get_slot(prototype, slot + 1);
+                    return call_setter(cx, setter, Value::object(object), value, key, strict);
+                }
+                found => found.map(|(_, property)| property),
+            },
+        };
+        if let Some(property) = inherited {
             if !property.has(PropertyFlags::WRITABLE) {
                 return read_only(cx, key, strict);
             }
@@ -543,6 +668,24 @@ pub(crate) fn set_on(
         current = heap.prototype_of(prototype);
     }
     add(cx, object, key, value, strict)
+}
+
+/// `[[Set]]` through the internal methods, for receivers and chains the
+/// heap walk above does not model.
+#[inline(never)]
+fn generic_set(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    value: Value,
+    strict: bool,
+) -> Result<(), Throw> {
+    let done = super::object::set(cx, object, key, value, Value::object(object))?;
+    if !done && strict {
+        let message = format!("'{}' is read-only", key_text(cx.heap, key));
+        return Err(error::type_error(cx, &message));
+    }
+    Ok(())
 }
 
 /// Calls a setter with `receiver` as `this`; an absent setter is a
@@ -590,14 +733,16 @@ fn add(
         }
         return Ok(());
     }
+    if super::object::array_index(heap, key).is_some() {
+        let done = super::object::create_data_property(cx, object, key, value)?;
+        if !done && strict {
+            let message = format!("cannot define property '{}'", key_text(cx.heap, key));
+            return Err(error::type_error(cx, &message));
+        }
+        return Ok(());
+    }
     heap.add_property(object, key, PropertyFlags::DEFAULT, value)
         .map_err(|_| error::oom(cx.realm))?;
-    if let KeyKind::Index(index) = key.kind()
-        && heap.object_kind(object) == ObjectKind::Array
-        && index >= heap.array_length(object)
-    {
-        heap.set_array_length(object, index + 1);
-    }
     Ok(())
 }
 
@@ -670,37 +815,6 @@ pub(crate) fn define_accessor(
     result.map_err(|_| error::oom(cx.realm))
 }
 
-/// `array.length = value`.
-fn set_length(cx: &mut Cx<'_>, array: ObjectId, value: Value) -> Result<(), Throw> {
-    let length = match value.as_int32() {
-        Some(length) if length >= 0 => length as u32,
-        _ => {
-            let number = super::ops::to_number(cx, value)?;
-            let length = super::number::to_uint32(number);
-            if f64::from(length) != number {
-                return Err(error::range_error(cx, "invalid array length"));
-            }
-            length
-        }
-    };
-    let heap = &mut *cx.heap;
-    let old = heap.array_length(array);
-    heap.set_array_length(array, length);
-    if length < old {
-        // Far indices stored as named properties go too.
-        let cut: Vec<PropertyKey> = heap
-            .own_keys(array)
-            .into_iter()
-            .filter(|key| matches!(key.kind(), KeyKind::Index(index) if index >= length))
-            .collect();
-        for key in cut {
-            heap.delete_property(array, key)
-                .map_err(|_| error::oom(cx.realm))?;
-        }
-    }
-    Ok(())
-}
-
 /// `delete receiver[key]`.
 #[inline(never)]
 pub(crate) fn delete(
@@ -724,7 +838,7 @@ pub(crate) fn delete(
             return Err(error::type_error(cx, &message));
         }
         Kind::String => {
-            let length = cx.heap.string(receiver.as_string().unwrap()).repr.len();
+            let length = cx.heap.string_len(receiver.as_string().unwrap());
             let own = match key.kind() {
                 KeyKind::String(id) => id == cx.realm.names.length,
                 KeyKind::Index(index) => (index as usize) < length,
@@ -734,12 +848,16 @@ pub(crate) fn delete(
         }
         _ => return Ok(true),
     };
+    if cx.heap.object_kind(object).is_exotic() {
+        let done = super::object::delete(cx, object, key)?;
+        return non_configurable(cx, key, !done, strict).map(|_| done);
+    }
     let heap = &mut *cx.heap;
     match key.kind() {
         KeyKind::Index(index) => {
             if super::arguments::mapped_cell(heap, object, index).is_some() {
-                super::arguments::unmap(heap, object, index);
-                return Ok(true);
+                let done = super::object::ordinary_delete(cx, object, key)?;
+                return non_configurable(cx, key, !done, strict).map(|_| done);
             }
             if !heap.get_element(object, index).is_empty() {
                 heap.set_element(object, index, Value::EMPTY)
@@ -784,8 +902,12 @@ fn non_configurable(
 }
 
 /// `key in object`, along the prototype chain.
-pub(crate) fn has(heap: &Heap, names: &Names, object: ObjectId, key: PropertyKey) -> bool {
-    find(heap, names, object, key).is_some()
+pub(crate) fn has(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Result<bool, Throw> {
+    match lookup(cx.heap, &cx.realm.names, object, key) {
+        Lookup::Hit(_) => Ok(true),
+        Lookup::Miss => Ok(false),
+        Lookup::Exotic(holder) => super::object::has_property(cx, holder, key),
+    }
 }
 
 /// A key as text, for messages.
@@ -811,14 +933,13 @@ pub(crate) fn key_text(heap: &Heap, key: PropertyKey) -> String {
 /// atoms; `ForInNext` turns an index into a string as it yields it.
 #[inline(never)]
 pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
-    let heap = &*cx.heap;
     let mut keys: Vec<Value> = Vec::new();
     let mut seen = crate::heap::hash::FxHashSet::default();
     let start = match value.kind() {
         Kind::Undefined | Kind::Null => None,
         Kind::Object => value.as_object(),
         Kind::String => {
-            let length = heap.string(value.as_string().unwrap()).repr.len();
+            let length = cx.heap.string_len(value.as_string().unwrap());
             for index in 0..length.min(i32::MAX as usize) {
                 keys.push(Value::int32(index as i32));
                 if let Some(key) = PropertyKey::index(index as u32) {
@@ -831,8 +952,25 @@ pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw
         Kind::Bool => Some(cx.realm.intrinsic(Intrinsic::BooleanPrototype)),
         _ => Some(cx.realm.intrinsic(Intrinsic::ObjectPrototype)),
     };
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(value);
     let mut current = start;
     while let Some(object) = current {
+        if cx.heap.object_kind(object).is_exotic() {
+            // Proxies, typed arrays, string wrappers and namespaces: the
+            // internal methods, which may run JavaScript.
+            cx.heap.roots().push(Value::object(object));
+            let result = for_in_exotic(cx, object, &mut keys, &mut seen);
+            match result {
+                Ok(next) => current = next,
+                Err(throw) => {
+                    cx.heap.roots().truncate(mark);
+                    return Err(throw);
+                }
+            }
+            continue;
+        }
+        let heap = &*cx.heap;
         for key in own_keys_with_arguments(heap, object) {
             if !seen.insert(key) {
                 continue;
@@ -853,6 +991,7 @@ pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw
         }
         current = heap.prototype_of(object);
     }
+    cx.heap.roots().truncate(mark);
     let count = keys.len() as u32;
     let iterator = cx
         .heap
@@ -868,6 +1007,44 @@ pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw
     heap.set_raw_slot(iterator, 1, Value::int32(count as i32));
     heap.set_payload(iterator, 0);
     Ok(Value::object(iterator))
+}
+
+/// The for-in keys of an exotic object (`EnumerateObjectProperties`):
+/// `[[OwnPropertyKeys]]`, then `[[GetOwnProperty]]` of each string key; the
+/// next object is its `[[GetPrototypeOf]]`.
+fn for_in_exotic(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    keys: &mut Vec<Value>,
+    seen: &mut crate::heap::hash::FxHashSet<PropertyKey>,
+) -> Result<Option<ObjectId>, Throw> {
+    for key in super::object::own_property_keys(cx, object)? {
+        if matches!(key.kind(), KeyKind::Symbol(_)) {
+            continue;
+        }
+        let Some(descriptor) = super::object::get_own_property(cx, object, key)? else {
+            continue;
+        };
+        if !seen.insert(key) || descriptor.enumerable != Some(true) {
+            continue;
+        }
+        match key.kind() {
+            KeyKind::Index(index) if index <= i32::MAX as u32 => {
+                keys.push(Value::int32(index as i32))
+            }
+            KeyKind::Index(index) => {
+                let text = index.to_string();
+                let id = cx
+                    .heap
+                    .intern(&text)
+                    .map_err(|error| error::heap_error(cx, error))?;
+                keys.push(Value::string(id));
+            }
+            KeyKind::String(id) => keys.push(Value::string(id)),
+            KeyKind::Symbol(_) => {}
+        }
+    }
+    super::object::get_prototype_of(cx, object).map(|prototype| prototype.as_object())
 }
 
 /// Own keys in `[[OwnPropertyKeys]]` order, with the mapped indices of an
@@ -912,7 +1089,7 @@ pub(crate) fn for_in_next(cx: &mut Cx<'_>, iterator: Value) -> Result<Option<Val
             None => PropertyKey::atom(key.as_string().expect("a key atom")),
         };
         if let Some(object) = object.as_object()
-            && !has(heap, &cx.realm.names, object, property_key)
+            && !has(cx, object, property_key)?
         {
             continue;
         }

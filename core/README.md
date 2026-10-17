@@ -12,7 +12,10 @@ the measurements are in [`docs/performance/new-core-phase1-results.md`](../docs/
 phase 2 is planned in [`docs/performance/new-core-phase2.md`](../docs/performance/new-core-phase2.md)
 and measured in [`docs/performance/new-core-phase2-results.md`](../docs/performance/new-core-phase2-results.md);
 phase 3 (inline caches, the V8 v7 slice and the go/no-go) is planned in
-[`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md).
+[`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md)
+and measured in [`docs/performance/new-core-phase3-results.md`](../docs/performance/new-core-phase3-results.md);
+phase 4 (the builtins, strings and the full language surface) is planned in
+[`docs/performance/new-core-phase4.md`](../docs/performance/new-core-phase4.md).
 
 The crate has `#![forbid(unsafe_code)]` and one dependency, the
 regular-expression crate `oxide-regexp` (`regexp/`, phase 3 section 6.1),

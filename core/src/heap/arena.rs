@@ -63,7 +63,7 @@ impl<T: Record> Arena<T> {
     }
 
     /// Stores `value`, reusing the free list first. Returns its index.
-    #[inline]
+    #[inline(always)]
     pub fn alloc(&mut self, value: T) -> u32 {
         self.extra += value.extra_bytes();
         self.live_count += 1;

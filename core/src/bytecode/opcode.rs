@@ -232,6 +232,17 @@ opcodes! {
     /// A script-level declaration: defines global `imm` as `undefined` unless
     /// it exists.
     DeclareGlobal: Key,
+    /// A script-level `let` or `class` (section 5.7): a binding of the global
+    /// lexical environment, in the TDZ.
+    DeclareGlobalLet: Key,
+    /// A script-level `const`.
+    DeclareGlobalConst: Key,
+    /// `GlobalDeclarationInstantiation`'s check for a `var` or function
+    /// name: a `SyntaxError` if a lexical binding has it.
+    CheckGlobalVar: Key,
+    /// The check for a lexical name: a `SyntaxError` if a lexical binding or
+    /// a non-configurable global property has it.
+    CheckGlobalLexical: Key,
 
     // ---- captured bindings ----
     // A binding captured by an inner function lives in a cell (a one-slot
@@ -289,6 +300,155 @@ opcodes! {
     /// outside the surface, reached at run time).
     ThrowInternal: Key,
 
+    // ---- the phase 4 surface (out of line) ----
+    /// Throws `TypeError` when `a` (the `new.target` register) is
+    /// `undefined`: a class constructor called without `new`.
+    CheckCtor: A,
+    /// `a` = the running function's home object (section 5.1).
+    LoadHomeObject: A,
+    /// `a = ToObject(b)`.
+    ToObject: AB,
+    /// Sets the prototype of the fresh literal `a` to `b` when `b` is an
+    /// object or `null` (`__proto__: v` in a literal).
+    SetProto: AB,
+    /// Defines method `imm` of `a` as function `b` with home object `a`;
+    /// `c` holds the [`method`] flags.
+    DefineMethod: ABKey,
+    /// Defines method `b` (a canonical key) of `a` as function `c`; `imm`
+    /// holds the [`method`] flags.
+    DefineMethodComputed: ABC,
+    /// Names function `a` by the key in `b` when its name is empty
+    /// (`SetFunctionName` for anonymous functions in named positions).
+    SetFunctionName: AB,
+    /// Throws `TypeError` whose message is the atom `imm`.
+    ThrowType: Key,
+    /// Throws `ReferenceError` whose message is the atom `imm`.
+    ThrowReference: Key,
+    /// `a = import(b, c)` (section 5.6): the promise of module `b`'s
+    /// namespace, with the options in `c`.
+    ImportCall: ABC,
+
+    // ---- iteration (section 4.2): a record is three registers ----
+    /// The record at `a` (iterator, `next`, done flag; or array, the
+    /// `Value::EMPTY` mark, index) for the iterable in `b`.
+    IterStart: AB,
+    /// The next value of record `b` to `a` and whether it is done to `c`.
+    IterNext: ABC,
+    /// Closes record `a` unless it is done (a normal completion).
+    IterClose: A,
+    /// Closes record `a` unless it is done for the throw completion in `b`;
+    /// errors of `return` are dropped.
+    IterCloseThrow: AB,
+    /// `a` = record `b`'s `next` called with `c` (`yield*`), unchecked.
+    IterCallNext: ABC,
+    /// `a` = record `b`'s `return` (`imm` 0) or `throw` (`imm` 1) called
+    /// with `c`, and `a + 1` whether the method was missing (then `a` = `c`).
+    IterCall: ABC,
+    /// Throws `TypeError` when `a` is not an object.
+    IterCheckObject: A,
+    /// The async record at `a` for `b`: its `@@asyncIterator`, or an
+    /// async-from-sync iterator over its sync one.
+    IterStartAsync: AB,
+    /// `a` = record `b`'s `next()` result, unchecked; the record is marked
+    /// done until [`Opcode::IterResult`] reads the settled result.
+    IterNextRaw: AB,
+    /// Reads the settled result in `a` of record `b`: its value to `a`, its
+    /// done flag to `c` (the record is open again unless done).
+    IterResult: ABC,
+
+    // ---- classes (section 5.1) ----
+    /// `a` = the class constructor made from the closure in `b` with the
+    /// parent in `a` (`c` 1 when it has a heritage) and `b` = its
+    /// prototype; `imm` is the class name.
+    MakeClass: ABKey,
+    /// Installs the instance-field initializer `c` on constructor `a`, with
+    /// home object `b`.
+    InstallFields: ABC,
+    /// Runs the instance-field initializer of constructor `b` on `a`.
+    InitFields: AB,
+    /// Runs the static initializer `b` with `this` and home object `a`.
+    RunStaticInit: AB,
+    /// Calls static block `a` with the frame's `this` and home object.
+    CallStaticBlock: A,
+    /// `a` = the prototype of home object `b` (`null` allowed).
+    GetSuper: AB,
+    /// `a` = `base[key]` with `receiver` as `this`: receiver, base, key in
+    /// `b`, `b + 1`, `b + 2`.
+    GetSuperValue: AB,
+    /// `base[key] = value` with `receiver`: receiver, base, key, value in
+    /// `a` .. `a + 3`.
+    PutSuperValue: A,
+    /// `a` = the result of the implicit derived constructor: the parent
+    /// constructed with the frame's arguments and the `new.target` in `b`.
+    InitDerived: AB,
+    /// Binds a derived constructor's `this` register `a` to `b` (a
+    /// `ReferenceError` if already bound).
+    InitThis: AB,
+    /// [`Opcode::InitThis`] on the cell in `a`.
+    InitThisCell: AB,
+    /// [`Opcode::InitThis`] on the running function's capture `imm`.
+    InitThisCaptured: ACapture,
+    /// A derived constructor's return value: `a` stays if it is an object,
+    /// becomes the `this` in `b` for `undefined`; anything else throws.
+    CheckDerivedReturn: AB,
+
+    // ---- private names (section 5.1) ----
+    /// `a` = a new private name described by atom `imm`.
+    NewPrivateName: AKey,
+    /// Sets the home object of method `a` to `b` and gives `b` a brand.
+    SetHomeObject: AB,
+    /// Names private method `a` by atom `imm` after the prefix `c` (0 none,
+    /// 1 `get `, 2 `set `).
+    NamePrivateMethod: AKey,
+    /// `a` = own private field `c` of `b` (a `TypeError` if absent).
+    GetPrivate: ABC,
+    /// Own private field `c` of `a` = `b` (a `TypeError` if absent).
+    PutPrivate: ABC,
+    /// Defines own private field `c` of `a` as `b` (a `TypeError` if
+    /// present).
+    DefinePrivate: ABC,
+    /// `a` = whether `b` has own private field `c`.
+    PrivateIn: ABC,
+    /// `a` = private method `c` after a brand check of `b`.
+    GetPrivateMethod: ABC,
+    /// `a` = the private getter `c` called on `b` after a brand check.
+    CallPrivateGetter: ABC,
+    /// Calls the private setter `c` on `a` with `b` after a brand check.
+    CallPrivateSetter: ABC,
+    /// `a` = whether `b` carries the brand of private method `c`.
+    PrivateBrandIn: ABC,
+
+    // ---- suspension (section 4.3) ----
+    /// A generator suspends before its body: the call returns the
+    /// generator object.
+    InitialYield: None,
+    /// An async function starts: its promise is the call's result, and the
+    /// body runs until it awaits or completes.
+    AsyncStart: None,
+    /// Suspends with the value in `a`; a resumption writes its value to `a`
+    /// and its kind (0 `next`, 1 `return`) to `a + 1`, or throws here.
+    Yield: A,
+    /// `yield*`'s suspension: the iterator result in `a` is returned as is;
+    /// a `throw` resumes with kind 2 rather than throwing.
+    YieldStar: A,
+    /// Awaits the value in `a`; the fulfilled value is written to `a`, a
+    /// rejection throws here.
+    Await: A,
+
+    // ---- object spread and references ----
+    /// Copies the enumerable own properties of `b` onto `a`.
+    CopyData: AB,
+    /// [`Opcode::CopyData`] except the keys own by the object in `c`.
+    CopyDataExcluded: ABC,
+    /// `a` = the environment holding global `imm`: the lexical one, the
+    /// global object, or `undefined` when unresolvable.
+    GlobalRef: AKey,
+    /// `a` = binding `imm` of environment `b` (a `ReferenceError` if
+    /// missing; `undefined` with `c` 1).
+    GetRef: ABKey,
+    /// Binding `imm` of environment `a` = `b`.
+    PutRef: ABKey,
+
     // ---- allocation ----
     /// `a = {}` with room for `imm` properties.
     NewObject: ACount,
@@ -323,6 +483,13 @@ opcodes! {
     Return: A,
     ReturnUndefined: None,
     Throw: A,
+}
+
+/// The flags of `DefineMethod` and `DefineMethodComputed`.
+pub mod method {
+    pub const ENUMERABLE: u32 = 1 << 0;
+    pub const GETTER: u32 = 1 << 1;
+    pub const SETTER: u32 = 1 << 2;
 }
 
 impl Opcode {

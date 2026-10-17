@@ -26,8 +26,11 @@ fn run_with(source: &str, setup: impl FnOnce(&mut Runtime)) -> (String, u64) {
     runtime.capture_output();
     let lowered = lower_script(&mut runtime, &script).unwrap_or_else(|error| panic!("{error}"));
     let handle = runtime.hold(oxide_core::Value::object(lowered.function));
-    let result = runtime.run_script(lowered.function);
+    let mut result = runtime.run_script(lowered.function);
     runtime.release(handle);
+    if result.is_ok() {
+        result = runtime.run_jobs().map(|()| oxide_core::Value::UNDEFINED);
+    }
     let mut output = runtime.take_output();
     if let Err(thrown) = result {
         let handle = runtime.hold(thrown.0);
@@ -79,6 +82,10 @@ fn run_current_core(source: &str) -> String {
             .call(&report, Value::Undefined, &[exception])
             .unwrap();
     }
+    while runtime
+        .execute_pending_job()
+        .is_ok_and(|outcome| outcome.executed())
+    {}
     let Value::String(output) = context
         .eval("__out.length ? __out.join('\\n') + '\\n' : ''")
         .unwrap()
@@ -149,6 +156,9 @@ fn collection_under_200_frames_preserves_registers() {
     let (output, collections) = run_with(&source, |runtime| {
         let gc = runtime.heap_mut().gc_mut();
         gc.min_heap = 64 << 10;
+        // `junk` stays live, so the trigger grows with it; a small factor
+        // keeps collections frequent above phase 4's larger startup heap.
+        gc.growth_factor = 1.25;
         runtime.heap_mut().collect();
     });
     assert_eq!(output, "200\n");
@@ -217,6 +227,23 @@ const NOT_EMITTED: &[Opcode] = &[
     Opcode::JUndefinedOrNull,
     // Emitted only for a direct `eval` call, which the current core runs.
     Opcode::ThrowInternal,
+    // `new.target` is a register from phase 4 (section 4.5); the opcode
+    // remains for built units.
+    Opcode::LoadNewTarget,
+    // Class constructors and methods with `super`: the corpus gains them
+    // with classes (M3).
+    Opcode::CheckCtor,
+    Opcode::LoadHomeObject,
+    // Accessors in literals lower through `DefineMethod` with the getter
+    // and setter flags; the opcodes remain for built units.
+    Opcode::DefineGetter,
+    Opcode::DefineSetter,
+    // A reference read through a prepared global reference, emitted only
+    // in a function that also calls `eval` directly (M7).
+    Opcode::GetRef,
+    // `import()` needs the module host, which the corpus's scripts run
+    // without; Test262's dynamic-import tests run it (phase 4, section 5.6).
+    Opcode::ImportCall,
 ];
 
 /// The corpus and probes lower to every opcode the lowering can emit, so the
@@ -336,7 +363,7 @@ fn lowering_census() {
                 .filter(|constant| constant.as_child().is_some())
                 .map(|_| placeholder)
                 .collect();
-            match lower_function(&mut runtime, function, *parent, children) {
+            match lower_function(&mut runtime.compiler(), function, *parent, children) {
                 Ok(_) => lowered += 1,
                 Err(LowerError::Unsupported(construct)) => {
                     *reasons.entry(construct).or_insert(0) += 1;

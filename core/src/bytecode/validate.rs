@@ -67,9 +67,12 @@ fn fail<T>(at: Option<u32>, kind: ValidateErrorKind) -> Result<T, ValidateError>
     Err(ValidateError { at, kind })
 }
 
-/// Checks every operand of `unit`. `published` are the units already in the
-/// store; children must be among them.
-pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateError> {
+/// Checks every operand of `unit`. `published` finds the units already in
+/// the store; children must be among them.
+pub fn validate<'a>(
+    unit: &CodeUnit,
+    published: &dyn Fn(super::CodeUnitId) -> Option<&'a CodeUnit>,
+) -> Result<(), ValidateError> {
     use ValidateErrorKind as E;
     let len = unit.code.len() as u32;
     let registers = unit.register_count as u32;
@@ -89,7 +92,7 @@ pub fn validate(unit: &CodeUnit, published: &[CodeUnit]) -> Result<(), ValidateE
         return fail(None, E::LineTable);
     }
     for (index, &child) in unit.children.iter().enumerate() {
-        let Some(child_unit) = published.get(child.0 as usize) else {
+        let Some(child_unit) = published(child) else {
             return fail(Some(index as u32), E::UnpublishedChild(child.0));
         };
         for capture in &child_unit.captures {

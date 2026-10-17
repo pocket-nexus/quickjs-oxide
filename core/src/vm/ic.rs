@@ -156,7 +156,7 @@ pub(crate) fn get_hit(
     } else {
         let string = receiver.as_string()?;
         if entry.w0 == LENGTH_TAG {
-            return Some(length_value(strings.get(string.index()).repr.len()));
+            return Some(length_value(strings.get(string.index()).len()));
         }
         if entry.w0 != STRING_RECEIVER_TAG {
             return None;

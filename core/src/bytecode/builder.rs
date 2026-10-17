@@ -200,8 +200,12 @@ impl CodeBuilder {
             captures: layout.captures.into(),
             debug: DebugInfo {
                 name: layout.name.into(),
+                filename: layout.filename,
                 lines: self.lines.into(),
             },
+            name_atom: layout.name_atom,
+            length: layout.length,
+            source: layout.source,
         }
     }
 }
@@ -250,7 +254,7 @@ pub struct UnitLayout {
     pub register_count: u16,
     pub parameter_count: u16,
     pub local_count: u16,
-    pub flags: u8,
+    pub flags: u16,
     pub this_slots: u16,
     pub constant_count: u32,
     pub spill_register: Option<u16>,
@@ -258,4 +262,12 @@ pub struct UnitLayout {
     pub children: Vec<CodeUnitId>,
     pub captures: Vec<Capture>,
     pub name: String,
+    /// The function's `name` property (an atom), or `None` for `""`.
+    pub name_atom: Option<crate::value::StringId>,
+    /// The function's `length` property.
+    pub length: u16,
+    /// The function's source text, for `Function.prototype.toString`.
+    pub source: Option<Box<str>>,
+    /// The script or module the function belongs to.
+    pub filename: Option<std::rc::Rc<str>>,
 }

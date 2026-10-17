@@ -7,7 +7,7 @@
 //! mapped `arguments` object aliases the parameters through their cells: the
 //! lowering gives every parameter of such a function a cell.
 
-use super::error::{self, ErrorKind};
+use super::error;
 use super::property;
 use super::{Cx, Frame, Throw};
 use crate::bytecode::{CodeUnit, flags};
@@ -30,6 +30,11 @@ fn actual(cx: &Cx<'_>, frame: &Frame, unit: &CodeUnit, index: usize) -> Value {
         cx.heap.vm.registers[base + unit.register_count as usize + index - parameters]
     };
     unwrap_cell(cx, value)
+}
+
+/// Actual argument `index` of a frame, for natives and slow paths.
+pub(crate) fn actual_argument(cx: &Cx<'_>, frame: &Frame, unit: &CodeUnit, index: usize) -> Value {
+    actual(cx, frame, unit, index)
 }
 
 /// The value in a cell, or `value` itself: a register of a captured binding
@@ -76,7 +81,7 @@ fn new_arguments_rooted(
     let object = cx.heap.alloc_object_with_elements(
         ObjectKind::Arguments,
         Some(prototype),
-        2,
+        4,
         argc as u32,
     )?;
     cx.heap.set_payload(object, NONE);
@@ -86,21 +91,23 @@ fn new_arguments_rooted(
         let value = actual(cx, frame, unit, index);
         cx.heap.values.set(elements, index as u32, value);
     }
-    let names = cx.realm.names;
-    let hidden = PropertyFlags::data(true, false, true);
-    cx.heap.add_property(
-        object,
-        Names::key(names.length),
-        hidden,
-        Value::int32(argc as i32),
-    )?;
-    if !unit.has(flags::STRICT) {
-        cx.heap.add_property(
-            object,
-            Names::key(names.callee),
-            hidden,
-            Value::object(frame.function),
-        )?;
+    let strict = unit.has(flags::STRICT);
+    let length = Value::int32(argc as i32);
+    let values = Value::object(cx.realm.intrinsic(Intrinsic::ArrayValues));
+    let cache = usize::from(strict);
+    if let Some(shape) = cx.heap.arguments_shapes[cache] {
+        let thrower = Value::object(cx.realm.intrinsic(Intrinsic::ThrowTypeError));
+        let slots = if strict {
+            &[length, values, thrower, thrower][..]
+        } else {
+            &[length, values, Value::object(frame.function)][..]
+        };
+        cx.heap.apply_closure_shape(object, shape, slots);
+    } else {
+        add_properties(cx, object, frame, strict)?;
+        if !cx.heap.is_dictionary(object) {
+            cx.heap.arguments_shapes[cache] = Some(cx.heap.shape_of(object));
+        }
     }
     if mapped_count > 0 {
         let scope = cx.heap.alloc_scope(None, 1 + mapped_count as u32)?;
@@ -114,6 +121,48 @@ fn new_arguments_rooted(
         cx.heap.set_payload(object, scope.object().index());
     }
     Ok(Value::object(object))
+}
+
+/// Adds the own properties of a new `arguments` object one by one (the
+/// first of each kind, whose shape is then cached).
+fn add_properties(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    frame: &Frame,
+    strict: bool,
+) -> Result<(), crate::HeapError> {
+    let names = cx.realm.names;
+    let hidden = PropertyFlags::data(true, false, true);
+    cx.heap.add_property(
+        object,
+        Names::key(names.length),
+        hidden,
+        Value::int32(frame.argc as i32),
+    )?;
+    let values = cx.realm.intrinsic(Intrinsic::ArrayValues);
+    cx.heap.add_property(
+        object,
+        crate::runtime::WellKnown::key(cx.realm.symbols.iterator),
+        hidden,
+        Value::object(values),
+    )?;
+    if strict {
+        let thrower = Value::object(cx.realm.intrinsic(Intrinsic::ThrowTypeError));
+        cx.heap.add_accessor(
+            object,
+            Names::key(names.callee),
+            PropertyFlags::accessor(false, false),
+            thrower,
+            thrower,
+        )
+    } else {
+        cx.heap.add_property(
+            object,
+            Names::key(names.callee),
+            hidden,
+            Value::object(frame.function),
+        )
+    }
 }
 
 /// The cell aliasing index `index` of a mapped `arguments` object, if the
@@ -297,9 +346,9 @@ pub(crate) fn list_from_array_like(cx: &mut Cx<'_>, list: Value) -> Result<usize
     Ok(start)
 }
 
-/// `AppendSpread`: appends the elements of `source` (an array or an
-/// `arguments` object) to `array` from `index`; returns the next index.
-/// Other iterables need the iterator protocol of phase 4.
+/// `AppendSpread`: appends the values `source` iterates to `array` from
+/// `index`; returns the next index. A pristine array or an `arguments`
+/// object whose iteration is unmodified is copied directly.
 #[inline(never)]
 pub(crate) fn append_spread(
     cx: &mut Cx<'_>,
@@ -308,25 +357,12 @@ pub(crate) fn append_spread(
     source: Value,
 ) -> Result<Value, Throw> {
     let array = array.as_object().expect("a spread target array");
-    let Some(object) = source.as_object().filter(|&object| {
-        matches!(
-            cx.heap.object_kind(object),
-            ObjectKind::Array | ObjectKind::Arguments
-        )
-    }) else {
-        return Err(error::throw(
-            cx,
-            ErrorKind::Internal,
-            "unsupported: iterator spread",
-        ));
-    };
     let mut next = index.as_int32().expect("a spread index") as u32;
     let mark = cx.heap.roots().mark();
     cx.heap.roots().push(source);
     let result = (|| {
-        let length = array_like_length(cx, object)?;
-        for at in 0..length {
-            let value = element(cx, object, at as u32)?;
+        let mut iter = super::iter::get_iterator(cx, source)?;
+        while let Some(value) = super::iter::step(cx, &mut iter)? {
             cx.heap
                 .set_element(array, next, value)
                 .map_err(|_| error::oom(cx.realm))?;
