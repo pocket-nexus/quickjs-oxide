@@ -342,8 +342,26 @@ fixed here:
 Two collector bugs surfaced under `gc-stress` (an unrooted module namespace
 and `IsHTMLDDA` object).
 
-The loop stays under its gate: `vm::interp::run_at` is 16,246 bytes (M2:
-16,021). The bookkeeping for rewritten calls lives in `core/src/vm/via.rs`.
+### The loop
+
+`vm::interp::run_at` is 15,226 bytes (M2: 16,021; gate 16,384). Measuring
+M3's first build against M2's `oxide-run` found every V8 v7 program
+retiring about 5% more instructions and every probe slower
+(`empty_loop` 92 → 96 instructions per iteration). Three causes, fixed:
+
+- The unwind tested whether a backtrace line awaited its position before
+  calling the cold `place_frame`. Inside `run_at` that one test cost about
+  4% on every instruction; the call is now unconditional and the test is
+  inside it.
+- A call rewritten through `call` or `apply` marked its callee's frame for
+  the backtrace, and the `Return` fast path, which required `flags == 0`,
+  sent every such frame through `finish_return` (RayTrace's
+  `initialize.apply(this, arguments)` on every construction). The fast path
+  now ignores the marks, and a single rewrite records nothing on the heap
+  (`frame_flags::VIA_CALL`/`VIA_APPLY`; only a chain uses the side table in
+  `core/src/vm/via.rs`).
+- Keeping a NaN's bits put an integer compare on every number's boxing;
+  the NaN case is out of line.
 
 ### Attributions
 
@@ -399,6 +417,96 @@ array and `CallSpread`.
 shape, in insertion order; the new core keeps them in the element range, so
 `print({b: 1, 0: 2})` shows `{ 0: 2, b: 1 }` where QuickJS shows
 `{ b: 1, 0: 2 }`. No case in the corpus meets it.
+
+### Tables A and B replayed
+
+Only the binary that changed is measured: the new `qjs` (`build.py
+--plain-only` at `7a3bbd4c`), `fixed.py --repeat 3 --cpu 2
+--linux-counters --timeout 900` (the plan's five repetitions are three for
+this phase's own runs), every sample's stdout checked. QuickJS and the
+current core are the baseline's binaries, unchanged since phase 4 (their
+hashes match the [baseline](baseline.md)), so their columns are phase 4's
+reads, as is the phase 4 column. Instructions are deterministic; times
+from different sessions carry the machine's drift.
+
+| Program | QuickJS ms | Current ms | M3 ms | QuickJS G instr | Phase 4 G instr | M3 G instr | M3 / phase 4 instr | M3 / QuickJS time | Current / M3 time |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| v8-v7-richards | 1,074 | 4,160 | 1,043 | 14.12 | 18.23 | 18.09 | 0.992 | 0.97 | 3.99 |
+| v8-v7-deltablue | 1,098 | 4,720 | 1,051 | 13.32 | 17.51 | 17.48 | 0.998 | 0.96 | 4.49 |
+| v8-v7-crypto | 982 | 3,381 | 822 | 13.86 | 15.18 | 15.05 | 0.992 | 0.84 | 4.11 |
+| v8-v7-raytrace | 1,085 | 5,018 | 922 | 15.89 | 15.14 | 15.23 | 1.006 | 0.85 | 5.45 |
+| v8-v7-earley-boyer | 1,027 | 4,444 | 783 | 14.24 | 12.77 | 12.66 | 0.991 | 0.76 | 5.68 |
+| v8-v7-regexp | 1,201 | 1,803 | 1,162 | 20.57 | 20.87 | 21.22 | 1.017 | 0.97 | 1.55 |
+| v8-v7-splay | 1,784 | 5,604 | 1,757 | 15.88 | 19.50 | 19.53 | 1.001 | 0.98 | 3.19 |
+| v8-v7-navier-stokes | 1,055 | 3,060 | 1,035 | 14.44 | 21.90 | 21.80 | 0.995 | 0.98 | 2.96 |
+| octane-richards | 1,072 | 4,351 | 1,043 | 14.10 | 18.23 | 18.09 | 0.992 | 0.97 | 4.17 |
+| octane-deltablue | 1,100 | 4,701 | 1,061 | 13.36 | 17.51 | 17.48 | 0.998 | 0.96 | 4.43 |
+| octane-crypto | 968 | 3,373 | 827 | 13.84 | 15.19 | 15.05 | 0.991 | 0.85 | 4.08 |
+| octane-raytrace | 1,092 | 4,991 | 918 | 15.91 | 15.14 | 15.24 | 1.006 | 0.84 | 5.44 |
+| octane-earley-boyer | 1,018 | 4,441 | 781 | 14.11 | 12.76 | 12.67 | 0.993 | 0.77 | 5.69 |
+| octane-regexp | 1,275 | 2,274 | 1,231 | 21.54 | 22.12 | 22.47 | 1.016 | 0.97 | 1.85 |
+| octane-splay | 1,801 | 5,601 | 1,728 | 15.89 | 19.51 | 19.58 | 1.003 | 0.96 | 3.24 |
+| octane-navier-stokes | 1,040 | 3,102 | 1,022 | 14.44 | 21.92 | 21.82 | 0.995 | 0.98 | 3.03 |
+| octane-pdfjs | 1,125 | 11,796 | 1,311 | 17.68 | 19.89 | 20.13 | 1.012 | 1.17 | 9.00 |
+| octane-mandreel | 2,412 | 12,776 | 3,523 | 33.59 | 64.00 | 63.71 | 0.996 | 1.46 | 3.63 |
+| octane-gameboy | 1,056 | 8,059 | 2,300 | 15.74 | 44.92 | 45.84 | 1.021 | 2.18 | 3.50 |
+| octane-code-load | 1,018 | 3,027 | 2,434 | 11.55 | 23.62 | 23.63 | 1.001 | 2.39 | 1.24 |
+| octane-box2d | 1,047 | 5,196 | 992 | 13.00 | 16.66 | 16.64 | 0.999 | 0.95 | 5.24 |
+| octane-zlib | 6,329 | 29,220 | 7,810 | 76.73 | 158.48 | 158.33 | 0.999 | 1.23 | 3.74 |
+| octane-typescript | 1,668 | 8,648 | 1,852 | 15.32 | 25.95 | 26.20 | 1.010 | 1.11 | 4.67 |
+| awfy-DeltaBlue | 517 | 2,907 | 515 | 6.31 | 8.14 | 8.10 | 0.995 | 1.00 | 5.64 |
+| awfy-Richards | 3,370 | 14,363 | 3,555 | 42.58 | 58.61 | 58.45 | 0.997 | 1.05 | 4.04 |
+| awfy-Json | 886 | 6,627 | 940 | 12.15 | 15.52 | 15.59 | 1.004 | 1.06 | 7.05 |
+| awfy-CD | 1,906 | 9,127 | 1,734 | 25.89 | 28.72 | 28.60 | 0.996 | 0.91 | 5.26 |
+| awfy-Havlak | 3,182 | 19,099 | 2,840 | 35.75 | 39.57 | 39.48 | 0.998 | 0.89 | 6.72 |
+| awfy-Bounce | 975 | 10,149 | 884 | 15.15 | 17.83 | 17.72 | 0.994 | 0.91 | 11.48 |
+| awfy-List | 946 | 4,619 | 1,093 | 12.84 | 19.72 | 19.51 | 0.989 | 1.15 | 4.23 |
+| awfy-Mandelbrot | 524 | 2,003 | 522 | 7.32 | 9.15 | 9.06 | 0.990 | 1.00 | 3.83 |
+| awfy-NBody | 741 | 6,333 | 819 | 11.50 | 15.45 | 15.43 | 0.999 | 1.11 | 7.73 |
+| awfy-Permute | 1,202 | 5,099 | 1,121 | 15.96 | 20.49 | 20.35 | 0.993 | 0.93 | 4.55 |
+| awfy-Queens | 790 | 3,485 | 848 | 10.39 | 13.84 | 13.77 | 0.995 | 1.07 | 4.11 |
+| awfy-Sieve | 918 | 7,214 | 1,144 | 15.34 | 22.91 | 22.78 | 0.994 | 1.25 | 6.31 |
+| awfy-Storage | 1,490 | 6,601 | 804 | 16.43 | 14.65 | 14.66 | 1.000 | 0.54 | 8.21 |
+| awfy-Towers | 1,201 | 5,167 | 1,124 | 14.80 | 19.01 | 18.88 | 0.993 | 0.94 | 4.60 |
+
+Geometric means over 37 programs: M3 / QuickJS time 1.01, current / M3 time 4.40, M3 / phase 4 instructions 0.999.
+
+Table B, instructions per iteration (`phase2.py`):
+
+| Probe | QuickJS | Current | Phase 4 | M3 | M3 / QuickJS |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| `empty_loop` | 90 | 295 | 92 | 89 | 0.99 |
+| `numeric_local_loop` | 167 | 1,007 | 148 | 140 | 0.84 |
+| `local_read` | 130 | 830 | 147 | 145 | 1.12 |
+| `local_read_with_setup` | 130 | 830 | 147 | 145 | 1.12 |
+| `local_move` | 133 | 679 | 140 | 137 | 1.03 |
+| `argument_move` | 117 | 457 | 116 | 113 | 0.97 |
+| `call0` | 388 | 2,231 | 554 | 549 | 1.41 |
+| `prop_read` | 201 | 543 | 204 | 200 | 1.00 |
+| `prop_write` | 163 | 958 | 159 | 154 | 0.94 |
+| `array_read` | 227 | 505 | 279 | 275 | 1.21 |
+| `array_write` | 193 | 1,406 | 246 | 241 | 1.25 |
+| `tdz` | 13,612 | 36,805 | 9,436 | 20,925 | 1.54 |
+| `type_error` | 13,611 | 33,085 | 8,269 | 20,859 | 1.53 |
+| `bigint_64` | 1,843 | 7,488 | 6,064 | 6,469 | 3.51 |
+| `{a:i,b:i}` (`literal`) | 1,294 | 2,680 | 970 | 961 | 0.74 |
+| `new P(i)` (`constructor`) | 1,874 | 5,479 | 1,181 | 1,174 | 0.63 |
+| closure | 2,080 | 18,881 | 2,139 | 2,130 | 1.02 |
+| depth-3 prototype read | 243 | 1,194 | 263 | 259 | 1.07 |
+| `for_of_array` | 4,508 | 65,443 | 3,239 | 3,206 | 0.71 |
+| `spread_call` | 4,119 | 45,061 | 2,459 | 2,813 | 0.68 |
+| `class_method` | 561 | 2,791 | 662 | 658 | 1.17 |
+| `generator_next` | 1,958 | 30,889 | 1,942 | 1,971 | 1.01 |
+| `typed_write` | 259 | 1,698 | 383 | 377 | 1.46 |
+| `map_get` | 678 | 5,096 | 1,329 | 1,352 | 1.99 |
+| `string_build` | 742 | 2,775 | 736 | 731 | 0.99 |
+| `sort_cmp` | 5,239 | 74,115 | 6,236 | 6,677 | 1.27 |
+
+Error creation (`tdz`, `type_error`) costs twice phase 4's: an error now
+records QuickJS's backtrace, native frames and positions included.
+`spread_call` reads `@@iterator` twice and closes on a throw as
+`js_append_enumerate` does; `bigint_64` pays for QuickJS's allocation
+limits; `sort_cmp` (+7%) runs QuickJS's `js_array_sort` comparison order. `map_get` and `generator_next` are within 2% of phase 4 and the rest at or below it.
 
 ### Table E replayed
 
