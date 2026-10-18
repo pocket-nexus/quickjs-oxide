@@ -265,7 +265,13 @@ pub(crate) fn add_stack_at(
         };
         // Entered through a rewritten `call` or `apply` (section 5.2): the
         // native QuickJS ran between this frame and its caller.
-        if frame.flags & frame_flags::VIA != 0 {
+        if frame.flags & frame_flags::VIA_CALL != 0 {
+            let _ = writeln!(text, "    at call (native)");
+            line_index += 1;
+        } else if frame.flags & frame_flags::VIA_APPLY != 0 {
+            let _ = writeln!(text, "    at apply (native)");
+            line_index += 1;
+        } else if frame.flags & frame_flags::VIA_CHAIN != 0 {
             let vias = vm
                 .via
                 .frames

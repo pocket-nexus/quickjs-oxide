@@ -299,3 +299,127 @@ names an entry. The README, `docs/status.md`, `docs/compatibility.md` and
 
 CI: `test262-focused` runs the one spec; `new-core-test262-full` is gone
 (`test262-full` covers it); `new-core-suite` is `suite-stress`.
+
+## M3: `qjs`, the oracle corpus and the benchmark tools
+
+### `qjs` on the new API
+
+`apps/cli` runs on `api::core` with section 3.1's option table: the module
+loader is a `ModuleLoader` over the file system that compiles through its
+`Scope`, `--gc-stats`, `--memory-report` and `--ic-stats` read the core's
+reports, the features are `gc-stress` and `ic-stats`, and an engine failure
+that is not an exception prints as QuickJS prints its uncaught
+out-of-memory error. `oxide-run`, the profiling build and
+`api::new_core` are gone; `apps/cli/tests/cli/core_options.rs` covers the
+options that replaced them. The benchmark tools run `qjs`: `build.py` builds
+the plain CLI only, the compile probes and `profile_v8.py` lost their
+profiling paths, `ic_events.py` is gone, and `phase2.py`, `relink.py`,
+`check-new-core-stress.py` and `check-new-core-suite.py` take `--qjs`.
+
+All 37 suite programs print their manifest's stdout on `qjs`.
+
+### What the corpora found
+
+The oracle corpus (`apps/cli/tests/oracle`, 189 Rust files and 233
+JavaScript case files, 3,970 cases with their flag variants), the 13
+fixtures, the 9 C oracles and the printer goldens of `apps/cli/tests/cli`
+were run against the pinned QuickJS. The first per-case run found 519
+JavaScript cases and 30 Rust tests that differed. Everything that differed
+for a reason other than a dropped feature was a defect of the new core,
+fixed here:
+
+| Area | What changed |
+| --- | --- |
+| error messages | the core's messages take QuickJS's exact text, checked by a map of 278 triggers run on both engines (`not a function`, `'x' is read-only`, `invalid array index: 3`, the BigInt and typed-array wording, QuickJS's typos `not a object` and `Array loo long`), formatted through QuickJS's 255-byte message buffer and 64-byte atom buffer; four error kinds and a few check orders follow QuickJS |
+| stack traces | native frames listed (`at reduce (native)`, and the `call`/`apply` the loop rewrites), positions for frames the loop throws in, the native frames QuickJS runs without a frame hidden, `-s` code printed without a location, a rope-valued `name` read as absent |
+| intrinsic shape | every intrinsic's own keys, their order and attributes, `length` and `name`, and the global object's order and `Symbol.toStringTag` match QuickJS: 722 objects compared |
+| builtins | Array sort, the change-by-copy limits, BigInt allocation limits, `ArrayBuffer` lengths through `ToInt64`, Atomics rechecks, the RegExp and String protocols, Proxy (rewritten after `js_proxy_*`), Object, iterators, collections, Promise combinators, `RegExp.escape` |
+| language | TDZ messages, global lexical and Annex B quirks, for-in (QuickJS's lazy algorithm), spread and argument limits, the async generator driver, JSON syntax errors and nesting depths, function source decoding, private brands (added when the class body ends, with `JS_CheckBrand`'s messages) |
+| printer | Map and Set records an iterator still holds, converted `arguments` objects, Iterator subclasses, the resolving functions' classes, rope fields, raw names written as WTF-8 (`Host::write` now takes bytes), regexp flags as QuickJS prints them, BigInt typed-array elements |
+| numbers | a NaN keeps its bits below the boxed range (x86's `0/0` is negative), and QuickJS's `OP_dec` quirk on a BigInt outside `int64` |
+| async | an async function whose frame cannot be entered returns a rejected promise |
+
+Two collector bugs surfaced under `gc-stress` (an unrooted module namespace
+and `IsHTMLDDA` object).
+
+The loop stays under its gate: `vm::interp::run_at` is 16,246 bytes (M2:
+16,021). The bookkeeping for rewritten calls lives in `core/src/vm/via.rs`.
+
+### Attributions
+
+A JavaScript case that differs only because of a dropped feature is listed
+in `dev-support/oracle-attributions.tsv` with the ledger entry; the runner
+requires such a case to still differ, a test requires every row to name a
+case, and `check-oracle-registry.py` requires every row to name a dropped
+feature. Section 5 asked for these rows in `quickjs-fixture-gates.tsv`;
+that table describes fixtures (paths, hashes, drivers), so the cases have
+their own table and the fixture table gained the `deviation` column for its
+own rows.
+
+| Entry | Oracle cases | Fixtures |
+| --- | ---: | ---: |
+| `NEWCORE-DIRECT-EVAL-001` | 64 | 5 (r3h, r3i, r3j, r3l, r3z: direct eval of private names and locals) |
+| `NEWCORE-SPECIES-001` | 57 | 1 (r3o) |
+| `NEWCORE-WITH-001` | 48 | 0 |
+| `NEWCORE-UNSCOPABLES-001`, `NEWCORE-REALMS-001` | 0 | 0 |
+
+Two observation cases that used `eval` or `with` incidentally had that part
+moved into a case of its own, so the rest stays compared. The Rust tests of
+`with` (`oracle_with.rs`), of direct eval in async functions, of the RegExp
+`@@split` recursion that only species reaches, and the cross-realm ones
+(the `$262.createRealm` test, a `Promise.prototype.finally` handler across
+realms) are deleted; mixed tests lost only their direct-eval assertions.
+Tests that measured the old engine rather than QuickJS were adjusted: string
+identity across the embedding API (which copies strings at its boundary),
+the async stack preflight's two realms, a 2 MiB thread sized for the old
+engine's frames, and a finalizer timing that QuickJS's reference counts
+give and a tracing collector gives at its next collection.
+
+### Gates
+
+| Gate | Result |
+| --- | --- |
+| oracle corpus | 205 tests pass, 1 ignored (below) |
+| `test-quickjs-fixtures.sh --all` | 13 of 13: 7 match, 6 differ by their attributed entry |
+| `test-quickjs-c-oracles.sh` | 9 of 9 |
+| `test-parity-slice.sh` | passes after the receipt below |
+| `cargo test --workspace --all-targets`, `oxide-core --features gc-stress`, clippy, fmt | pass |
+
+**Open defect.** The register lowering declines a function whose operand
+stack passes the 256-register window: a call or template literal with more
+than about 250 operands, or nesting past about 250 levels, fails to compile
+(`unsupported: functions with more than 256 registers`). Test262 does not
+reach it (phase 4's census lowers every function), but QuickJS accepts such
+programs. The template stack-limit oracle test and four parser-depth tests
+are ignored with this reason. Fixing it means spilling operand temporaries
+past the window in the lowering and turning a call that does not fit into an
+array and `CallSpread`.
+
+**Open difference.** QuickJS keeps an ordinary object's index keys in its
+shape, in insertion order; the new core keeps them in the element range, so
+`print({b: 1, 0: 2})` shows `{ 0: 2, b: 1 }` where QuickJS shows
+`{ b: 1, 0: 2 }`. No case in the corpus meets it.
+
+### Table E replayed
+
+| Vector | M2 | M3 |
+| --- | ---: | ---: |
+| focused, of 6,844 | 6,814 | 6,814, byte-identical body |
+| full, QuickJS scope, of 83,562 | 81,445 | 81,434 |
+
+Eleven variants pass on M2 and fail on M3, and none moves the other way:
+
+- Seven follow the pinned QuickJS, which fails them too: a bound function
+  inherits `%Function.prototype%` and prints `function bound name()`
+  (`staging/sm/Function/function-bind`, `staging/sm/class/boundFunctionSubclassing`
+  ×2), `Object.defineProperties` defines each property as it reads it
+  (`staging/sm/object/defineProperties-order` ×2), and a proxy's
+  `getOwnPropertyDescriptor` may report another value for a frozen property
+  (`staging/sm/regress/regress-1383630` ×2).
+- Four are direct eval's `this` (`S11.1.1_A3.2`, `S11.1.1_A4.2`, both
+  modes): dropped variants of D that passed only because the global object
+  printed as `[object Object]`; it now has QuickJS's `Symbol.toStringTag`.
+
+Seventy more rows change only their failure detail. The full receipt is
+re-frozen (milestone `new-core-phase6-m3`) and the metrics regenerate to
+**81,434 of 83,562 (97.453%)**.

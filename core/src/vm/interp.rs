@@ -406,9 +406,10 @@ pub(crate) fn set_function_name(
 /// the receiver `function` becomes the callee, the window moves onto the
 /// `thisArg`, and `apply`'s list replaces it from the next register. Repeats
 /// while the new callee is one of the two. Returns the callee, the window,
-/// `this`, the argument count, and `frame_flags::VIA` for a bytecode callee
-/// with the `call`s and `apply`s recorded in `VmStack::via_frames` (for any
-/// other, `VmStack::via_call` holds them).
+/// `this`, the argument count, and for a bytecode callee the frame flag
+/// recording what it went through: `VIA_CALL` or `VIA_APPLY` for one, the
+/// side table (`VIA_CHAIN`) for a chain. A native callee finds them in
+/// `ViaCalls::calls`.
 #[inline(never)]
 #[allow(clippy::type_complexity)]
 fn rewrite_call(
@@ -419,23 +420,45 @@ fn rewrite_call(
     mut this: Value,
     mut argc: usize,
 ) -> Result<(Callee, Value, usize, Value, usize, u8), Throw> {
-    super::via::begin(cx);
+    // The first `call` or `apply` stays local: the common rewrite records
+    // nothing on the heap.
+    let mut first = (Value::UNDEFINED, 0);
+    let mut count = 0usize;
     loop {
         let target = callee(cx.heap, function);
         let Callee::Native(native @ (Native::FunctionCall | Native::FunctionApply)) = target else {
             match target {
+                Callee::Bytecode(..) if count == 1 => {
+                    return Ok((target, function, window, this, argc, first.1));
+                }
                 Callee::Bytecode(..) => {
                     super::via::enter_bytecode(cx);
-                    return Ok((target, function, window, this, argc, frame_flags::VIA));
+                    return Ok((target, function, window, this, argc, frame_flags::VIA_CHAIN));
                 }
                 // A frameless native lists nothing; `call_other` lists them
                 // while anything else runs.
                 Callee::Native(native) if native.frameless() => super::via::abandon(cx),
+                _ if count == 1 => super::via::begin(cx, first.0),
                 _ => {}
             }
             return Ok((target, function, window, this, argc, 0));
         };
-        super::via::record(cx, function);
+        match count {
+            0 => {
+                let flag = if native == Native::FunctionCall {
+                    frame_flags::VIA_CALL
+                } else {
+                    frame_flags::VIA_APPLY
+                };
+                first = (function, flag);
+            }
+            1 => {
+                super::via::begin(cx, first.0);
+                super::via::record(cx, function);
+            }
+            _ => super::via::record(cx, function),
+        }
+        count += 1;
         let apply = function;
         function = this;
         window += 1;
@@ -2410,8 +2433,12 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         Value::UNDEFINED
                     };
                     // A plain call's frame (not an entry, a construction or
-                    // a tail call) returns to the frame below, loaded once.
-                    if frame.flags == 0 {
+                    // a tail call) returns to the frame below, loaded once;
+                    // the backtrace's `VIA_*` marks do not matter here.
+                    if frame.flags
+                        & (frame_flags::ENTRY | frame_flags::CONSTRUCT | frame_flags::TAIL)
+                        == 0
+                    {
                         cx.heap.vm.frames.pop();
                         let caller = *cx.heap.vm.frames.last().expect("a caller");
                         let caller_unit = store.get(caller.unit);
@@ -2463,9 +2490,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             continue 'dispatch;
         };
         let mut at = pc - 1;
-        if cx.heap.vm.unpositioned.is_some() {
-            error::place_frame(cx, thrown, unit, at as u32);
-        }
+        // Unconditional: a test of `unpositioned` here costs the loop's
+        // code about 4% (new-core phase 6, M3).
+        error::place_frame(cx, thrown, unit, at as u32);
         loop {
             if let Some(handler) = unit
                 .handlers

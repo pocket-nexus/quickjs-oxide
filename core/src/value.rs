@@ -104,6 +104,17 @@ impl Value {
     /// fall in the boxed range: those become [`CANONICAL_NAN`].
     #[inline]
     pub fn number(value: f64) -> Value {
+        if value.is_nan() {
+            return Value::nan(value);
+        }
+        Value(value.to_bits())
+    }
+
+    /// [`Value::number`] of a NaN, out of line so the common case stays a
+    /// float compare.
+    #[cold]
+    #[inline(never)]
+    fn nan(value: f64) -> Value {
         let bits = value.to_bits();
         if bits >= BOXED_MIN {
             Value(CANONICAL_NAN)

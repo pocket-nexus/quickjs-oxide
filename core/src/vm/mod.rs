@@ -63,10 +63,13 @@ pub mod frame_flags {
     pub const CONSTRUCT: u8 = 1 << 1;
     /// Entered by a tail call: its result is also its caller's result.
     pub const TAIL: u8 = 1 << 2;
-    /// Called through `Function.prototype.call` or `apply` (the rewrite of
-    /// section 5.2): `VmStack::via_frames` holds the natives QuickJS would
-    /// list after its backtrace line.
-    pub const VIA: u8 = 1 << 3;
+    /// Called through `Function.prototype.call` (the rewrite of section
+    /// 5.2): QuickJS lists `at call (native)` after its backtrace line.
+    pub const VIA_CALL: u8 = 1 << 3;
+    /// Called through `Function.prototype.apply`, likewise.
+    pub const VIA_APPLY: u8 = 1 << 4;
+    /// Called through a chain of them: `ViaCalls::frames` lists it.
+    pub const VIA_CHAIN: u8 = 1 << 5;
 }
 
 /// One activation. `return_pc` and `return_dst` belong to the caller: where

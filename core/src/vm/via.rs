@@ -1,7 +1,8 @@
 //! What QuickJS's frames for the `Function.prototype.call`s and `apply`s
 //! the loop rewrites (section 5.2) would show in a backtrace: the rewrite
-//! records them, a bytecode callee's frame carries `frame_flags::VIA`, and a
-//! native callee runs with them listed below it.
+//! records them, a bytecode callee's frame carries `frame_flags::VIA_CALL`,
+//! `VIA_APPLY` or (for a chain) `VIA_CHAIN`, and a native callee runs with
+//! them listed below it.
 //!
 //! Kept out of `interp` so the loop's code does not move.
 
@@ -14,20 +15,25 @@ pub(crate) struct ViaCalls {
     /// The `call`s and `apply`s, outermost first, of the rewrite running or
     /// of the native callee it reached; taken by that callee.
     pub(crate) calls: Vec<Value>,
-    /// Those of the frames marked `frame_flags::VIA`: each native with the
+    /// Those of the frames marked `frame_flags::VIA_CHAIN`: each native with the
     /// depth (index in `frames`) of the frame it follows, outermost first.
     /// An entry outlives its frame until a call at its depth or below
     /// replaces it.
     pub(crate) frames: Vec<(u32, Value)>,
 }
 
-/// A rewrite starts.
+/// A rewrite goes on past its first `call` or `apply`, `first`, or reaches
+/// a callee that is not bytecode.
+#[cold]
 #[inline(never)]
-pub(super) fn begin(cx: &mut Cx<'_>) {
-    cx.heap.vm.via.calls.clear();
+pub(super) fn begin(cx: &mut Cx<'_>, first: Value) {
+    let calls = &mut cx.heap.vm.via.calls;
+    calls.clear();
+    calls.push(first);
 }
 
 /// The rewrite went through `function` (a `call` or an `apply`).
+#[cold]
 #[inline(never)]
 pub(super) fn record(cx: &mut Cx<'_>, function: Value) {
     cx.heap.vm.via.calls.push(function);
@@ -41,7 +47,7 @@ pub(super) fn abandon(cx: &mut Cx<'_>) {
 }
 
 /// The rewrite reached a bytecode callee, whose frame (at the current
-/// depth) is about to be entered with `frame_flags::VIA`.
+/// depth) is about to be entered with `frame_flags::VIA_CHAIN`.
 #[inline(never)]
 pub(super) fn enter_bytecode(cx: &mut Cx<'_>) {
     let depth = cx.heap.vm.frames.len() as u32;
