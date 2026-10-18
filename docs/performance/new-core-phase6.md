@@ -253,7 +253,9 @@ deletion's instruction gate measures the deletion alone:
 - the full Test262 receipt is re-frozen once, at the end of M4b.
 
 **Acceptance (M4b).** No backlog item remains open; no variant that passed
-on M2 fails for a QuickJS-matching reason; the receipts replay.
+on M2 fails for a QuickJS-matching reason; the register window no longer
+limits a function's operand stack; the receipts replay. The implementation
+plan is [new-core-phase6-m4b.md](new-core-phase6-m4b.md).
 
 **Delivery (amended after M3).** M4, M4b, M5 and M6 land in M3's pull
 request (#152) instead of one pull request each.
@@ -290,7 +292,7 @@ Every page that describes the old core is rewritten or retired in M5; the phase 
 | M2 | the web playground, the adapters and the Test262 runner switched (3.2, 3.3); the ledger entries landed; `current.conf` migrated | the acceptances of 3.2 and 3.3; the ledger's new entries pass `check-oracle-registry.py` | 5–8 days |
 | M3 | `qjs` on the new API, `oxide-run` folded in, the oracle and fixture corpora attributed, the benchmark tools switched (3.1, 3.4) | the acceptances of 3.1 and 3.4 | 6–9 days |
 | M4 | the deletion (section 4); the layout gate rewritten | section 4's acceptance | 4–6 days |
-| M4b | the spec alignment (section 5.1): every behavior M3 copied from QuickJS where it departs from ECMA-262 returns to the specification; the receipts re-frozen | section 5.1's acceptance | 3–5 days |
+| M4b | the spec alignment (section 5.1, [plan](new-core-phase6-m4b.md)): every behavior M3 copied from QuickJS where it departs from ECMA-262 returns to the specification; the register lowering's 256-register operand limit lifted; the receipts re-frozen | the plan's section 1 | 6–9 days |
 | M5 | the documentation (section 6) | section 6's acceptance | 5–7 days |
 | M6 | the record: Tables A, B and E replayed on `qjs`, the counts, binary size and build time; the results page; release 0.3.0 | section 8 | 3–4 days |
 
