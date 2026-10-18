@@ -1260,7 +1260,7 @@ fn has_own(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Result<bool, 
 fn own_keys_with_arguments(heap: &Heap, object: ObjectId) -> Vec<PropertyKey> {
     let mut keys = heap.own_keys(object);
     if heap.object_kind(object) == ObjectKind::Arguments && heap.header(object).payload != NONE {
-        let mut mapped: Vec<PropertyKey> = (0..heap.header(object).elements().len)
+        let mut mapped: Vec<PropertyKey> = (0..super::arguments::mapped_count(heap, object))
             .filter(|&index| super::arguments::mapped_cell(heap, object, index).is_some())
             .filter_map(PropertyKey::index)
             .collect();

@@ -677,6 +677,14 @@ fn arguments_define(
     let KeyKind::Index(index) = key.kind() else {
         return ordinary_define(cx, object, key, descriptor);
     };
+    // QuickJS's `js_arguments_define_own_property` converts the fast array
+    // to ordinary properties before redefining an existing index (for-in
+    // then snapshots the keys).
+    if arguments::mapped_cell(cx.heap, object, index).is_some()
+        || !cx.heap.get_element(object, index).is_empty()
+    {
+        slow_arguments(cx, object)?;
+    }
     let Some(cell) = arguments::mapped_cell(cx.heap, object, index) else {
         return ordinary_define(cx, object, key, descriptor);
     };
