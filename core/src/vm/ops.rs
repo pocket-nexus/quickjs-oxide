@@ -552,20 +552,8 @@ pub(crate) fn unary(cx: &mut Cx<'_>, op: Unary, x: Value) -> Result<Value, Throw
             Unary::Neg => qjs::neg(&value),
             Unary::ToNumeric => Ok(value),
             Unary::Inc => qjs::add(&value, &one, false),
-            Unary::Dec => {
-                // QuickJS's slow `OP_dec` adds `js_bigint_set_si(2 * (op -
-                // OP_dec) - 1)`, computed unsigned: a BigInt outside its
-                // short range (`int64`, or at `INT64_MIN`) gains 2^32 - 1.
-                let short_min = Big::from_i64(i64::MIN);
-                let short_max = Big::from_i64(i64::MAX);
-                if value.cmp(&short_min) == std::cmp::Ordering::Greater
-                    && value.cmp(&short_max) != std::cmp::Ordering::Greater
-                {
-                    qjs::add(&value, &one, true)
-                } else {
-                    qjs::add(&value, &Big::from_u64(u64::from(u32::MAX)), false)
-                }
-            }
+            // BigInt::subtract (13.4.5.1): x - 1 for every BigInt.
+            Unary::Dec => qjs::add(&value, &one, true),
             Unary::BitNot => qjs::not(&value),
             Unary::Plus => unreachable!(),
         };

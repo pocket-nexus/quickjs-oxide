@@ -279,32 +279,6 @@ pub(crate) fn prevent_extensions(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<boo
     })
 }
 
-/// QuickJS's `check_define_prop_flags`: whether `descriptor` may redefine
-/// `current`, comparing attributes only (no values, getters or setters).
-fn check_define_flags(current: &Descriptor, descriptor: &Descriptor) -> bool {
-    if current.configurable != Some(false) {
-        return true;
-    }
-    if descriptor.configurable == Some(true) {
-        return false;
-    }
-    if let Some(enumerable) = descriptor.enumerable
-        && enumerable != current.enumerable.unwrap_or(false)
-    {
-        return false;
-    }
-    if !descriptor.is_generic() {
-        let is_getset = current.is_accessor();
-        if descriptor.is_accessor() != is_getset {
-            return false;
-        }
-        if !is_getset && current.writable != Some(true) && descriptor.writable == Some(true) {
-            return false;
-        }
-    }
-    true
-}
-
 pub(crate) fn get_own_property(
     cx: &mut Cx<'_>,
     proxy: ObjectId,
@@ -344,10 +318,12 @@ pub(crate) fn get_own_property(
         if let Some(current) = &current {
             current.root(cx);
         }
+        // 10.5.5 steps 10–15.
         if result.is_undefined() {
-            if let Some(current) = current
-                && (current.configurable != Some(true) || !raw_extensible(cx.heap, target))
-            {
+            let Some(current) = current else {
+                return Ok(None);
+            };
+            if current.configurable == Some(false) || !object::is_extensible(cx, target)? {
                 return Err(invariant(cx, "getOwnPropertyDescriptor"));
             }
             return Ok(None);
@@ -355,30 +331,13 @@ pub(crate) fn get_own_property(
         let extensible = object::is_extensible(cx, target)?;
         let descriptor = object::to_property_descriptor(cx, result)?;
         let complete = complete(&descriptor);
-        match &current {
-            Some(current) => {
-                let mut flags = complete;
-                if flags.is_accessor() {
-                    flags.value = None;
-                    flags.writable = None;
-                }
-                if !check_define_flags(current, &flags) {
-                    return Err(invariant(cx, "getOwnPropertyDescriptor"));
-                }
-            }
-            None => {
-                if !extensible {
-                    return Err(invariant(cx, "getOwnPropertyDescriptor"));
-                }
-            }
+        if !object::compatible(cx, extensible, &complete, current.as_ref()) {
+            return Err(invariant(cx, "getOwnPropertyDescriptor"));
         }
         if complete.configurable == Some(false) {
             match &current {
                 Some(current) if current.configurable == Some(false) => {
-                    if !complete.is_accessor()
-                        && complete.writable == Some(false)
-                        && current.writable == Some(true)
-                    {
+                    if complete.writable == Some(false) && current.writable == Some(true) {
                         return Err(invariant(cx, "getOwnPropertyDescriptor"));
                     }
                 }
@@ -451,34 +410,21 @@ pub(crate) fn define_own_property(
             cx.heap.vm.proxy_refused = true;
             return Ok(false);
         }
+        // 10.5.6 steps 11–16.
         let current = object::get_own_property(cx, target, key)?;
         if let Some(current) = &current {
             current.root(cx);
         }
+        let extensible = object::is_extensible(cx, target)?;
         let setting_non_configurable = descriptor.configurable == Some(false);
         let Some(current) = current else {
-            if !raw_extensible(cx.heap, target) || setting_non_configurable {
+            if !extensible || setting_non_configurable {
                 return Err(invariant(cx, "defineProperty"));
             }
             return Ok(true);
         };
-        if !check_define_flags(&current, descriptor) {
+        if !object::compatible(cx, extensible, descriptor, Some(&current)) {
             return Err(invariant(cx, "defineProperty"));
-        }
-        if current.configurable == Some(false) {
-            let differs = |cx: &Cx<'_>, new: Option<Value>, old: Option<Value>| {
-                new.is_some_and(|new| !object::same_value(cx, new, old.unwrap_or(Value::UNDEFINED)))
-            };
-            if current.is_accessor() {
-                if differs(cx, descriptor.get, current.get)
-                    || differs(cx, descriptor.set, current.set)
-                {
-                    return Err(invariant(cx, "defineProperty"));
-                }
-            } else if current.writable != Some(true) && differs(cx, descriptor.value, current.value)
-            {
-                return Err(invariant(cx, "defineProperty"));
-            }
         }
         if current.configurable == Some(true) && setting_non_configurable {
             return Err(invariant(cx, "defineProperty"));

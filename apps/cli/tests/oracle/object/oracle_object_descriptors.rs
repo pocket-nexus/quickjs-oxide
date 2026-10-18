@@ -24,16 +24,19 @@ const PROXY_GOPD_SAME_VALUE_OMISSION: &str = r#"(function(){
 })()"#;
 
 #[test]
-fn object_descriptor_pins_quickjs_proxy_same_value_omission_without_an_oracle() {
+/// 10.5.5 step 14 (IsCompatiblePropertyDescriptor): a proxy may not report
+/// another value for a non-configurable, non-writable property; QuickJS
+/// compares only the attributes (QUICKJS-SPEC-005).
+fn object_descriptor_proxy_rejects_another_value_for_a_frozen_property() {
     let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(
             &runtime,
             &mut context,
             PROXY_GOPD_SAME_VALUE_OMISSION,
-            "Proxy gOPD same-value omission",
+            "Proxy gOPD same-value check",
         ),
-        "return|string|1:false:true:false|2",
+        "throw|object|TypeError|proxy: inconsistent getOwnPropertyDescriptor",
     );
 }
 

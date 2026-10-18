@@ -14,6 +14,11 @@ enum NumericKind {
 struct UpdateCase {
     label: String,
     source: String,
+    /// What the pinned QuickJS runs instead, where it departs from the
+    /// specification: its `--x` on a BigInt outside `int64` (or at
+    /// `INT64_MIN`) adds 2^32 - 1 (QUICKJS-SPEC-001), so the oracle computes
+    /// the decrement as BigInt::subtract (13.4.5.1).
+    oracle_source: Option<String>,
     kind: NumericKind,
 }
 
@@ -125,9 +130,11 @@ fn push_update_cases(cases: &mut Vec<UpdateCase>, label: &str, initial: &str, ki
         ("prefix increment", "++value"),
         ("prefix decrement", "--value"),
     ] {
+        let source = format!("(function(){{ var value = {initial}; return {expression}; }})()");
         cases.push(UpdateCase {
             label: format!("{label} {operation} result"),
-            source: format!("(function(){{ var value = {initial}; return {expression}; }})()"),
+            oracle_source: bigint_subtract(kind, &source),
+            source,
             kind,
         });
     }
@@ -136,20 +143,37 @@ fn push_update_cases(cases: &mut Vec<UpdateCase>, label: &str, initial: &str, ki
         ("postfix increment", "value++"),
         ("postfix decrement", "value--"),
     ] {
+        let source = format!(
+            "(function(){{ var value = {initial}; var old = {expression}; return old; }})()"
+        );
         cases.push(UpdateCase {
             label: format!("{label} {operation} old"),
-            source: format!(
-                "(function(){{ var value = {initial}; var old = {expression}; return old; }})()"
-            ),
+            oracle_source: bigint_subtract(kind, &source),
+            source,
             kind,
         });
+        let source =
+            format!("(function(){{ var value = {initial}; {expression}; return value; }})()");
         cases.push(UpdateCase {
             label: format!("{label} {operation} new"),
-            source: format!(
-                "(function(){{ var value = {initial}; {expression}; return value; }})()"
-            ),
+            oracle_source: bigint_subtract(kind, &source),
+            source,
             kind,
         });
+    }
+}
+
+/// `source` with its BigInt decrement written as a subtraction.
+fn bigint_subtract(kind: NumericKind, source: &str) -> Option<String> {
+    if !matches!(kind, NumericKind::BigInt) {
+        return None;
+    }
+    if source.contains("--value") {
+        Some(source.replace("--value", "(value = value - 1n)"))
+    } else if source.contains("value--") {
+        Some(source.replace("value--", "((value = value - 1n) + 1n)"))
+    } else {
+        None
     }
 }
 
@@ -173,7 +197,8 @@ var __qjo_update_cases = [
 "#,
     );
     for case in cases {
-        writeln!(script, "function(){{ return {}; }},", case.source)
+        let source = case.oracle_source.as_ref().unwrap_or(&case.source);
+        writeln!(script, "function(){{ return {source}; }},")
             .expect("writing to a String cannot fail");
     }
     script.push_str(

@@ -26,7 +26,9 @@ const DEFINE_PROPERTIES_PROXY_ORDER: &str = r#"(function(){
 })()"#;
 
 #[test]
-fn object_define_properties_pins_quickjs_proxy_batch_order_without_an_oracle() {
+/// ObjectDefineProperties (20.1.2.3.1): each key's [[GetOwnProperty]] and
+/// Get in turn; QuickJS reads every descriptor first (QUICKJS-SPEC-004).
+fn object_define_properties_reads_each_descriptor_then_its_value() {
     let (runtime, mut context) = host_runtime_context();
     assert_eq!(
         observe_rust_eval(
@@ -35,8 +37,8 @@ fn object_define_properties_pins_quickjs_proxy_batch_order_without_an_oracle() {
             DEFINE_PROPERTIES_PROXY_ORDER,
             "Object.defineProperties Proxy batch order",
         ),
-        "return|string|ownKeys,getOwnPropertyDescriptor,getOwnPropertyDescriptor,get,get|\
-         ownKeys,getOwnPropertyDescriptor,getOwnPropertyDescriptor,get,get",
+        "return|string|ownKeys,getOwnPropertyDescriptor,get,getOwnPropertyDescriptor,get|\
+         ownKeys,getOwnPropertyDescriptor,get,getOwnPropertyDescriptor,get",
     );
 }
 

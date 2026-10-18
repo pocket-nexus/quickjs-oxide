@@ -33,6 +33,7 @@ const DIRECTORIES: &[&str] = &[
     "primitive_intrinsics",
     "primitives",
     "program_declarations",
+    "promise",
     "proxy_reflect",
     "regexp",
     "string",
@@ -191,6 +192,11 @@ fn primitives() {
 #[test]
 fn program_declarations() {
     run_case_directory("program_declarations");
+}
+
+#[test]
+fn promise() {
+    run_case_directory("promise");
 }
 
 #[test]

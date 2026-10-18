@@ -145,8 +145,10 @@ pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
     if let Some(text) = crate::vm::compile::function_source(cx, object) {
         return super::string_units(cx, &text);
     }
-    // QuickJS's form without source: the kind's prefix, the `name`
-    // property, then a native body.
+    // The NativeFunction form (20.2.3.5): the kind's prefix, the name when
+    // it is a PropertyName after an optional `get `/`set `, then a native
+    // body. The name is the own `name` data property, read without [[Get]]
+    // so that printing runs no code; a proxy prints none.
     let prefix = match crate::vm::compile::function_kind_flags(cx, object) {
         Some(flags) => {
             use crate::bytecode::flags as unit;
@@ -159,14 +161,65 @@ pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
         }
         None => "function ",
     };
-    let name = internal::get_property(cx, object, Names::key(cx.realm.names.name))?;
     let mut text: Vec<u16> = prefix.encode_utf16().collect();
-    if !name.is_undefined() {
-        let name = super::to_string_id(cx, name)?;
-        text.extend(cx.heap.string(name).repr().units());
+    if cx.heap.object_kind(object) != crate::ObjectKind::Proxy {
+        let name = internal::get_own_property(cx, object, Names::key(cx.realm.names.name))?
+            .and_then(|descriptor| descriptor.value)
+            .and_then(|value| value.as_string());
+        if let Some(name) = name {
+            let units = cx.heap.string(name).repr().units().collect::<Vec<u16>>();
+            if is_native_function_name(&units) {
+                text.extend(units);
+            }
+        }
     }
     text.extend("() {\n    [native code]\n}".encode_utf16());
     super::string_units(cx, &text)
+}
+
+/// `NativeFunctionAccessor? PropertyName` for the names functions have: an
+/// IdentifierName, or a well-known symbol's `[Symbol.name]`, after an
+/// optional `get ` or `set `.
+fn is_native_function_name(units: &[u16]) -> bool {
+    let name = units
+        .strip_prefix(&[
+            u16::from(b'g'),
+            u16::from(b'e'),
+            u16::from(b't'),
+            u16::from(b' '),
+        ])
+        .or_else(|| {
+            units.strip_prefix(&[
+                u16::from(b's'),
+                u16::from(b'e'),
+                u16::from(b't'),
+                u16::from(b' '),
+            ])
+        })
+        .unwrap_or(units);
+    let symbol: Vec<u16> = "[Symbol.".encode_utf16().collect();
+    match name.strip_prefix(symbol.as_slice()) {
+        Some(rest) => rest
+            .strip_suffix(&[u16::from(b']')])
+            .is_some_and(is_identifier_name),
+        None => is_identifier_name(name),
+    }
+}
+
+fn is_identifier_name(units: &[u16]) -> bool {
+    let mut code_points = char::decode_utf16(units.iter().copied());
+    let start = |c: char| c == '$' || c == '_' || oxide_regexp::unicode::is_id_start(c as u32);
+    match code_points.next() {
+        Some(Ok(first)) if start(first) => code_points.all(|c| {
+            c.is_ok_and(|c| {
+                start(c)
+                    || c == '\u{200c}'
+                    || c == '\u{200d}'
+                    || oxide_regexp::unicode::is_id_continue(c as u32)
+            })
+        }),
+        _ => false,
+    }
 }
 
 /// `f.call(thisArg, …)` outside a rewritten call site.
@@ -209,18 +262,19 @@ pub(super) fn bind(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         return Err(error::type_error(cx, "not a function"));
     }
     let target_object = target.as_object().unwrap();
+    // BoundFunctionCreate step 1: the target's [[GetPrototypeOf]], which a
+    // proxy target answers with its trap.
+    let prototype = internal::get_prototype_of(cx, target_object)?;
+    cx.heap.roots().push(prototype);
     let mut slots = vec![target, site.arg(cx, 0)];
     slots.extend((1..site.argc).map(|index| site.arg(cx, index)));
-    // QuickJS's bound functions inherit from `%Function.prototype%`, not
-    // the target's prototype (which it never reads).
-    let prototype = cx.realm.intrinsic(Intrinsic::FunctionPrototype);
     let callable = cx.heap.header(target_object).flags & (flags::CALLABLE | flags::CONSTRUCTOR);
     let bound = cx
         .heap
         .alloc_internal(
             ObjectKind::BoundFunction,
             InternalTag::None,
-            Some(prototype),
+            prototype.as_object(),
             2,
             &slots,
             Default::default(),

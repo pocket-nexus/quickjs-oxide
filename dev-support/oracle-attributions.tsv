@@ -168,3 +168,16 @@ templates/tagged / dynamic-compilation-sites / authored eval and separately cons
 templates/tagged / super-member-this / super member tags and direct eval preserve the method receiver	NEWCORE-DIRECT-EVAL-001
 templates/tagged / with-receiver / an identifier tag resolved through with receives the with object as this	NEWCORE-WITH-001
 typed_array/of / static from shares only the direct constructor diagnostic seam	NEWCORE-SPECIES-001
+primitives/values / bigint decrement subtracts one outside int64	QUICKJS-SPEC-001
+promise/combinators / allSettled element functions share one alreadyCalled record	QUICKJS-SPEC-006
+promise/combinators / a late onRejected after fulfillment leaves the result unchanged	QUICKJS-SPEC-006
+function_semantics/bind_to_string_probe	QUICKJS-SPEC-003
+proxy_reflect/proxy / pinned getOwnPropertyDescriptor frozen checks omit value getter and setter identity	QUICKJS-SPEC-005
+proxy_reflect/proxy / pinned nested Proxy undefined descriptor trap bypasses target IsExtensible	QUICKJS-SPEC-005
+object/descriptors / pinned QuickJS omits the fixed data descriptor same value check	QUICKJS-SPEC-005
+object/intrinsic / QuickJS defineProperties converts and defines sequentially	QUICKJS-SPEC-004
+object/intrinsic / QuickJS snapshots Proxy enumerability before reading descriptor values	QUICKJS-SPEC-004
+function_semantics/bound_functions / a bound function inherits its target's prototype	QUICKJS-SPEC-002
+function_semantics/bound_functions / a proxy target's getPrototypeOf trap runs before the bound function exists	QUICKJS-SPEC-002
+function_semantics/bound_functions / a bound function prints as a NativeFunction	QUICKJS-SPEC-003
+class_initialization/private_in / setter-only getter-only and paired accessors test the brand	QUICKJS-SPEC-007

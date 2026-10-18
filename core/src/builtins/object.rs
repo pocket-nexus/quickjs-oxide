@@ -355,13 +355,30 @@ fn define_properties_from(
 ) -> Result<(), Throw> {
     let properties = internal::to_object(cx, properties)?;
     root(cx, Value::object(properties));
-    // QuickJS's `JS_ObjectDefineProperties`: the enumerable keys first, then
-    // each descriptor read, converted and defined in turn.
-    for key in internal::own_enumerable_keys(cx, properties)? {
+    // ObjectDefineProperties (20.1.2.3.1): every key's descriptor is read
+    // and converted before any is defined.
+    let mut descriptors = Vec::new();
+    for key in internal::own_property_keys(cx, properties)? {
+        root(cx, key.to_value());
+        let Some(own) = internal::get_own_property(cx, properties, key)? else {
+            continue;
+        };
+        if own.enumerable != Some(true) {
+            continue;
+        }
         let value = internal::get(cx, properties, key, Value::object(properties))?;
         root(cx, value);
         let descriptor = internal::to_property_descriptor(cx, value)?;
-        internal::define_property_or_throw(cx, object, key, &descriptor)?;
+        for field in [descriptor.value, descriptor.get, descriptor.set]
+            .into_iter()
+            .flatten()
+        {
+            root(cx, field);
+        }
+        descriptors.push((key, descriptor));
+    }
+    for (key, descriptor) in &descriptors {
+        internal::define_property_or_throw(cx, object, *key, descriptor)?;
     }
     Ok(())
 }

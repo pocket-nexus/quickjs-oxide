@@ -314,11 +314,7 @@ fn class_op_rooted(
             let Some(target) = target.as_object() else {
                 return Err(error::type_error(cx, "invalid 'in' operand"));
             };
-            let has = if method.as_object().is_some() {
-                brand_check(cx, Value::object(target), method)?
-            } else {
-                unbranded_in(cx, target, method)?
-            };
+            let has = brand_check(cx, Value::object(target), method)?;
             set_reg(cx, frame, insn.a, Value::bool(has));
         }
         Opcode::CopyData => {
@@ -599,25 +595,6 @@ fn add_brand(cx: &mut Cx<'_>, home: ObjectId, target: ObjectId) -> Result<(), Th
             Value::UNDEFINED,
         )
         .map_err(|error| error::heap_error(cx, error))
-}
-
-/// `#x in target` for an accessor without a getter: QuickJS's
-/// `js_operator_private_in` finds no method function in the getter's
-/// uninitialized variable and looks for an own property named by its
-/// `JS_ValueToAtom`, `"[unsupported type]"`.
-#[cold]
-#[inline(never)]
-fn unbranded_in(cx: &mut Cx<'_>, target: ObjectId, method: Value) -> Result<bool, Throw> {
-    let name = if method.is_empty() {
-        "[unsupported type]"
-    } else {
-        "undefined"
-    };
-    let key = cx
-        .heap
-        .intern(name)
-        .map_err(|error| error::heap_error(cx, error))?;
-    Ok(cx.heap.lookup_own(target, PropertyKey::atom(key)).is_some())
 }
 
 /// QuickJS's `JS_CheckBrand`: whether `target` carries the brand of the

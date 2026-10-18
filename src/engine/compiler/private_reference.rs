@@ -317,10 +317,17 @@ pub(super) fn resolve_private_field_operation(
             BindingKind::PrivateField { .. }
             | BindingKind::PrivateMethod { .. }
             | BindingKind::PrivateGetter { .. }
-            | BindingKind::PrivateSetter { .. }
             | BindingKind::PrivateGetterSetter { .. },
             PrivateFieldAccess::In,
         ) => Instruction::PrivateIn(primary.source),
+        // A setter-only accessor's brand is checked through its setter
+        // (13.10.1, PrivateElementFind): the getter binding is never set.
+        (BindingKind::PrivateSetter { .. }, PrivateFieldAccess::In) => {
+            let setter_name = private_setter_binding_name(&mut tree.names, name);
+            let setter = resolve_private_binding(tree, consuming_function, use_scope, setter_name)?
+                .ok_or_else(|| Error::internal("private setter binding is missing"))?;
+            Instruction::PrivateIn(setter.source)
+        }
         (
             BindingKind::Normal
             | BindingKind::Lexical { .. }

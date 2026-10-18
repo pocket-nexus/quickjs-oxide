@@ -307,9 +307,11 @@ fn perform(
     capability: [Value; 3],
     record: &mut iter::Iter,
 ) -> Result<Value, (Throw, bool)> {
+    // The `values` List (or `errors`), as an array no script sees: the
+    // result is a fresh array made from it (CreateArrayFromList).
     let values = internal::array_create(cx, 0).map_err(|throw| (throw, false))?;
     root(cx, Value::object(values));
-    // The shared state of the element closures: the values array, the
+    // The shared state of the element closures: the values list, the
     // remaining count, the capability.
     let shared = native_data(
         cx,
@@ -346,18 +348,25 @@ fn perform(
                     capability[2],
                 ),
                 Combinator::AllSettled => {
-                    let fulfilled = element_closure(
+                    // 27.2.4.2.1 step 8: both halves share one
+                    // `alreadyCalled` record.
+                    let called = native_data(cx, &[Value::FALSE])?;
+                    root(cx, Value::object(called));
+                    let fulfilled = settled_closure(
                         cx,
                         Native::PromiseAllSettledResolveElement,
                         shared,
                         index,
+                        called,
                     )?;
                     root(cx, fulfilled);
-                    // Each half has its own already-called flag, as QuickJS
-                    // copies the element data into each function: a
-                    // thenable calling both stores the second.
-                    let rejected =
-                        element_closure(cx, Native::PromiseAllSettledRejectElement, shared, index)?;
+                    let rejected = settled_closure(
+                        cx,
+                        Native::PromiseAllSettledRejectElement,
+                        shared,
+                        index,
+                        called,
+                    )?;
                     (fulfilled, rejected)
                 }
                 Combinator::Any => (
@@ -387,16 +396,12 @@ fn perform(
         .set_internal_slot(shared, 1, Value::int32(remaining));
     if remaining == 0 {
         let finish = (|| {
+            let array = array_from_list(cx, values)?;
             if kind == Combinator::Any {
-                let error = aggregate_error(cx, values)?;
+                let error = aggregate_error(cx, array)?;
                 crate::vm::call(cx, capability[2], Value::UNDEFINED, &[error])?;
             } else {
-                crate::vm::call(
-                    cx,
-                    capability[1],
-                    Value::UNDEFINED,
-                    &[Value::object(values)],
-                )?;
+                crate::vm::call(cx, capability[1], Value::UNDEFINED, &[array])?;
             }
             Ok(())
         })();
@@ -406,8 +411,7 @@ fn perform(
     Ok(capability[0])
 }
 
-/// QuickJS's `JS_DefinePropertyValueUint32` on the values array: user code
-/// that froze it makes the definition fail silently.
+/// Sets element `index` of a values list.
 fn define_element(
     cx: &mut Cx<'_>,
     values: ObjectId,
@@ -419,8 +423,24 @@ fn define_element(
     Ok(())
 }
 
-/// An `AggregateError` whose `errors` are the array's elements.
-fn aggregate_error(cx: &mut Cx<'_>, errors: ObjectId) -> Result<Value, Throw> {
+/// CreateArrayFromList of a values list: a fresh array with its elements.
+fn array_from_list(cx: &mut Cx<'_>, list: ObjectId) -> Result<Value, Throw> {
+    let length_key = Names::key(cx.realm.names.length);
+    let length = internal::get(cx, list, length_key, Value::object(list))?
+        .as_f64()
+        .unwrap_or(0.0) as u32;
+    let array = internal::array_create(cx, 0)?;
+    root(cx, Value::object(array));
+    for index in 0..length {
+        let key = internal::index_key(cx, index)?;
+        let value = internal::get(cx, list, key, Value::object(list))?;
+        internal::create_data_property(cx, array, key, value)?;
+    }
+    Ok(Value::object(array))
+}
+
+/// An `AggregateError` whose `errors` is the array `errors`.
+fn aggregate_error(cx: &mut Cx<'_>, errors: Value) -> Result<Value, Throw> {
     let error = crate::vm::error::new_bare_error(cx, crate::ErrorKind::Aggregate)
         .map_err(|error| error::heap_error(cx, error))?;
     root(cx, error);
@@ -430,7 +450,7 @@ fn aggregate_error(cx: &mut Cx<'_>, errors: ObjectId) -> Result<Value, Throw> {
             error.as_object().unwrap(),
             key,
             PropertyFlags::data(true, false, true),
-            Value::object(errors),
+            errors,
         )
         .map_err(|error| error::heap_error(cx, error))?;
     Ok(error)
@@ -455,13 +475,49 @@ fn element_closure(
     native_closure(cx, native, data).map(Value::object)
 }
 
+/// An `allSettled` element closure, whose already-called flag is the record
+/// `called` it shares with its other half.
+fn settled_closure(
+    cx: &mut Cx<'_>,
+    native: Native,
+    shared: ObjectId,
+    index: u32,
+    called: ObjectId,
+) -> Result<Value, Throw> {
+    let data = native_data(
+        cx,
+        &[
+            Value::object(shared),
+            Value::int32(index as i32),
+            Value::object(called),
+        ],
+    )?;
+    native_closure(cx, native, data).map(Value::object)
+}
+
+/// Whether the element function has been called (its own flag, or the
+/// record it shares).
+fn already_called(cx: &mut Cx<'_>, site: &CallSite) -> bool {
+    match site.data(cx, 2).as_object() {
+        Some(record) => cx.heap.internal_slot(record, 0) == Value::TRUE,
+        None => site.data(cx, 2) == Value::TRUE,
+    }
+}
+
+fn set_called(cx: &mut Cx<'_>, site: &CallSite) {
+    match site.data(cx, 2).as_object() {
+        Some(record) => cx.heap.set_internal_slot(record, 0, Value::TRUE),
+        None => site.set_data(cx, 2, Value::TRUE),
+    }
+}
+
 /// The common part of the element functions: once only, store the element,
 /// and settle when the last one arrives.
 fn element(cx: &mut Cx<'_>, site: CallSite, element: Value, any: bool) -> Result<Value, Throw> {
-    if site.data(cx, 2) == Value::TRUE {
+    if already_called(cx, &site) {
         return Ok(Value::UNDEFINED);
     }
-    site.set_data(cx, 2, Value::TRUE);
+    set_called(cx, &site);
     let shared = site.data(cx, 0).as_object().expect("shared state");
     let index = site.data(cx, 1).as_int32().unwrap_or(0) as u32;
     let values = cx
@@ -474,13 +530,14 @@ fn element(cx: &mut Cx<'_>, site: CallSite, element: Value, any: bool) -> Result
     cx.heap
         .set_internal_slot(shared, 1, Value::int32(remaining));
     if remaining == 0 {
+        let array = array_from_list(cx, values)?;
         if any {
             let reject = cx.heap.internal_slot(shared, 4);
-            let error = aggregate_error(cx, values)?;
+            let error = aggregate_error(cx, array)?;
             return crate::vm::call(cx, reject, Value::UNDEFINED, &[error]);
         }
         let resolve = cx.heap.internal_slot(shared, 3);
-        return crate::vm::call(cx, resolve, Value::UNDEFINED, &[Value::object(values)]);
+        return crate::vm::call(cx, resolve, Value::UNDEFINED, &[array]);
     }
     Ok(Value::UNDEFINED)
 }
@@ -514,7 +571,7 @@ fn settled_record(cx: &mut Cx<'_>, rejected: bool, value: Value) -> Result<Value
 
 pub(super) fn all_settled_resolve_element(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let value = site.arg(cx, 0);
-    if site.data(cx, 2) == Value::TRUE {
+    if already_called(cx, &site) {
         return Ok(Value::UNDEFINED);
     }
     let record = settled_record(cx, false, value)?;
@@ -523,7 +580,7 @@ pub(super) fn all_settled_resolve_element(cx: &mut Cx<'_>, site: CallSite) -> Re
 
 pub(super) fn all_settled_reject_element(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let value = site.arg(cx, 0);
-    if site.data(cx, 2) == Value::TRUE {
+    if already_called(cx, &site) {
         return Ok(Value::UNDEFINED);
     }
     let record = settled_record(cx, true, value)?;

@@ -524,6 +524,9 @@
 // case: bigint update matrix
 ((function(){ var value = 4n; var old = value--; var replacement = ++value; return old * 100n + replacement * 10n + value; })()
 )
+// case: bigint decrement subtracts one outside int64
+((function(){ var out = []; [2n ** 63n, -(2n ** 63n), 2n ** 64n, -(2n ** 64n), 2n ** 100n].forEach(function (start) { var a = start, b = start; var old = b--; out.push(String(--a - start), String(old - start), String(b - start)); }); return out.join(','); })()
+)
 // case: captured identifier updates share one cell
 ((function(value){ var update = function(){ return value++; }; return update() * 100 + (++value) * 10 + value; })(2)
 )
