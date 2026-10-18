@@ -316,7 +316,6 @@ impl Printer<'_, '_> {
                 InternalTag::RegExpStringIterator => "RegExp String Iterator",
                 InternalTag::IteratorHelper => "Iterator Helper",
                 InternalTag::Iterator => "Iterator",
-                InternalTag::IteratorConcat => "Iterator Concat",
                 InternalTag::WrapForValidIterator => "Iterator Wrap",
                 InternalTag::AsyncFromSyncIterator => "",
                 InternalTag::Promise => "Promise",

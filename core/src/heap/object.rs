@@ -295,7 +295,6 @@ pub enum InternalTag {
     SetIterator,
     RegExpStringIterator,
     IteratorHelper,
-    IteratorConcat,
     WrapForValidIterator,
     AsyncFromSyncIterator,
     Promise,

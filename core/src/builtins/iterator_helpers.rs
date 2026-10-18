@@ -4,12 +4,12 @@
 //! `drop`, `flatMap`) and the eager consumers (`reduce`, `toArray`,
 //! `forEach`, `some`, `every`, `find`).
 //!
-//! A helper is QuickJS's `JSIteratorHelperData`: an internal record (tag
-//! `IteratorHelper`) whose slots hold the underlying iterator and its
-//! `next`, the helper's kind, its callback, its limit or counter, whether it
-//! is running or done, and for `flatMap` the inner iterator. `next` and
-//! `return` run QuickJS's `js_iterator_helper_next`, whose `return` steps
-//! the underlying iterator with its `return` method.
+//! A helper is an internal record (tag `IteratorHelper`) whose slots hold
+//! the underlying iterator and its `next`, the helper's kind, its callback,
+//! its limit or counter, the generator state, and for `flatMap` the inner
+//! iterator and its `next`. `next` runs the helper's closure (27.1.4.x)
+//! from one yield to the next; `return` resumes it with a return
+//! completion, which closes the iterators.
 
 use super::{Native, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;
@@ -81,14 +81,6 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         super::hidden(),
     )?;
 
-    let concat = plain_object(cx, Some(iterator_prototype), 3)?;
-    cx.set_intrinsic(Intrinsic::IteratorConcatPrototype, concat);
-    methods(
-        cx,
-        concat,
-        &[Native::IteratorConcatNext, Native::IteratorConcatReturn],
-    )?;
-    to_string_tag(cx, concat, "Iterator Concat")?;
     let helper = plain_object(cx, Some(iterator_prototype), 3)?;
     cx.set_intrinsic(Intrinsic::IteratorHelperPrototype, helper);
     methods(
@@ -182,10 +174,25 @@ fn setter_ignoring_prototype(
 
 // ---- Iterator.from and the wrapper ----
 
-/// QuickJS's `JS_IteratorNext(iterator, method)`: the value and whether
-/// the iterator is done (`value` is not read then).
-fn iterator_next(cx: &mut Cx<'_>, iterator: Value, method: Value) -> Result<(Value, bool), Throw> {
-    let result = crate::vm::call(cx, method, iterator, &[])?;
+/// `IteratorStepValue` over a record's iterator and `next`: the value, or
+/// `None` when done (`value` is not read then).
+fn step_value(cx: &mut Cx<'_>, iterator: Value, next: Value) -> Result<Option<Value>, Throw> {
+    let result = crate::vm::call(cx, next, iterator, &[])?;
+    step_result(cx, result)
+}
+
+/// [`step_value`] calling `next` without a native frame of its own, as
+/// QuickJS's concat steps its items (the backtrace shows no extra frame).
+fn step_value_direct(
+    cx: &mut Cx<'_>,
+    iterator: Value,
+    next: Value,
+) -> Result<Option<Value>, Throw> {
+    let result = crate::vm::call_next(cx, next, iterator)?;
+    step_result(cx, result)
+}
+
+fn step_result(cx: &mut Cx<'_>, result: Value) -> Result<Option<Value>, Throw> {
     let Some(result) = result.as_object() else {
         return Err(error::type_error(cx, "iterator must return an object"));
     };
@@ -193,35 +200,51 @@ fn iterator_next(cx: &mut Cx<'_>, iterator: Value, method: Value) -> Result<(Val
     let names = cx.realm.names;
     let done = internal::get_property(cx, result, Names::key(names.done))?;
     if ops::to_boolean(cx.heap, done) {
-        return Ok((Value::UNDEFINED, true));
+        return Ok(None);
     }
     let value = internal::get_property(cx, result, Names::key(names.value))?;
     root(cx, value);
-    Ok((value, false))
+    Ok(Some(value))
 }
 
-/// `Iterator.from(value)`, as QuickJS's `js_iterator_from`: a string or an
-/// object without `@@iterator` is itself the iterator, primitive or not.
-pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let value = site.arg(cx, 0);
-    if value.as_object().is_none() && value.as_string().is_none() {
-        return Err(error::type_error(cx, "Iterator.from called on non-object"));
+/// `IteratorStep`: whether the iterator produced a value (it is not read).
+fn step_only(cx: &mut Cx<'_>, iterator: Value, next: Value) -> Result<bool, Throw> {
+    let result = crate::vm::call(cx, next, iterator, &[])?;
+    let Some(result) = result.as_object() else {
+        return Err(error::type_error(cx, "iterator must return an object"));
+    };
+    root(cx, Value::object(result));
+    let done = internal::get_property(cx, result, Names::key(cx.realm.names.done))?;
+    Ok(!ops::to_boolean(cx.heap, done))
+}
+
+/// `GetIteratorFlattenable(value, primitives)` (7.4.x): the iterator and its
+/// `next`. A string primitive is iterated when `strings` allows it.
+fn flattenable(cx: &mut Cx<'_>, value: Value, strings: bool) -> Result<(Value, Value), Throw> {
+    if value.as_object().is_none() && !(strings && value.as_string().is_some()) {
+        return Err(error::type_error(cx, "not an object"));
     }
     let key = WellKnown::key(cx.realm.symbols.iterator);
-    let method = property::get(cx, value, key)?;
-    let iterator = if method.is_undefined() || method.is_null() {
-        value
-    } else {
-        root(cx, method);
-        let iterator = crate::vm::call(cx, method, value, &[])?;
-        if iterator.as_object().is_none() {
-            return Err(error::type_error(cx, "not an object"));
+    let iterator = match internal::get_method(cx, value, key)? {
+        None => value,
+        Some(method) => {
+            root(cx, method);
+            crate::vm::call(cx, method, value, &[])?
         }
-        iterator
     };
+    if iterator.as_object().is_none() {
+        return Err(error::type_error(cx, "not an object"));
+    }
     root(cx, iterator);
     let next = property::get(cx, iterator, Names::key(cx.realm.names.next))?;
     root(cx, next);
+    Ok((iterator, next))
+}
+
+/// `Iterator.from(value)` (27.1.3.2.1).
+pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    let value = site.arg(cx, 0);
+    let (iterator, next) = flattenable(cx, value, true)?;
     let constructor = cx.realm.intrinsic(Intrinsic::Iterator);
     if internal::ordinary_has_instance(cx, Value::object(constructor), iterator)? {
         return Ok(iterator);
@@ -256,29 +279,23 @@ fn this_tagged(cx: &mut Cx<'_>, site: &CallSite, tag: InternalTag) -> Result<Obj
     }
 }
 
-/// The wrapper's `next`: a fresh result from the wrapped iterator's.
+/// `%WrapForValidIteratorPrototype%.next`: the wrapped `next`'s result.
 pub(super) fn wrap_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let wrapper = this_tagged(cx, &site, InternalTag::WrapForValidIterator)?;
     let iterator = cx.heap.internal_slot(wrapper, 0);
     let next = cx.heap.internal_slot(wrapper, 1);
-    let (value, done) = iterator_next(cx, iterator, next)?;
-    iter::result_object(cx, value, done)
+    crate::vm::call(cx, next, iterator, &[])
 }
 
-/// The wrapper's `return`: the wrapped iterator's `return` result itself.
+/// `%WrapForValidIteratorPrototype%.return`: the wrapped `return`'s result.
 pub(super) fn wrap_return(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let wrapper = this_tagged(cx, &site, InternalTag::WrapForValidIterator)?;
     let iterator = cx.heap.internal_slot(wrapper, 0);
     let key = Names::key(cx.realm.names.return_);
-    let method = property::get(cx, iterator, key)?;
-    if method.is_undefined() || method.is_null() {
-        return iter::result_object(cx, Value::UNDEFINED, true);
+    match internal::get_method(cx, iterator, key)? {
+        None => iter::result_object(cx, Value::UNDEFINED, true),
+        Some(method) => crate::vm::call(cx, method, iterator, &[]),
     }
-    let result = crate::vm::call(cx, method, iterator, &[])?;
-    if result.as_object().is_none() {
-        return Err(error::type_error(cx, "iterator must return an object"));
-    }
-    Ok(result)
 }
 
 // ---- the helpers ----
@@ -292,9 +309,15 @@ enum Kind {
     Take = 2,
     Drop = 3,
     FlatMap = 4,
+    Concat = 5,
 }
 
-// Slots of a helper record.
+// Slots of a helper record: the underlying iterator and `next`, the kind,
+// the callback, the limit or counter, the generator state (started,
+// executing, done), and for `flatMap` the inner iterator and its `next`.
+// A concat's iterator and `next` are the open item's (undefined between
+// items), its count the index of that item, and its items follow as
+// (open method, iterable) pairs.
 const ITERATOR: usize = 0;
 const NEXT: usize = 1;
 const KIND: usize = 2;
@@ -303,6 +326,9 @@ const COUNT: usize = 4;
 const EXECUTING: usize = 5;
 const DONE: usize = 6;
 const INNER: usize = 7;
+const INNER_NEXT: usize = 8;
+const STARTED: usize = 9;
+const CONCAT_ITEMS: usize = 10;
 
 /// The receiver of an `Iterator.prototype` method: an object.
 fn this_iterator(cx: &mut Cx<'_>, site: &CallSite) -> Result<Value, Throw> {
@@ -326,9 +352,9 @@ fn close_unread(cx: &mut Cx<'_>, iterator: Value, failure: Throw) -> Throw {
     }
 }
 
-/// QuickJS's `js_create_iterator_helper`: the limit's conversion or the
-/// callback's check, then the receiver's `next`; any failure closes the
-/// receiver.
+/// A helper (27.1.4.x): the limit's conversion or the callback's check,
+/// whose failure closes the receiver, then GetIteratorDirect (the
+/// receiver's `next`).
 fn create_helper(cx: &mut Cx<'_>, site: CallSite, kind: Kind) -> Result<Value, Throw> {
     let iterator = this_iterator(cx, &site)?;
     let argument = site.arg(cx, 0);
@@ -360,10 +386,7 @@ fn create_helper(cx: &mut Cx<'_>, site: CallSite, kind: Kind) -> Result<Value, T
             callback = argument;
         }
     }
-    let next = match property::get(cx, iterator, Names::key(cx.realm.names.next)) {
-        Ok(next) => next,
-        Err(throw) => return Err(close_unread(cx, iterator, throw)),
-    };
+    let next = property::get(cx, iterator, Names::key(cx.realm.names.next))?;
     root(cx, next);
     let prototype = cx.realm.intrinsic(Intrinsic::IteratorHelperPrototype);
     cx.heap
@@ -381,6 +404,8 @@ fn create_helper(cx: &mut Cx<'_>, site: CallSite, kind: Kind) -> Result<Value, T
                 Value::FALSE,
                 Value::FALSE,
                 Value::UNDEFINED,
+                Value::UNDEFINED,
+                Value::FALSE,
             ],
             Default::default(),
             0,
@@ -417,24 +442,12 @@ fn set_slot(cx: &mut Cx<'_>, helper: ObjectId, index: usize, value: Value) {
     cx.heap.set_internal_slot(helper, index, value);
 }
 
-/// How a helper step failed: QuickJS's `fail` closes the underlying
-/// iterator (keeping the failure), `fail_no_close` does not.
+/// How a helper step failed: IfAbruptCloseIterator closes the underlying
+/// iterator (keeping the failure); a failure of the underlying iterator's
+/// own step does not.
 enum Failure {
     Close(Throw),
     NoClose(Throw),
-}
-
-/// The method a helper steps the underlying iterator with: its `next`, or
-/// for `return` its `return` method, read now.
-fn step_method(cx: &mut Cx<'_>, helper: ObjectId, returning: bool) -> Result<Value, Failure> {
-    if !returning {
-        return Ok(slot(cx, helper, NEXT));
-    }
-    let iterator = slot(cx, helper, ITERATOR);
-    let key = Names::key(cx.realm.names.return_);
-    let method = property::get(cx, iterator, key).map_err(Failure::Close)?;
-    root(cx, method);
-    Ok(method)
 }
 
 fn take_count(cx: &mut Cx<'_>, helper: ObjectId) -> f64 {
@@ -448,161 +461,118 @@ fn next_index(cx: &mut Cx<'_>, helper: ObjectId) -> Value {
     crate::vm::number::number(count)
 }
 
-/// One run of QuickJS's `js_iterator_helper_next`: the value and whether
-/// the helper reports done, or the failure and that flag.
-fn helper_body(
-    cx: &mut Cx<'_>,
-    helper: ObjectId,
-    returning: bool,
-    done: &mut bool,
-) -> Result<Value, Failure> {
+/// The helper's closure run from its last yield to the next one: the value
+/// yielded, or `None` when it returns.
+fn helper_step(cx: &mut Cx<'_>, helper: ObjectId) -> Result<Option<Value>, Failure> {
     let kind = slot(cx, helper, KIND).as_int32().unwrap();
-    let iterator = slot(cx, helper, ITERATOR);
+    let (iterator, next) = (slot(cx, helper, ITERATOR), slot(cx, helper, NEXT));
     let callback = slot(cx, helper, CALLBACK);
-    *done = false;
-    let next = |cx: &mut Cx<'_>, method: Value, done: &mut bool| {
-        let result = iterator_next(cx, iterator, method).map_err(Failure::NoClose);
-        *done = result.as_ref().is_ok_and(|&(_, done)| done);
-        result.map(|(value, _)| value)
-    };
+    let step = |cx: &mut Cx<'_>| step_value(cx, iterator, next).map_err(Failure::NoClose);
     match kind {
+        k if k == Kind::Map as i32 => {
+            let Some(item) = step(cx)? else {
+                return Ok(None);
+            };
+            let index = next_index(cx, helper);
+            crate::vm::call(cx, callback, Value::UNDEFINED, &[item, index])
+                .map(Some)
+                .map_err(Failure::Close)
+        }
+        k if k == Kind::Filter as i32 => loop {
+            let Some(item) = step(cx)? else {
+                return Ok(None);
+            };
+            let index = next_index(cx, helper);
+            let selected = crate::vm::call(cx, callback, Value::UNDEFINED, &[item, index])
+                .map_err(Failure::Close)?;
+            if ops::to_boolean(cx.heap, selected) {
+                return Ok(Some(item));
+            }
+        },
+        k if k == Kind::Take as i32 => {
+            if take_count(cx, helper) == 0.0 {
+                // `IteratorClose(iterated, ReturnCompletion(undefined))`.
+                let record = iter::Iter::Protocol {
+                    iterator,
+                    next: Value::UNDEFINED,
+                };
+                iter::close(cx, &record, Ok(())).map_err(Failure::NoClose)?;
+                return Ok(None);
+            }
+            let count = take_count(cx, helper);
+            set_slot(cx, helper, COUNT, Value::number(count - 1.0));
+            step(cx)
+        }
         k if k == Kind::Drop as i32 => {
-            let method = step_method(cx, helper, returning)?;
+            // The skipped values are stepped with IteratorStep, unread.
             while take_count(cx, helper) > 0.0 {
                 let count = take_count(cx, helper);
                 set_slot(cx, helper, COUNT, Value::number(count - 1.0));
-                next(cx, method, done)?;
-                if returning {
-                    *done = true;
-                }
-                if *done {
-                    return Ok(Value::UNDEFINED);
+                if !step_only(cx, iterator, next).map_err(Failure::NoClose)? {
+                    return Ok(None);
                 }
             }
-            next(cx, method, done)
+            step(cx)
         }
-        k if k == Kind::Filter as i32 => {
-            let method = step_method(cx, helper, returning)?;
-            loop {
-                let item = next(cx, method, done)?;
-                if *done || returning {
-                    return Ok(item);
+        k if k == Kind::Concat as i32 => loop {
+            if slot(cx, helper, ITERATOR).is_undefined() {
+                let index = take_count(cx, helper) as usize;
+                let count = (cx.heap.internal(helper).slots.len() - CONCAT_ITEMS) / 2;
+                if index >= count {
+                    return Ok(None);
                 }
-                let index = next_index(cx, helper);
-                let selected = crate::vm::call(cx, callback, Value::UNDEFINED, &[item, index])
-                    .map_err(Failure::Close)?;
-                if ops::to_boolean(cx.heap, selected) {
-                    return Ok(item);
+                let at = CONCAT_ITEMS + index * 2;
+                let (method, iterable) = (slot(cx, helper, at), slot(cx, helper, at + 1));
+                let iterator =
+                    crate::vm::call(cx, method, iterable, &[]).map_err(Failure::NoClose)?;
+                if iterator.as_object().is_none() {
+                    return Err(Failure::NoClose(error::type_error(cx, "not an object")));
+                }
+                root(cx, iterator);
+                let next = property::get(cx, iterator, Names::key(cx.realm.names.next))
+                    .map_err(Failure::NoClose)?;
+                set_slot(cx, helper, ITERATOR, iterator);
+                set_slot(cx, helper, NEXT, next);
+            }
+            let (iterator, next) = (slot(cx, helper, ITERATOR), slot(cx, helper, NEXT));
+            match step_value_direct(cx, iterator, next).map_err(Failure::NoClose)? {
+                Some(value) => return Ok(Some(value)),
+                None => {
+                    set_slot(cx, helper, ITERATOR, Value::UNDEFINED);
+                    set_slot(cx, helper, NEXT, Value::UNDEFINED);
+                    let index = take_count(cx, helper);
+                    set_slot(cx, helper, COUNT, Value::number(index + 1.0));
                 }
             }
-        }
-        k if k == Kind::Map as i32 => {
-            let method = step_method(cx, helper, returning)?;
-            let item = next(cx, method, done)?;
-            if *done || returning {
-                return Ok(item);
-            }
-            let index = next_index(cx, helper);
-            crate::vm::call(cx, callback, Value::UNDEFINED, &[item, index]).map_err(Failure::Close)
-        }
-        k if k == Kind::Take as i32 => {
-            if take_count(cx, helper) > 0.0 {
-                let method = step_method(cx, helper, returning)?;
-                let count = take_count(cx, helper);
-                set_slot(cx, helper, COUNT, Value::number(count - 1.0));
-                return next(cx, method, done);
-            }
-            *done = true;
-            let record = iter::Iter::Protocol {
-                iterator,
-                next: Value::UNDEFINED,
-            };
-            iter::close(cx, &record, Ok(())).map_err(Failure::NoClose)?;
-            Ok(Value::UNDEFINED)
-        }
-        _ => flat_map_body(cx, helper, returning, done),
-    }
-}
-
-/// `flatMap`'s run. The inner iterator's `next` (or `return`) is read on
-/// every step; a failure there closes the inner iterator, whose own failure
-/// then replaces it, before the underlying one is closed. An exhausted inner
-/// iterator is closed too, with any failure of that ignored.
-fn flat_map_body(
-    cx: &mut Cx<'_>,
-    helper: ObjectId,
-    returning: bool,
-    done: &mut bool,
-) -> Result<Value, Failure> {
-    let iterator = slot(cx, helper, ITERATOR);
-    let callback = slot(cx, helper, CALLBACK);
-    loop {
-        if slot(cx, helper, INNER).is_undefined() {
-            let method = step_method(cx, helper, returning)?;
-            let (item, finished) = iterator_next(cx, iterator, method).map_err(Failure::NoClose)?;
-            *done = finished;
-            if finished || returning {
-                return Ok(item);
-            }
-            let index = next_index(cx, helper);
-            let mapped = crate::vm::call(cx, callback, Value::UNDEFINED, &[item, index])
-                .map_err(Failure::Close)?;
-            root(cx, mapped);
-            if mapped.as_object().is_none() {
-                return Err(Failure::Close(error::type_error(cx, "not an object")));
-            }
-            let key = WellKnown::key(cx.realm.symbols.iterator);
-            let method = property::get(cx, mapped, key).map_err(Failure::Close)?;
-            let inner = if method.is_undefined() || method.is_null() {
-                mapped
-            } else {
-                root(cx, method);
-                let inner = crate::vm::call(cx, method, mapped, &[]).map_err(Failure::Close)?;
-                if inner.as_object().is_none() {
-                    return Err(Failure::Close(error::type_error(cx, "not an object")));
-                }
-                inner
-            };
-            set_slot(cx, helper, INNER, inner);
-        }
-        let inner = slot(cx, helper, INNER);
-        let inner_record = iter::Iter::Protocol {
-            iterator: inner,
-            next: Value::UNDEFINED,
-        };
-        let names = cx.realm.names;
-        let key = Names::key(if returning { names.return_ } else { names.next });
-        let stepped = property::get(cx, inner, key).and_then(|method| {
-            if returning && (method.is_undefined() || method.is_null()) {
-                return Ok((Value::UNDEFINED, true));
-            }
-            root(cx, method);
-            iterator_next(cx, inner, method)
-        });
-        match stepped {
-            Ok((item, false)) => {
-                *done = false;
-                return Ok(item);
-            }
-            Ok((_, true)) => {
-                *done = false;
-                let _ = iter::close(cx, &inner_record, Ok(()));
-                set_slot(cx, helper, INNER, Value::UNDEFINED);
-            }
-            Err(throw) => {
-                let throw = match iter::close(cx, &inner_record, Ok(())) {
-                    Err(replaced) => replaced,
-                    Ok(()) => throw,
+        },
+        _ => loop {
+            if slot(cx, helper, INNER).is_undefined() {
+                let Some(item) = step(cx)? else {
+                    return Ok(None);
                 };
-                set_slot(cx, helper, INNER, Value::UNDEFINED);
-                return Err(Failure::Close(throw));
+                let index = next_index(cx, helper);
+                let mapped = crate::vm::call(cx, callback, Value::UNDEFINED, &[item, index])
+                    .map_err(Failure::Close)?;
+                root(cx, mapped);
+                let (inner, inner_next) = flattenable(cx, mapped, false).map_err(Failure::Close)?;
+                set_slot(cx, helper, INNER, inner);
+                set_slot(cx, helper, INNER_NEXT, inner_next);
             }
-        }
+            let (inner, inner_next) = (slot(cx, helper, INNER), slot(cx, helper, INNER_NEXT));
+            match step_value(cx, inner, inner_next).map_err(Failure::Close)? {
+                Some(value) => return Ok(Some(value)),
+                None => {
+                    set_slot(cx, helper, INNER, Value::UNDEFINED);
+                    set_slot(cx, helper, INNER_NEXT, Value::UNDEFINED);
+                }
+            }
+        },
     }
 }
 
-/// QuickJS's `js_iterator_helper_next` for `next` and `return`.
-fn helper_resume(cx: &mut Cx<'_>, site: CallSite, returning: bool) -> Result<Value, Throw> {
+/// `%IteratorHelperPrototype%.next` (27.1.2.1.1): GeneratorResume of the
+/// helper's closure.
+pub(super) fn helper_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let helper = this_tagged(cx, &site, InternalTag::IteratorHelper)?;
     if slot(cx, helper, EXECUTING) == Value::TRUE {
         return Err(error::type_error(cx, "cannot invoke a running iterator"));
@@ -610,9 +580,9 @@ fn helper_resume(cx: &mut Cx<'_>, site: CallSite, returning: bool) -> Result<Val
     if slot(cx, helper, DONE) == Value::TRUE {
         return iter::result_object(cx, Value::UNDEFINED, true);
     }
+    set_slot(cx, helper, STARTED, Value::TRUE);
     set_slot(cx, helper, EXECUTING, Value::TRUE);
-    let mut done = false;
-    let result = match helper_body(cx, helper, returning, &mut done) {
+    let result = match helper_step(cx, helper) {
         Ok(value) => Ok(value),
         Err(Failure::NoClose(throw)) => Err(throw),
         Err(Failure::Close(throw)) => {
@@ -626,20 +596,62 @@ fn helper_resume(cx: &mut Cx<'_>, site: CallSite, returning: bool) -> Result<Val
             }
         }
     };
-    set_slot(cx, helper, DONE, Value::bool(returning || done));
     set_slot(cx, helper, EXECUTING, Value::FALSE);
-    let value = result?;
-    iter::result_object(cx, value, done)
+    match result {
+        Ok(Some(value)) => iter::result_object(cx, value, false),
+        Ok(None) => {
+            set_slot(cx, helper, DONE, Value::TRUE);
+            iter::result_object(cx, Value::UNDEFINED, true)
+        }
+        Err(throw) => {
+            set_slot(cx, helper, DONE, Value::TRUE);
+            Err(throw)
+        }
+    }
 }
 
-/// `%IteratorHelperPrototype%.next`.
-pub(super) fn helper_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    helper_resume(cx, site, false)
-}
-
-/// `%IteratorHelperPrototype%.return`.
+/// `%IteratorHelperPrototype%.return` (27.1.2.1.2): before the first `next`
+/// the underlying iterator is closed; at a yield the closure resumes with a
+/// return completion, which closes `flatMap`'s inner iterator (a failure of
+/// that closes the underlying one and wins) and then the underlying one.
 pub(super) fn helper_return(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    helper_resume(cx, site, true)
+    let helper = this_tagged(cx, &site, InternalTag::IteratorHelper)?;
+    if slot(cx, helper, EXECUTING) == Value::TRUE {
+        return Err(error::type_error(cx, "cannot invoke a running iterator"));
+    }
+    if slot(cx, helper, DONE) == Value::TRUE {
+        return iter::result_object(cx, Value::UNDEFINED, true);
+    }
+    let underlying = iter::Iter::Protocol {
+        iterator: slot(cx, helper, ITERATOR),
+        next: Value::UNDEFINED,
+    };
+    // A concat has no underlying iterator before its first `next`.
+    if slot(cx, helper, STARTED) != Value::TRUE {
+        set_slot(cx, helper, DONE, Value::TRUE);
+        if !slot(cx, helper, ITERATOR).is_undefined() {
+            iter::close(cx, &underlying, Ok(()))?;
+        }
+        return iter::result_object(cx, Value::UNDEFINED, true);
+    }
+    set_slot(cx, helper, EXECUTING, Value::TRUE);
+    let inner = slot(cx, helper, INNER);
+    let result = (|| {
+        if !inner.is_undefined() {
+            let record = iter::Iter::Protocol {
+                iterator: inner,
+                next: Value::UNDEFINED,
+            };
+            if let Err(throw) = iter::close(cx, &record, Ok(())) {
+                return iter::close(cx, &underlying, Err(throw));
+            }
+        }
+        iter::close(cx, &underlying, Ok(()))
+    })();
+    set_slot(cx, helper, EXECUTING, Value::FALSE);
+    set_slot(cx, helper, DONE, Value::TRUE);
+    result?;
+    iter::result_object(cx, Value::UNDEFINED, true)
 }
 
 // ---- the consumers ----
@@ -767,21 +779,20 @@ pub(super) fn to_array(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
 
 // ---- Iterator.concat ----
 
-// Slots of a concat record (QuickJS's `JSIteratorConcatData`): whether it
-// is running, the index of the current item, the open inner iterator and its
-// `next` (`undefined` until read), then (open method, iterable) per item.
-const CONCAT_RUNNING: usize = 0;
-const CONCAT_INDEX: usize = 1;
-const CONCAT_INNER: usize = 2;
-const CONCAT_ITEMS: usize = 4;
-
-/// `Iterator.concat(...items)`.
+/// `Iterator.concat(...items)`: an Iterator Helper over the items' iterators
+/// in turn, each opened when reached.
 pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let mut slots = vec![
-        Value::FALSE,
+        Value::UNDEFINED,
+        Value::UNDEFINED,
+        Value::int32(Kind::Concat as i32),
+        Value::UNDEFINED,
         Value::int32(0),
+        Value::FALSE,
+        Value::FALSE,
         Value::UNDEFINED,
         Value::UNDEFINED,
+        Value::FALSE,
     ];
     let key = WellKnown::key(cx.realm.symbols.iterator);
     for index in 0..site.argc {
@@ -796,11 +807,11 @@ pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         slots.push(method);
         slots.push(item);
     }
-    let prototype = cx.realm.intrinsic(Intrinsic::IteratorConcatPrototype);
+    let prototype = cx.realm.intrinsic(Intrinsic::IteratorHelperPrototype);
     cx.heap
         .alloc_internal(
             ObjectKind::Builtin,
-            InternalTag::IteratorConcat,
+            InternalTag::IteratorHelper,
             Some(prototype),
             0,
             &slots,
@@ -809,103 +820,4 @@ pub(super) fn concat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         )
         .map(Value::object)
         .map_err(|error| error::heap_error(cx, error))
-}
-
-fn concat_count(cx: &Cx<'_>, concat: ObjectId) -> usize {
-    (cx.heap.internal(concat).slots.len() - CONCAT_ITEMS) / 2
-}
-
-/// QuickJS's `js_iterator_concat_next` loop: a failure leaves the state as
-/// it was, so the next call retries the same step (opening the item again,
-/// or reading `next` again).
-fn concat_step(cx: &mut Cx<'_>, concat: ObjectId) -> Result<Option<Value>, Throw> {
-    loop {
-        let index = slot(cx, concat, CONCAT_INDEX).as_int32().unwrap() as usize;
-        if index >= concat_count(cx, concat) {
-            return Ok(None);
-        }
-        let at = CONCAT_ITEMS + index * 2;
-        let mut iterator = slot(cx, concat, CONCAT_INNER);
-        if iterator.is_undefined() {
-            let method = slot(cx, concat, at);
-            let iterable = slot(cx, concat, at + 1);
-            iterator = crate::vm::call(cx, method, iterable, &[])?;
-            if iterator.as_object().is_none() {
-                return Err(error::type_error(cx, "not an object"));
-            }
-            set_slot(cx, concat, CONCAT_INNER, iterator);
-        }
-        let mut next = slot(cx, concat, CONCAT_INNER + 1);
-        if next.is_undefined() {
-            next = crate::vm::property::get(cx, iterator, Names::key(cx.realm.names.next))?;
-            set_slot(cx, concat, CONCAT_INNER + 1, next);
-        }
-        let result = crate::vm::call_next(cx, next, iterator)?;
-        let Some(result) = result.as_object() else {
-            return Err(error::type_error(cx, "iterator must return an object"));
-        };
-        root(cx, Value::object(result));
-        let names = cx.realm.names;
-        let done = internal::get_property(cx, result, Names::key(names.done))?;
-        if !ops::to_boolean(cx.heap, done) {
-            return internal::get_property(cx, result, Names::key(names.value)).map(Some);
-        }
-        set_slot(cx, concat, CONCAT_INNER, Value::UNDEFINED);
-        set_slot(cx, concat, CONCAT_INNER + 1, Value::UNDEFINED);
-        set_slot(cx, concat, at, Value::UNDEFINED);
-        set_slot(cx, concat, at + 1, Value::UNDEFINED);
-        set_slot(cx, concat, CONCAT_INDEX, Value::int32(index as i32 + 1));
-    }
-}
-
-pub(super) fn concat_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let concat = this_tagged(cx, &site, InternalTag::IteratorConcat)?;
-    if slot(cx, concat, CONCAT_RUNNING) == Value::TRUE {
-        return Err(error::type_error(cx, "already running"));
-    }
-    set_slot(cx, concat, CONCAT_RUNNING, Value::TRUE);
-    let result = concat_step(cx, concat);
-    set_slot(cx, concat, CONCAT_RUNNING, Value::FALSE);
-    match result? {
-        Some(value) => iter::result_object(cx, value, false),
-        None => iter::result_object(cx, Value::UNDEFINED, true),
-    }
-}
-
-/// QuickJS's `js_iterator_concat_return`: the open inner iterator's
-/// `return` result itself (calling a missing `return` throws), and the
-/// concat is finished whatever that call did.
-pub(super) fn concat_return(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let concat = this_tagged(cx, &site, InternalTag::IteratorConcat)?;
-    if slot(cx, concat, CONCAT_RUNNING) == Value::TRUE {
-        return Err(error::type_error(cx, "already running"));
-    }
-    let iterator = slot(cx, concat, CONCAT_INNER);
-    let mut result = Ok(Value::UNDEFINED);
-    if !iterator.is_undefined() {
-        set_slot(cx, concat, CONCAT_RUNNING, Value::TRUE);
-        let key = Names::key(cx.realm.names.return_);
-        let method = crate::vm::property::get(cx, iterator, key);
-        let method = match method {
-            Ok(method) => method,
-            Err(throw) => {
-                set_slot(cx, concat, CONCAT_RUNNING, Value::FALSE);
-                return Err(throw);
-            }
-        };
-        result = crate::vm::call(cx, method, iterator, &[]);
-        set_slot(cx, concat, CONCAT_RUNNING, Value::FALSE);
-        if let Ok(value) = result {
-            root(cx, value);
-        }
-    }
-    let count = concat_count(cx, concat);
-    for index in 0..count {
-        set_slot(cx, concat, CONCAT_ITEMS + index * 2, Value::UNDEFINED);
-        set_slot(cx, concat, CONCAT_ITEMS + index * 2 + 1, Value::UNDEFINED);
-    }
-    set_slot(cx, concat, CONCAT_INDEX, Value::int32(count as i32));
-    set_slot(cx, concat, CONCAT_INNER, Value::UNDEFINED);
-    set_slot(cx, concat, CONCAT_INNER + 1, Value::UNDEFINED);
-    result
 }

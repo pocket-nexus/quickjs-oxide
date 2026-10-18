@@ -74,7 +74,6 @@ intrinsics! {
     SetIteratorPrototype,
     RegExpStringIteratorPrototype,
     IteratorHelperPrototype,
-    IteratorConcatPrototype,
     Iterator,
     WrapForValidIteratorPrototype,
     AsyncFromSyncIteratorPrototype,

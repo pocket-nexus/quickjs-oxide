@@ -207,3 +207,10 @@ object/group_by / an internal Array push failure does not close the iterator	QUI
 array/find / String receiver callback sees UTF-16 units and the original primitive	QUICKJS-SPEC-020
 array/sort / unchanged original position skips Set while undefined does not	QUICKJS-SPEC-019
 for_await_of/completion / a completed async iterator is neither read nor closed	QUICKJS-SPEC-016
+iterator/concat / intrinsic graph / static metadata hidden prototype descriptors tag and exact brands	QUICKJS-SPEC-021
+iterator/concat / captured methods / static this capture cache sentinel and primitive-open retry boundaries	QUICKJS-SPEC-021
+iterator/concat / abrupt retry / open next getter call done and value failures retry without closing	QUICKJS-SPEC-021
+iterator/concat / return / before-start preserve drain validation and passthrough semantics	QUICKJS-SPEC-021
+iterator/concat / running guard / all next and return reentry directions throw while outer work survives	QUICKJS-SPEC-021
+iterator/helpers / flatMap close / inner normal-close errors replace step errors before outer close	QUICKJS-SPEC-022
+iterator/helpers / String fallback / a primitive String remains the wrapped iterator and call receiver	QUICKJS-SPEC-022

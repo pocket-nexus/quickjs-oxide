@@ -585,8 +585,6 @@ natives! {
     IteratorToArray => iterator_helpers::to_array, "toArray", 0;
     IteratorHelperNext => iterator_helpers::helper_next, "next", 0;
     IteratorHelperReturn => iterator_helpers::helper_return, "return", 0;
-    IteratorConcatNext => iterator_helpers::concat_next, "next", 0;
-    IteratorConcatReturn => iterator_helpers::concat_return, "return", 0;
 
     ArrayBufferConstructor => buffer::array_buffer_constructor, "ArrayBuffer", 1, constructor;
     ArrayBufferIsView => buffer::is_view, "isView", 1;
