@@ -2785,7 +2785,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .debug()
             .and_then(|debug| debug.source.as_ref())
             .filter(|_| !self.is_script)
-            .map(|bytes| String::from_utf8_lossy(bytes).into_owned().into_boxed_str());
+            .map(|bytes| bytes.to_vec().into_boxed_slice());
         let captures = self.captures(parent)?;
         let name = self
             .function

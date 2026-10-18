@@ -261,8 +261,10 @@ pub struct UnitLayout {
     pub name_atom: Option<crate::value::StringId>,
     /// The function's `length` property.
     pub length: u16,
-    /// The function's source text, for `Function.prototype.toString`.
-    pub source: Option<Box<str>>,
+    /// The function's source text, for `Function.prototype.toString`, in
+    /// WTF-8 (a lone surrogate of `Function` constructor source is kept as
+    /// its three-byte form, as QuickJS's `JS_ToCStringLen2` keeps it).
+    pub source: Option<Box<[u8]>>,
     /// The script or module the function belongs to.
     pub filename: Option<std::rc::Rc<str>>,
 }
