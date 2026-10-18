@@ -498,48 +498,62 @@ pub(crate) fn function_source(cx: &Cx<'_>, function: ObjectId) -> Option<Vec<u16
     Some(wtf8_units(source))
 }
 
-/// The UTF-16 units of WTF-8 `bytes`: a surrogate's three-byte form gives
-/// the lone unit back; a malformed sequence gives U+FFFD per byte.
+/// The UTF-16 units of source `bytes` as QuickJS's `JS_NewStringLen` reads
+/// them (`Function.prototype.toString` of a function's debug source): a
+/// surrogate's three-byte form gives the lone unit back, and an invalid
+/// sequence gives one U+FFFD, skipping its continuation bytes, the next
+/// byte and that byte's continuation bytes.
 fn wtf8_units(bytes: &[u8]) -> Vec<u16> {
+    let continuation = |byte: u8| (0x80..0xc0).contains(&byte);
     let mut units = Vec::with_capacity(bytes.len());
     let mut index = 0;
     while index < bytes.len() {
         let lead = bytes[index];
-        let (length, initial) = match lead {
-            0x00..=0x7f => (1, u32::from(lead)),
-            0xc2..=0xdf => (2, u32::from(lead & 0x1f)),
-            0xe0..=0xef => (3, u32::from(lead & 0x0f)),
-            0xf0..=0xf4 => (4, u32::from(lead & 0x07)),
-            _ => (0, 0),
+        if lead < 0x80 {
+            units.push(u16::from(lead));
+            index += 1;
+            continue;
+        }
+        // QuickJS's `unicode_from_utf8`.
+        let (length, mask, minimum) = match lead {
+            0xc0..=0xdf => (1, 0x1f, 0x80),
+            0xe0..=0xef => (2, 0x0f, 0x800),
+            0xf0..=0xf7 => (3, 0x07, 0x1_0000),
+            0xf8..=0xfb => (4, 0x03, 0x20_0000),
+            0xfc..=0xfd => (5, 0x01, 0x400_0000),
+            _ => (0, 0, 0),
         };
-        let tail = bytes.get(index + 1..index + length.max(1));
-        let code_point = (length > 0)
-            .then_some(tail)
-            .flatten()
-            .filter(|tail| tail.iter().all(|&byte| byte & 0xc0 == 0x80))
+        let decoded = (length > 0 && index + length < bytes.len())
+            .then(|| &bytes[index + 1..=index + length])
+            .filter(|tail| tail.iter().all(|&byte| continuation(byte)))
             .map(|tail| {
-                tail.iter()
-                    .fold(initial, |code, &byte| code << 6 | u32::from(byte & 0x3f))
+                tail.iter().fold(u32::from(lead & mask), |code, &byte| {
+                    code << 6 | u32::from(byte & 0x3f)
+                })
             })
-            .filter(|&code| match length {
-                3 => code >= 0x800,
-                4 => (0x1_0000..=0x10_ffff).contains(&code),
-                _ => true,
-            });
-        match code_point {
+            .filter(|&code| code >= minimum && code <= 0x10_ffff);
+        match decoded {
             Some(code) if code >= 0x1_0000 => {
                 let code = code - 0x1_0000;
                 units.push(0xd800 | (code >> 10) as u16);
                 units.push(0xdc00 | (code & 0x3ff) as u16);
-                index += length;
+                index += length + 1;
             }
             Some(code) => {
                 units.push(code as u16);
-                index += length;
+                index += length + 1;
             }
             None => {
                 units.push(0xfffd);
-                index += 1;
+                while index < bytes.len() && continuation(bytes[index]) {
+                    index += 1;
+                }
+                if index < bytes.len() {
+                    index += 1;
+                    while index < bytes.len() && continuation(bytes[index]) {
+                        index += 1;
+                    }
+                }
             }
         }
     }
