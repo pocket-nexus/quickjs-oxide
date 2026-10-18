@@ -214,3 +214,6 @@ iterator/concat / return / before-start preserve drain validation and passthroug
 iterator/concat / running guard / all next and return reentry directions throw while outer work survives	QUICKJS-SPEC-021
 iterator/helpers / flatMap close / inner normal-close errors replace step errors before outer close	QUICKJS-SPEC-022
 iterator/helpers / String fallback / a primitive String remains the wrapped iterator and call receiver	QUICKJS-SPEC-022
+control_flow/for_in / fast Array additions shadow prototype keys without joining the iteration	QUICKJS-SPEC-023
+control_flow/for_in / fast Array non-enumerable additions still shadow prototype keys	QUICKJS-SPEC-023
+arguments/arguments / new own properties shadow prototypes but miss a fast snapshot	QUICKJS-SPEC-023

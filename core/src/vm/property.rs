@@ -1100,9 +1100,9 @@ fn units_atom_text(units: &[u16]) -> String {
 /// keys of the level are elements in pairs: the key (an `Int32` index or an
 /// atom) and whether it is enumerable.
 ///
-/// A fast array without enumerable named properties records only its
-/// element count. Any other object snapshots its own string keys, the
-/// non-enumerable ones too. The prototypes are read when the own keys run
+/// A fast array without enumerable named properties records its element
+/// count and its named keys (only shadowing keys then). Any other object
+/// snapshots its own string keys, the non-enumerable ones too. The prototypes are read when the own keys run
 /// out ([`for_in_next`]); `undefined` and `null` enumerate nothing, and a
 /// primitive enumerates its wrapper.
 #[inline(never)]
@@ -1119,7 +1119,17 @@ pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw
             Some(object) => {
                 cx.heap.roots().push(Value::object(object));
                 match fast_array_count(cx, object) {
-                    Some(count) => (FOR_IN_ARRAY, count, Vec::new()),
+                    Some(count) => {
+                        let shape = cx.heap.header(object).shape;
+                        let named = cx
+                            .heap
+                            .shape_entries(shape)
+                            .into_iter()
+                            .filter(|(key, _, _)| !matches!(key.kind(), KeyKind::Symbol(_)))
+                            .map(|(key, _, _)| (key, false))
+                            .collect();
+                        (FOR_IN_ARRAY, count, named)
+                    }
                     None => {
                         let keys = level_keys(cx, object)?;
                         (FOR_IN_KEYS, keys.len() as u32, keys)
@@ -1280,8 +1290,9 @@ fn own_keys_with_arguments(heap: &Heap, object: ObjectId) -> Vec<PropertyKey> {
 /// property is still an own property of that level's object, as a string;
 /// `None` when the enumeration is exhausted. When the level's keys run out,
 /// the first time the prototype chain is checked for an enumerable key (none
-/// ends the enumeration), and the own keys become the seen set: a fast
-/// array's as they are now, any other object's from its snapshot. Each
+/// ends the enumeration), and the own keys snapshotted at the start become
+/// the seen set (CreateForInIterator's visited keys: a key added since does
+/// not shadow a prototype's). Each
 /// prototype's keys are then read as it is reached, skipping and recording
 /// the keys seen.
 #[inline(never)]
@@ -1364,11 +1375,33 @@ fn for_in_next_level(
             }
             current = prototype;
         }
+        let heap = &*cx.heap;
+        let count = heap.raw_slot(iterator, 1).as_int32().unwrap_or(0) as u32;
+        let named = heap.header(iterator).elements().len / 2;
         let seen = if mode == FOR_IN_ARRAY {
-            level_keys(cx, object)?
+            // The keys snapshotted at the start that are still present (a
+            // deleted one leaves its prototype's key visible, as QuickJS's).
+            let mut seen: Vec<(PropertyKey, bool)> = (0..count)
+                .filter_map(PropertyKey::index)
+                .map(|key| (key, false))
+                .collect();
+            seen.push((Names::key(cx.realm.names.length), false));
+            seen.extend((0..named).map(|index| {
+                let key = heap.get_element(iterator, 2 * index);
+                let key = match key.as_int32() {
+                    Some(index) => PropertyKey::index(index as u32).expect("an index key"),
+                    None => PropertyKey::atom(key.as_string().expect("a key atom")),
+                };
+                (key, false)
+            }));
+            let mut present = Vec::with_capacity(seen.len());
+            for (key, enumerable) in seen {
+                if has_own(cx, object, key)? {
+                    present.push((key, enumerable));
+                }
+            }
+            present
         } else {
-            let heap = &*cx.heap;
-            let count = heap.raw_slot(iterator, 1).as_int32().unwrap_or(0) as u32;
             (0..count)
                 .map(|index| {
                     let key = heap.get_element(iterator, 2 * index);
