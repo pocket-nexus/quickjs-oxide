@@ -11,7 +11,7 @@ use crate::runtime::{Intrinsic, Names, WellKnown};
 use crate::value::{Kind, ObjectId, Value};
 use crate::vm::native::CallSite;
 use crate::vm::object::{self as internal, Descriptor};
-use crate::vm::{Cx, Throw, error, iter, ops};
+use crate::vm::{Cx, Throw, error, iter, ops, property};
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
@@ -322,14 +322,9 @@ pub(super) fn assign(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         }
         let from = internal::to_object(cx, source)?;
         root(cx, Value::object(from));
-        for key in internal::own_property_keys(cx, from)? {
-            if let Some(descriptor) = internal::get_own_property(cx, from, key)?
-                && descriptor.enumerable == Some(true)
-            {
-                let value = internal::get(cx, from, key, Value::object(from))?;
-                internal::put(cx, target, key, value, true)?;
-            }
-        }
+        internal::copy_own_enumerable(cx, from, &[], |cx, key, value| {
+            internal::put(cx, target, key, value, true)
+        })?;
     }
     Ok(Value::object(target))
 }
@@ -360,18 +355,12 @@ fn define_properties_from(
 ) -> Result<(), Throw> {
     let properties = internal::to_object(cx, properties)?;
     root(cx, Value::object(properties));
-    let mut descriptors = Vec::new();
-    for key in internal::own_property_keys(cx, properties)? {
-        if let Some(descriptor) = internal::get_own_property(cx, properties, key)?
-            && descriptor.enumerable == Some(true)
-        {
-            let value = internal::get(cx, properties, key, Value::object(properties))?;
-            root(cx, value);
-            let descriptor = internal::to_property_descriptor(cx, value)?;
-            descriptors.push((key, descriptor));
-        }
-    }
-    for (key, descriptor) in descriptors {
+    // QuickJS's `JS_ObjectDefineProperties`: the enumerable keys first, then
+    // each descriptor read, converted and defined in turn.
+    for key in internal::own_enumerable_keys(cx, properties)? {
+        let value = internal::get(cx, properties, key, Value::object(properties))?;
+        root(cx, value);
+        let descriptor = internal::to_property_descriptor(cx, value)?;
         internal::define_property_or_throw(cx, object, key, &descriptor)?;
     }
     Ok(())
@@ -529,8 +518,35 @@ pub(super) fn from_entries(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     }
     let object = super::new_plain(cx, 4)?;
     root(cx, Value::object(object));
-    let mut entries = iter::get_iterator(cx, iterable)?;
-    while let Some(entry) = iter::step(cx, &mut entries)? {
+    // QuickJS closes the iterator on any failure after opening it,
+    // including reading `next` and stepping.
+    let mut entries = if iter::is_pristine_array(cx, iterable) {
+        iter::get_iterator(cx, iterable)?
+    } else {
+        let iterator = iter::open(cx, iterable)?;
+        let mut entries = iter::Iter::Protocol {
+            iterator,
+            next: Value::UNDEFINED,
+        };
+        let next = property::get(cx, iterator, Names::key(cx.realm.names.next));
+        match next {
+            Ok(next) => {
+                root(cx, next);
+                entries = iter::Iter::Protocol { iterator, next };
+            }
+            Err(throw) => iter::close(cx, &entries, Err(throw))?,
+        }
+        entries
+    };
+    loop {
+        let entry = match iter::step(cx, &mut entries) {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(throw) => {
+                iter::close(cx, &entries, Err(throw))?;
+                break;
+            }
+        };
         let mark = cx.heap.roots().mark();
         root(cx, entry);
         let result = (|| {
@@ -661,29 +677,26 @@ pub(super) fn is(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 pub(super) fn group_by(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let items = site.arg(cx, 0);
     let callback = site.arg(cx, 1);
-    let groups = group(cx, items, callback, true)?;
-    let object = cx
-        .heap
-        .alloc_object(ObjectKind::Ordinary, None, 4)
-        .map_err(|error| error::heap_error(cx, error))?;
-    root(cx, Value::object(object));
-    for (key, members) in groups {
-        let array = internal::array_from_list(cx, &members)?;
-        let key = ops::to_property_key(cx, key)?;
-        internal::create_data_property_or_throw(cx, object, key, Value::object(array))?;
-    }
-    Ok(Value::object(object))
+    group(cx, items, callback, true, |cx| {
+        cx.heap
+            .alloc_object(ObjectKind::Ordinary, None, 4)
+            .map_err(|error| error::heap_error(cx, error))
+    })
 }
 
-/// `GroupBy(items, callback, keyCoercion)`: the groups in first-key order,
-/// keys and members rooted. `property` keys are property keys, otherwise
-/// `SameValueZero` (with -0 normalized).
+/// QuickJS's `js_object_groupBy`: the groups object or map from `create`,
+/// built while iterating `items`. The callback runs with the global object
+/// as `this`; a group's array is created on its first member and each member
+/// is pushed with `Array.prototype.push`'s `Set`s. Only the callback's and
+/// the key conversion's failures close the iterator. `property` keys are
+/// property keys, otherwise map keys (with -0 normalized).
 pub(crate) fn group(
     cx: &mut Cx<'_>,
     items: Value,
     callback: Value,
     property: bool,
-) -> Result<Vec<(Value, Vec<Value>)>, Throw> {
+    create: impl FnOnce(&mut Cx<'_>) -> Result<ObjectId, Throw>,
+) -> Result<Value, Throw> {
     // QuickJS checks the callback first.
     if !ops::is_callable(cx.heap, callback) {
         return Err(error::type_error(cx, "not a function"));
@@ -691,17 +704,15 @@ pub(crate) fn group(
     if items.is_undefined() || items.is_null() {
         return Err(error::not_iterable_nullish(cx, items));
     }
-    let mut groups: Vec<(Value, Vec<Value>)> = Vec::new();
     let mut iterator = iter::get_iterator(cx, items)?;
+    let groups = create(cx)?;
+    root(cx, Value::object(groups));
+    let global = Value::object(cx.realm.global());
     let mut index = 0u64;
     while let Some(value) = iter::step(cx, &mut iterator)? {
+        let mark = cx.heap.roots().mark();
         root(cx, value);
-        let key = crate::vm::call(
-            cx,
-            callback,
-            Value::UNDEFINED,
-            &[value, Value::number(index as f64)],
-        );
+        let key = crate::vm::call(cx, callback, global, &[value, Value::number(index as f64)]);
         let key = match key.and_then(|key| {
             if property {
                 ops::to_property_key(cx, key).map(PropertyKey::to_value)
@@ -718,14 +729,29 @@ pub(crate) fn group(
             }
         };
         root(cx, key);
-        match groups
-            .iter_mut()
-            .find(|(existing, _)| internal::same_value_zero(cx, *existing, key))
-        {
-            Some((_, members)) => members.push(value),
-            None => groups.push((key, vec![value])),
-        }
+        let existing = if property {
+            let key = ops::to_property_key(cx, key)?;
+            internal::get_property(cx, groups, key)?
+        } else {
+            cx.heap.table_get(groups, key).unwrap_or(Value::UNDEFINED)
+        };
+        let array = match existing.as_object() {
+            Some(array) => array,
+            None => {
+                let array = internal::array_create(cx, 0)?;
+                root(cx, Value::object(array));
+                if property {
+                    let key = ops::to_property_key(cx, key)?;
+                    internal::create_data_property(cx, groups, key, Value::object(array))?;
+                } else {
+                    super::collection::set_entry(cx, groups, key, Value::object(array))?;
+                }
+                array
+            }
+        };
+        super::array::push_one(cx, array, value)?;
+        cx.heap.roots().truncate(mark);
         index += 1;
     }
-    Ok(groups)
+    Ok(Value::object(groups))
 }

@@ -744,21 +744,38 @@ fn generic_set(
 }
 
 /// A strict `[[Set]]` on `object` that returned false: QuickJS's
-/// `proxy: cannot set property` when the first exotic object on the chain
-/// is a proxy (its `set` trap said no), else `'{key}' is read-only`.
+/// `proxy: cannot set property` when a proxy's `set` trap said no, `object
+/// is not extensible` when no object on the chain has the property and the
+/// first cannot take it, else `'{key}' is read-only`. A proxy without the
+/// trap forwarded to its target, which gave the reason.
 #[cold]
 #[inline(never)]
 pub(crate) fn set_failed(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Throw {
     let mut current = Some(object);
-    while let Some(holder) = current {
+    let mut first = None;
+    while let Some(mut holder) = current {
         let kind = cx.heap.object_kind(holder);
         if kind == ObjectKind::Proxy {
-            return error::type_error(cx, "proxy: cannot set property");
+            if cx.heap.vm.proxy_refused {
+                return error::type_error(cx, "proxy: cannot set property");
+            }
+            while cx.heap.object_kind(holder) == ObjectKind::Proxy {
+                holder = super::proxy::target(cx.heap, holder);
+            }
+            current = Some(holder);
+            continue;
         }
-        if kind.is_exotic() {
+        first.get_or_insert(holder);
+        if kind.is_exotic() || cx.heap.lookup_own(holder, key).is_some() {
             break;
         }
         current = cx.heap.prototype_of(holder);
+    }
+    if current.is_none()
+        && let Some(first) = first
+        && !cx.heap.header(first).has(flags::EXTENSIBLE)
+    {
+        return error::type_error(cx, "object is not extensible");
     }
     let message = format!("'{}' is read-only", atom_text(cx.heap, key));
     error::type_error(cx, &message)

@@ -248,7 +248,12 @@ fn this_collection(
     }
 }
 
-fn set_entry(cx: &mut Cx<'_>, object: ObjectId, key: Value, value: Value) -> Result<(), Throw> {
+pub(super) fn set_entry(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: Value,
+    value: Value,
+) -> Result<(), Throw> {
     cx.heap
         .table_set(object, key, value)
         .map_err(|error| error::heap_error(cx, error))
@@ -404,15 +409,10 @@ pub(super) fn weak_set_constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Va
 pub(super) fn group_by(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let items = site.arg(cx, 0);
     let callback = site.arg(cx, 1);
-    let groups = super::object::group(cx, items, callback, false)?;
-    let prototype = cx.realm.intrinsic(Intrinsic::MapPrototype);
-    let map = new_collection(cx, InternalTag::Map, prototype)?;
-    for (key, members) in groups {
-        let array = internal::array_from_list(cx, &members)?;
-        root(cx, Value::object(array));
-        set_entry(cx, map, key, Value::object(array))?;
-    }
-    Ok(Value::object(map))
+    super::object::group(cx, items, callback, false, |cx| {
+        let prototype = cx.realm.intrinsic(Intrinsic::MapPrototype);
+        new_collection(cx, InternalTag::Map, prototype)
+    })
 }
 
 // ---- Map.prototype ----
@@ -472,13 +472,24 @@ fn get_or_insert(cx: &mut Cx<'_>, site: &CallSite, map: ObjectId) -> Result<Valu
 /// absent, and its result is stored even if the callback added the key.
 pub(super) fn map_get_or_insert_computed(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let map = this_collection(cx, &site, InternalTag::Map, "Map")?;
-    get_or_insert_computed(cx, &site, map)
+    get_or_insert_computed(cx, &site, map, false)
 }
 
-fn get_or_insert_computed(cx: &mut Cx<'_>, site: &CallSite, map: ObjectId) -> Result<Value, Throw> {
+/// QuickJS's `js_map_getOrInsert` with a callback: checked before the key;
+/// an entry the callback added for the key is deleted, and the result
+/// appended.
+fn get_or_insert_computed(
+    cx: &mut Cx<'_>,
+    site: &CallSite,
+    map: ObjectId,
+    weak: bool,
+) -> Result<Value, Throw> {
     let (key, callback) = (site.arg(cx, 0), site.arg(cx, 1));
     if !ops::is_callable(cx.heap, callback) {
         return Err(error::type_error(cx, "not a function"));
+    }
+    if weak {
+        weak_key(cx, key, false)?;
     }
     if let Some(existing) = cx.heap.table_get(map, key) {
         return Ok(existing);
@@ -486,6 +497,7 @@ fn get_or_insert_computed(cx: &mut Cx<'_>, site: &CallSite, map: ObjectId) -> Re
     let key = canonical(key);
     let value = crate::vm::call(cx, callback, Value::UNDEFINED, &[key])?;
     root(cx, value);
+    cx.heap.table_delete(map, key);
     set_entry(cx, map, key, value)?;
     Ok(value)
 }
@@ -676,16 +688,22 @@ fn set_record(cx: &mut Cx<'_>, other: Value) -> Result<SetRecord, Throw> {
         }
         return Err(error::type_error(cx, ".size is not a number"));
     };
-    let names = cx.realm.names;
-    let size = internal::get_property(cx, set, Names::key(names.size))?;
-    let size = ops::to_number(cx, size)?;
-    if size.is_nan() {
-        return Err(error::type_error(cx, ".size is not a number"));
-    }
-    let size = internal::to_integer_or_infinity(cx, Value::number(size))?;
-    if size < 0.0 {
-        return Err(error::range_error(cx, ".size must be positive"));
-    }
+    // QuickJS's `get_set_record` takes a genuine set's size without a Get.
+    let size = if cx.heap.internal_tag(set) == InternalTag::Set {
+        set_size_of(cx, set)
+    } else {
+        let names = cx.realm.names;
+        let size = internal::get_property(cx, set, Names::key(names.size))?;
+        let size = ops::to_number(cx, size)?;
+        if size.is_nan() {
+            return Err(error::type_error(cx, ".size is not a number"));
+        }
+        let size = internal::to_integer_or_infinity(cx, Value::number(size))?;
+        if size < 0.0 {
+            return Err(error::range_error(cx, ".size must be positive"));
+        }
+        size
+    };
     let key = cx
         .heap
         .property_key("has")
@@ -732,24 +750,14 @@ impl SetRecord {
         Ok(ops::to_boolean(cx.heap, result))
     }
 
-    /// The iterator of `keys()`, with `next` read once.
+    /// The iterator of `keys()`, with `next` read once. QuickJS reads
+    /// `next` off whatever value `keys()` returns and calls it on that value.
     fn keys(&self, cx: &mut Cx<'_>) -> Result<iter::Iter, Throw> {
         let iterator = crate::vm::call(cx, self.keys, Value::object(self.set), &[])?;
-        if iterator.as_object().is_none() {
-            // QuickJS reads `next` off the value and calls it.
-            if iterator.is_null() || iterator.is_undefined() {
-                let base = if iterator.is_null() {
-                    "null"
-                } else {
-                    "undefined"
-                };
-                let message = format!("cannot read property 'next' of {base}");
-                return Err(error::type_error(cx, &message));
-            }
-            return Err(error::type_error(cx, "not a function"));
-        }
         root(cx, iterator);
-        iter::direct(cx, iterator)
+        let next = crate::vm::property::get(cx, iterator, Names::key(cx.realm.names.next))?;
+        root(cx, next);
+        Ok(iter::Iter::Protocol { iterator, next })
     }
 }
 
@@ -809,7 +817,8 @@ fn each_of(
         let result = visit(cx, value);
         cx.heap.roots().truncate(mark);
         if !result? {
-            iter::close(cx, &iterator, Ok(()))?;
+            // QuickJS ignores the outcome of this `JS_IteratorClose`.
+            let _ = iter::close(cx, &iterator, Ok(()));
             return Ok(false);
         }
     }
@@ -989,9 +998,7 @@ pub(super) fn weak_map_get_or_insert_computed(
     site: CallSite,
 ) -> Result<Value, Throw> {
     let map = this_collection(cx, &site, InternalTag::WeakMap, "WeakMap")?;
-    let key = site.arg(cx, 0);
-    weak_key(cx, key, false)?;
-    get_or_insert_computed(cx, &site, map)
+    get_or_insert_computed(cx, &site, map, true)
 }
 
 pub(super) fn weak_set_add(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {

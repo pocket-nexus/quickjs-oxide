@@ -67,37 +67,23 @@ pub(super) fn apply(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     crate::vm::call(cx, function, this, &args)
 }
 
+/// `Reflect.construct(target, argumentsList, newTarget)` in QuickJS's order:
+/// the `newTarget` check, the arguments list, then the construction, which
+/// rejects a `target` that is not a constructor.
 pub(super) fn construct(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let function = site.arg(cx, 0);
     let new_target = if site.argc > 2 {
-        site.arg(cx, 2)
+        let new_target = site.arg(cx, 2);
+        if !internal::is_constructor(cx, new_target) {
+            return Err(error::not_a_constructor(cx, new_target));
+        }
+        new_target
     } else {
         function
     };
-    if !internal::is_constructor(cx, function) {
-        return Err(construct_refused(cx, &site, function, new_target));
-    }
-    if !internal::is_constructor(cx, new_target) {
-        return Err(error::not_a_constructor(cx, new_target));
-    }
     let list = site.arg(cx, 1);
     let args = internal::list_from_array_like(cx, list)?;
     crate::vm::construct(cx, function, &args, new_target)
-}
-
-/// `Reflect.construct` on a `target` that is not a constructor, with the
-/// error QuickJS reaches first: its `newTarget` check, then the arguments
-/// list's `not a object`, then the construction itself.
-#[cold]
-#[inline(never)]
-fn construct_refused(cx: &mut Cx<'_>, site: &CallSite, target: Value, new_target: Value) -> Throw {
-    if site.argc > 2 && !internal::is_constructor(cx, new_target) {
-        return error::not_a_constructor(cx, new_target);
-    }
-    if site.arg(cx, 1).as_object().is_none() {
-        return error::type_error(cx, "not a object");
-    }
-    error::construct_error(cx, target)
 }
 
 pub(super) fn define_property(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {

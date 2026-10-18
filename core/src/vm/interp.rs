@@ -519,7 +519,10 @@ fn call_other(
                 } else {
                     crate::heap::object::flags::CALLABLE
                 };
+                // QuickJS enters any proxy, which reports a non-callable
+                // target after reading its `apply` trap.
                 cx.heap.header(object).has(flag)
+                    || (!construct && cx.heap.object_kind(object) == ObjectKind::Proxy)
             });
             if !callable {
                 if construct {
@@ -653,12 +656,7 @@ fn call_exotic_from_rust(
             cx.heap.vm.leave_native();
             result
         }
-        ObjectKind::Proxy
-            if cx
-                .heap
-                .header(object)
-                .has(crate::heap::object::flags::CALLABLE) =>
-        {
+        ObjectKind::Proxy => {
             let args = cx.heap.vm.registers[base + 1..base + 1 + argc].to_vec();
             super::proxy::call(cx, object, this, &args)
         }

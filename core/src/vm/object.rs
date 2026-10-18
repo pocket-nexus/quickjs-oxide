@@ -1217,7 +1217,14 @@ pub(crate) fn define_property_or_throw(
 /// QuickJS's `JS_DefineProperty` gives.
 #[cold]
 #[inline(never)]
-pub(crate) fn cannot_define(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Throw {
+pub(crate) fn cannot_define(cx: &mut Cx<'_>, mut object: ObjectId, key: PropertyKey) -> Throw {
+    // A proxy without the trap forwarded to its target, which gave the
+    // reason.
+    if !cx.heap.vm.proxy_refused {
+        while cx.heap.object_kind(object) == ObjectKind::Proxy {
+            object = proxy::target(cx.heap, object);
+        }
+    }
     let heap = &*cx.heap;
     let header = *heap.header(object);
     let message = match header.kind {
@@ -1470,15 +1477,10 @@ pub(crate) fn is_array(cx: &mut Cx<'_>, value: Value) -> Result<bool, Throw> {
         match cx.heap.object_kind(object) {
             ObjectKind::Array => return Ok(true),
             ObjectKind::Proxy => {
-                let handler = cx.heap.internal_slot(object, 1);
-                if handler.is_null() {
+                if proxy::is_revoked(cx.heap, object) {
                     return Err(error::type_error(cx, "revoked proxy"));
                 }
-                object = cx
-                    .heap
-                    .internal_slot(object, 0)
-                    .as_object()
-                    .expect("a target");
+                object = proxy::target(cx.heap, object);
             }
             _ => return Ok(false),
         }
@@ -1507,10 +1509,10 @@ fn function_realm(cx: &mut Cx<'_>, mut function: ObjectId) -> Result<(), Throw> 
     loop {
         match cx.heap.object_kind(function) {
             ObjectKind::Proxy => {
-                if cx.heap.internal_slot(function, 1).is_null() {
+                if proxy::is_revoked(cx.heap, function) {
                     return Err(error::type_error(cx, "revoked proxy"));
                 }
-                function = cx.heap.internal_slot(function, 0).as_object().unwrap();
+                function = proxy::target(cx.heap, function);
             }
             ObjectKind::BoundFunction => {
                 function = cx.heap.internal_slot(function, 0).as_object().unwrap();
@@ -1619,9 +1621,11 @@ pub(crate) fn to_property_descriptor(cx: &mut Cx<'_>, value: Value) -> Result<De
     };
     let names = cx.realm.names;
     let mut descriptor = Descriptor::default();
+    // QuickJS's `js_obj_to_desc` ignores an abrupt HasProperty (its -1 is
+    // true) and goes on to the Get.
     let field = |cx: &mut Cx<'_>, name| -> Result<Option<Value>, Throw> {
         let key = Names::key(name);
-        if !has_property(cx, object, key)? {
+        if !has_property(cx, object, key).unwrap_or(true) {
             return Ok(None);
         }
         let value = get_property(cx, object, key)?;
@@ -1638,17 +1642,20 @@ pub(crate) fn to_property_descriptor(cx: &mut Cx<'_>, value: Value) -> Result<De
     if let Some(value) = field(cx, names.writable)? {
         descriptor.writable = Some(ops::to_boolean(cx.heap, value));
     }
-    if let Some(getter) = field(cx, names.get)? {
-        if !getter.is_undefined() && !ops::is_callable(cx.heap, getter) {
-            return Err(error::type_error(cx, "invalid getter"));
+    // A throwing `get` or `set` read is reported as an invalid accessor.
+    match field(cx, names.get) {
+        Ok(None) => {}
+        Ok(Some(getter)) if getter.is_undefined() || ops::is_callable(cx.heap, getter) => {
+            descriptor.get = Some(getter);
         }
-        descriptor.get = Some(getter);
+        _ => return Err(error::type_error(cx, "invalid getter")),
     }
-    if let Some(setter) = field(cx, names.set)? {
-        if !setter.is_undefined() && !ops::is_callable(cx.heap, setter) {
-            return Err(error::type_error(cx, "invalid setter"));
+    match field(cx, names.set) {
+        Ok(None) => {}
+        Ok(Some(setter)) if setter.is_undefined() || ops::is_callable(cx.heap, setter) => {
+            descriptor.set = Some(setter);
         }
-        descriptor.set = Some(setter);
+        _ => return Err(error::type_error(cx, "invalid setter")),
     }
     if descriptor.is_accessor() && descriptor.is_data() {
         return Err(error::type_error(
@@ -1752,9 +1759,8 @@ pub(crate) fn test_integrity_level(
     object: ObjectId,
     frozen: bool,
 ) -> Result<bool, Throw> {
-    if is_extensible(cx, object)? {
-        return Ok(false);
-    }
+    // QuickJS's `js_object_isSealed` reads the properties before
+    // `IsExtensible`.
     let mark = cx.heap.roots().mark();
     let result = (|| {
         for key in own_property_keys(cx, object)? {
@@ -1767,7 +1773,7 @@ pub(crate) fn test_integrity_level(
                 }
             }
         }
-        Ok(true)
+        Ok(!is_extensible(cx, object)?)
     })();
     cx.heap.roots().truncate(mark);
     result
@@ -1793,6 +1799,54 @@ pub(crate) fn enumerable_own_keys(
     Ok(keys)
 }
 
+/// QuickJS's `JS_GetOwnPropertyNamesInternal` with `JS_GPN_ENUM_ONLY`: the
+/// own string and symbol keys, then each one's enumerability (a proxy's
+/// `getOwnPropertyDescriptor` traps all run before any later Get).
+pub(crate) fn own_enumerable_keys(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+) -> Result<Vec<PropertyKey>, Throw> {
+    let keys = own_property_keys(cx, object)?;
+    let mut enumerable = Vec::with_capacity(keys.len());
+    for key in keys {
+        if get_own_property(cx, object, key)?.is_some_and(|d| d.enumerable == Some(true)) {
+            enumerable.push(key);
+        }
+    }
+    Ok(enumerable)
+}
+
+/// QuickJS's `JS_CopyDataProperties` from `from`: the enumerable own keys,
+/// listed before any Get (a proxy lists them all and each one's
+/// enumerability is read just before its Get), then for each key not in
+/// `excluded` the Get of `from` and `store` into the target. A listed key
+/// is read even when an earlier Get deleted it or made it non-enumerable.
+pub(crate) fn copy_own_enumerable(
+    cx: &mut Cx<'_>,
+    from: ObjectId,
+    excluded: &[PropertyKey],
+    mut store: impl FnMut(&mut Cx<'_>, PropertyKey, Value) -> Result<(), Throw>,
+) -> Result<(), Throw> {
+    let proxy = cx.heap.object_kind(from) == ObjectKind::Proxy;
+    let keys = if proxy {
+        own_property_keys(cx, from)?
+    } else {
+        own_enumerable_keys(cx, from)?
+    };
+    for key in keys {
+        if excluded.contains(&key) {
+            continue;
+        }
+        if proxy && !get_own_property(cx, from, key)?.is_some_and(|d| d.enumerable == Some(true)) {
+            continue;
+        }
+        let value = get(cx, from, key, Value::object(from))?;
+        root(cx, value);
+        store(cx, key, value)?;
+    }
+    Ok(())
+}
+
 /// `CopyDataProperties(target, source, excluded)`.
 pub(crate) fn copy_data_properties(
     cx: &mut Cx<'_>,
@@ -1807,18 +1861,9 @@ pub(crate) fn copy_data_properties(
     let result = (|| {
         let from = to_object(cx, source)?;
         root(cx, Value::object(from));
-        for key in own_property_keys(cx, from)? {
-            if excluded.contains(&key) {
-                continue;
-            }
-            if let Some(descriptor) = get_own_property(cx, from, key)?
-                && descriptor.enumerable == Some(true)
-            {
-                let value = get(cx, from, key, Value::object(from))?;
-                create_data_property_or_throw(cx, target, key, value)?;
-            }
-        }
-        Ok(())
+        copy_own_enumerable(cx, from, excluded, |cx, key, value| {
+            create_data_property(cx, target, key, value).map(|_| ())
+        })
     })();
     cx.heap.roots().truncate(mark);
     result

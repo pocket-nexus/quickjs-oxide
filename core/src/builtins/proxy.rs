@@ -69,13 +69,13 @@ pub(super) fn revocable(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
     Ok(Value::object(result))
 }
 
-/// A revoker: clears its proxy's target and handler once.
+/// A revoker: revokes its proxy once. As in QuickJS, the proxy keeps its
+/// target and handler.
 pub(super) fn revoke(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let proxy = site.data(cx, 0);
     if let Some(proxy) = proxy.as_object() {
         debug_assert_eq!(cx.heap.object_kind(proxy), ObjectKind::Proxy);
-        cx.heap.set_internal_slot(proxy, 0, Value::NULL);
-        cx.heap.set_internal_slot(proxy, 1, Value::NULL);
+        proxy::revoke(cx.heap, proxy);
         site.set_data(cx, 0, Value::NULL);
     }
     Ok(Value::UNDEFINED)

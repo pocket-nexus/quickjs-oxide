@@ -70,6 +70,7 @@ control_flow/with / with applies ToObject and rejects nullish values	NEWCORE-WIT
 control_flow/with / with methods receive the object while lexical fallback receives undefined	NEWCORE-WITH-001
 function_semantics/arrow / direct-eval / an eval-created arrow and nested eval retain with and unscopables	NEWCORE-WITH-001
 function_semantics/arrow / with / an escaped arrow retains with lookup and honors unscopables	NEWCORE-WITH-001
+object/accessors / direct-eval / direct eval resolves accessor-owned this arguments and new target	NEWCORE-DIRECT-EVAL-001
 object/assignment / for-of prepares a with Reference independently for each yielded object	NEWCORE-WITH-001
 object/assignment / with resolves a missing identifier before the source getter adds it	NEWCORE-WITH-001
 object/assignment / with retains an existing identifier Reference across source deletion	NEWCORE-WITH-001
@@ -77,9 +78,21 @@ object/bindings / binding Put fault closes the outer iterator and keeps the Put 
 object/bindings / computed sloppy var evaluates key then prepares with reference before get	NEWCORE-WITH-001
 object/bindings / fixed sloppy var prepares its with reference before the property getter	NEWCORE-WITH-001
 object/bindings / nested var prepares its leaf reference after the outer get and before the inner get	NEWCORE-WITH-001
+object/methods / direct-eval / direct eval resolves the method this arguments and new target owners	NEWCORE-DIRECT-EVAL-001
 object/rest / rest target Put fault follows copy then closes the outer iterator	NEWCORE-WITH-001
 object/rest / sloppy with resolves a missing rest target before copy adds that name	NEWCORE-WITH-001
 object/rest / sloppy with retains an existing rest target reference after copy deletes it	NEWCORE-WITH-001
+object/super_eval / accessors / getter and setter direct eval inherit their own HomeObject this and arguments	NEWCORE-DIRECT-EVAL-001
+object/super_eval / authored-arrow / an escaped authored arrow carries method direct-eval super across a live prototype change	NEWCORE-DIRECT-EVAL-001
+object/super_eval / call-receiver / direct-eval super call reads from the base and invokes with the method receiver	NEWCORE-DIRECT-EVAL-001
+object/super_eval / delete / direct-eval delete super throws before computed-key coercion	NEWCORE-DIRECT-EVAL-001
+object/super_eval / eval-created-arrow / an escaped arrow created by eval retains imported this and HomeObject cells	NEWCORE-DIRECT-EVAL-001
+object/super_eval / first-slot-wins / eval-visible pseudo relays are reused by authored super in the same escaped arrow	NEWCORE-DIRECT-EVAL-001
+object/super_eval / method-read / dot and computed direct eval use the live HomeObject prototype and method receiver	NEWCORE-DIRECT-EVAL-001
+object/super_eval / nested-eval / method and arrow nested direct eval recursively preserve super capability	NEWCORE-DIRECT-EVAL-001
+object/super_eval / strictness / caller and eval-source strictness govern rejected direct-eval super writes	NEWCORE-DIRECT-EVAL-001
+object/super_eval / update / direct-eval postfix and prefix super updates preserve values receiver and ordering	NEWCORE-DIRECT-EVAL-001
+object/super_eval / write / computed direct-eval super assignment writes through the current receiver	NEWCORE-DIRECT-EVAL-001
 regexp/dotall / matchAll preserves s while split preserves s and appends sticky	NEWCORE-SPECIES-001
 regexp/match_all / empty global matches advance by code unit or Unicode code point from matcher lastIndex	NEWCORE-SPECIES-001
 regexp/match_all / exec throws and primitive results leave the iterator retryable	NEWCORE-SPECIES-001

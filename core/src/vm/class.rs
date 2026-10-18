@@ -138,10 +138,11 @@ fn class_op_rooted(
             let base = reg(cx, frame, insn.a + 1);
             let key = reg(cx, frame, insn.a + 2);
             let value = reg(cx, frame, insn.a + 3);
-            let key = ops::to_property_key(cx, key)?;
+            // QuickJS rejects the base before converting the key.
             let Some(base) = base.as_object() else {
                 return Err(error::type_error(cx, "not an object"));
             };
+            let key = ops::to_property_key(cx, key)?;
             let done = object::set(cx, base, key, value, receiver)?;
             if !done && unit.has(flags::STRICT) {
                 return Err(property::set_failed(cx, base, key));
@@ -324,8 +325,11 @@ fn class_op_rooted(
             let target = reg(cx, frame, insn.a)
                 .as_object()
                 .expect("a literal object");
+            // QuickJS spreads nothing from a primitive.
             let source = reg(cx, frame, insn.b);
-            object::copy_data_properties(cx, target, source, &[])?;
+            if source.as_object().is_some() {
+                object::copy_data_properties(cx, target, source, &[])?;
+            }
         }
         Opcode::CopyDataExcluded => {
             let target = reg(cx, frame, insn.a).as_object().expect("a rest object");

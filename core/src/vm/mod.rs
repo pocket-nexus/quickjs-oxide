@@ -143,6 +143,11 @@ pub struct VmStack {
     /// The suspendable activations running, innermost last (phase 4,
     /// section 4.3): where `Yield` and `Await` save their frame.
     pub(crate) active: Vec<ObjectId>,
+    /// Whether the last proxy `[[Set]]` or `[[DefineOwnProperty]]` that
+    /// returned false was refused by a trap rather than by the target it
+    /// forwarded to: QuickJS throws `proxy: cannot set property` or `proxy:
+    /// defineProperty exception` only for the former.
+    pub(crate) proxy_refused: bool,
 }
 
 impl Default for VmStack {
@@ -160,6 +165,7 @@ impl Default for VmStack {
             natives: Vec::new(),
             unpositioned: None,
             active: Vec::new(),
+            proxy_refused: false,
         }
     }
 }
@@ -204,6 +210,17 @@ impl VmStack {
         }
         self.nesting += 1;
         true
+    }
+
+    /// The native stack bytes nested re-entries may still use.
+    pub(crate) fn native_remaining(&self) -> usize {
+        if self.nesting == 0 {
+            return self.native_budget;
+        }
+        let marker = 0u8;
+        let here = std::ptr::addr_of!(marker) as usize;
+        self.native_budget
+            .saturating_sub(self.native_base.abs_diff(here))
     }
 
     #[inline]

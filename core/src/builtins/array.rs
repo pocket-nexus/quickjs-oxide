@@ -467,6 +467,24 @@ pub(super) fn push(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(index_value(length))
 }
 
+/// QuickJS's `js_array_push(array, value)` from a native: the element's
+/// `Set` and the new length's, each throwing on failure.
+pub(crate) fn push_one(cx: &mut Cx<'_>, object: ObjectId, value: Value) -> Result<(), Throw> {
+    if plain_writable(cx, object) && cx.heap.array_length(object) < u32::MAX - 1 {
+        let length = cx.heap.array_length(object);
+        return cx
+            .heap
+            .set_element(object, length, value)
+            .map_err(|error| error::heap_error(cx, error));
+    }
+    let length = length_of(cx, object)?;
+    if length + 1 > MAX_LENGTH {
+        return Err(error::type_error(cx, "Array loo long"));
+    }
+    set_at(cx, object, length, value)?;
+    set_length(cx, object, length + 1)
+}
+
 pub(super) fn pop(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_object(cx, &site)?;
     if plain_writable(cx, object) {
