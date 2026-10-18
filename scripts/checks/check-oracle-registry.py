@@ -112,15 +112,37 @@ def compiled_inventory(features=False, test_filter=None):
 LEDGER = ROOT / 'docs/deviations.md'
 FIXTURE_GATES = ROOT / 'dev-support/quickjs-fixture-gates.tsv'
 ORACLE_ATTRIBUTIONS = ROOT / 'dev-support/oracle-attributions.tsv'
+SPEC_DEPARTURES = ROOT / 'dev-support/quickjs-spec-departures.tsv'
+SPEC_DEPARTURE = re.compile(r'^QUICKJS-SPEC-\d{3}$')
 LEDGER_ENTRY = re.compile(r'^### ([A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3})$', re.MULTILINE)
 # The fields every new-core entry carries (new-core phase 6, section 5).
 NEWCORE_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
                   'Baseline evidence', 'Acceptance', 'Specification')
 
 
+def spec_departures():
+    """The registry of QuickJS's departures from ECMA-262 (phase 6 M4b,
+    section 2.3): identifiers in order, each with its clause and summary."""
+    rows = SPEC_DEPARTURES.read_text().splitlines()
+    if rows[0] != 'id\tclause\tsummary\ttest262':
+        fail('QuickJS spec departures lack their id/clause/summary/test262 header')
+    departures = []
+    for row in rows[1:]:
+        fields = row.split('\t')
+        if len(fields) != 4 or not all(fields):
+            fail(f'QuickJS spec departure row is malformed: {row}')
+        if not SPEC_DEPARTURE.match(fields[0]):
+            fail(f'QuickJS spec departure has an invalid identifier: {fields[0]}')
+        if fields[0] != f'QUICKJS-SPEC-{len(departures) + 1:03d}':
+            fail(f'QuickJS spec departures are not numbered in order at {fields[0]}')
+        departures.append(fields[0])
+    return departures
+
+
 def ledger_entries():
     """The deviation ledger's entry identifiers; checks the new-core entries'
-    form and that every fixture and oracle-case attribution names an entry."""
+    form and that every fixture and oracle-case attribution names an entry or
+    a QuickJS spec departure, and every departure is attributed."""
     text = LEDGER.read_text()
     found = LEDGER_ENTRY.findall(text)
     if len(found) != len(set(found)):
@@ -139,13 +161,17 @@ def ledger_entries():
                 'NEWCORE-REALMS-001', 'NEWCORE-SPECIES-001'}
     if newcore != expected:
         fail(f'deviation ledger new-core entries differ: {sorted(newcore ^ expected)}')
+    departures = spec_departures()
+    used = set()
     rows = FIXTURE_GATES.read_text().splitlines()
     header = rows[0].split('\t')
     if 'deviation' in header:
         column = header.index('deviation')
         for row in rows[1:]:
             value = row.split('\t')[column]
-            if value != '-' and value not in entries:
+            if value in departures:
+                used.add(value)
+            elif value != '-' and value not in entries:
                 fail(f'fixture gate {row.split(chr(9))[0]} names no ledger entry: {value}')
     rows = ORACLE_ATTRIBUTIONS.read_text().splitlines()
     if rows[0] != 'case\tdeviation':
@@ -156,8 +182,12 @@ def ledger_entries():
         if case in seen:
             fail(f'oracle attributions repeat {case}')
         seen.add(case)
-        if value not in newcore:
-            fail(f'oracle case {case} is attributed to no dropped feature: {value}')
+        if value in departures:
+            used.add(value)
+        elif value not in newcore:
+            fail(f'oracle case {case} is attributed to no dropped feature or departure: {value}')
+    if unused := sorted(set(departures) - used):
+        fail(f'QuickJS spec departures attributed to no case or fixture: {unused}')
     return entries
 
 

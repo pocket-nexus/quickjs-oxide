@@ -654,4 +654,4 @@ abba --cpu 2 --linux-counters`, medians.
 | oracle corpus | 205 pass, 1 ignored |
 | `test-quickjs-fixtures.sh --all`, `test-quickjs-c-oracles.sh`, `test-parity-slice.sh` | 13 of 13, 9 of 9, pass |
 | `check-source-layout.py`, `check-test262-host-boundary.sh`, `check-no-test262-special-casing.sh`, `check-rust-only.sh` | pass |
-| `test-test262.sh --focused` | 6,814 of 6,844, matching the M3 receipt |
+| `test-test262.sh --focused`, `--full` | 6,814 of 6,844 and 81,434 of 83,354, matching the M3 receipts |
