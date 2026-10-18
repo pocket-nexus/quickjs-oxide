@@ -1,0 +1,9 @@
+object object true true true
+[object Array] [object Object] [object Function] [object Null] [object Undefined] [object Number] [object String] [object Boolean] [object Error] [object RegExp]
+[object Arguments]
+[object Object] custom 8
+true true false false
+true true true true
+true false true true
+true function
+TypeError

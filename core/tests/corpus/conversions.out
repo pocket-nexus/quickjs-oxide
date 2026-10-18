@@ -1,0 +1,8 @@
+42 82 true true 4
+S! xS true S,S
+2 1 3
+10 10 true true
+undefined by-string
+caught nope
+[object Object] 1,2,3 true true true
+RangeError: r RangeError: r!

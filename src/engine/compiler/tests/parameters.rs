@@ -112,18 +112,6 @@ fn class_name_scopes_in_parameter_initializers_are_not_body_lexicals() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
-fn body_eval_after_default_parameters_keeps_parameter_bindings_visible() {
-    assert_eq!(
-        evaluate_in_context("(function(first, second = 1) { return eval('first + second'); })(41)",),
-        Value::Int(42)
-    );
-}
-
-#[test]
 fn implicit_arguments_binding_is_lazy_and_precedes_body_hoists() {
     for source in [
         "(function() { return 1; })",
@@ -330,10 +318,6 @@ fn parameter_binding_patterns_execute_across_sync_function_forms() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
 fn parameter_binding_patterns_follow_quickjs_scope_arguments_and_hoist_order() {
     assert_eq!(
         evaluate_in_context(
@@ -359,7 +343,6 @@ fn parameter_binding_patterns_follow_quickjs_scope_arguments_and_hoist_order() {
                     let lexical='body';
                     return value;
                 })({outer:42}));
-                results.push((function([a]){return eval('a')})([42]));
                 results.push((function({[eval('"key"')]:value}){
                     return value;
                 })({key:42}));
@@ -377,7 +360,7 @@ fn parameter_binding_patterns_follow_quickjs_scope_arguments_and_hoist_order() {
             })()"#,
         ),
         Value::String(JsString::from_static(
-            "7|9;42;function|42;42;42;42;42;42;42;42"
+            "7|9;42;function|42;42;42;42;42;42;42"
         ))
     );
 
@@ -965,10 +948,6 @@ fn identifier_rest_parameters_publish_quickjs_length_and_entry_order() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
 fn identifier_rest_with_direct_eval_uses_the_extended_entry_order() {
     let script =
         compile_unlinked_script("function f(...rest){ return eval('this.marker') + rest[0] }")
@@ -994,13 +973,6 @@ fn identifier_rest_with_direct_eval_uses_the_extended_entry_order() {
         .position(|window| matches!(window, [Instruction::Rest(0), Instruction::PutArg(0)]))
         .unwrap();
     assert!(variable_environment < rest);
-
-    assert_eq!(
-        evaluate_in_context(
-            "(function(...rest){ return eval('this.marker') + rest[0] }).call({marker:40},2)",
-        ),
-        Value::Int(42)
-    );
 }
 
 #[test]

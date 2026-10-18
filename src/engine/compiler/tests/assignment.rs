@@ -3,41 +3,6 @@ use crate::engine::test_support::assert_script_true;
 use crate::engine::test_support::test_context;
 
 #[test]
-fn numeric_array_accumulate_is_selected_from_local_value_uses() {
-    use crate::engine::code::exec_opcode::Opcode;
-    let (runtime, mut context) = test_context();
-    let root = context
-        .compile(
-            "(function(array, i, scale) { var sum = 0; sum += array[i] * scale; return sum; })",
-        )
-        .unwrap();
-    let function = runtime.test_child_function_bytecode(&root, 0).unwrap();
-    let code = runtime.test_function_code(&function).unwrap();
-    let opcodes = runtime.test_function_exec_opcodes(&function).unwrap();
-    assert!(
-        opcodes.contains(&Opcode::NumericArrayAccumulate),
-        "{code:?} {opcodes:?}"
-    );
-    let start = opcodes
-        .iter()
-        .position(|opcode| *opcode == Opcode::NumericArrayAccumulate)
-        .unwrap();
-    assert_eq!(
-        &opcodes[start + 1..start + 9],
-        &[
-            Opcode::GetArg,
-            Opcode::GetArg,
-            Opcode::GetArrayEl,
-            Opcode::GetArg,
-            Opcode::Mul,
-            Opcode::Add,
-            Opcode::SetLocal,
-            Opcode::Drop,
-        ]
-    );
-}
-
-#[test]
 fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() {
     let (runtime, mut context) = test_context();
     let global = context.global_object().unwrap();
@@ -388,47 +353,6 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
             "global constant {name}"
         );
     }
-
-    let mut caller = runtime.new_context().expect("create context");
-    let realm_key = runtime.intern_property_key("__qjo_delete_realm").unwrap();
-    let descriptor = OrdinaryPropertyDescriptor {
-        value: DescriptorField::Present(Value::Int(1)),
-        writable: DescriptorField::Present(true),
-        enumerable: DescriptorField::Present(true),
-        configurable: DescriptorField::Present(true),
-        ..OrdinaryPropertyDescriptor::new()
-    };
-    assert!(
-        context
-            .define_own_property(&context.global_object().unwrap(), &realm_key, &descriptor)
-            .unwrap()
-    );
-    assert!(
-        caller
-            .define_own_property(&caller.global_object().unwrap(), &realm_key, &descriptor)
-            .unwrap()
-    );
-    let Value::Object(deleter) = context
-        .eval("(function(){ return delete __qjo_delete_realm; })")
-        .unwrap()
-    else {
-        panic!("cross-realm delete source did not produce a function");
-    };
-    let deleter = runtime.as_callable(&deleter).unwrap().unwrap();
-    assert_eq!(
-        caller.call(&deleter, Value::Undefined, &[]).unwrap(),
-        Value::Bool(true)
-    );
-    assert!(
-        !runtime
-            .has_own_property(&context.global_object().unwrap(), &realm_key)
-            .unwrap()
-    );
-    assert!(
-        runtime
-            .has_own_property(&caller.global_object().unwrap(), &realm_key)
-            .unwrap()
-    );
 
     let global = context.compile("delete __qjo_delete_opcode").unwrap();
     assert!(
@@ -1320,21 +1244,10 @@ fn identifier_compound_assignment_uses_resolved_get_set_paths() {
 #[test]
 fn discarded_field_assignments_lower_to_a_single_put_field() {
     let (runtime, mut context) = test_context();
-    let code = |context: &mut crate::engine::api::Context, source: &str| {
-        let callable = runtime
-            .callable_from_value(context.eval(source).unwrap())
-            .unwrap();
-        let crate::engine::vm::call::CallableExecution::Bytecode { bytecode, .. } =
-            runtime.bytecode_for_callable(&callable).unwrap()
-        else {
-            panic!("bytecode")
-        };
-        runtime
-            .snapshot_function_bytecode(&bytecode)
-            .unwrap()
-            .exec
-            .test_ir()
-            .to_vec()
+    let code = |context: &mut Context, source: &str| {
+        let root = context.compile(source).unwrap();
+        let function = runtime.test_child_function_bytecode(&root, 0).unwrap();
+        runtime.test_function_code(&function).unwrap()
     };
     let count =
         |code: &[Instruction], f: fn(&Instruction) -> bool| code.iter().filter(|i| f(i)).count();
@@ -1485,10 +1398,6 @@ fn discarded_binding_assignments_lower_to_a_single_put() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
 fn discarded_binding_assignments_keep_their_semantics() {
     let (_, mut context) = test_context();
     let source = r#"
@@ -1524,13 +1433,8 @@ fn discarded_binding_assignments_keep_their_semantics() {
             var r;
             for (var j = 0; j < 2; j++) { r = j ? 'b' : 'a'; }
             out.push(r);
-            // with, eval and completion values.
-            var w = 'outer';
-            with ({ w: 'inner' }) { w = 'set'; }
-            out.push(w);
+            // Completion values of eval code.
             out.push(eval('let q; q = 7;'));
-            eval('w = "evaled";');
-            out.push(w);
             out.push(eval('var e1 = 1; e1 = 8;'));
             return out.join(',');
         })()
@@ -1538,7 +1442,7 @@ fn discarded_binding_assignments_keep_their_semantics() {
     assert_eq!(
         context.eval(source).unwrap(),
         Value::String(JsString::from_static(
-            "true,2,1,8,true,5,ReferenceError,TypeError,TypeError,function,old,b,outer,7,evaled,8"
+            "true,2,1,8,true,5,ReferenceError,TypeError,TypeError,function,old,b,7,8"
         ))
     );
 }

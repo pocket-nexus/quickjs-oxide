@@ -325,13 +325,6 @@ impl<'source> Parser<'source> {
         completion: StatementCompletion,
     ) -> Result<(), Error> {
         let with_span = self.current().span;
-        // phase 4, section 7.2: the new core drops `with`.
-        if cfg!(feature = "dropped-features-probe") {
-            return Err(Error::syntax(
-                "with statements are not supported",
-                with_span,
-            ));
-        }
         if self.current_ir().strict {
             return Err(Error::syntax("invalid keyword: with", with_span));
         }

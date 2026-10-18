@@ -14,9 +14,6 @@ pub(super) fn relocate_ir_fragment(
     old_range: Range<usize>,
     new_start: usize,
 ) -> Result<(), Error> {
-    profile!(let _phase_timer = PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Relocation
-    ));
     for operation in operations {
         let Some(target) = ir_target_mut(&mut operation.op) else {
             continue;
@@ -111,9 +108,6 @@ pub(super) fn relocate_lowered_instruction(
     let Some(target) = instruction_target_mut(instruction) else {
         return Ok(());
     };
-    profile!(let _phase_timer = PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Relocation
-    ));
     let old =
         usize::try_from(*target).map_err(|_| Error::internal("jump target did not fit usize"))?;
     let new = offsets

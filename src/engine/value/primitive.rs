@@ -9,8 +9,6 @@ use std::rc::{Rc, Weak};
 
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorMessage};
 use crate::engine::value::bigint::JsBigInt;
-use num_bigint::BigUint;
-use num_traits::ToPrimitive;
 
 /// ECMAScript strings are sequences of UTF-16 code units, not UTF-8 scalar
 /// values. Compact Latin-1/UTF-16 leaves and bounded ropes mirror QuickJS's
@@ -87,11 +85,6 @@ fn arm_reservation_failure(flag: &'static std::thread::LocalKey<Cell<bool>>, lab
     });
 }
 
-#[cfg(all(test, feature = "profiling"))]
-pub fn fail_next_concat_reservation_for_test() {
-    arm_reservation_failure(&FAIL_NEXT_CONCAT_RESERVATION, "concat");
-}
-
 #[cfg(test)]
 pub fn fail_next_repeat_reservation_for_test() {
     arm_reservation_failure(&FAIL_NEXT_REPEAT_RESERVATION, "repeat");
@@ -105,14 +98,6 @@ pub fn fail_next_pad_reservation_for_test() {
 #[cfg(test)]
 pub fn fail_next_trim_reservation_for_test() {
     arm_reservation_failure(&FAIL_NEXT_TRIM_RESERVATION, "trim");
-}
-
-#[cfg(test)]
-pub fn fail_next_replacement_reservation_for_test() {
-    arm_reservation_failure(
-        &FAIL_NEXT_REPLACEMENT_RESERVATION,
-        "replacement StringBuffer",
-    );
 }
 
 struct StringRepr {
@@ -218,283 +203,7 @@ pub struct JsStringBuilder {
     failed: bool,
 }
 
-enum ReplacementStorage {
-    Latin1(Vec<u8>),
-    Utf16(Vec<u16>),
-}
-
-/// Fallible, narrow-first equivalent of QuickJS's `StringBuffer` for the
-/// Annex-B CreateHTML family. Errors are deliberately latched instead of
-/// returned from writes: the runtime must still perform the observable
-/// attribute conversion before surfacing an earlier prefix allocation or
-/// length failure.
-pub struct CreateHtmlStringBuffer(ReplacementStringBuffer);
-
-/// Fallible, narrow-first equivalent of QuickJS's `StringBuffer` for the
-/// String/RegExp replacement family.
-///
-/// The first length or allocation failure is latched. Later writes become
-/// no-ops and cannot replace that error, allowing the runtime to continue any
-/// still-observable property access or replacement callback before `finish`
-/// surfaces the original failure.
-pub struct ReplacementStringBuffer {
-    storage: ReplacementStorage,
-    limit: usize,
-    error: Option<JsStringError>,
-}
-
-impl CreateHtmlStringBuffer {
-    pub fn new(tag: &'static str, attribute: Option<&'static str>, limit: usize) -> Self {
-        let mut buffer = ReplacementStringBuffer::with_limit(7, limit);
-        buffer.append_ascii("<");
-        buffer.append_ascii(tag);
-        if let Some(attribute) = attribute {
-            buffer.append_ascii(" ");
-            buffer.append_ascii(attribute);
-            buffer.append_ascii("=\"");
-        }
-        Self(buffer)
-    }
-
-    /// Append the attribute as raw UTF-16 code units. Only U+0022 is escaped;
-    /// ampersands, angle brackets, NUL and unpaired surrogates remain intact.
-    pub fn append_escaped_attribute(&mut self, value: &JsString) {
-        for unit in value.utf16_units() {
-            if unit == u16::from(b'"') {
-                self.0.append_ascii("&quot;");
-            } else {
-                self.0.append_code_unit(unit);
-            }
-        }
-        self.0.append_ascii("\"");
-    }
-
-    pub fn finish(
-        mut self,
-        source: &JsString,
-        tag: &'static str,
-    ) -> Result<JsString, JsStringError> {
-        self.0.append_ascii(">");
-        self.0.append_js_string(source);
-        self.0.append_ascii("</");
-        self.0.append_ascii(tag);
-        self.0.append_ascii(">");
-        self.0.finish()
-    }
-}
-
-impl ReplacementStringBuffer {
-    pub fn new(capacity: usize) -> Self {
-        Self::with_limit(capacity, JsString::MAX_LEN)
-    }
-
-    pub fn with_limit(capacity: usize, limit: usize) -> Self {
-        let limit = limit.min(JsString::MAX_LEN);
-        let mut units = Vec::new();
-        // QuickJS allocates the String header even for
-        // `string_buffer_init(..., 0)`. Keep one fallible reservation so an
-        // injected/real initial OOM is latched before the first append.
-        let initial_capacity = capacity.min(limit).clamp(1, 4096);
-        let error = Self::reserve_additional(&mut units, initial_capacity).err();
-        Self {
-            storage: ReplacementStorage::Latin1(units),
-            limit,
-            error,
-        }
-    }
-
-    fn len(&self) -> usize {
-        match &self.storage {
-            ReplacementStorage::Latin1(units) => units.len(),
-            ReplacementStorage::Utf16(units) => units.len(),
-        }
-    }
-
-    fn latch(&mut self, error: JsStringError) {
-        if self.error.is_none() {
-            self.error = Some(error);
-        }
-    }
-
-    fn checked_new_len(&mut self, additional: usize) -> Option<usize> {
-        if self.error.is_some() {
-            return None;
-        }
-        match JsString::checked_length_with_limit(self.len(), additional, self.limit) {
-            Ok(length) => Some(length),
-            Err(error) => {
-                self.latch(error);
-                None
-            }
-        }
-    }
-
-    fn reserve_additional<T>(units: &mut Vec<T>, additional: usize) -> Result<(), JsStringError> {
-        if units.capacity().saturating_sub(units.len()) < additional {
-            #[cfg(test)]
-            if FAIL_NEXT_REPLACEMENT_RESERVATION.with(|armed| armed.replace(false)) {
-                return Err(JsStringError::OutOfMemory);
-            }
-            units
-                .try_reserve(additional)
-                .map_err(|_| JsStringError::OutOfMemory)?;
-        }
-        Ok(())
-    }
-
-    fn widen(&mut self, new_len: usize) -> Option<Vec<u16>> {
-        let ReplacementStorage::Latin1(units) =
-            std::mem::replace(&mut self.storage, ReplacementStorage::Latin1(Vec::new()))
-        else {
-            unreachable!("replacement StringBuffer widened more than once")
-        };
-        let mut wide = Vec::new();
-        if let Err(error) = Self::reserve_additional(&mut wide, new_len.max(units.capacity())) {
-            self.storage = ReplacementStorage::Latin1(units);
-            self.latch(error);
-            return None;
-        }
-        wide.extend(units.iter().copied().map(u16::from));
-        Some(wide)
-    }
-
-    #[must_use]
-    pub const fn error(&self) -> Option<JsStringError> {
-        self.error
-    }
-
-    pub fn append_code_unit(&mut self, unit: u16) {
-        let Some(new_len) = self.checked_new_len(1) else {
-            return;
-        };
-        if matches!(self.storage, ReplacementStorage::Latin1(_)) && unit > u16::from(u8::MAX) {
-            let Some(mut wide) = self.widen(new_len) else {
-                return;
-            };
-            wide.push(unit);
-            self.storage = ReplacementStorage::Utf16(wide);
-            return;
-        }
-        let result = match &mut self.storage {
-            ReplacementStorage::Latin1(units) => {
-                Self::reserve_additional(units, 1).map(|()| units.push(unit as u8))
-            }
-            ReplacementStorage::Utf16(units) => {
-                Self::reserve_additional(units, 1).map(|()| units.push(unit))
-            }
-        };
-        if let Err(error) = result {
-            self.latch(error);
-        }
-    }
-
-    fn append_ascii(&mut self, value: &str) {
-        debug_assert!(value.is_ascii());
-        for byte in value.bytes() {
-            self.append_code_unit(u16::from(byte));
-        }
-    }
-
-    pub fn append_js_string(&mut self, value: &JsString) {
-        self.append_range(value, 0, value.len());
-    }
-
-    /// Append one exact UTF-16 code-unit range without allocating a temporary
-    /// substring. A wide source range only widens the destination when the
-    /// selected units themselves require it.
-    pub fn append_range(&mut self, value: &JsString, start: usize, end: usize) {
-        assert!(
-            start <= end,
-            "replacement StringBuffer range start exceeded end"
-        );
-        assert!(
-            end <= value.len(),
-            "replacement StringBuffer range exceeded source length"
-        );
-        let additional = end - start;
-        let Some(new_len) = self.checked_new_len(additional) else {
-            return;
-        };
-        if additional == 0 {
-            return;
-        }
-        let flat = value.linearize();
-        let narrow = flat.flat_latin1().map(|units| &units[start..end]);
-        let wide = flat.flat_utf16().map(|units| &units[start..end]);
-        let requires_wide = wide.is_some_and(|units| units.iter().any(|&unit| unit > 255));
-        let result = match &mut self.storage {
-            ReplacementStorage::Latin1(units) if !requires_wide => {
-                Self::reserve_additional(units, additional).map(|()| {
-                    if let Some(source) = narrow {
-                        units.extend_from_slice(source);
-                    } else {
-                        units.extend(wide.unwrap().iter().map(|&unit| unit as u8));
-                    }
-                })
-            }
-            ReplacementStorage::Latin1(_) => {
-                let Some(mut units) = self.widen(new_len) else {
-                    return;
-                };
-                units.extend_from_slice(wide.unwrap());
-                self.storage = ReplacementStorage::Utf16(units);
-                Ok(())
-            }
-            ReplacementStorage::Utf16(units) => {
-                Self::reserve_additional(units, additional).map(|()| {
-                    if let Some(source) = wide {
-                        units.extend_from_slice(source);
-                    } else {
-                        units.extend(narrow.unwrap().iter().copied().map(u16::from));
-                    }
-                })
-            }
-        };
-        if let Err(error) = result {
-            self.latch(error);
-        }
-    }
-
-    pub fn finish(self) -> Result<JsString, JsStringError> {
-        if let Some(error) = self.error {
-            return Err(error);
-        }
-        Ok(match self.storage {
-            ReplacementStorage::Latin1(units) => {
-                JsString(StringRepr::allocate(StringData::Latin1(units)))
-            }
-            ReplacementStorage::Utf16(units) => {
-                JsString(StringRepr::allocate(StringData::Utf16(units)))
-            }
-        })
-    }
-}
-
 impl JsStringBuilder {
-    pub fn new(capacity: usize) -> Self {
-        Self::with_limit(capacity, JsString::MAX_LEN)
-    }
-
-    /// Allocate the complete backing buffer up front without exposing an
-    /// infallible `Vec` growth path. Callers which can compute their exact
-    /// UTF-16 result length use this to mirror QuickJS's `StringBuffer`
-    /// preallocation and surface allocator failure as `JsStringError`.
-    #[cfg(feature = "test262-host")]
-    pub fn try_with_exact_capacity(capacity: usize) -> Result<Self, JsStringError> {
-        if capacity > JsString::MAX_LEN {
-            return Err(JsStringError::TooLong);
-        }
-        let mut units = Vec::new();
-        units
-            .try_reserve_exact(capacity)
-            .map_err(|_| JsStringError::OutOfMemory)?;
-        Ok(Self {
-            units,
-            limit: capacity,
-            failed: false,
-        })
-    }
-
     pub fn with_limit(capacity: usize, limit: usize) -> Self {
         let limit = limit.min(JsString::MAX_LEN);
         Self {
@@ -504,22 +213,9 @@ impl JsStringBuilder {
         }
     }
 
-    pub fn push_utf8(&mut self, value: &str) -> Result<(), JsStringError> {
-        let additional = value.encode_utf16().count();
-        self.ensure_additional(additional)?;
-        self.units.extend(value.encode_utf16());
-        Ok(())
-    }
-
     fn push_latin1(&mut self, value: &[u8]) -> Result<(), JsStringError> {
         self.ensure_additional(value.len())?;
         self.units.extend(value.iter().copied().map(u16::from));
-        Ok(())
-    }
-
-    pub fn push_js_string(&mut self, value: &JsString) -> Result<(), JsStringError> {
-        self.ensure_additional(value.len())?;
-        self.units.extend(value.utf16_units());
         Ok(())
     }
 
@@ -766,12 +462,6 @@ impl JsString {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
-    /// A single decrement cannot destroy the string or any rope descendants.
-    #[cfg(test)]
-    pub(crate) fn release_keeps_storage_alive(&self) -> bool {
-        Rc::strong_count(&self.0) > 1
-    }
-
     #[must_use]
     pub fn content_hash(&self) -> u32 {
         if let Some(hash) = self.0.content_hash.get() {
@@ -968,28 +658,6 @@ impl JsString {
             StringData::Latin1(units) => BorrowedUtf16Units::Latin1(units.iter()),
             StringData::Utf16(units) => BorrowedUtf16Units::Utf16(units.iter()),
             StringData::Rope(_) => BorrowedUtf16Units::Rope(Box::new(Utf16Units::new(self))),
-        }
-    }
-
-    /// Feed exact code units to a caller-owned hasher. Every representation
-    /// uses the same write sequence, including mixed-width equal strings.
-    pub(crate) fn hash_code_units<H: Hasher>(&self, state: &mut H) {
-        match self.0.data() {
-            StringData::Latin1(units) => {
-                for &unit in units {
-                    state.write_u16(u16::from(unit));
-                }
-            }
-            StringData::Utf16(units) => {
-                for &unit in units {
-                    state.write_u16(unit);
-                }
-            }
-            StringData::Rope(_) => {
-                for unit in self.utf16_units() {
-                    state.write_u16(unit);
-                }
-            }
         }
     }
 
@@ -1973,14 +1641,10 @@ impl fmt::Display for JsString {
     }
 }
 
-/// The currently materialized value tags follow `QuickJS`'s split between
-/// immediate 32-bit integers and IEEE-754 doubles. Heap-backed tags are added
-/// through the runtime heap rather than by changing source semantics.
+/// A constant-pool value of the front end. Numbers follow `QuickJS`'s split
+/// between immediate 32-bit integers and IEEE-754 doubles.
 #[derive(Clone, Debug)]
 pub enum PrimitiveValue {
-    Undefined,
-    Null,
-    Bool(bool),
     Int(i32),
     Float(f64),
     BigInt(JsBigInt),
@@ -1990,47 +1654,10 @@ pub enum PrimitiveValue {
 impl PrimitiveValue {
     #[must_use]
     pub fn number(value: f64) -> Self {
-        match super::number::operations::Number::compact(value) {
-            super::number::operations::Number::Int(value) => Self::Int(value),
-            super::number::operations::Number::Float(value) => Self::Float(value),
-        }
-    }
-
-    /// Match QuickJS's representation-only `JSPrimitiveValue` comparison. This is
-    /// narrower than JavaScript equality: heap-backed primitives must retain
-    /// the same cell and floating-point payload bits must match exactly.
-    #[must_use]
-    pub fn same_quickjs_representation(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::Undefined, Self::Undefined) | (Self::Null, Self::Null) => true,
-            (Self::Bool(left), Self::Bool(right)) => left == right,
-            (Self::Int(left), Self::Int(right)) => left == right,
-            (Self::Float(left), Self::Float(right)) => left.to_bits() == right.to_bits(),
-            (Self::BigInt(left), Self::BigInt(right)) => left.same_representation(right),
-            (Self::String(left), Self::String(right)) => left.same_representation(right),
-            _ => false,
-        }
-    }
-
-    /// Apply ECMAScript `ToBoolean`, including QuickJS's Annex B
-    /// `is_HTMLDDA` object exception.
-    #[must_use]
-    pub fn to_boolean(&self) -> bool {
-        self.to_boolean_primitive()
-    }
-
-    /// Apply the representation-only primitive portion of `ToBoolean`.
-    /// Runtime internals use this only after checking object metadata through
-    /// the owning runtime.
-    #[must_use]
-    pub fn to_boolean_primitive(&self) -> bool {
-        match self {
-            Self::Bool(value) => *value,
-            Self::Int(value) => *value != 0,
-            Self::Float(value) => *value != 0.0 && !value.is_nan(),
-            Self::BigInt(value) => !value.is_zero(),
-            Self::String(value) => !value.is_empty(),
-            Self::Undefined | Self::Null => false,
+        if value == f64::from(value as i32) && !(value == 0.0 && value.is_sign_negative()) {
+            Self::Int(value as i32)
+        } else {
+            Self::Float(value)
         }
     }
 
@@ -2043,27 +1670,6 @@ impl PrimitiveValue {
         }
     }
 
-    /// Apply ECMAScript `ToNumber` to the value kinds implemented by the
-    /// runtime kernel.
-    ///
-    /// # Errors
-    /// Symbol and BigInt conversion throw, while object conversion must be
-    /// routed through a context so `ToPrimitive` can execute user code.
-    pub fn to_number(&self) -> Result<f64, Error> {
-        match self {
-            Self::Undefined => Ok(f64::NAN),
-            Self::Null => Ok(0.0),
-            Self::Bool(value) => Ok(f64::from(u8::from(*value))),
-            Self::Int(value) => Ok(f64::from(*value)),
-            Self::Float(value) => Ok(*value),
-            Self::BigInt(_) => Err(Error::new(
-                ErrorKind::Type,
-                "cannot convert bigint to number",
-            )),
-            Self::String(value) => Ok(string_to_number(value)),
-        }
-    }
-
     /// Apply ECMAScript `ToString` to the value kinds implemented by the
     /// runtime kernel.
     ///
@@ -2073,10 +1679,6 @@ impl PrimitiveValue {
     /// be routed through a context so `ToPrimitive` can execute user code.
     pub fn to_js_string(&self) -> Result<JsString, Error> {
         let text = match self {
-            Self::Undefined => "undefined".to_owned(),
-            Self::Null => "null".to_owned(),
-            Self::Bool(false) => "false".to_owned(),
-            Self::Bool(true) => "true".to_owned(),
             Self::Int(value) => value.to_string(),
             Self::Float(value) => number_to_string(*value),
             Self::BigInt(value) => {
@@ -2097,8 +1699,6 @@ impl PrimitiveValue {
     #[expect(clippy::float_cmp)]
     pub fn strict_equal(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Undefined, Self::Undefined) | (Self::Null, Self::Null) => true,
-            (Self::Bool(left), Self::Bool(right)) => left == right,
             (Self::String(left), Self::String(right)) => left == right,
             (Self::BigInt(left), Self::BigInt(right)) => left == right,
             (Self::Int(left), Self::Int(right)) => left == right,
@@ -2108,174 +1708,12 @@ impl PrimitiveValue {
             },
         }
     }
-
-    #[must_use]
-    #[expect(clippy::float_cmp)]
-    pub fn same_value(&self, other: &Self) -> bool {
-        match (self.as_number(), other.as_number()) {
-            (Some(left), Some(right)) if left.is_nan() && right.is_nan() => true,
-            (Some(left), Some(right)) if left == 0.0 && right == 0.0 => {
-                is_negative_zero(left) == is_negative_zero(right)
-            }
-            (Some(left), Some(right)) => left == right,
-            _ => self.strict_equal(other),
-        }
-    }
-
-    #[must_use]
-    #[expect(clippy::float_cmp)]
-    pub fn same_value_zero(&self, other: &Self) -> bool {
-        match (self.as_number(), other.as_number()) {
-            (Some(left), Some(right)) if left.is_nan() && right.is_nan() => true,
-            (Some(left), Some(right)) => left == right,
-            _ => self.strict_equal(other),
-        }
-    }
-
-    #[must_use]
-    /// Return the representation-only `typeof` tag.
-    ///
-    /// Object callability is runtime metadata, so the VM refines the object
-    /// case through its runtime host and returns `"function"` for callables.
-    pub const fn type_of(&self) -> &'static str {
-        match self {
-            Self::Null => "object",
-            Self::Bool(_) => "boolean",
-            Self::Int(_) | Self::Float(_) => "number",
-            Self::BigInt(_) => "bigint",
-            Self::String(_) => "string",
-            Self::Undefined => "undefined",
-        }
-    }
 }
 
 #[must_use]
 pub fn number_to_string(value: f64) -> String {
     crate::engine::value::number::to_string_radix(value, 10)
         .expect("decimal is always a valid Number formatting radix")
-}
-
-pub fn string_to_number(value: &JsString) -> f64 {
-    if let StringData::Latin1(bytes) = value.0.data()
-        && bytes.is_ascii()
-    {
-        profile!(record_owned_execution_event("number_parse.ascii_borrowed"));
-        // ASCII Latin-1 is already the parser's byte representation. Borrow it
-        // rather than allocate UTF-16 and then a second UTF-8 buffer. Neither
-        // the representation nor the parsed result is cached or changed.
-        let text = std::str::from_utf8(bytes).expect("ASCII is valid UTF-8");
-        let text = text.trim_matches(|character: char| is_ecmascript_whitespace(character as u16));
-        return parse_number_text(text);
-    }
-    profile!(record_owned_execution_event("number_parse.utf16_fallback"));
-    string_to_number_utf16(value)
-}
-
-fn string_to_number_utf16(value: &JsString) -> f64 {
-    let units = value.utf16_units().collect::<Vec<_>>();
-    let mut start = 0;
-    let mut end = units.len();
-    while start < end && is_ecmascript_whitespace(units[start]) {
-        start += 1;
-    }
-    while end > start && is_ecmascript_whitespace(units[end - 1]) {
-        end -= 1;
-    }
-    if start == end {
-        return 0.0;
-    }
-
-    let Ok(text) = String::from_utf16(&units[start..end]) else {
-        return f64::NAN;
-    };
-    parse_number_text(&text)
-}
-
-/// Both storage paths share the complete Number grammar and rounding kernels.
-/// The caller removes only ECMAScript whitespace; this is not prefix parsing.
-fn parse_number_text(text: &str) -> f64 {
-    if text.is_empty() {
-        return 0.0;
-    }
-    match text {
-        "Infinity" | "+Infinity" => return f64::INFINITY,
-        "-Infinity" => return f64::NEG_INFINITY,
-        _ => {}
-    }
-
-    if let Some(digits) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-        return parse_radix_number(digits, 16);
-    }
-    if let Some(digits) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-        return parse_radix_number(digits, 8);
-    }
-    if let Some(digits) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-        return parse_radix_number(digits, 2);
-    }
-    if is_decimal_number_text(text) {
-        text.parse::<f64>().unwrap_or(f64::NAN)
-    } else {
-        f64::NAN
-    }
-}
-
-fn parse_radix_number(digits: &str, radix: u32) -> f64 {
-    if digits.is_empty()
-        || !digits
-            .bytes()
-            .all(|byte| ascii_digit_value(byte).is_some_and(|digit| digit < radix))
-    {
-        return f64::NAN;
-    }
-    BigUint::parse_bytes(digits.as_bytes(), radix)
-        .and_then(|value| value.to_f64())
-        .unwrap_or(f64::NAN)
-}
-
-const fn ascii_digit_value(byte: u8) -> Option<u32> {
-    match byte {
-        b'0'..=b'9' => Some((byte - b'0') as u32),
-        b'a'..=b'f' => Some((byte - b'a' + 10) as u32),
-        b'A'..=b'F' => Some((byte - b'A' + 10) as u32),
-        _ => None,
-    }
-}
-
-fn is_decimal_number_text(text: &str) -> bool {
-    let bytes = text.as_bytes();
-    let mut index = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
-    let mut integer_digits = 0;
-    while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-        index += 1;
-        integer_digits += 1;
-    }
-
-    let mut fractional_digits = 0;
-    if bytes.get(index) == Some(&b'.') {
-        index += 1;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-            fractional_digits += 1;
-        }
-    }
-    if integer_digits + fractional_digits == 0 {
-        return false;
-    }
-
-    if matches!(bytes.get(index), Some(b'e' | b'E')) {
-        index += 1;
-        if matches!(bytes.get(index), Some(b'+' | b'-')) {
-            index += 1;
-        }
-        let exponent_start = index;
-        while bytes.get(index).is_some_and(u8::is_ascii_digit) {
-            index += 1;
-        }
-        if index == exponent_start {
-            return false;
-        }
-    }
-    index == bytes.len()
 }
 
 pub(super) const fn is_ecmascript_whitespace(unit: u16) -> bool {
@@ -2295,10 +1733,6 @@ pub(super) const fn is_ecmascript_whitespace(unit: u16) -> bool {
     )
 }
 
-pub fn is_negative_zero(value: f64) -> bool {
-    value == 0.0 && value.is_sign_negative()
-}
-
 impl PartialEq for PrimitiveValue {
     fn eq(&self, other: &Self) -> bool {
         self.strict_equal(other)
@@ -2314,11 +1748,9 @@ mod tests {
     use std::rc::Rc;
 
     use super::{
-        JsString, JsStringBuilder, JsStringError, PrimitiveValue, ReplacementStringBuffer,
-        StringData, StringRepr, number_to_string,
+        JsString, JsStringError, PrimitiveValue, StringData, StringRepr, number_to_string,
     };
-    use crate::engine::api::error::{Error, ErrorKind, NativeErrorMessage};
-    use crate::engine::value::bigint::JsBigInt;
+    use crate::engine::api::error::{Error, ErrorKind};
 
     #[test]
     fn cached_content_hash_survives_linearization_and_invalidates_on_append() {
@@ -2453,28 +1885,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn numeric_to_string_adopts_ascii_without_widening() {
-        use crate::engine::value::Value;
-        for (value, expected) in [
-            (Value::Undefined, "undefined"),
-            (Value::Null, "null"),
-            (Value::Bool(true), "true"),
-            (Value::Bool(false), "false"),
-            (Value::Int(i32::MIN), "-2147483648"),
-            (Value::Float(-0.0), "0"),
-            (Value::Float(f64::NAN), "NaN"),
-            (Value::Float(f64::INFINITY), "Infinity"),
-            (Value::Float(f64::NEG_INFINITY), "-Infinity"),
-            (Value::Float(1e30), "1e+30"),
-            (Value::BigInt(JsBigInt::from(-123_i32)), "-123"),
-        ] {
-            let string = value.to_js_string().unwrap();
-            assert!(!string.is_wide());
-            assert_eq!(string.to_string(), expected);
-        }
-    }
-
     fn content_hash(value: &JsString) -> u64 {
         let mut state = DefaultHasher::new();
         value.hash(&mut state);
@@ -2482,37 +1892,8 @@ mod tests {
     }
 
     #[test]
-    fn flat_and_rope_key_hashing_agree_across_storage_widths() {
-        let narrow = JsString::try_from_utf8(&"é".repeat(9000)).unwrap();
-        let wide = JsString(StringRepr::allocate(StringData::Utf16(vec![0xe9; 9000])));
-        let left = JsString::try_from_utf8(&"é".repeat(8500)).unwrap();
-        let right = JsString::try_from_utf8(&"é".repeat(500)).unwrap();
-        let rope = left.try_concat(&right).unwrap();
-        assert!(!rope.is_flat());
-        let hash_units = |value: &JsString| {
-            let mut hasher = DefaultHasher::new();
-            value.hash_code_units(&mut hasher);
-            hasher.finish()
-        };
-        for value in [&wide, &rope] {
-            assert_eq!(narrow, *value);
-            assert_eq!(*value, narrow);
-            assert_eq!(narrow.content_hash(), value.content_hash());
-            assert_eq!(hash_units(&narrow), hash_units(value));
-        }
-        let lone_surrogate = JsString::try_from_utf16([0xd800]).unwrap();
-        assert_ne!(lone_surrogate, JsString::from_static("é"));
-        let _ = rope.linearize();
-        assert_eq!(hash_units(&rope), hash_units(&narrow));
-    }
-
-    #[test]
     fn tagged_atom_decimal_strings_are_narrow_and_fresh() {
-        for (value, expected) in [
-            (0, "0"),
-            (42, "42"),
-            (crate::engine::atom::ATOM_MAX_INT, "2147483647"),
-        ] {
+        for (value, expected) in [(0, "0"), (42, "42"), (2_147_483_647, "2147483647")] {
             let left = JsString::from_fresh_decimal_u32(value);
             let right = JsString::from_fresh_decimal_u32(value);
             assert_eq!(left, JsString::from_static(expected));
@@ -2612,94 +1993,6 @@ mod tests {
             JsString::try_from_utf16_with_limit("😀".encode_utf16(), 1),
             Err(JsStringError::TooLong)
         );
-    }
-
-    #[test]
-    fn checked_string_builder_latches_and_keeps_code_points_atomic() {
-        let mut exact = JsStringBuilder::with_limit(0, 3);
-        exact.push_utf8("a").unwrap();
-        exact.push_code_point(0x1f600).unwrap();
-        let exact = exact.finish().unwrap();
-        assert_eq!(
-            exact.utf16_units().collect::<Vec<_>>(),
-            [0x61, 0xd83d, 0xde00]
-        );
-
-        let mut copied = JsStringBuilder::with_limit(0, 2);
-        copied.push_js_string(&JsString::from_static("ab")).unwrap();
-        assert_eq!(copied.finish().unwrap(), JsString::from_static("ab"));
-
-        let mut failed = JsStringBuilder::with_limit(0, 2);
-        failed.push_utf8("a").unwrap();
-        assert_eq!(failed.push_code_point(0x1f600), Err(JsStringError::TooLong));
-        assert_eq!(failed.push_utf8("b"), Err(JsStringError::TooLong));
-        assert_eq!(failed.finish(), Err(JsStringError::TooLong));
-    }
-
-    #[test]
-    fn replacement_string_buffer_is_narrow_first_and_appends_utf16_ranges() {
-        let source = JsString::try_from_utf16([0x78, 0x00e9, 0x0100, 0xd800, 0x79]).unwrap();
-
-        let mut narrow = ReplacementStringBuffer::new(0);
-        narrow.append_js_string(&JsString::from_static("ab"));
-        narrow.append_range(&source, 0, 2);
-        narrow.append_code_unit(u16::from(b'!'));
-        let narrow = narrow.finish().unwrap();
-        assert_eq!(
-            narrow.utf16_units().collect::<Vec<_>>(),
-            [0x61, 0x62, 0x78, 0x00e9, 0x21]
-        );
-        assert!(matches!(narrow.0.data(), StringData::Latin1(_)));
-
-        let mut wide = ReplacementStringBuffer::new(0);
-        wide.append_js_string(&JsString::from_static("a"));
-        wide.append_range(&source, 2, 4);
-        wide.append_code_unit(u16::from(b'!'));
-        let wide = wide.finish().unwrap();
-        assert_eq!(
-            wide.utf16_units().collect::<Vec<_>>(),
-            [0x61, 0x0100, 0xd800, 0x21]
-        );
-        assert!(matches!(wide.0.data(), StringData::Utf16(_)));
-    }
-
-    #[test]
-    fn replacement_string_buffer_with_limit_latches_the_first_length_error() {
-        let mut buffer = ReplacementStringBuffer::with_limit(0, 3);
-        buffer.append_js_string(&JsString::from_static("ab"));
-        buffer.append_code_unit(u16::from(b'c'));
-        assert_eq!(buffer.error(), None);
-
-        buffer.append_code_unit(u16::from(b'd'));
-        assert_eq!(buffer.error(), Some(JsStringError::TooLong));
-        buffer.append_code_unit(0x0100);
-        buffer.append_js_string(&JsString::from_static("ignored"));
-        assert_eq!(buffer.error(), Some(JsStringError::TooLong));
-        assert_eq!(buffer.finish(), Err(JsStringError::TooLong));
-    }
-
-    #[test]
-    fn replacement_string_buffer_latches_widening_allocation_failure() {
-        let mut buffer = ReplacementStringBuffer::with_limit(0, 4);
-        buffer.append_code_unit(u16::from(b'a'));
-        super::fail_next_replacement_reservation_for_test();
-        buffer.append_code_unit(0x0100);
-        assert_eq!(buffer.error(), Some(JsStringError::OutOfMemory));
-
-        buffer.append_js_string(&JsString::from_static("ignored"));
-        assert_eq!(buffer.error(), Some(JsStringError::OutOfMemory));
-        assert_eq!(buffer.finish(), Err(JsStringError::OutOfMemory));
-    }
-
-    #[test]
-    fn replacement_string_buffer_latches_initial_allocation_failure() {
-        super::fail_next_replacement_reservation_for_test();
-        let mut buffer = ReplacementStringBuffer::with_limit(0, 1);
-        assert_eq!(buffer.error(), Some(JsStringError::OutOfMemory));
-
-        buffer.append_js_string(&JsString::from_static("too long"));
-        assert_eq!(buffer.error(), Some(JsStringError::OutOfMemory));
-        assert_eq!(buffer.finish(), Err(JsStringError::OutOfMemory));
     }
 
     #[test]
@@ -2809,103 +2102,6 @@ mod tests {
         let cesu8 = across_leaf.try_to_cesu8_bytes().unwrap();
         assert_eq!(&cesu8[8193..8199], &[0xed, 0xa0, 0xbd, 0xed, 0xb8, 0x80]);
         assert_eq!(cesu8, flat.try_to_cesu8_bytes().unwrap());
-    }
-
-    #[test]
-    fn atom_get_str_preserves_ascii_fast_path_and_non_ascii_scratch_boundary() {
-        fn format_read_only(units: impl IntoIterator<Item = u16>) -> Vec<u16> {
-            let atom = JsString::try_from_utf16(units).unwrap();
-            let mut message = NativeErrorMessage::new();
-            message.push_utf8("'");
-            atom.push_atom_get_str_to(&mut message);
-            message.push_utf8("' is read-only");
-            message.to_js_string().unwrap().utf16_units().collect()
-        }
-
-        let suffix = "' is read-only".encode_utf16().collect::<Vec<_>>();
-        let cases = [
-            (
-                vec![u16::from(b'A'); 70],
-                [
-                    vec![u16::from(b'\'')],
-                    vec![u16::from(b'A'); 70],
-                    suffix.clone(),
-                ]
-                .concat(),
-            ),
-            (
-                [vec![u16::from(b'A'); 57], vec![0x00e9]].concat(),
-                [
-                    vec![u16::from(b'\'')],
-                    vec![u16::from(b'A'); 57],
-                    vec![0x00e9],
-                    suffix.clone(),
-                ]
-                .concat(),
-            ),
-            (
-                [vec![u16::from(b'A'); 58], vec![0x00e9]].concat(),
-                [
-                    vec![u16::from(b'\'')],
-                    vec![u16::from(b'A'); 58],
-                    suffix.clone(),
-                ]
-                .concat(),
-            ),
-            (
-                [vec![u16::from(b'A'); 54], vec![0xd83d, 0xde42]].concat(),
-                [
-                    vec![u16::from(b'\'')],
-                    vec![u16::from(b'A'); 54],
-                    vec![0xd83d, 0xde42],
-                    suffix.clone(),
-                ]
-                .concat(),
-            ),
-            (
-                [vec![u16::from(b'A'); 55], vec![0xd83d, 0xde42]].concat(),
-                [
-                    vec![u16::from(b'\'')],
-                    vec![u16::from(b'A'); 55],
-                    vec![0xd83d],
-                    suffix.clone(),
-                ]
-                .concat(),
-            ),
-            (
-                vec![u16::from(b'A'), 0, u16::from(b'B')],
-                [vec![u16::from(b'\''), u16::from(b'A')], suffix.clone()].concat(),
-            ),
-            (
-                vec![0x00e9, 0, u16::from(b'B')],
-                [vec![u16::from(b'\''), 0x00e9], suffix].concat(),
-            ),
-        ];
-        for (units, expected) in cases {
-            assert_eq!(format_read_only(units.clone()), expected, "{units:04x?}");
-        }
-
-        let wide_ascii = JsString(StringRepr::allocate(StringData::Utf16(vec![
-            u16::from(b'A');
-            70
-        ])));
-        let mut message = NativeErrorMessage::new();
-        message.push_utf8("'");
-        wide_ascii.push_atom_get_str_to(&mut message);
-        message.push_utf8("' is read-only");
-        assert_eq!(
-            message
-                .to_js_string()
-                .unwrap()
-                .utf16_units()
-                .collect::<Vec<_>>(),
-            [
-                vec![u16::from(b'\'')],
-                vec![u16::from(b'A'); 58],
-                "' is read-only".encode_utf16().collect(),
-            ]
-            .concat()
-        );
     }
 
     #[test]
@@ -3411,72 +2607,10 @@ mod tests {
     }
 
     #[test]
-    fn equality_variants_handle_nan_and_zero() {
-        let nan = PrimitiveValue::Float(f64::NAN);
-        assert!(!nan.strict_equal(&nan));
-        assert!(nan.same_value(&nan));
-        assert!(nan.same_value_zero(&nan));
-
-        let positive_zero = PrimitiveValue::Int(0);
-        let negative_zero = PrimitiveValue::Float(-0.0);
-        assert!(positive_zero.strict_equal(&negative_zero));
-        assert!(!positive_zero.same_value(&negative_zero));
-        assert!(positive_zero.same_value_zero(&negative_zero));
-    }
-
-    #[test]
-    fn primitive_coercions_follow_ecmascript() {
-        assert_eq!(
-            PrimitiveValue::String(JsString::from_static("  \u{feff}  "))
-                .to_number()
-                .unwrap(),
-            0.0
-        );
-        assert_eq!(
-            PrimitiveValue::String(JsString::from_static("0xff"))
-                .to_number()
-                .unwrap(),
-            255.0
-        );
-        assert!(
-            PrimitiveValue::String(JsString::from_static("-0x1"))
-                .to_number()
-                .unwrap()
-                .is_nan()
-        );
-        for invalid in ["0x1_", "0x+1", "0b1_", "0o7_"] {
-            assert!(
-                PrimitiveValue::String(JsString::try_from_utf8(invalid).unwrap())
-                    .to_number()
-                    .unwrap()
-                    .is_nan(),
-                "{invalid}"
-            );
-        }
-        assert_eq!(PrimitiveValue::Bool(true).to_number().unwrap(), 1.0);
-        assert_eq!(PrimitiveValue::Null.to_number().unwrap(), 0.0);
-        assert!(PrimitiveValue::Undefined.to_number().unwrap().is_nan());
-    }
-
-    #[test]
     fn number_formatting_uses_ecmascript_thresholds() {
         assert_eq!(number_to_string(-0.0), "0");
         assert_eq!(number_to_string(f64::NAN), "NaN");
         assert_eq!(number_to_string(1e20), "100000000000000000000");
         assert_eq!(number_to_string(1e21), "1e+21");
     }
-
-    #[test]
-    fn bigint_has_distinct_primitive_coercion_rules() {
-        let zero = PrimitiveValue::BigInt(JsBigInt::zero());
-        let one = PrimitiveValue::BigInt(JsBigInt::one());
-        assert!(!zero.to_boolean());
-        assert!(one.to_boolean());
-        assert!(one.to_number().is_err());
-        assert_eq!(one.to_js_string().unwrap(), JsString::from_static("1"));
-        assert_eq!(one.type_of(), "bigint");
-    }
 }
-
-#[cfg(test)]
-mod number_conversion_tests;

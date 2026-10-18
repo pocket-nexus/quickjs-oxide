@@ -1,0 +1,14 @@
+0 1 0 1
+cleanup
+{"value":9,"done":true} {"done":true}
+caught x
+waiting
+a,b
+1,2,3
+caught inner
+waiting
+outer finally
+{"value":"done","done":true}
+{"value":1,"done":true}
+cleanup
+fail

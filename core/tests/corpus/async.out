@@ -1,0 +1,15 @@
+f start 1
+sync end
+f resumed 1
+then 1
+f result 2
+then 2
+caught async boom
+{"value":1,"done":false}
+{"value":2,"done":false}
+agen got x
+{"value":3,"done":true}
+agen got undefined
+sum 33
+arrow 6
+method static

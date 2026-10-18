@@ -1,0 +1,9 @@
+number number string boolean undefined object
+object object function function bigint undefined
+function function undefined undefined
+true undefined false true true
+true undefined 3 false true
+true undefined undefined
+true undefined
+false number
+true false true false true false false

@@ -284,7 +284,7 @@ impl StdError for Error {}
 #[cfg(test)]
 mod tests {
     use super::{Error, ErrorKind, NativeErrorMessage};
-    use crate::engine::api::runtime_error::RuntimeError;
+    use crate::engine::api::core::RuntimeError;
     use crate::source::{SourceLocation, SourceSpan};
 
     #[test]
@@ -312,14 +312,12 @@ mod tests {
 
     #[test]
     fn error_channel_stays_one_register() {
-        use crate::engine::value::JsValue;
         use std::mem::size_of;
         let word = size_of::<usize>();
         assert_eq!(size_of::<Error>(), word);
         assert_eq!(size_of::<Result<(), Error>>(), word);
         assert!(size_of::<Result<bool, Error>>() <= 2 * word);
         assert!(size_of::<Result<&u8, Error>>() <= 2 * word);
-        assert!(size_of::<Result<JsValue, Error>>() <= 2 * word);
     }
 
     #[test]
@@ -342,9 +340,9 @@ mod tests {
         );
 
         let wrapped = RuntimeError::from(original.clone());
-        assert_eq!(wrapped, RuntimeError::Engine(original.clone()));
+        assert_eq!(wrapped, RuntimeError::Compile(original.clone()));
         assert_eq!(format!("{wrapped}"), format!("{original}"));
-        assert_eq!(format!("{wrapped:?}"), format!("Engine({original:?})"));
+        assert_eq!(format!("{wrapped:?}"), format!("Compile({original:?})"));
         assert_eq!(original.clone(), original);
 
         let relocated = original.clone().with_span(SourceSpan::default());

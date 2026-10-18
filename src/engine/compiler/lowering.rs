@@ -15,8 +15,6 @@ use super::DetachedBytecode;
 use super::{ARG_EVAL_VARIABLE_OBJECT_LOCAL_NAME, EVAL_VARIABLE_OBJECT_LOCAL_NAME};
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
-#[cfg(test)]
-use crate::engine::atom::AtomTable;
 use crate::engine::code::bytecode::DynamicEnvironmentSource;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::debug::DebugInfoMode;
@@ -38,7 +36,7 @@ use crate::engine::code::function::metadata::ParameterArgumentCell;
 use crate::engine::code::function::metadata::ParameterBodyStorage;
 use crate::engine::code::function::metadata::ParameterEnvironmentLayout;
 use crate::engine::code::function::metadata::ParameterPatternCopy;
-use crate::engine::compiler::flow::{lowered_max_stack, plan_numeric_regions};
+use crate::engine::compiler::flow::lowered_max_stack;
 use crate::engine::compiler::optimize::{
     apply_quickjs_late_throw_sites, fold_quickjs_constant_branches,
 };
@@ -191,6 +189,18 @@ fn build_scope_lifecycles(
         .collect()
 }
 
+/// QuickJS's immediate integer atoms: canonical decimal strings up to 2^31 - 1,
+/// which are never shared as atom strings.
+#[cfg(test)]
+fn is_immediate_integer_atom(text: &JsString) -> bool {
+    let text = text.to_string();
+    (text == "0" || !text.starts_with('0'))
+        && text.bytes().all(|byte| byte.is_ascii_digit())
+        && text
+            .parse::<u32>()
+            .is_ok_and(|value| value <= i32::MAX as u32)
+}
+
 #[cfg(test)]
 pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedBytecode<Value>, Error> {
     let mut functions = tree.functions;
@@ -212,7 +222,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
         .map(|constant| match constant {
             IrConstant::Primitive(value) => Ok(value),
             IrConstant::AtomString(value) => {
-                if AtomTable::immediate_integer_atom(&value).is_some() {
+                if is_immediate_integer_atom(&value) {
                     Ok(Value::String(value))
                 } else {
                     let strings = atom_strings.entry(value.content_hash()).or_default();
@@ -241,8 +251,6 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
     let bytecode = DetachedBytecode {
         code,
         constants,
-        local_count: u16::try_from(function.locals.len())
-            .map_err(|_| Error::new(ErrorKind::JsInternal, "too many local variables"))?,
         max_stack,
     };
     bytecode.verify()?;
@@ -253,10 +261,6 @@ pub(super) fn lower_unlinked_tree(
     tree: FunctionTree,
     debug_info: DebugInfoMode,
 ) -> Result<UnlinkedFunction, Error> {
-    profile!(let _phase_timer = PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Lowering
-    ));
-
     let FunctionTree {
         functions: tree_functions,
         names,
@@ -274,13 +278,6 @@ pub(super) fn lower_unlinked_tree(
                 .map_err(|error| Error::internal(error.to_string()))?,
         )
     };
-    #[cfg(feature = "profiling")]
-    crate::engine::compiler::diagnostics::sample_ir_storage(
-        crate::engine::api::profiling::CompilePhase::Lowering,
-        crate::engine::compiler::diagnostics::arena_bytes(&tree_functions)
-            + (tree_functions.len() * size_of::<FunctionIr>()) as u64,
-        tree_functions.iter().map(Box::as_ref),
-    );
     let function_count = tree_functions.len();
     let captured_locals = captured_locals_by_function(&tree_functions)?;
     // A descendant eval descriptor names bindings owned by each ancestor and
@@ -496,33 +493,6 @@ pub(super) fn lower_unlinked_tree(
             })
             .transpose()?;
         let code = lowered_ops.code;
-        let dynamic_bindings = !function.eval_environments.is_empty()
-            || code.iter().any(|op| {
-                matches!(
-                    op,
-                    Instruction::Arguments(_)
-                        | Instruction::Eval { .. }
-                        | Instruction::ApplyEval { .. }
-                        | Instruction::VariableEnvironment
-                        | Instruction::HasEvalVariable { .. }
-                        | Instruction::GetEvalVariable { .. }
-                        | Instruction::PutEvalVariable { .. }
-                        | Instruction::DeleteEvalVariable { .. }
-                        | Instruction::DefineEvalVariable { .. }
-                        | Instruction::HasDynamicBinding { .. }
-                        | Instruction::GetDynamicBinding { .. }
-                        | Instruction::PutDynamicBinding { .. }
-                        | Instruction::DeleteDynamicBinding { .. }
-                )
-            });
-        let numeric_regions = plan_numeric_regions(
-            &code,
-            &function.constants,
-            &local_definitions,
-            &captured_locals[function_id],
-            function.parameters.len(),
-            dynamic_bindings,
-        );
         let constants = function
             .constants
             .into_iter()
@@ -657,7 +627,6 @@ pub(super) fn lower_unlinked_tree(
             )?),
             DebugInfoMode::StripDebug => None,
         };
-        profile!(record_lowered_function(&code, max_stack));
         let unlinked = UnlinkedFunction::new(
             code,
             constants,
@@ -666,7 +635,6 @@ pub(super) fn lower_unlinked_tree(
             local_definitions,
             function.closure_variables,
         )
-        .with_numeric_regions(numeric_regions)
         .with_parameter_environment(parameter_environment)
         .with_eval_environments(function.eval_environments)
         .with_name(func_name);

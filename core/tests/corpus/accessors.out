@@ -1,0 +1,9 @@
+2 g undefined
+5 10 set10;
+g
+true
+6 8 Lx undefined true
+2450 L49
+data getter
+RangeError boom
+base:one base:two true

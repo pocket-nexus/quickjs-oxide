@@ -39,6 +39,45 @@ impl Default for EvalOptions {
 #[derive(Clone, Debug, PartialEq)]
 pub struct FunctionBytecodeRef {
     function: ObjectRef,
+    /// The front end's stack code, which the front end's tests inspect.
+    #[cfg(test)]
+    pub(crate) stack: StackCode,
+}
+
+/// A function of a compiled script's stack code: the script's unlinked tree
+/// and the child-constant path from its root.
+#[cfg(test)]
+#[derive(Clone)]
+pub(crate) struct StackCode {
+    pub(crate) root: std::rc::Rc<crate::engine::code::function::UnlinkedFunction>,
+    pub(crate) path: Vec<usize>,
+}
+
+#[cfg(test)]
+impl StackCode {
+    pub(crate) fn function(&self) -> &crate::engine::code::function::UnlinkedFunction {
+        self.path.iter().fold(&self.root, |function, index| {
+            function.constants()[*index]
+                .as_child()
+                .expect("a child-function constant")
+        })
+    }
+}
+
+#[cfg(test)]
+impl std::fmt::Debug for StackCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StackCode")
+            .field("path", &self.path)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+impl PartialEq for StackCode {
+    fn eq(&self, other: &Self) -> bool {
+        std::rc::Rc::ptr_eq(&self.root, &other.root) && self.path == other.path
+    }
 }
 
 /// A compiled module, run by `Context::execute_module`.
@@ -181,6 +220,16 @@ impl Context {
         match lowered {
             Ok(lowered) => Ok(FunctionBytecodeRef {
                 function: entry.lift_object(lowered.function),
+                #[cfg(test)]
+                stack: StackCode {
+                    root: std::rc::Rc::new(
+                        crate::engine::compiler::compile_unlinked_script_bytes_with_filename(
+                            source, filename, debug_info,
+                        )
+                        .expect("the script compiled once"),
+                    ),
+                    path: Vec::new(),
+                },
             }),
             Err(ScriptCompileError::Front(error)) => {
                 Err(throw_compile_error(&mut entry, &error, source, filename))

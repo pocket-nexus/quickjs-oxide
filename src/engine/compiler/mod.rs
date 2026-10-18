@@ -22,12 +22,6 @@ use model::ir::function::{FunctionIrOptions, FunctionSourceInfo, SuperCapabiliti
 
 mod parser;
 
-/// Probe-cache hit/miss counters, exposed for the profiling compile probe.
-#[cfg(feature = "profiling")]
-pub(crate) fn lookahead_probe_counters() -> (u64, u64, u64, u64) {
-    parser::lookahead::counters::snapshot()
-}
-
 use parser::context::Parser;
 #[cfg(test)]
 use pseudo_binding::HOME_OBJECT_LOCAL_NAME;
@@ -52,8 +46,6 @@ use resolution::ensure_closure_variable;
 #[cfg(test)]
 use resolution::ensure_string_constant;
 use resolution::resolve_identifiers;
-#[cfg(feature = "profiling")]
-mod diagnostics;
 mod flow;
 mod lowering;
 mod optimize;
@@ -72,12 +64,12 @@ use crate::engine::code::debug::DebugInfoMode;
 use crate::source::SourceOffset;
 
 use crate::engine::code::function::UnlinkedFunction;
-use crate::engine::code::module::{ModuleImportAttribute, ModuleRequest, UnlinkedModule};
+use crate::engine::code::module::UnlinkedModule;
 
 use crate::engine::compiler::lexer::Span;
+use crate::engine::value::JsString;
 #[cfg(test)]
 use crate::engine::value::PrimitiveValue as Value;
-use crate::engine::value::{JsString, JsStringError};
 
 use crate::source::text::SourceText;
 #[cfg(test)]
@@ -199,96 +191,31 @@ pub fn compile_unlinked_module_with_name(
     name: JsString,
     debug_info: DebugInfoMode,
 ) -> Result<UnlinkedModule, Error> {
-    compile_unlinked_module_with_name_and_attribute_checker(source, name, debug_info, None)
-        .map_err(ModuleCompileFailure::into_engine_without_checker)
-}
-
-/// Synchronous host validation performed as soon as one non-empty static
-/// import-attribute clause has been parsed.
-///
-/// Pinned QuickJS invokes `JSModuleCheckAttributes` before consuming the
-/// clause's closing brace and before parsing any following source. Returning
-/// an error here therefore must stop parsing immediately.
-pub trait ModuleImportAttributeChecker {
-    /// Observe one source-order request after it has entered the parser-owned
-    /// requested-module table.
-    ///
-    /// Called after decoding attributes and before checking them, while the
-    /// closing brace is still current.
-    fn publish_request(&mut self, request: &ModuleRequest) -> Result<(), ModuleCompileFailure>;
-
-    fn check(&mut self, attributes: &[ModuleImportAttribute]) -> Result<(), ModuleCompileFailure>;
-}
-
-/// Abrupt completion of the checked module-compilation path.
-///
-/// Ordinary compiler diagnostics remain [`Error`] values. The distinct
-/// host-abort arm stops parsing after a module attribute callback throws.
-/// The caller retains the exact JavaScript value; the compiler never owns
-/// an engine handle or converts that value into a diagnostic.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ModuleCompileFailure {
-    Engine(Error),
-    Host,
-}
-
-impl From<Error> for ModuleCompileFailure {
-    fn from(error: Error) -> Self {
-        Self::Engine(error)
-    }
-}
-
-impl From<JsStringError> for ModuleCompileFailure {
-    fn from(error: JsStringError) -> Self {
-        Self::Engine(error.into())
-    }
-}
-
-impl ModuleCompileFailure {
-    fn into_engine_without_checker(self) -> Error {
-        match self {
-            Self::Engine(error) => error,
-            Self::Host => Error::internal(
-                "module compiler produced a host throw without an attribute checker",
-            ),
-        }
-    }
-}
-
-/// Compile a module while exposing QuickJS's parse-time attribute-check hook.
-pub fn compile_unlinked_module_with_name_and_attribute_checker(
-    source: &str,
-    name: JsString,
-    debug_info: DebugInfoMode,
-    checker: Option<&mut dyn ModuleImportAttributeChecker>,
-) -> Result<UnlinkedModule, ModuleCompileFailure> {
-    let tree = Parser::parse_module(source, name, checker)?;
+    let tree = Parser::parse_module(source, name)?;
     finish_unlinked_module_tree(tree, debug_info)
 }
 
 /// Compile one explicitly sized Module buffer after applying QuickJS's signed
 /// source-length guard, before allocating its byte-exact carrier.
-pub fn compile_unlinked_module_bytes_with_name_and_attribute_checker(
+pub fn compile_unlinked_module_bytes_with_name(
     source: &[u8],
     name: JsString,
     debug_info: DebugInfoMode,
-    checker: Option<&mut dyn ModuleImportAttributeChecker>,
-) -> Result<UnlinkedModule, ModuleCompileFailure> {
+) -> Result<UnlinkedModule, Error> {
     validate_source_length(source.len())?;
     let source = SourceText::try_from_raw_bytes(source)?;
-    let tree = Parser::parse_module_source(&source, name, checker)?;
+    let tree = Parser::parse_module_source(&source, name)?;
     finish_unlinked_module_tree(tree, debug_info)
 }
 
 fn finish_unlinked_module_tree(
     mut tree: FunctionTree,
     debug_info: DebugInfoMode,
-) -> Result<UnlinkedModule, ModuleCompileFailure> {
+) -> Result<UnlinkedModule, Error> {
     resolve_identifiers(&mut tree)?;
     if let Some(error) = tree.pending_unsupported.take() {
-        return Err(error.into());
+        return Err(error);
     }
-    let name = tree.filename.clone();
     let module = tree
         .module
         .take()
@@ -300,7 +227,7 @@ fn finish_unlinked_module_tree(
             .any(|operation| matches!(operation.op, IrOp::Bytecode(Instruction::Await)))
     });
     let function = lower_unlinked_tree(tree, debug_info)?;
-    module::finish_module(name, function, has_top_level_await, module).map_err(Into::into)
+    module::finish_module(function, has_top_level_await, module)
 }
 
 /// Compile one primitive-String eval as an independent synthetic root.

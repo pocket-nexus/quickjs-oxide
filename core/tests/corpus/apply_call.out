@@ -1,0 +1,17 @@
+self:1,2 self:undefined,undefined self:3,4
+self:undefined,undefined self:undefined,undefined self:undefined,undefined
+self:5,6 self:undefined,undefined
+self:x,y
+1 2 base
+7
+98
+true true null 7
+self:c,d
+function function
+9 7
+TypeError
+TypeError
+native via apply
+native via call
+native via spread
+299 299

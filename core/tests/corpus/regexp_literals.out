@@ -1,0 +1,5 @@
+false object 0 0
+5 0
+/x\/y/ /a/g /[a-z]+/im
+3 0 true
+false 0 2

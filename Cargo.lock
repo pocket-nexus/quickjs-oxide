@@ -99,6 +99,7 @@ dependencies = [
 name = "quickjs-oxide-cli"
 version = "0.2.1"
 dependencies = [
+ "oxide-regexp",
  "quickjs-oxide",
  "quickjs-oxide-host",
 ]

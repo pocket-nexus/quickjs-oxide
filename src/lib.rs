@@ -1,26 +1,9 @@
 //! A pure-Rust rewrite of `QuickJS` aiming at semantic feature parity with the
 //! pinned upstream release.
 //!
-//! The implementation deliberately follows `QuickJS`'s major runtime boundaries:
-//! source is compiled to stack bytecode, bytecode executes inside a context,
-//! and contexts share a runtime-owned heap and atom table.
-
-/// Profiling-only statement: `profile!(name(args))` calls
-/// `engine::api::profiling::name`, `profile!(let x = Type::start(args))`
-/// binds a profiling guard. Both expand to nothing without `profiling`.
-#[cfg(feature = "profiling")]
-macro_rules! profile {
-    ($name:ident($($arg:tt)*)) => {
-        $crate::engine::api::profiling::$name($($arg)*)
-    };
-    (let $var:ident = $ty:ident::$function:ident($($arg:tt)*)) => {
-        let $var = $crate::engine::api::profiling::$ty::$function($($arg)*);
-    };
-}
-#[cfg(not(feature = "profiling"))]
-macro_rules! profile {
-    ($($statement:tt)*) => {};
-}
+//! The front end compiles source to `QuickJS`-shaped stack bytecode, the
+//! register lowering turns it into `oxide-core`'s register bytecode, and the
+//! embedding API runs it on the core.
 
 /// Interpreter implementation; embedders use [`engine::api`].
 ///
@@ -30,13 +13,9 @@ macro_rules! profile {
 /// ```
 /// Internal engine modules are not embedding interfaces:
 /// ```compile_fail
-/// use quickjs_oxide::engine::heap::Heap;
-/// ```
-/// ```compile_fail
-/// use quickjs_oxide::engine::vm::Vm;
+/// use quickjs_oxide::engine::compiler::CompileOptions;
 /// ```
 pub mod engine;
-pub mod regexp;
 pub mod source;
 
 /// The version of this quickjs-oxide engine crate.

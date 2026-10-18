@@ -285,52 +285,8 @@ fn root_and_ordinary_function_names_stay_distinct() {
 }
 
 #[test]
-fn filename_atom_ownership_counts_every_function_and_same_atom_use() {
+fn runtime_strip_mode_controls_debug_payload() {
     let (runtime, mut context) = test_context();
-    let baseline_atoms = runtime.test_atom_count().expect("atom count");
-    let root = context
-        .compile_with_filename("(function(){ return same; })", "same")
-        .unwrap();
-    let child = runtime.test_child_function_bytecode(&root, 0).unwrap();
-
-    assert_eq!(
-        runtime.test_debug_filename_atom_ownership(&root).unwrap(),
-        Some((2, Some(4)))
-    );
-    assert_eq!(
-        runtime.test_debug_filename_atom_ownership(&child).unwrap(),
-        Some((2, Some(4)))
-    );
-    drop(root);
-    assert_eq!(
-        runtime
-            .heap_counts()
-            .expect("runtime state")
-            .function_bytecode_nodes,
-        1
-    );
-    assert_eq!(
-        runtime.test_function_debug_source(&child).unwrap(),
-        Some(b"function(){ return same; }".to_vec())
-    );
-    drop(child);
-    assert_eq!(
-        runtime
-            .heap_counts()
-            .expect("runtime state")
-            .function_bytecode_nodes,
-        0
-    );
-    assert_eq!(
-        runtime.test_atom_count().expect("atom count"),
-        baseline_atoms
-    );
-}
-
-#[test]
-fn runtime_strip_mode_controls_debug_payload_and_filename_atom_ownership() {
-    let (runtime, mut context) = test_context();
-    let baseline_atoms = runtime.test_atom_count().expect("atom count");
 
     runtime
         .set_debug_info_mode(DebugInfoMode::StripSource)
@@ -347,18 +303,6 @@ fn runtime_strip_mode_controls_debug_payload_and_filename_atom_ownership() {
         ))
     );
     assert_eq!(runtime.test_function_debug_source(&child).unwrap(), None);
-    assert!(
-        runtime
-            .test_debug_filename_atom_ownership(&child)
-            .unwrap()
-            .is_some()
-    );
-    drop(root);
-    drop(child);
-    assert_eq!(
-        runtime.test_atom_count().expect("atom count"),
-        baseline_atoms
-    );
 
     runtime
         .set_debug_info_mode(DebugInfoMode::StripDebug)
@@ -372,18 +316,4 @@ fn runtime_strip_mode_controls_debug_payload_and_filename_atom_ownership() {
         None
     );
     assert_eq!(runtime.test_function_debug_source(&child).unwrap(), None);
-    assert_eq!(
-        runtime.test_debug_filename_atom_ownership(&child).unwrap(),
-        None
-    );
-    assert_eq!(
-        runtime.test_atom_count().expect("atom count"),
-        baseline_atoms
-    );
-    drop(root);
-    drop(child);
-    assert_eq!(
-        runtime.test_atom_count().expect("atom count"),
-        baseline_atoms
-    );
 }

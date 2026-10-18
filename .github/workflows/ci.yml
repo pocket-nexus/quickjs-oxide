@@ -99,10 +99,6 @@ jobs:
       - name: Run fast engine tests
         run: |
           cargo test --locked --workspace --all-targets
-          cargo test --locked -p quickjs-oxide-cli --features profiling --test profiling --bin qjs
-          cargo test --locked -p quickjs-oxide --features profiling --lib profiling_
-          # Release-optimized engine tests with trusted-handle checks restored.
-          cargo test --locked --release -p quickjs-oxide --features checked-handles --lib
           cargo test --locked --workspace --doc
           cargo test --locked --workspace --features test262-host --lib --bins
           cargo test --locked --features test262-host \
@@ -112,7 +108,7 @@ jobs:
           ./scripts/checks/check-oracle-registry.sh --compiled
           # New core: the whole suite again with a collection at every allocation.
           cargo test --locked -p oxide-core --features gc-stress
-          # The lowering and the two-core corpus on the new core under stress.
+          # The lowering and the corpus under stress.
           cargo test --locked -p quickjs-oxide --features gc-stress --lib compiler::register
           # The driver under stress: the fixed probes at smoke size and the corpus.
           cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
@@ -122,7 +118,6 @@ jobs:
         run: |
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
           cargo clippy --locked --workspace --lib --bins -- -D warnings
-          cargo clippy --locked -p quickjs-oxide-cli --features profiling --bin qjs -- -D warnings
           cargo clippy --locked --test oracle -- -D warnings
           cargo clippy --locked --workspace --features test262-host \
             --lib --bins -- -D warnings

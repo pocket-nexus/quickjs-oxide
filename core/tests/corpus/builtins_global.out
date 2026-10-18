@@ -1,0 +1,9 @@
+42 -31 255 16 35
+12 NaN NaN 2 NaN NaN
+1.2345678901234568e+29 -0 -Infinity 4 0
+11 9 7 8 1112745
+3.14 -0.5 1000 1 Infinity NaN
+0.001 -0 -Infinity 1.2345678901234568e+29
+true true false true false true
+true false true false false
+object true true true

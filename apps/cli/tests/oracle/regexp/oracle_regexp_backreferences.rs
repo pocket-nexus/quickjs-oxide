@@ -1,8 +1,9 @@
+use crate::runtime_completion_oracle::compile;
 use crate::runtime_completion_oracle::observe_rust_result as observe_rust;
 use crate::runtime_observation::utf16;
 use crate::support::regexp_probe_oracle::{MatchProbe, run_match_probes};
+use oxide_regexp::{CompileErrorKind, execute};
 use quickjs_oxide::engine::api::core::JsString;
-use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 

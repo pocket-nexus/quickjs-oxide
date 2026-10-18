@@ -49,6 +49,7 @@ impl Pc2LineTable {
 
     /// Match QuickJS `find_line_num`: the last entry whose PC is no greater
     /// than the queried PC wins. A missing current PC uses the definition site.
+    #[cfg(test)]
     #[must_use]
     pub fn lookup(&self, pc: Option<u32>) -> LineColumn {
         let Some(pc) = pc else {

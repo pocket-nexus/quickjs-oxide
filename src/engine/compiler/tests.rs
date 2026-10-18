@@ -1,10 +1,7 @@
 use super::destructuring::ParenthesizedParameterScan;
 use super::*;
-use crate::engine::api::Value;
-use crate::engine::api::context::Context;
-use crate::engine::api::error::{Error, ErrorKind};
-use crate::engine::api::runtime::Runtime;
-use crate::engine::api::runtime_error::RuntimeError;
+use crate::engine::api::core::{Context, Runtime, RuntimeError, Value};
+use crate::engine::api::error::ErrorKind;
 use crate::engine::compiler::model::ir::function::FunctionIr;
 use crate::engine::compiler::model::ir::function::FunctionIrOptions;
 use crate::engine::compiler::model::ir::function::FunctionKind;
@@ -23,6 +20,10 @@ use crate::engine::code::bytecode::{
 };
 use crate::engine::code::debug::DebugInfoMode;
 
+use crate::engine::api::core::{
+    AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor,
+    PropertyKey, WellKnownSymbol,
+};
 use crate::engine::code::function::metadata::{
     ClassInitializerKind, ClosureSource, ClosureVariable, ClosureVariableKind, ClosureVariableName,
     ConstructorKind, EvalBindingSource, EvalCallerProfile, EvalCallerVariableTarget, EvalKind,
@@ -31,13 +32,8 @@ use crate::engine::code::function::metadata::{
 };
 use crate::engine::code::module::{
     ModuleExportTarget, ModuleImportAttributes, ModuleImportCollisionDeclaration, ModuleImportName,
-    ModuleRequest,
 };
 use crate::engine::compiler::lexer::{LexError, LexErrorKind, Lexer, Position, Span};
-use crate::engine::object::{
-    AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor,
-    PropertyKey, WellKnownSymbol,
-};
 use crate::engine::value::JsString;
 use crate::engine::value::bigint::JsBigInt;
 use crate::source::text::SourceText;
@@ -45,11 +41,9 @@ use crate::source::text::SourceText;
 use super::{
     ACTIVE_FUNCTION_LOCAL_NAME, BindingKind, BindingStorage, EVAL_VARIABLE_OBJECT_LOCAL_NAME,
     EvalCompileContext, HOME_OBJECT_LOCAL_NAME, MAX_BYTECODE_STACK, MAX_CALL_ARGUMENTS,
-    MAX_LOCAL_VARIABLES, ModuleCompileFailure, ModuleImportAttributeChecker, NEW_TARGET_LOCAL_NAME,
-    ScopeId, ScopeKind, SourceOffset, THIS_LOCAL_NAME, WITH_OBJECT_LOCAL_NAME, compile_script,
-    compile_unlinked_eval_with_filename,
-    compile_unlinked_module_bytes_with_name_and_attribute_checker,
-    compile_unlinked_module_with_filename, compile_unlinked_module_with_name_and_attribute_checker,
+    MAX_LOCAL_VARIABLES, NEW_TARGET_LOCAL_NAME, ScopeId, ScopeKind, SourceOffset, THIS_LOCAL_NAME,
+    WITH_OBJECT_LOCAL_NAME, compile_script, compile_unlinked_eval_with_filename,
+    compile_unlinked_module_bytes_with_name, compile_unlinked_module_with_filename,
     compile_unlinked_script, compile_unlinked_script_source_with_filename,
     compile_unlinked_script_with_filename, ensure_closure_variable, lower_unlinked_tree,
     resolve_identifiers, validate_source_length,
@@ -80,12 +74,8 @@ fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (Js
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
         panic!("source did not throw an Error object: {source}");
     };
-    let name = runtime
-        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
-        .unwrap();
-    let message = runtime
-        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Message)
-        .unwrap();
+    let name = runtime.intern_property_key("name").unwrap();
+    let message = runtime.intern_property_key("message").unwrap();
     let Value::String(name) = context.get_property(&error, &name).unwrap() else {
         panic!("Error.name was not a string: {source}");
     };
@@ -100,9 +90,7 @@ fn evaluate_function_name(source: &str) -> (JsString, bool, bool, bool) {
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("source did not evaluate to a function object");
     };
-    let name = runtime
-        .pinned_property_key(crate::engine::atom::pinned::PinnedAtom::Name)
-        .unwrap();
+    let name = runtime.intern_property_key("name").unwrap();
     let CompleteOrdinaryPropertyDescriptor::Data {
         value: Value::String(value),
         writable,
@@ -148,7 +136,6 @@ mod eval;
 mod function_declarations;
 
 mod assignment;
-mod numeric_region;
 
 mod closures;
 

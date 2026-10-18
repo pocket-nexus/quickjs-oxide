@@ -459,13 +459,14 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         Value::String(JsString::from_static("undefined|undefined"))
     );
 
-    let mut sealed = runtime.new_context().expect("create context");
+    let sealed_runtime = Runtime::new();
+    let mut sealed = sealed_runtime.new_context().expect("create context");
     assert_eq!(
         sealed.eval("let sealedLexical=1").unwrap(),
         Value::Undefined
     );
     let sealed_global = sealed.global_object().unwrap();
-    runtime.prevent_extensions(&sealed_global).unwrap();
+    sealed_runtime.prevent_extensions(&sealed_global).unwrap();
     assert!(matches!(
         sealed.eval("var sealedLexical"),
         Err(RuntimeError::Exception)
@@ -484,7 +485,8 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         ))
     );
 
-    let mut atomic = runtime.new_context().expect("create context");
+    let atomic_runtime = Runtime::new();
+    let mut atomic = atomic_runtime.new_context().expect("create context");
     assert_eq!(
         atomic
             .eval("globalThis.atomicExisting=5;globalThis.atomicMarker=0")
@@ -492,7 +494,7 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
         Value::Int(0)
     );
     let atomic_global = atomic.global_object().unwrap();
-    runtime.prevent_extensions(&atomic_global).unwrap();
+    atomic_runtime.prevent_extensions(&atomic_global).unwrap();
     assert!(matches!(
         atomic.eval("atomicMarker=1;var atomicExisting=6,atomicMissing=7"),
         Err(RuntimeError::Exception)
@@ -536,355 +538,6 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
     ] {
         compile_unlinked_script(source).unwrap();
     }
-}
-
-#[test]
-fn program_var_cross_realm_instantiation_and_fallback_match_quickjs() {
-    let runtime = Runtime::new();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-
-    let fresh = defining.compile("var crossVar=41;crossVar+1").unwrap();
-    assert_eq!(caller.execute(&fresh).unwrap(), Value::Int(42));
-    assert_eq!(
-        defining.eval("typeof crossVar").unwrap(),
-        Value::String(JsString::from_static("undefined"))
-    );
-    assert_eq!(caller.eval("crossVar").unwrap(), Value::Int(41));
-
-    assert_eq!(
-        defining.eval("crossData='A'").unwrap(),
-        Value::String(JsString::from_static("A"))
-    );
-    assert_eq!(
-        caller.eval("crossData='B'").unwrap(),
-        Value::String(JsString::from_static("B"))
-    );
-    let data = defining
-        .compile("var crossData='written';crossData")
-        .unwrap();
-    assert_eq!(
-        caller.execute(&data).unwrap(),
-        Value::String(JsString::from_static("written"))
-    );
-    assert_eq!(
-        defining.eval("crossData").unwrap(),
-        Value::String(JsString::from_static("A"))
-    );
-    assert_eq!(
-        caller.eval("crossData").unwrap(),
-        Value::String(JsString::from_static("written"))
-    );
-
-    assert_eq!(
-        defining.eval("Function.aSeen='none'").unwrap(),
-        Value::String(JsString::from_static("none"))
-    );
-    assert_eq!(
-        caller.eval("Function.bSeen='none'").unwrap(),
-        Value::String(JsString::from_static("none"))
-    );
-    let Value::Object(a_getter) = defining.eval("(function(){return 'Aget'})").unwrap() else {
-        panic!("defining realm accessor getter was not callable");
-    };
-    let Value::Object(a_setter) = defining
-        .eval("(function(value){Function.aSeen=value})")
-        .unwrap()
-    else {
-        panic!("defining realm accessor setter was not callable");
-    };
-    let Value::Object(b_getter) = caller.eval("(function(){return 'Bget'})").unwrap() else {
-        panic!("caller realm accessor getter was not callable");
-    };
-    let Value::Object(b_setter) = caller
-        .eval("(function(value){Function.bSeen=value})")
-        .unwrap()
-    else {
-        panic!("caller realm accessor setter was not callable");
-    };
-    let a_getter = runtime.as_callable(&a_getter).unwrap().unwrap();
-    let a_setter = runtime.as_callable(&a_setter).unwrap().unwrap();
-    let b_getter = runtime.as_callable(&b_getter).unwrap().unwrap();
-    let b_setter = runtime.as_callable(&b_setter).unwrap().unwrap();
-    let accessor = runtime.intern_property_key("crossAccessor").unwrap();
-    for (context, getter, setter) in [
-        (&mut defining, a_getter, a_setter),
-        (&mut caller, b_getter, b_setter),
-    ] {
-        let global = context.global_object().unwrap();
-        assert!(
-            context
-                .define_own_property(
-                    &global,
-                    &accessor,
-                    &OrdinaryPropertyDescriptor {
-                        get: DescriptorField::Present(AccessorValue::Callable(getter)),
-                        set: DescriptorField::Present(AccessorValue::Callable(setter)),
-                        enumerable: DescriptorField::Present(true),
-                        configurable: DescriptorField::Present(true),
-                        ..OrdinaryPropertyDescriptor::new()
-                    },
-                )
-                .unwrap()
-        );
-    }
-    let accessor_script = defining
-        .compile("var crossAccessor='written';crossAccessor")
-        .unwrap();
-    assert_eq!(
-        caller.execute(&accessor_script).unwrap(),
-        Value::String(JsString::from_static("Aget"))
-    );
-    assert_eq!(
-        defining.eval("crossAccessor+'|'+Function.aSeen").unwrap(),
-        Value::String(JsString::from_static("Aget|written"))
-    );
-    assert_eq!(
-        caller.eval("crossAccessor+'|'+Function.bSeen").unwrap(),
-        Value::String(JsString::from_static("Bget|none"))
-    );
-
-    let readonly = runtime.intern_property_key("crossReadonly").unwrap();
-    let defining_global = defining.global_object().unwrap();
-    assert!(
-        defining
-            .define_own_property(
-                &defining_global,
-                &readonly,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(Value::Int(1)),
-                    writable: DescriptorField::Present(false),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-    let caller_global = caller.global_object().unwrap();
-    assert!(
-        caller
-            .define_own_property(
-                &caller_global,
-                &readonly,
-                &OrdinaryPropertyDescriptor {
-                    get: DescriptorField::Present(AccessorValue::Undefined),
-                    set: DescriptorField::Present(AccessorValue::Undefined),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-    let Value::Object(defining_type_prototype) = defining.eval("TypeError.prototype").unwrap()
-    else {
-        panic!("defining TypeError.prototype was not an object");
-    };
-    let readonly_script = defining
-        .compile("'use strict';var crossReadonly=2")
-        .unwrap();
-    assert!(matches!(
-        caller.execute(&readonly_script),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = caller.take_exception().unwrap().unwrap() else {
-        panic!("cross-realm var initializer did not throw an Error object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&error).unwrap(),
-        Some(defining_type_prototype)
-    );
-
-    let mut syntax_caller = runtime.new_context().expect("create context");
-    drop(syntax_caller.eval("let crossConflict=1").unwrap());
-    let Value::Object(syntax_prototype) = syntax_caller.eval("SyntaxError.prototype").unwrap()
-    else {
-        panic!("caller SyntaxError.prototype was not an object");
-    };
-    let conflict = defining.compile("var crossConflict").unwrap();
-    assert!(matches!(
-        syntax_caller.execute(&conflict),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = syntax_caller.take_exception().unwrap().unwrap() else {
-        panic!("cross-realm var conflict did not throw an Error object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&error).unwrap(),
-        Some(syntax_prototype)
-    );
-
-    let mut type_caller = runtime.new_context().expect("create context");
-    let Value::Object(type_prototype) = type_caller.eval("TypeError.prototype").unwrap() else {
-        panic!("caller TypeError.prototype was not an object");
-    };
-    let type_global = type_caller.global_object().unwrap();
-    runtime.prevent_extensions(&type_global).unwrap();
-    let missing = defining.compile("var missingCrossVar").unwrap();
-    assert!(matches!(
-        type_caller.execute(&missing),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = type_caller.take_exception().unwrap().unwrap() else {
-        panic!("cross-realm non-extensible var did not throw an Error object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&error).unwrap(),
-        Some(type_prototype)
-    );
-}
-
-#[test]
-fn program_var_function_cell_cycle_is_collectable_after_context_drop() {
-    let runtime = Runtime::new();
-    {
-        let mut context = runtime.new_context().expect("create context");
-        assert_script_true(
-            &mut context,
-            "var cycle=function(){return cycle};cycle()===cycle",
-        );
-        let counts = runtime.heap_counts().expect("runtime state");
-        assert_eq!(counts.context_nodes, 1);
-        assert!(counts.var_ref_nodes > 0);
-        assert!(counts.function_bytecode_nodes > 0);
-    }
-
-    assert_eq!(
-        runtime.heap_counts().expect("runtime state").context_nodes,
-        1
-    );
-    runtime.run_gc().unwrap();
-    let counts = runtime.heap_counts().expect("runtime state");
-    assert_eq!(counts.context_nodes, 0);
-    assert_eq!(counts.object_nodes, 0);
-    assert_eq!(counts.shape_nodes, 0);
-    assert_eq!(counts.var_ref_nodes, 0);
-    assert_eq!(counts.function_bytecode_nodes, 0);
-    assert_eq!(counts.live, 0);
-}
-
-#[test]
-fn program_function_declaration_cycle_is_collectable_after_context_drop() {
-    let runtime = Runtime::new();
-    {
-        let mut context = runtime.new_context().expect("create context");
-        assert_script_true(
-            &mut context,
-            "function declarationCycle(){return declarationCycle};declarationCycle()===declarationCycle",
-        );
-        let counts = runtime.heap_counts().expect("runtime state");
-        assert_eq!(counts.context_nodes, 1);
-        assert!(counts.var_ref_nodes > 0);
-        assert!(counts.function_bytecode_nodes > 0);
-    }
-
-    assert_eq!(
-        runtime.heap_counts().expect("runtime state").context_nodes,
-        1
-    );
-    runtime.run_gc().unwrap();
-    let counts = runtime.heap_counts().expect("runtime state");
-    assert_eq!(counts.context_nodes, 0);
-    assert_eq!(counts.object_nodes, 0);
-    assert_eq!(counts.shape_nodes, 0);
-    assert_eq!(counts.var_ref_nodes, 0);
-    assert_eq!(counts.function_bytecode_nodes, 0);
-    assert_eq!(counts.live, 0);
-}
-
-#[test]
-fn program_global_lexicals_persist_shadow_and_reject_redeclaration() {
-    let (runtime, mut context) = test_context();
-    assert_eq!(
-        context
-            .eval("let mutable=1,named=function(){};const fixed=3;mutable+'|'+named.name+'|'+fixed")
-            .unwrap(),
-        Value::String(JsString::from_static("1|named|3"))
-    );
-    assert_eq!(context.eval("mutable+=2").unwrap(), Value::Int(3));
-    assert_eq!(
-        context.eval("typeof globalThis.mutable").unwrap(),
-        Value::String(JsString::from_static("undefined"))
-    );
-    assert_eq!(context.eval("delete mutable").unwrap(), Value::Bool(false));
-
-    let global = context.global_object().unwrap();
-    let lexical_environment = context.global_var_object().unwrap();
-    for (binding_name, expected_value, writable) in [
-        ("mutable", Value::Int(3), true),
-        ("fixed", Value::Int(3), false),
-    ] {
-        let key = runtime.intern_property_key(binding_name).unwrap();
-        assert!(context.get_own_property(&global, &key).unwrap().is_none());
-        assert_eq!(
-            context
-                .get_own_property(&lexical_environment, &key)
-                .unwrap(),
-            Some(CompleteOrdinaryPropertyDescriptor::Data {
-                value: expected_value,
-                writable,
-                enumerable: true,
-                configurable: true,
-            })
-        );
-    }
-
-    assert!(matches!(
-        context.eval("fixed=4"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("global const write did not throw an Error object");
-    };
-    let name = runtime.intern_property_key("name").unwrap();
-    let message = runtime.intern_property_key("message").unwrap();
-    assert_eq!(
-        context.get_property(&error, &name).unwrap(),
-        Value::String(JsString::from_static("TypeError"))
-    );
-    assert_eq!(
-        context.get_property(&error, &message).unwrap(),
-        Value::String(JsString::from_static("'fixed' is read-only"))
-    );
-
-    assert!(matches!(
-        context.eval("let mutable=9"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("global lexical redeclaration did not throw an Error object");
-    };
-    assert_eq!(
-        context.get_property(&error, &name).unwrap(),
-        Value::String(JsString::from_static("SyntaxError"))
-    );
-    assert_eq!(
-        context.get_property(&error, &message).unwrap(),
-        Value::String(JsString::from_static("redeclaration of 'mutable'"))
-    );
-
-    assert_eq!(context.eval("shadowedGlobal=1").unwrap(), Value::Int(1));
-    assert_eq!(
-        context.eval("let shadowedGlobal=2;shadowedGlobal").unwrap(),
-        Value::Int(2)
-    );
-    assert_eq!(
-        context.eval("globalThis.shadowedGlobal").unwrap(),
-        Value::Int(1)
-    );
-    assert_script_true(&mut context, "delete globalThis.shadowedGlobal");
-    assert_eq!(context.eval("shadowedGlobal").unwrap(), Value::Int(2));
-
-    let mut sealed = runtime.new_context().expect("create context");
-    let sealed_global = sealed.global_object().unwrap();
-    runtime.prevent_extensions(&sealed_global).unwrap();
-    assert_eq!(
-        sealed
-            .eval("let sealedLexical=6;const sealedConst=7;sealedLexical+sealedConst")
-            .unwrap(),
-        Value::Int(13)
-    );
 }
 
 #[test]
@@ -973,33 +626,4 @@ fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
         Err(RuntimeError::Exception)
     ));
     drop(context.take_exception().unwrap().unwrap());
-
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-    let caller_syntax_prototype = caller.eval("SyntaxError.prototype").unwrap();
-    let conflict = defining.compile("let NaN=1").unwrap();
-    assert!(matches!(
-        caller.execute(&conflict),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = caller.take_exception().unwrap().unwrap() else {
-        panic!("cross-realm declaration conflict did not throw an Error object");
-    };
-    let Value::Object(caller_syntax_prototype) = caller_syntax_prototype else {
-        panic!("SyntaxError.prototype was not an object");
-    };
-    assert_eq!(
-        runtime.get_prototype_of(&error).unwrap(),
-        Some(caller_syntax_prototype)
-    );
-
-    let cross_realm = defining
-        .compile("let crossRealmBinding=41;crossRealmBinding+1")
-        .unwrap();
-    assert_eq!(caller.execute(&cross_realm).unwrap(), Value::Int(42));
-    assert_eq!(
-        defining.eval("typeof crossRealmBinding").unwrap(),
-        Value::String(JsString::from_static("undefined"))
-    );
-    assert_eq!(caller.eval("crossRealmBinding").unwrap(), Value::Int(41));
 }

@@ -1,7 +1,8 @@
 use crate::oracle_cases::ExpectedMatchCase as MatchCase;
+use crate::runtime_completion_oracle::compile;
 use crate::runtime_observation::from_char_code_source as js_utf16;
+use oxide_regexp::{CompileErrorKind, execute};
 use quickjs_oxide::engine::api::core::JsString;
-use quickjs_oxide::regexp::{CompileErrorKind, compile, execute};
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 
@@ -288,7 +289,7 @@ fn units(
 fn compile_ascii(
     pattern: &str,
     flags: &str,
-) -> Result<quickjs_oxide::regexp::CompiledRegExp, quickjs_oxide::regexp::CompileError> {
+) -> Result<oxide_regexp::CompiledRegExp, oxide_regexp::CompileError> {
     compile(
         &JsString::try_from_utf8(pattern).unwrap(),
         &JsString::try_from_utf8(flags).unwrap(),

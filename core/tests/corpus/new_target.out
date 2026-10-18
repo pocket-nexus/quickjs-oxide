@@ -1,0 +1,3 @@
+call object new
+true true
+true false

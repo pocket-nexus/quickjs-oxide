@@ -25,11 +25,6 @@ external_module_paths=$(rg --with-filename --no-heading --color never \
     --glob '*.rs' --glob '!**/tests/**' -- '^#\[path[[:space:]]*=[[:space:]]*"\.\./' src regexp apps adapters conformance examples || true)
 [[ -z "$external_module_paths" ]] \
     || die 'production sources contain an unauthenticated external module path'
-rg --quiet --multiline --pcre2 -- \
-    '^#\[cfg\(test\)\]\nmod tests;$' src/engine/modules/mod.rs \
-    || die 'runtime module unit tests must be guarded by cfg(test)'
-[[ -f src/engine/modules/tests.rs && ! -L src/engine/modules/tests.rs ]] \
-    || die 'runtime module unit tests must be a regular source file'
 
 scan_roots=(src regexp apps adapters conformance examples Cargo.toml)
 while IFS= read -r build_script; do
@@ -75,12 +70,6 @@ printf '%s\n' \
     "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"export\")" \
     "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\".\") {" \
     "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"(\") {" \
-    "src/engine/vm/driver.rs:            let arguments = if source.contains(\"try{\") {" \
-    "src/engine/vm/driver.rs:            if source.contains(\"try{\") {" \
-    "src/engine/vm/driver.rs:                assert!(source.contains(\"extends 1\"), \"{source}\");" \
-    "src/engine/vm/driver.rs:                assert!(!source.contains(\"extends 1\"), \"{source}\");" \
-    "src/engine/vm/stack.rs:                if source.starts_with(\"new Uint8Array\") && !detached {" \
-    "src/engine/builtins/iterator/collection.rs:            if source.contains(\"get 0(){\") {" \
     > "$source_probe_allowlist"
 
 filename_probe_allowlist=$tmp/filename-probe-allowlist.txt

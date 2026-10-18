@@ -1,5 +1,4 @@
 use super::*;
-use crate::engine::test_support::assert_script_true;
 use crate::engine::test_support::test_context;
 
 #[test]
@@ -361,32 +360,6 @@ fn direct_eval_super_capability_is_explicit_and_independent_from_imports() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
-fn nested_eval_in_derived_constructor_accepts_inner_private_fields() {
-    let (_, mut context) = test_context();
-    let source = r#"
-        var testStr = `
-            class C extends Object {
-                constructor() {
-                    eval(\`a => b => {
-                        class Q { #f = 1; }
-                        super();
-                    }\`);
-                    super();
-                }
-            }
-            new C;
-        `;
-        (function () { eval(testStr); })();
-    "#;
-
-    assert_eq!(context.eval(source).unwrap(), Value::Undefined);
-}
-
-#[test]
 fn compiler_preserves_authenticated_with_environment_relays() {
     let with_object = EvalRootBinding {
         name: JsString::from_static(WITH_OBJECT_LOCAL_NAME),
@@ -459,96 +432,6 @@ fn compiler_preserves_authenticated_with_environment_relays() {
     assert!(!binding.is_lexical);
     assert!(!binding.is_const);
     assert!(!binding.is_catch_parameter);
-}
-
-#[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
-fn with_statements_execute_ordered_environment_and_reference_paths() {
-    let (_, mut context) = test_context();
-
-    assert_eq!(
-        context
-            .eval("var withGet = { value: 42 }; with (withGet) value")
-            .unwrap(),
-        Value::Int(42),
-    );
-    assert_eq!(
-        context
-            .eval(
-                "var value = 7; var withHidden = { value: 42, [Symbol.unscopables]: { value: true } }; with (withHidden) value",
-            )
-            .unwrap(),
-        Value::Int(7),
-    );
-    assert_eq!(
-        context
-            .eval(
-                "var withWrite = { value: 1 }; with (withWrite) { value = 2; value += 3; value++; ++value; value ||= 99; } withWrite.value",
-            )
-            .unwrap(),
-        Value::Int(7),
-    );
-    assert_eq!(
-        context
-            .eval(
-                "var withCall = { value: 42, method: function(){ return this.value; } }; with (withCall) method()",
-            )
-            .unwrap(),
-        Value::Int(42),
-    );
-    assert_eq!(
-        context
-            .eval(
-                "var disappearingCall = { method: function(){} }; Object.defineProperty(disappearingCall, Symbol.unscopables, { get: function(){ delete disappearingCall.method; return {}; } }); var strictCaller; with (disappearingCall) strictCaller = function(){ 'use strict'; return method(); }; var disappearingError; try { strictCaller(); } catch (error) { disappearingError = error.name; } disappearingError",
-            )
-            .unwrap(),
-        Value::String(JsString::from_static("TypeError")),
-    );
-    assert_script_true(
-        &mut context,
-        "var withDelete = { value: 1 }; var deleted; with (withDelete) deleted = delete value; deleted && !('value' in withDelete)",
-    );
-    assert_eq!(
-        context
-            .eval(
-                "var withCapture = { value: 42 }; var captured; with (withCapture) captured = function(){ return value; }; captured()",
-            )
-            .unwrap(),
-        Value::Int(42),
-    );
-
-    let strict = compile_unlinked_script("'use strict'; with ({}) 0").unwrap_err();
-    assert_eq!(strict.kind(), ErrorKind::Syntax);
-    assert_eq!(strict.message(), "invalid keyword: with");
-    assert_eq!(context.eval("with (null) 0"), Err(RuntimeError::Exception),);
-
-    assert_eq!(
-        context
-            .eval(
-                "var withSideEffect = 0; const withReadonly = 1; try { with ({}) withReadonly = (withSideEffect = 1); } catch (error) {} withSideEffect",
-            )
-            .unwrap(),
-        Value::Int(0),
-    );
-    assert_eq!(
-        context
-            .eval(
-                "(function(){ var object = { value: 1 }; var value; with (object) { var value = (delete object.value, 2); } return object.value + '|' + ('value' in object) + '|' + value; })()",
-            )
-            .unwrap(),
-        Value::String(JsString::from_static("2|true|undefined")),
-    );
-    assert_eq!(
-        context
-            .eval(
-                "if (false) { with ({}) let\n value = 1; } if (false) { with ({}) let\n {} } 'parsed'",
-            )
-            .unwrap(),
-        Value::String(JsString::from_static("parsed")),
-    );
 }
 
 #[test]
@@ -637,10 +520,6 @@ fn eval_compiler_rejects_incoherent_caller_variable_profiles() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
 fn strict_script_direct_eval_uses_a_local_eval_declaration_target() {
     let script = compile_unlinked_script("'use strict'; eval('var x = 42; x')").unwrap();
     assert!(script.metadata().strict);
@@ -649,21 +528,6 @@ fn strict_script_direct_eval_uses_a_local_eval_declaration_target() {
     assert_eq!(
         script.eval_environments()[0].variable_environment,
         EvalVariableEnvironment::Global
-    );
-
-    assert_eq!(
-        evaluate_in_context("'use strict'; eval('var x = 42; x')"),
-        Value::Int(42)
-    );
-    assert_eq!(
-        evaluate_in_context("'use strict'; eval('var x = 42'); typeof x"),
-        Value::String(JsString::from_static("undefined"))
-    );
-    assert_eq!(
-        evaluate_in_context(
-            "(function(){ return eval(\"'use strict'; eval('var x = 42; x')\") })()",
-        ),
-        Value::Int(42)
     );
 }
 
@@ -794,10 +658,7 @@ fn sloppy_eval_function_owns_hidden_variable_object_and_orders_eval_pseudo_bindi
         .code()
         .iter()
         .filter_map(|instruction| match instruction {
-            Instruction::HasEvalVariable { name, .. }
-            | Instruction::GetEvalVariable { name, .. }
-            | Instruction::PutEvalVariable { name, .. }
-            | Instruction::DeleteEvalVariable { name, .. } => Some(*name),
+            Instruction::DefineEvalVariable { name, .. } => Some(*name),
             _ => None,
         })
         .any(|name| {

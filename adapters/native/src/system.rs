@@ -10,12 +10,13 @@ use std::env;
 use std::ffi::{OsStr, OsString};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use quickjs_oxide::engine::api::HostServices;
+use quickjs_oxide::engine::api::core::Host;
 use tz::TimeZone;
 
-/// Production provider backed by `SystemTime` and the host TZif/POSIX rules.
+/// The core's host over the system clock and the host TZif/POSIX rules
+/// (new-core phase 6, section 2.2); output and files are the process's.
 #[derive(Debug, Default)]
-pub struct SystemHostServices {
+pub struct SystemHost {
     cached_time_zone: RefCell<Option<CachedTimeZone>>,
 }
 
@@ -25,21 +26,7 @@ struct CachedTimeZone {
     time_zone: TimeZone,
 }
 
-impl HostServices for SystemHostServices {
-    fn write_output(&self, bytes: &[u8], flush: bool) {
-        use std::io::Write;
-        let stdout = std::io::stdout();
-        let mut stdout = stdout.lock();
-        let _ = stdout.write_all(bytes);
-        if flush {
-            let _ = stdout.flush();
-        }
-    }
-
-    fn now_millis(&self) -> i64 {
-        system_time_millis(SystemTime::now())
-    }
-
+impl SystemHost {
     fn timezone_offset_minutes(&self, epoch_millis: i64) -> i32 {
         let unix_seconds = epoch_millis / 1_000;
         let environment = env::var_os("TZ");
@@ -77,34 +64,23 @@ impl HostServices for SystemHostServices {
             unix_seconds,
         )
     }
-
-    fn random_seed(&self) -> u64 {
-        system_time_random_seed(SystemTime::now())
-    }
 }
 
-/// The new core's host over the same system clock and time-zone rules
-/// (new-core phase 6, section 2.2); output and files are the process's.
-#[derive(Debug, Default)]
-pub struct SystemHost {
-    services: SystemHostServices,
-}
-
-impl quickjs_oxide::engine::api::core::Host for SystemHost {
+impl Host for SystemHost {
     fn now_ms(&mut self) -> f64 {
-        self.services.now_millis() as f64
+        system_time_millis(SystemTime::now()) as f64
     }
 
     fn local_tz_offset_minutes(&mut self, utc_ms: f64) -> i32 {
         if utc_ms.is_finite() {
-            self.services.timezone_offset_minutes(utc_ms as i64)
+            self.timezone_offset_minutes(utc_ms as i64)
         } else {
             0
         }
     }
 
     fn random_seed(&mut self) -> u64 {
-        self.services.random_seed()
+        system_time_random_seed(SystemTime::now())
     }
 }
 
@@ -152,27 +128,6 @@ fn system_time_random_seed(time: SystemTime) -> u64 {
 mod tests {
     use super::*;
 
-    #[derive(Debug)]
-    struct FixedHostServices {
-        now_millis: i64,
-        timezone_offset_minutes: i32,
-        random_seed: u64,
-    }
-
-    impl HostServices for FixedHostServices {
-        fn now_millis(&self) -> i64 {
-            self.now_millis
-        }
-
-        fn timezone_offset_minutes(&self, _epoch_millis: i64) -> i32 {
-            self.timezone_offset_minutes
-        }
-
-        fn random_seed(&self) -> u64 {
-            self.random_seed
-        }
-    }
-
     #[test]
     fn pre_epoch_submillisecond_time_rounds_like_gettimeofday() {
         assert_eq!(system_time_millis(UNIX_EPOCH), 0);
@@ -196,18 +151,6 @@ mod tests {
             system_time_millis(UNIX_EPOCH.checked_add(Duration::from_micros(999)).unwrap()),
             0
         );
-    }
-
-    #[test]
-    fn fixed_provider_keeps_clock_and_offset_injectable() {
-        let host = FixedHostServices {
-            now_millis: -123,
-            timezone_offset_minutes: 480,
-            random_seed: 7,
-        };
-        assert_eq!(host.now_millis(), -123);
-        assert_eq!(host.timezone_offset_minutes(i64::MAX), 480);
-        assert_eq!(host.random_seed(), 7);
     }
 
     #[test]

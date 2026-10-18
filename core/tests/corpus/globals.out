@@ -1,0 +1,10 @@
+function undefined undefined
+fn 1
+made made
+9
+ReferenceError: 'missingName' is not defined
+ReferenceError: 'undeclaredStrict' is not defined
+undefined true true true
+undefined
+2
+2

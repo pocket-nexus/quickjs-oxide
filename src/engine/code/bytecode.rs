@@ -1,4 +1,4 @@
-use crate::engine::api::Error;
+use crate::engine::api::error::Error;
 use std::collections::VecDeque;
 
 /// QuickJS `JS_MAX_LOCAL_VARS` for one bytecode function.
@@ -97,13 +97,6 @@ pub enum ApplyKind {
 pub use super::instruction::Instruction;
 
 impl Instruction {
-    /// String constant used as a static name by the VM's property-key bridge.
-    /// Publication links these operands once, including unreachable code.
-    #[must_use]
-    pub(crate) const fn constant_property_key_index(&self) -> Option<u32> {
-        self.operand_contract().static_name()
-    }
-
     #[must_use]
     pub const fn stack_effect(&self) -> (usize, usize) {
         self.nominal_stack_effect()
@@ -115,9 +108,6 @@ impl Instruction {
 pub struct DetachedBytecode<T> {
     pub code: Vec<Instruction>,
     pub constants: Vec<T>,
-    /// Declared local frame width. Local operands are verified against this
-    /// boundary even when their instructions are unreachable.
-    pub local_count: u16,
     pub max_stack: u16,
 }
 
@@ -195,10 +185,7 @@ pub fn compute_stack_size(
             // below that value rather than emitting synthetic cleanup.
             // `OP_throw_error` is likewise terminal: a postfix update may
             // retain its old value below the replaced immutable write.
-            Instruction::TailCall(_)
-            | Instruction::TailCallMethod(_)
-            | Instruction::Return
-            | Instruction::ReturnUndefined
+            Instruction::Return
             | Instruction::ReturnDerived(_)
             | Instruction::Throw
             | Instruction::Ret
@@ -256,7 +243,6 @@ impl<T> Default for DetachedBytecode<T> {
         Self {
             code: Vec::new(),
             constants: Vec::new(),
-            local_count: 0,
             max_stack: 0,
         }
     }
@@ -268,7 +254,7 @@ mod tests {
         ApplyKind, ArgumentsKind, DefineMethodKind, DetachedBytecode, DynamicEnvironmentSource,
         EvalVariableSource, Instruction, WithObjectSource,
     };
-    use crate::engine::api::JsString;
+    use crate::engine::value::JsString;
     use crate::engine::value::PrimitiveValue as Value;
 
     #[test]
@@ -283,7 +269,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(function.verify().unwrap().max_stack, 1);
@@ -306,7 +291,6 @@ mod tests {
                     Instruction::Return,
                 ],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 2,
             };
             assert_eq!(function.verify().unwrap().max_stack, 2);
@@ -315,7 +299,6 @@ mod tests {
         let underflow = DetachedBytecode::<Value> {
             code: vec![Instruction::Yield, Instruction::Return],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(
@@ -333,7 +316,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(function.verify().unwrap().max_stack, 1);
@@ -341,7 +323,6 @@ mod tests {
         let underflow = DetachedBytecode::<Value> {
             code: vec![Instruction::Await, Instruction::Return],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(
@@ -360,7 +341,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(function.verify().unwrap().max_stack, 2);
@@ -372,7 +352,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(
@@ -406,10 +385,9 @@ mod tests {
                 Instruction::Nip,
                 Instruction::Return,
             ],
-            constants: vec![Value::String(crate::engine::api::JsString::from_static(
+            constants: vec![Value::String(crate::engine::value::JsString::from_static(
                 "C",
             ))],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(function.verify().unwrap().max_stack, 2);
@@ -442,10 +420,9 @@ mod tests {
                 Instruction::Drop,
                 Instruction::Return,
             ],
-            constants: vec![Value::String(crate::engine::api::JsString::from_static(
+            constants: vec![Value::String(crate::engine::value::JsString::from_static(
                 "Derived",
             ))],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(heritage.verify().unwrap().max_stack, 2);
@@ -457,7 +434,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code: vec![Instruction::Arguments(kind), Instruction::Return],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 1,
             };
             assert_eq!(function.verify().unwrap().max_stack, 1);
@@ -469,7 +445,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 0,
         };
         assert_eq!(
@@ -480,7 +455,6 @@ mod tests {
         let rest = DetachedBytecode::<Value> {
             code: vec![Instruction::Rest(3), Instruction::Return],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(rest.verify().unwrap().max_stack, 1);
@@ -493,88 +467,6 @@ mod tests {
             undersized_rest.verify().unwrap_err().message(),
             "declared maximum stack is smaller than required"
         );
-    }
-
-    #[test]
-    fn verifier_models_tail_invocations_as_terminal_zero_result_operations() {
-        for (code, maximum) in [
-            (
-                vec![
-                    Instruction::Undefined,
-                    Instruction::PushI32(1),
-                    Instruction::PushI32(2),
-                    Instruction::TailCall(2),
-                    // Terminal tail invocation makes this underflowing
-                    // instruction unreachable.
-                    Instruction::Drop,
-                ],
-                3,
-            ),
-            (
-                vec![
-                    Instruction::PushI32(9),
-                    Instruction::Undefined,
-                    Instruction::PushI32(1),
-                    Instruction::PushI32(2),
-                    Instruction::TailCallMethod(2),
-                    Instruction::Drop,
-                ],
-                4,
-            ),
-        ] {
-            let function = DetachedBytecode::<Value> {
-                code,
-                constants: vec![],
-                local_count: 0,
-                max_stack: maximum,
-            };
-            assert_eq!(function.verify().unwrap().max_stack, maximum);
-        }
-
-        for instruction in [Instruction::TailCall(0), Instruction::TailCallMethod(0)] {
-            let function = DetachedBytecode::<Value> {
-                code: vec![instruction],
-                constants: vec![],
-                local_count: 0,
-                max_stack: 0,
-            };
-            assert_eq!(
-                function.verify().unwrap_err().message(),
-                "bytecode stack underflow"
-            );
-        }
-
-        let undersized = DetachedBytecode::<Value> {
-            code: vec![
-                Instruction::Undefined,
-                Instruction::PushI32(1),
-                Instruction::PushI32(2),
-                Instruction::TailCall(2),
-            ],
-            constants: vec![],
-            local_count: 0,
-            max_stack: 2,
-        };
-        assert_eq!(
-            undersized.verify().unwrap_err().message(),
-            "declared maximum stack is smaller than required"
-        );
-
-        for instruction in [
-            Instruction::TailCall(u16::MAX),
-            Instruction::TailCallMethod(u16::MAX),
-        ] {
-            let function = DetachedBytecode::<Value> {
-                code: vec![instruction],
-                constants: vec![],
-                local_count: 0,
-                max_stack: 0,
-            };
-            assert_eq!(
-                function.verify().unwrap_err().message(),
-                "bytecode stack underflow"
-            );
-        }
     }
 
     #[test]
@@ -610,7 +502,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code,
                 constants: vec![],
-                local_count: 0,
                 max_stack: maximum,
             };
             assert_eq!(
@@ -641,7 +532,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code,
                 constants: vec![],
-                local_count: 0,
                 max_stack: 2,
             };
             assert_eq!(
@@ -662,7 +552,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(
@@ -707,7 +596,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code,
                 constants: vec![],
-                local_count: 0,
                 max_stack: maximum,
             };
             assert_eq!(function.verify().unwrap().max_stack, maximum);
@@ -721,7 +609,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code: vec![Instruction::Undefined, instruction, Instruction::Return],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 1,
             };
             assert_eq!(
@@ -742,7 +629,6 @@ mod tests {
                     Instruction::Return,
                 ],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 2,
             };
             assert_eq!(valid.verify().unwrap().max_stack, 2);
@@ -750,7 +636,6 @@ mod tests {
             let underflow = DetachedBytecode::<Value> {
                 code: vec![Instruction::PushI32(1), operator, Instruction::Return],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 1,
             };
             assert!(underflow.verify().is_err());
@@ -764,21 +649,12 @@ mod tests {
             code: vec![
                 Instruction::VariableEnvironment,
                 Instruction::PutLocal(0),
-                Instruction::HasEvalVariable { source, name: 0 },
-                Instruction::Drop,
-                Instruction::GetEvalVariable { source, name: 0 },
-                Instruction::Drop,
-                Instruction::PushI32(1),
-                Instruction::PutEvalVariable { source, name: 0 },
-                Instruction::DeleteEvalVariable { source, name: 0 },
-                Instruction::Drop,
                 Instruction::PushI32(2),
                 Instruction::DefineEvalVariable { source, name: 0 },
                 Instruction::Undefined,
                 Instruction::Return,
             ],
             constants: vec![Value::String(JsString::from_static("added"))],
-            local_count: 1,
             max_stack: 1,
         };
         assert_eq!(function.verify().unwrap().max_stack, 1);
@@ -827,7 +703,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![Value::String(JsString::from_static("binding"))],
-            local_count: 2,
             max_stack: 2,
         };
         assert_eq!(function.verify().unwrap().max_stack, 2);
@@ -835,7 +710,6 @@ mod tests {
         let undersized_global_reference = DetachedBytecode::<Value> {
             code: vec![Instruction::GlobalReference(0), Instruction::Return],
             constants: vec![],
-            local_count: 0,
             max_stack: 0,
         };
         assert_eq!(
@@ -849,7 +723,6 @@ mod tests {
         let function = DetachedBytecode::<Value> {
             code: vec![Instruction::ThrowRedeclaration(0)],
             constants: vec![Value::String(JsString::from_static("conflict"))],
-            local_count: 0,
             max_stack: 0,
         };
         assert_eq!(function.verify().unwrap().max_stack, 0);
@@ -860,7 +733,6 @@ mod tests {
         let cycle = DetachedBytecode::<Value> {
             code: vec![Instruction::Goto(0)],
             constants: vec![],
-            local_count: 0,
             max_stack: 0,
         };
         assert_eq!(cycle.verify().unwrap().max_stack, 0);
@@ -872,7 +744,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code: vec![Instruction::PushI32(1), Instruction::PushI32(2), completion],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 2,
             };
             assert_eq!(function.verify().unwrap().max_stack, 2);
@@ -890,7 +761,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(normal.verify().unwrap().max_stack, 1);
@@ -903,7 +773,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(thrown.verify().unwrap().max_stack, 2);
@@ -919,7 +788,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(nip.verify().unwrap().max_stack, 4);
@@ -942,7 +810,6 @@ mod tests {
                 Instruction::Ret,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(returning.verify().unwrap().max_stack, 2);
@@ -959,7 +826,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(abrupt_cleanup.verify().unwrap().max_stack, 2);
@@ -991,7 +857,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(nip_catch.verify().unwrap().max_stack, 4);
@@ -1011,7 +876,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 5,
         };
         assert_eq!(iterator_close.verify().unwrap().max_stack, 5);
@@ -1031,7 +895,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 5,
         };
         assert_eq!(normal.verify().unwrap().max_stack, 5);
@@ -1050,7 +913,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 6,
         };
         assert_eq!(offset.verify().unwrap().max_stack, 6);
@@ -1064,7 +926,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(preserve.verify().unwrap().max_stack, 4);
@@ -1078,7 +939,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(drop_preserve.verify().unwrap().max_stack, 4);
@@ -1100,7 +960,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 5,
         };
         assert_eq!(normal.verify().unwrap().max_stack, 5);
@@ -1118,7 +977,6 @@ mod tests {
                     Instruction::Return,
                 ],
                 constants: vec![],
-                local_count: 0,
                 max_stack: 4,
             };
             assert_eq!(detach.verify().unwrap().max_stack, 4);
@@ -1141,7 +999,6 @@ mod tests {
                 Instruction::Goto(2),
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 3,
         };
         assert_eq!(function.verify().unwrap().max_stack, 3);
@@ -1149,7 +1006,6 @@ mod tests {
         let underflow = DetachedBytecode::<Value> {
             code: vec![Instruction::ForInStart, Instruction::Return],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert!(underflow.verify().is_err());
@@ -1171,7 +1027,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 5,
         };
         assert_eq!(iterator_inside_catch.verify().unwrap().max_stack, 5);
@@ -1193,7 +1048,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(catch_inside_iterator.verify().unwrap().max_stack, 4);
@@ -1213,7 +1067,6 @@ mod tests {
                 Instruction::Ret,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 5,
         };
         assert_eq!(iterator_above_outer_gosub.verify().unwrap().max_stack, 5);
@@ -1231,7 +1084,6 @@ mod tests {
                 Instruction::Ret,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(gosub_above_iterator.verify().unwrap().max_stack, 4);
@@ -1252,7 +1104,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 1,
             max_stack: 2,
         };
         assert_eq!(initialized_then_updated.verify().unwrap().max_stack, 2);
@@ -1268,7 +1119,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 1,
             max_stack: 1,
         };
         assert_eq!(consuming_write.verify().unwrap().max_stack, 1);
@@ -1281,7 +1131,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(checked_var_ref.verify().unwrap().max_stack, 1);
@@ -1297,7 +1146,6 @@ mod tests {
             let underflow = DetachedBytecode::<Value> {
                 code: vec![instruction, Instruction::Undefined, Instruction::Return],
                 constants: vec![],
-                local_count: 1,
                 max_stack: 1,
             };
             assert!(underflow.verify().is_err());
@@ -1316,7 +1164,6 @@ mod tests {
                 Instruction::ReturnDerived(0),
             ],
             constants: vec![],
-            local_count: 2,
             max_stack: 2,
         };
         assert_eq!(default_derived.verify().unwrap().max_stack, 2);
@@ -1329,14 +1176,12 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 1,
         };
         assert_eq!(captured_initializer.verify().unwrap().max_stack, 1);
 
         let return_underflow = DetachedBytecode::<Value> {
             code: vec![Instruction::ReturnDerived(0)],
-            local_count: 1,
             max_stack: 0,
             ..DetachedBytecode::<Value>::default()
         };
@@ -1353,7 +1198,6 @@ mod tests {
                 Instruction::ReturnDerived(0),
                 Instruction::PushI32(1),
             ],
-            local_count: 1,
             max_stack: 1,
             ..DetachedBytecode::<Value>::default()
         };
@@ -1374,7 +1218,6 @@ mod tests {
             constants: vec![Value::String(crate::engine::value::JsString::from_static(
                 "2",
             ))],
-            local_count: 0,
             max_stack: 3,
         };
         assert_eq!(fixed.verify().unwrap().max_stack, 2);
@@ -1392,7 +1235,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 3,
         };
         assert_eq!(dynamic.verify().unwrap().max_stack, 3);
@@ -1408,7 +1250,6 @@ mod tests {
             constants: vec![Value::String(crate::engine::value::JsString::from_static(
                 "length",
             ))],
-            local_count: 0,
             max_stack: 3,
         };
         assert_eq!(trailing_hole.verify().unwrap().max_stack, 3);
@@ -1437,7 +1278,6 @@ mod tests {
                 Value::String(crate::engine::value::JsString::from_static("field")),
                 Value::String(crate::engine::value::JsString::from_static("method")),
             ],
-            local_count: 0,
             max_stack: 2,
         };
         assert_eq!(fixed_proto_spread.verify().unwrap().max_stack, 2);
@@ -1455,7 +1295,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 3,
         };
         assert_eq!(computed.verify().unwrap().max_stack, 3);
@@ -1477,7 +1316,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 4,
         };
         assert_eq!(function.verify().unwrap().max_stack, 4);
@@ -1495,7 +1333,6 @@ mod tests {
                 Instruction::Return,
             ],
             constants: vec![],
-            local_count: 0,
             max_stack: 3,
         };
         assert_eq!(
@@ -1530,7 +1367,6 @@ mod tests {
             let function = DetachedBytecode::<Value> {
                 code: vec![instruction, Instruction::Return],
                 constants,
-                local_count: 0,
                 max_stack: 2,
             };
             assert_eq!(

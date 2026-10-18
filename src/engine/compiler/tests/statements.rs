@@ -34,31 +34,13 @@ fn script_roots_enable_annex_b_html_comments_without_stealing_decrement() {
 }
 
 #[test]
-#[cfg_attr(
-    feature = "dropped-features-probe",
-    ignore = "phase 4, section 7.2: asserts a behavior the new core drops"
-)]
-fn direct_and_indirect_eval_roots_enable_annex_b_html_comments() {
+fn indirect_eval_roots_enable_annex_b_html_comments() {
     assert_eq!(
-        evaluate_in_context(
-            r#"(function () {
-                let local = 1;
-                eval("<!-- direct eval\nlocal = 42");
-                let indirect = (0, eval)("<!-- indirect eval\n40 + 2");
-                return local + "|" + indirect;
-            })()"#,
-        ),
-        Value::String(JsString::from_static("42|42"))
+        evaluate_in_context(r#"(0, eval)("<!-- indirect eval\n40 + 2")"#),
+        Value::Int(42)
     );
     assert_eq!(
-        evaluate_in_context(
-            r#"(function () {
-                "use strict";
-                let local = 1;
-                eval("--> strict direct eval\nlocal = 42");
-                return local;
-            })()"#,
-        ),
+        evaluate_in_context(r#""use strict"; (0, eval)("--> strict indirect eval\n40 + 2")"#),
         Value::Int(42)
     );
 }

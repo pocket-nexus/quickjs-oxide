@@ -1,0 +1,14 @@
+3 6 true
+undefined 2 false
+1 true
+object true false
+3 2 0 null
+undefined NaN
+true
+true
+5
+98 50
+boom true Error Error: boom
+    at <eval> (<input>:26:20)
+true called TypeError: called
+    at <eval> (<input>:28:19)

@@ -219,10 +219,18 @@ impl<'source> Parser<'source> {
                     .source_range_to_js_string(pattern_start..pattern_end)?
                     .ok_or_else(|| Error::internal("regexp source range is invalid"))?;
                 let flags = JsString::try_from_utf8(literal.flags)?;
-                let program = crate::regexp::compile(&pattern, &flags).map_err(|error| {
-                    let kind = crate::regexp::javascript_compile_error_kind(&error);
-                    let message =
-                        crate::regexp::javascript_compile_error_message(&error).to_owned();
+                let program = oxide_regexp::compile(
+                    &pattern.utf16_units().collect::<Vec<_>>(),
+                    &flags.utf16_units().collect::<Vec<_>>(),
+                )
+                .map_err(|error| {
+                    let kind = match error.kind() {
+                        oxide_regexp::CompileErrorKind::Internal => ErrorKind::JsInternal,
+                        oxide_regexp::CompileErrorKind::Syntax
+                        | oxide_regexp::CompileErrorKind::TooManyCaptures
+                        | oxide_regexp::CompileErrorKind::TooManyRegisters => ErrorKind::Syntax,
+                    };
+                    let message = oxide_regexp::javascript_compile_error_message(&error).to_owned();
                     Error::new(kind, message).with_span(token.span)
                 })?;
                 let constant = self.add_constant(IrConstant::RegExp {

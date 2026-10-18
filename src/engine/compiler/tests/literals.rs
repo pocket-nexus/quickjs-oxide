@@ -100,7 +100,9 @@ fn integer_fast_path_preserves_rounding_at_mantissa_and_accumulator_boundaries()
         let boundary = BigUint::from(1u32) << bits;
         for delta in 0..=3u32 {
             for integer in [&boundary + delta, &boundary - delta] {
-                let expected = Value::number(integer.to_f64().unwrap_or(f64::INFINITY));
+                let expected = crate::engine::value::PrimitiveValue::number(
+                    integer.to_f64().unwrap_or(f64::INFINITY),
+                );
                 for (radix, prefix) in [(2, "0b"), (8, "0o"), (10, ""), (16, "0x")] {
                     let digits = integer.to_str_radix(radix);
                     let separated = digits

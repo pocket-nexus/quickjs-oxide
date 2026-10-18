@@ -23,16 +23,13 @@ pub(super) fn fold_quickjs_constant_branches(code: &mut [Instruction]) {
             Instruction::Undefined | Instruction::Null | Instruction::PushFalse => false,
             Instruction::PushTrue => true,
             Instruction::PushI32(value) => value != 0,
-            Instruction::PushAtomValueIndex(_) => true,
             _ => continue,
         };
         let effects = code[pc].potential_effects();
-        // Preserve QuickJS's existing elimination of tagged integer-atom String
-        // materialization. No other allocation or observable JS effect is waived.
         if effects.may_call_js
             || effects.javascript_exception
                 != crate::engine::code::instruction::JsExceptionEffect::None
-            || (effects.may_allocate && !matches!(code[pc], Instruction::PushAtomValueIndex(_)))
+            || effects.may_allocate
         {
             continue;
         }
@@ -143,11 +140,7 @@ pub(super) fn apply_quickjs_late_throw_sites(
         survives_first_pass[index] = true;
         let parser_terminal = matches!(
             code[index],
-            Instruction::Goto(_)
-                | Instruction::Return
-                | Instruction::ReturnUndefined
-                | Instruction::Throw
-                | Instruction::Ret
+            Instruction::Goto(_) | Instruction::Return | Instruction::Throw | Instruction::Ret
         );
         if !parser_terminal {
             index += 1;
@@ -248,7 +241,6 @@ pub(super) fn apply_quickjs_late_throw_sites(
             Instruction::Undefined | Instruction::Null | Instruction::PushFalse => Some(false),
             Instruction::PushTrue => Some(true),
             Instruction::PushI32(value) => Some(value != 0),
-            Instruction::PushAtomValueIndex(_) => Some(true),
             _ => None,
         };
         let mut folded_goto = false;
@@ -342,7 +334,6 @@ pub(super) fn apply_quickjs_late_throw_sites(
                 code[index],
                 Instruction::Goto(_)
                     | Instruction::Return
-                    | Instruction::ReturnUndefined
                     | Instruction::Throw
                     | Instruction::Ret
                     | Instruction::ThrowReadOnly(_)
@@ -404,15 +395,7 @@ mod tests {
         use Instruction::*;
         // The first rewrite removes the only branch to PC 4. The second
         // candidate must still see the original entry map and remain intact.
-        let mut code = [
-            Nop,
-            PushFalse,
-            IfTrue(4),
-            PushTrue,
-            IfTrue(6),
-            Nop,
-            ReturnUndefined,
-        ];
+        let mut code = [Nop, PushFalse, IfTrue(4), PushTrue, IfTrue(6), Nop, Return];
         fold_quickjs_constant_branches(&mut code);
         assert!(matches!(code[1], Nop));
         assert!(matches!(code[2], Nop));
@@ -440,7 +423,7 @@ mod tests {
         // No late throw is present, but unreachable invalid targets must still
         // fail in the projection before later publication validators run.
         for target in [Goto(9), IfTrue(9), IfFalse(9), Catch(9), Gosub(9)] {
-            let code = [ReturnUndefined, target];
+            let code = [Return, target];
             assert_eq!(
                 apply_quickjs_late_throw_sites(&code, &mut [start, dead])
                     .unwrap_err()

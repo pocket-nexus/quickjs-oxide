@@ -164,7 +164,6 @@ pub struct ModuleStarExport {
 /// Mutable compiler output which has not entered a runtime domain yet.
 #[derive(Debug)]
 pub struct UnlinkedModule {
-    name: JsString,
     function: UnlinkedFunction,
     has_top_level_await: bool,
     declaration_order: Box<[u16]>,
@@ -187,21 +186,9 @@ pub struct UnlinkedModuleTables {
     pub star_exports: Vec<ModuleStarExport>,
 }
 
-/// Owned pieces crossing the one-way module publication boundary.
-pub struct UnlinkedModuleParts<F = UnlinkedFunction> {
-    pub name: JsString,
-    pub function: F,
-    pub has_top_level_await: bool,
-    pub requested_modules: Box<[ModuleRequest]>,
-    pub imports: Box<[ModuleImport]>,
-    pub exports: Box<[ModuleExport]>,
-    pub star_exports: Box<[ModuleStarExport]>,
-}
-
 impl UnlinkedModule {
     #[must_use]
     pub fn new(
-        name: JsString,
         function: UnlinkedFunction,
         has_top_level_await: bool,
         tables: UnlinkedModuleTables,
@@ -216,7 +203,6 @@ impl UnlinkedModule {
             star_exports,
         } = tables;
         Self {
-            name,
             function,
             has_top_level_await,
             declaration_order: declaration_order.into_boxed_slice(),
@@ -281,18 +267,5 @@ impl UnlinkedModule {
     #[cfg_attr(not(test), allow(dead_code))]
     pub const fn star_exports(&self) -> &[ModuleStarExport] {
         &self.star_exports
-    }
-
-    #[must_use]
-    pub fn into_parts(self) -> UnlinkedModuleParts {
-        UnlinkedModuleParts {
-            name: self.name,
-            function: self.function,
-            has_top_level_await: self.has_top_level_await,
-            requested_modules: self.requested_modules,
-            imports: self.imports,
-            exports: self.exports,
-            star_exports: self.star_exports,
-        }
     }
 }

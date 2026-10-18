@@ -1,19 +1,18 @@
 #!/usr/bin/env python3
-"""New core phase 2, M3/M4: per-iteration instruction slopes of both cores.
+"""New core phase 2, M3/M4: per-iteration instruction slopes.
 
-Runs each probe at N and 2N on the new core and on the current core through
-the root crate's measurement hook (`run_probe_file`, an ignored test in
-src/engine/compiler/register/run_tests.rs), under `perf stat -e
-instructions:u`, pinned to one CPU, and reports the per-iteration slope
-(I(2N) - I(N)) / N, the median over the repeats. Startup, compilation and
-lowering cancel in the slope; nothing else is subtracted. Both cores run
-from the same release test binary, so they are built identically.
+Runs each probe at N and 2N under `perf stat -e instructions:u`, pinned to
+one CPU, and reports the per-iteration slope (I(2N) - I(N)) / N, the median
+over the repeats. Startup, compilation and lowering cancel in the slope;
+nothing else is subtracted. The engine is the root crate's measurement hook
+(`run_probe_file`, an ignored test in
+src/engine/compiler/register/run_tests.rs):
 
     cargo test --release --lib --no-run   # prints the binary path
     python3 docs/performance/probes/new-core/phase2.py \\
         --binary target/release/deps/quickjs_oxide-HASH --cpu 2 --repeat 3
 
-or, from M5 on, with any engine run as `PATH FILE` (each named column):
+or any engine run as `PATH FILE` (each named column):
 
     python3 docs/performance/probes/new-core/phase2.py --engine quickjs=$QJS \\
         --engine new=target/release/qjs
@@ -113,11 +112,11 @@ def instructions(command: list, env: dict, cpu: int, path: Path) -> int:
     raise RuntimeError(f"no instruction count: {result.stderr}")
 
 
-def hook(binary: str, core: str) -> tuple:
-    """The root crate's measurement hook running one core (M3/M4)."""
+def hook(binary: str) -> tuple:
+    """The root crate's measurement hook."""
     command = [binary, "--exact", "engine::compiler::register::run_tests::run_probe_file",
                "--ignored", "--nocapture", "--test-threads=1"]
-    return command, {"PROBE_FILE": "{file}", "PROBE_CORE": core}
+    return command, {"PROBE_FILE": "{file}"}
 
 
 def slope(engine, cpu, repeat, source, n, directory):
@@ -133,7 +132,7 @@ def slope(engine, cpu, repeat, source, n, directory):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", help="the root crate's release test binary (both cores)")
+    parser.add_argument("--binary", help="the root crate's release test binary")
     parser.add_argument("--engine", action="append", default=[],
                         help="NAME=PATH of a binary run as `PATH FILE` (QuickJS, qjs)")
     parser.add_argument("--cpu", type=int, default=2)
@@ -143,8 +142,7 @@ def main():
     args = parser.parse_args()
     engines = {}
     if args.binary:
-        engines["current"] = hook(args.binary, "current")
-        engines["new"] = hook(args.binary, "new")
+        engines["new"] = hook(args.binary)
     for spec in args.engine:
         name, path = spec.split("=", 1)
         engines[name] = ([path], {})

@@ -14,18 +14,17 @@ expected_packages = {
     "quickjs-oxide", "quickjs-oxide-web-host",
     "quickjs-oxide-host", "quickjs-oxide-cli",
     "quickjs-oxide-web", "quickjs-oxide-test262",
-    # The new core (#122); the engine depends on it from phase 2 on.
+    # The engine (#122) and the regular-expression engine and Unicode
+    # tables it uses (phase 3, section 6.1).
     "oxide-core",
-    # The regular-expression engine and Unicode tables both cores use
-    # (phase 3, section 6.1).
     "oxide-regexp",
 }
 if set(packages) != expected_packages:
     fail("workspace package set drifted from the reviewed engine/app split")
 # Candidate A: providers depend on the complete engine, never the reverse.
-# The engine's edges are to the new core and the regular-expression crate;
-# the new core's single edge is to the regular-expression crate, which
-# depends on nothing.
+# The root crate's edges are to the core and the regular-expression crate;
+# the core's single edge is to the regular-expression crate, which depends
+# on nothing.
 expected_dependencies = {
     "quickjs-oxide": {"oxide-core", "oxide-regexp"},
     "quickjs-oxide-host": {"quickjs-oxide"},
@@ -117,17 +116,9 @@ def require_gated(path: str, declarations: tuple[str | tuple[str, int], ...]) ->
 
 
 require_gated('apps/cli/tests/oracle/main.rs', ('mod test262_host_gc;', 'mod test262_is_html_dda;'))
-require_gated('src/engine/api/mod.rs', ('pub(crate) mod test262_agent;', 'pub(crate) mod test262_host;'))
-require_gated('src/engine/heap/runtime_gc.rs', ('    pub(crate) fn call_test262_gc(',))
-require_gated('src/engine/object/storage.rs', ('    pub(crate) fn set_object_is_html_dda(&self, object: &ObjectRef) -> Result<(), RuntimeError> {',))
-require_gated('src/engine/api/context/test262.rs', ('    pub fn new_code_point_range_function(&mut self) -> Result<CallableRef, RuntimeError> {', '    pub fn new_test262_gc_function(&mut self) -> Result<CallableRef, RuntimeError> {'))
-require_gated('src/engine/api/mod.rs', ('pub use crate::engine::api::test262_agent::{Test262AgentError, Test262AgentSession};',))
-require_gated('src/engine/builtins/native.rs', ('pub enum Test262AgentKind {', '    StringCodePointRange,', '    Test262DetachArrayBuffer,', '    Test262EvalScript,', '    Test262CreateRealm,', '    Test262IsHtmlDda,', '    Test262Gc,', '    Test262Agent(Test262AgentKind),'))
-require_gated('src/engine/heap/object_storage.rs', ('    pub(crate) fn set_object_is_html_dda(&mut self, id: ObjectId) -> Result<(), HeapError> {',))
-require_gated('src/engine/builtins/dispatch.rs', ('            NativeFunctionId::StringCodePointRange => {', ('            NativeFunctionId::Test262DetachArrayBuffer => {', 2), '            NativeFunctionId::Test262EvalScript => {', '            NativeFunctionId::Test262CreateRealm => self.call_test262_create_realm(invocation),', '            NativeFunctionId::Test262IsHtmlDda => self.call_test262_is_html_dda(invocation),', '            NativeFunctionId::Test262Gc => self.call_test262_gc(invocation),', '            NativeFunctionId::Test262Agent(kind) => {'))
-require_gated('src/engine/builtins/array_buffer.rs', ('    pub(crate) fn call_test262_detach_array_buffer(', '    pub fn new_detach_array_buffer_function(&mut self) -> Result<CallableRef, RuntimeError> {'))
-require_gated('src/engine/builtins/string.rs', ('    pub(crate) fn call_string_code_point_range(',))
-require_gated('src/engine/value/primitive.rs', ('    pub fn try_with_exact_capacity(capacity: usize) -> Result<Self, JsStringError> {',))
+require_gated('src/engine/api/core/mod.rs', ('pub mod test262;',))
+require_gated('src/engine/api/core/compile.rs', ('pub(crate) fn run_agent_script(',))
+require_gated('src/engine/api/core/context.rs', ('    pub fn install_test262_host(&mut self) -> Result<ObjectRef, RuntimeError> {',))
 
 gate = Path("scripts/test262/test-test262.sh").read_text()
 if "-p quickjs-oxide-test262 --bin run-test262" not in gate:

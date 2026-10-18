@@ -34,16 +34,6 @@ impl FunctionBuilder {
         })
     }
 
-    #[cfg(feature = "profiling")]
-    pub(in crate::engine::compiler) fn owned_record_bytes(&self) -> u64 {
-        (size_of::<FunctionIr>()
-            + if self.context.0.is_some() {
-                size_of::<FunctionParseContext>()
-            } else {
-                0
-            }) as u64
-    }
-
     /// Release construction-only state as soon as an ordinary/arrow body is
     /// complete. Class aggregate initializers retain it while suspended.
     pub(in crate::engine::compiler) fn finish_parsing(&mut self) -> Result<(), Error> {

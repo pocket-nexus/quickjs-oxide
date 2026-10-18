@@ -16,7 +16,7 @@ categories = ["compilers", "development-tools"]
 workspace = true
 
 [dependencies]
-# The new core (#122); only the phase 2 register lowering and its driver use it.
+# The engine (#122): the lowering's target and the API's runtime.
 oxide-core = { workspace = true }
 # The regular-expression engine and Unicode tables (phase 3, section 6.1).
 oxide-regexp = { workspace = true }
@@ -27,18 +27,11 @@ num-traits = { workspace = true }
 default = []
 test262-host = []
 test-support = []
-profiling = []
-# Restores identity checks on trusted handle fast paths in release builds.
-checked-handles = []
 # The core's stress mode (collect before every allocation), for the register
 # lowering's tests and `qjs --gc-stress`.
 gc-stress = ["oxide-core/gc-stress"]
 # `qjs --ic-stats`: the core's inline-cache counters.
 ic-stats = ["oxide-core/ic-stats"]
-# Phase 4, section 7.2: the current engine with the five behaviors the new
-# core drops switched off, for the one Test262 run that freezes the dropped
-# variants. Never in a release, never in the default gates.
-dropped-features-probe = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 oxide-regexp = { workspace = true, features = ["test-hooks"] }

@@ -99,10 +99,6 @@ fn function_resolution_events(tree: &FunctionTree) -> Result<Vec<FunctionResolut
 }
 
 pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> {
-    profile!(let _phase_timer = PhaseTimer::start(
-        crate::engine::api::profiling::CompilePhase::Resolution
-    ));
-
     #[derive(Clone, Copy)]
     enum UnresolvedAccess {
         Identifier(IdentifierAccess),
@@ -111,15 +107,6 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
         PrivateField(PrivateFieldAccess),
     }
 
-    #[cfg(feature = "profiling")]
-    crate::engine::compiler::diagnostics::sample_ir_storage(
-        crate::engine::api::profiling::CompilePhase::Resolution,
-        crate::engine::compiler::diagnostics::arena_bytes(&tree.functions)
-            + (tree.functions.len()
-                * size_of::<crate::engine::compiler::model::ir::function::FunctionIr>())
-                as u64,
-        tree.functions.iter().map(Box::as_ref),
-    );
     install_eval_variable_objects(tree)?;
     seed_global_declarations(tree)?;
     seed_module_bindings(tree)?;
@@ -231,15 +218,6 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
     // link-time call never initializes `this`/direct-eval pseudo cells.
     install_pseudo_binding_prologues(tree)?;
     install_module_declaration_hoists(tree)?;
-    #[cfg(feature = "profiling")]
-    crate::engine::compiler::diagnostics::sample_ir_storage(
-        crate::engine::api::profiling::CompilePhase::Resolution,
-        crate::engine::compiler::diagnostics::arena_bytes(&tree.functions)
-            + (tree.functions.len()
-                * size_of::<crate::engine::compiler::model::ir::function::FunctionIr>())
-                as u64,
-        tree.functions.iter().map(Box::as_ref),
-    );
     Ok(())
 }
 
@@ -546,7 +524,7 @@ fn finalize_eval_closure_suffixes(
                             }
                         }
                     }
-                    ClosureVariableName::None | ClosureVariableName::Atom(_) => {
+                    ClosureVariableName::None => {
                         return Err(Error::internal(
                             "eval-visible closure slot retained no compiler string name",
                         ));

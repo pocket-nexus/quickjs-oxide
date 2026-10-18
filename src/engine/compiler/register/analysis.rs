@@ -126,10 +126,7 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
         }
         analysis.max_depth = analysis.max_depth.max(next);
         match *instruction {
-            Instruction::TailCall(_)
-            | Instruction::TailCallMethod(_)
-            | Instruction::Return
-            | Instruction::ReturnUndefined
+            Instruction::Return
             | Instruction::ReturnDerived(_)
             | Instruction::Throw
             | Instruction::Ret

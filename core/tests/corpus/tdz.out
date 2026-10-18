@@ -1,0 +1,10 @@
+ReferenceError: x is not initialized
+1
+ReferenceError
+TypeError: 'c' is read-only
+5
+captured ReferenceError
+2
+ReferenceError
+'k' is read-only
+T0T1

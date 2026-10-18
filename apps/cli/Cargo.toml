@@ -43,3 +43,4 @@ pkg-fmt = "zip"
 
 [dev-dependencies]
 quickjs-oxide = { workspace = true, features = ["test-support"] }
+oxide-regexp = { workspace = true }

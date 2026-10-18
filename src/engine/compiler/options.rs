@@ -124,25 +124,6 @@ impl EvalCompileContext {
         }
     }
 
-    pub fn direct_with_profile_and_arguments(
-        caller_strict: bool,
-        bindings: Vec<EvalRootBinding<JsString>>,
-        caller_profile: EvalCallerProfile,
-        super_call_allowed: bool,
-        super_allowed: bool,
-        arguments_forbidden: bool,
-    ) -> Self {
-        let mut context = Self::direct_with_profile(
-            caller_strict,
-            bindings,
-            caller_profile,
-            super_call_allowed,
-            super_allowed,
-        );
-        context.arguments_forbidden = arguments_forbidden;
-        context
-    }
-
     pub fn indirect() -> Self {
         Self {
             kind: EvalKind::Indirect,

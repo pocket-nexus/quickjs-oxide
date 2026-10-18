@@ -20,7 +20,7 @@ pub(in crate::engine::compiler) enum IrConstant {
     /// compile-once payload behind one verified constant index.
     RegExp {
         pattern: JsString,
-        program: Rc<crate::regexp::CompiledRegExp>,
+        program: Rc<oxide_regexp::CompiledRegExp>,
     },
     /// Runtime-independent template-site payload. Publication materializes
     /// the two frozen realm-local Arrays once and replaces this structural

@@ -185,7 +185,7 @@ impl<'source> LookaheadCache<'source> {
         }
     }
 
-    #[cfg(any(test, feature = "profiling"))]
+    #[cfg(test)]
     fn len(&self) -> usize {
         self.entries.len() - self.base
     }
@@ -241,8 +241,6 @@ impl<'source> Parser<'source> {
         self.lookahead
             .borrow_mut()
             .insert(start, goal, context, token);
-        #[cfg(feature = "profiling")]
-        counters::record_entries(self.lookahead.borrow().len());
         Ok(token)
     }
 
@@ -252,10 +250,7 @@ impl<'source> Parser<'source> {
         goal: LexicalGoal,
         context: LexContext,
     ) -> Option<Token<'source>> {
-        let token = self.lookahead.borrow().peek(start, goal, context).copied();
-        #[cfg(feature = "profiling")]
-        counters::record(token.is_some());
-        token
+        self.lookahead.borrow().peek(start, goal, context).copied()
     }
 
     /// Drops memoized scans invalidated by a goal or context change.
@@ -290,8 +285,6 @@ impl<'source> Parser<'source> {
         };
         self.lexer.seek(token.span.end);
         self.token = *token;
-        #[cfg(feature = "profiling")]
-        counters::record_commit_hit();
         true
     }
 
@@ -311,41 +304,6 @@ impl<'source> Parser<'source> {
         self.lookahead
             .borrow_mut()
             .insert(start, goal, context, token);
-    }
-}
-
-/// Diagnostic probe-cache counters for `feature = "profiling"` builds. The
-/// public compile probe prints them; production builds compile them out.
-#[cfg(feature = "profiling")]
-pub(crate) mod counters {
-    use std::sync::atomic::AtomicU64;
-    use std::sync::atomic::Ordering;
-
-    static HITS: AtomicU64 = AtomicU64::new(0);
-    static MISSES: AtomicU64 = AtomicU64::new(0);
-    static COMMIT_HITS: AtomicU64 = AtomicU64::new(0);
-    static MAX_ENTRIES: AtomicU64 = AtomicU64::new(0);
-
-    pub(in crate::engine::compiler) fn record(hit: bool) {
-        let counter = if hit { &HITS } else { &MISSES };
-        counter.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(in crate::engine::compiler) fn record_commit_hit() {
-        COMMIT_HITS.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub(in crate::engine::compiler) fn record_entries(len: usize) {
-        MAX_ENTRIES.fetch_max(len as u64, Ordering::Relaxed);
-    }
-
-    pub(crate) fn snapshot() -> (u64, u64, u64, u64) {
-        (
-            HITS.load(Ordering::Relaxed),
-            MISSES.load(Ordering::Relaxed),
-            COMMIT_HITS.load(Ordering::Relaxed),
-            MAX_ENTRIES.load(Ordering::Relaxed),
-        )
     }
 }
 

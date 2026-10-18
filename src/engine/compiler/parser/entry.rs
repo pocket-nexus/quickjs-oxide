@@ -7,8 +7,6 @@ use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::code::function::metadata::EvalRootBinding;
 use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
 use crate::engine::compiler::EvalCompileContext;
-use crate::engine::compiler::ModuleCompileFailure;
-use crate::engine::compiler::ModuleImportAttributeChecker;
 
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::Lexer;
@@ -36,29 +34,25 @@ impl<'source> Parser<'source> {
         source: &'source str,
         filename: JsString,
     ) -> Result<FunctionTree, Error> {
-        Self::parse_root(source, None, filename, RootCompileContext::Script, None)
-            .map_err(ModuleCompileFailure::into_engine_without_checker)
+        Self::parse_root(source, None, filename, RootCompileContext::Script)
     }
 
     pub(in crate::engine::compiler) fn parse_module(
         source: &'source str,
         filename: JsString,
-        checker: Option<&mut dyn ModuleImportAttributeChecker>,
-    ) -> Result<FunctionTree, ModuleCompileFailure> {
-        Self::parse_root(source, None, filename, RootCompileContext::Module, checker)
+    ) -> Result<FunctionTree, Error> {
+        Self::parse_root(source, None, filename, RootCompileContext::Module)
     }
 
     pub(in crate::engine::compiler) fn parse_module_source(
         source: &'source SourceText,
         filename: JsString,
-        checker: Option<&mut dyn ModuleImportAttributeChecker>,
-    ) -> Result<FunctionTree, ModuleCompileFailure> {
+    ) -> Result<FunctionTree, Error> {
         Self::parse_root(
             source.carrier(),
             Some(source),
             filename,
             RootCompileContext::Module,
-            checker,
         )
     }
 
@@ -71,9 +65,7 @@ impl<'source> Parser<'source> {
             Some(source),
             filename,
             RootCompileContext::Script,
-            None,
         )
-        .map_err(ModuleCompileFailure::into_engine_without_checker)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -82,14 +74,7 @@ impl<'source> Parser<'source> {
         filename: JsString,
         context: EvalCompileContext,
     ) -> Result<FunctionTree, Error> {
-        Self::parse_root(
-            source,
-            None,
-            filename,
-            RootCompileContext::Eval(context),
-            None,
-        )
-        .map_err(ModuleCompileFailure::into_engine_without_checker)
+        Self::parse_root(source, None, filename, RootCompileContext::Eval(context))
     }
 
     pub(in crate::engine::compiler) fn parse_eval_source(
@@ -102,9 +87,7 @@ impl<'source> Parser<'source> {
             Some(source),
             filename,
             RootCompileContext::Eval(context),
-            None,
         )
-        .map_err(ModuleCompileFailure::into_engine_without_checker)
     }
 
     pub(in crate::engine::compiler) fn parse_root(
@@ -112,11 +95,7 @@ impl<'source> Parser<'source> {
         source_text: Option<&'source SourceText>,
         filename: JsString,
         context: RootCompileContext,
-        mut module_attribute_checker: Option<&mut dyn ModuleImportAttributeChecker>,
-    ) -> Result<FunctionTree, ModuleCompileFailure> {
-        profile!(let _phase_timer = PhaseTimer::start(
-            crate::engine::api::profiling::CompilePhase::Parse
-        ));
+    ) -> Result<FunctionTree, Error> {
         validate_source_length(source.len())?;
         let is_module = matches!(&context, RootCompileContext::Module);
         let (
@@ -151,9 +130,9 @@ impl<'source> Parser<'source> {
             ),
             RootCompileContext::Eval(context) => {
                 if !matches!(context.kind, EvalKind::Direct | EvalKind::Indirect) {
-                    return Err(
-                        Error::internal("eval compiler received a non-eval root kind").into(),
-                    );
+                    return Err(Error::internal(
+                        "eval compiler received a non-eval root kind",
+                    ));
                 }
                 if context.kind == EvalKind::Indirect
                     && (!context.bindings.is_empty()
@@ -166,8 +145,7 @@ impl<'source> Parser<'source> {
                 {
                     return Err(Error::internal(
                         "indirect eval compiler received a caller environment",
-                    )
-                    .into());
+                    ));
                 }
                 let super_capabilities = SuperCapabilities {
                     super_call_allowed: context.super_call_allowed,
@@ -294,21 +272,10 @@ impl<'source> Parser<'source> {
         parser.functions[0].strict = strict;
         parser.functions[0].arguments_forbidden = arguments_forbidden;
         if is_module {
-            parser.parse_module_body(&mut module_attribute_checker)?;
+            parser.parse_module_body()?;
         } else {
             parser.parse_script_body()?;
         }
-        #[cfg(feature = "profiling")]
-        crate::engine::compiler::diagnostics::sample_ir_storage(
-            crate::engine::api::profiling::CompilePhase::Parse,
-            crate::engine::compiler::diagnostics::arena_bytes(&parser.functions)
-                + parser
-                    .functions
-                    .iter()
-                    .map(FunctionBuilder::owned_record_bytes)
-                    .sum::<u64>(),
-            parser.functions.iter().map(|builder| builder.ir.as_ref()),
-        );
         Ok(FunctionTree {
             functions: parser
                 .functions

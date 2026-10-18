@@ -539,10 +539,6 @@ fn unary(instruction: &Instruction) -> Option<Opcode> {
         Instruction::TypeOf => Opcode::TypeOf,
         Instruction::ToPropKey => Opcode::ToPropertyKey,
         Instruction::IsUndefinedOrNull => Opcode::IsUndefinedOrNull,
-        Instruction::IsUndefined => Opcode::IsUndefined,
-        Instruction::IsNull => Opcode::IsNull,
-        Instruction::TypeOfIsUndefined => Opcode::TypeOfIsUndefined,
-        Instruction::TypeOfIsFunction => Opcode::TypeOfIsFunction,
         _ => return None,
     })
 }
@@ -663,7 +659,6 @@ struct Lowerer<'a, 'c> {
     max_scratch: u32,
     pool: Vec<CoreValue>,
     pool_index: HashMap<u32, u32>,
-    decimal_index: HashMap<u32, u32>,
     child_ordinal: HashMap<u32, u32>,
     this_keys: HashSet<u32>,
     /// Register PCs of the calls written as a direct `eval` (for the
@@ -733,7 +728,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             max_scratch: 0,
             pool: Vec::new(),
             pool_index: HashMap::new(),
-            decimal_index: HashMap::new(),
             child_ordinal,
             this_keys: HashSet::new(),
             analysis,
@@ -1116,9 +1110,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             });
         };
         let value = match primitive {
-            PrimitiveValue::Undefined => return Ok(Entry::Undefined),
-            PrimitiveValue::Null => return Ok(Entry::Null),
-            PrimitiveValue::Bool(value) => return Ok(Entry::Bool(*value)),
             PrimitiveValue::Int(value) => return Ok(Entry::Int(*value)),
             PrimitiveValue::Float(value) => CoreValue::number(*value),
             PrimitiveValue::String(string) => {
@@ -1148,18 +1139,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         let slot = self.pool.len() as u32;
         self.pool.push(value);
         self.pool_index.insert(index, slot);
-        Ok(Entry::Const(slot))
-    }
-
-    fn decimal_entry(&mut self, index: u32) -> Result<Entry, LowerError> {
-        if let Some(&slot) = self.decimal_index.get(&index) {
-            return Ok(Entry::Const(slot));
-        }
-        let units: Vec<u16> = index.to_string().encode_utf16().collect();
-        let value = self.atom_value(&units)?;
-        let slot = self.pool.len() as u32;
-        self.pool.push(value);
-        self.decimal_index.insert(index, slot);
         Ok(Entry::Const(slot))
     }
 
@@ -1323,10 +1302,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::PushI32(value) => self.stack.push(Entry::Int(value)),
             I::PushConst(index) => {
                 let entry = self.pool_entry(index)?;
-                self.stack.push(entry);
-            }
-            I::PushAtomValueIndex(index) => {
-                let entry = self.decimal_entry(index)?;
                 self.stack.push(entry);
             }
             I::Undefined => self.stack.push(Entry::Undefined),
@@ -1680,9 +1655,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let (_, [value]) = self.pop_operands::<1>()?;
                 self.emit(|b| b.a(Opcode::Return, value));
             }
-            I::ReturnUndefined => {
-                self.emit(|b| b.op(Opcode::ReturnUndefined));
-            }
             I::Throw => {
                 let (_, [value]) = self.pop_operands::<1>()?;
                 self.emit(|b| b.a(Opcode::Throw, value));
@@ -1785,12 +1757,12 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                     ApplyKind::Call => Opcode::CallSpread,
                     ApplyKind::Construct => Opcode::NewSpread,
                 };
-                self.call(op, 0, 3, true)?;
+                self.call(op, 0, 3)?;
             }
             // A direct `eval` is a call of whatever `eval` resolves to, which
             // runs as indirect eval (phase 0, section 5.5).
             I::Eval { argument_count, .. } => {
-                self.call(Opcode::Call, argument_count, 1, true)?;
+                self.call(Opcode::Call, argument_count, 1)?;
                 self.direct_eval_sites
                     .push(self.builder.code().len() as u32 - 1);
             }
@@ -1807,7 +1779,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.emit(|b| b.ab(Opcode::Mov, moved, array));
                 self.stack[base + 1] = Entry::Undefined;
                 self.push_canon(1);
-                self.call(Opcode::CallSpread, 0, 3, true)?;
+                self.call(Opcode::CallSpread, 0, 3)?;
             }
             // A function with a direct `eval` has no dynamic binding: the
             // eval throws before it could create one.
@@ -2034,8 +2006,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.stack.truncate(base);
             }
             I::MarkSuperCall => {}
-            I::ConstructSuper(argc) => self.call(Opcode::New, argc, 2, true)?,
-            I::ApplySuper => self.call(Opcode::NewSpread, 0, 3, true)?,
+            I::ConstructSuper(argc) => self.call(Opcode::New, argc, 2)?,
+            I::ApplySuper => self.call(Opcode::NewSpread, 0, 3)?,
             I::InitDerivedConstructor => {
                 let new_target = self.new_target_register()?;
                 let dst = self.result_register()?;
@@ -2210,11 +2182,9 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             }
 
             // ---- calls ----
-            I::Call(argc) => self.call(Opcode::Call, argc, 1, true)?,
-            I::CallMethod(argc) => self.call(Opcode::CallMethod, argc, 2, true)?,
-            I::Construct(argc) => self.call(Opcode::New, argc, 2, true)?,
-            I::TailCall(argc) => self.call(Opcode::TailCall, argc, 1, false)?,
-            I::TailCallMethod(argc) => self.call(Opcode::TailCallMethod, argc, 2, false)?,
+            I::Call(argc) => self.call(Opcode::Call, argc, 1)?,
+            I::CallMethod(argc) => self.call(Opcode::CallMethod, argc, 2)?,
+            I::Construct(argc) => self.call(Opcode::New, argc, 2)?,
 
             _ => return Err(unsupported_instruction(instruction)),
         }
@@ -2283,13 +2253,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         Ok(())
     }
 
-    fn call(
-        &mut self,
-        op: Opcode,
-        argc: u16,
-        fixed: usize,
-        returns: bool,
-    ) -> Result<(), LowerError> {
+    fn call(&mut self, op: Opcode, argc: u16, fixed: usize) -> Result<(), LowerError> {
         let argc = u8::try_from(argc)
             .map_err(|_| LowerError::unsupported("calls with more than 255 arguments"))?;
         let base = self
@@ -2304,12 +2268,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         }
         self.stack.truncate(base);
         let callee = Self::r8(self.temp(base))?;
-        if returns {
-            let at = self.emit(|b| b.call(op, callee, callee, argc));
-            self.push_result(at);
-        } else {
-            self.emit(|b| b.call(op, 0, callee, argc));
-        }
+        let at = self.emit(|b| b.call(op, callee, callee, argc));
+        self.push_result(at);
         Ok(())
     }
 

@@ -17,11 +17,10 @@ fn raw_module_and_script_source_length_guard_matches_quickjs_signed_debug_limit(
 #[test]
 fn raw_module_wtf8_surrogate_preserves_debug_source_and_definition_column() {
     let raw = b"/*\xed\xa0\x80*/export function f(){return '\xed\xa0\x80';}";
-    let module = compile_unlinked_module_bytes_with_name_and_attribute_checker(
+    let module = compile_unlinked_module_bytes_with_name(
         raw,
         JsString::from_static("raw-module.mjs"),
         DebugInfoMode::Full,
-        None,
     )
     .unwrap();
     let child = module
@@ -43,11 +42,10 @@ fn raw_module_wtf8_surrogate_preserves_debug_source_and_definition_column() {
 
 #[test]
 fn raw_module_accepts_malformed_bytes_inside_comments() {
-    let module = compile_unlinked_module_bytes_with_name_and_attribute_checker(
+    let module = compile_unlinked_module_bytes_with_name(
         b"/*\x80X*/export const answer = 42;",
         JsString::from_static("raw-comment.mjs"),
         DebugInfoMode::StripDebug,
-        None,
     )
     .unwrap();
 
@@ -65,17 +63,12 @@ fn raw_module_accepts_malformed_bytes_inside_comments() {
 #[test]
 fn raw_module_malformed_token_reports_authored_byte_span() {
     let raw = b"export const bad = \x80;";
-    let ModuleCompileFailure::Engine(error) =
-        compile_unlinked_module_bytes_with_name_and_attribute_checker(
-            raw,
-            JsString::from_static("raw-token.mjs"),
-            DebugInfoMode::Full,
-            None,
-        )
-        .unwrap_err()
-    else {
-        panic!("malformed raw Module token did not produce an engine diagnostic");
-    };
+    let error = compile_unlinked_module_bytes_with_name(
+        raw,
+        JsString::from_static("raw-token.mjs"),
+        DebugInfoMode::Full,
+    )
+    .unwrap_err();
     let span = error.span().expect("malformed token source span");
     let raw_offset = raw.iter().position(|byte| *byte == 0x80).unwrap();
 

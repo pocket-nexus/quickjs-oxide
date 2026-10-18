@@ -1,8 +1,6 @@
 //! Function, parameter, closure, and eval descriptors shared by compilation and execution.
 //! Heap allocation and published-node ownership remain in the heap module.
 
-use crate::engine::atom::Atom;
-
 /// Body storage selected for one named physical parameter after its
 /// initializer-visible lexical cell has been initialized. Ordinary parameter
 /// environments keep the raw argument slot; the explicit enum leaves room
@@ -235,15 +233,11 @@ pub enum ClosureSource {
     ModuleImportMeta,
 }
 
-/// Closure-name representation before and after runtime publication.
-///
-/// Compiler drafts point at an exact string constant. Publication interns it
-/// and replaces the operand with an atom owned by `auxiliary_atoms`.
+/// A closure variable's name: an exact string constant of the function, or none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ClosureVariableName {
     None,
     Constant(u32),
-    Atom(Atom),
 }
 
 /// Semantics carried along a closure relay in addition to its storage source.
@@ -300,37 +294,7 @@ pub enum ClosureVariableKind {
     PrivateGetterSetter,
 }
 
-impl ClosureVariableKind {
-    /// Private methods and accessors: bindings whose value is the class's
-    /// shared callable rather than a per-instance field.
-    #[must_use]
-    pub const fn is_private_callable(self) -> bool {
-        matches!(
-            self,
-            Self::PrivateMethod
-                | Self::PrivateGetter
-                | Self::PrivateSetter
-                | Self::PrivateGetterSetter
-        )
-    }
-
-    #[must_use]
-    pub const fn is_eval_variable_object(self) -> bool {
-        matches!(self, Self::EvalVariableObject | Self::ArgEvalVariableObject)
-    }
-
-    #[must_use]
-    pub const fn is_private(self) -> bool {
-        matches!(
-            self,
-            Self::PrivateField
-                | Self::PrivateMethod
-                | Self::PrivateGetter
-                | Self::PrivateSetter
-                | Self::PrivateGetterSetter
-        )
-    }
-}
+impl ClosureVariableKind {}
 
 /// Runtime-independent closure metadata stored beside child bytecode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -339,22 +303,6 @@ pub struct ClosureVariable {
     pub name: ClosureVariableName,
     pub is_lexical: bool,
     pub is_const: bool,
-    pub kind: ClosureVariableKind,
-}
-
-/// Runtime-owned authoritative argument/local definition metadata.
-///
-/// This is the published counterpart of QuickJS's `JSVarDef`: present names
-/// are atoms whose references are owned by the containing bytecode node's
-/// `auxiliary_atoms` array.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct VariableDefinition {
-    pub name: Option<Atom>,
-    pub is_lexical: bool,
-    pub is_const: bool,
-    /// True only for a nested lexical scope whose lifetime is wholly inside
-    /// formal-parameter initialization.
-    pub is_parameter_initializer: bool,
     pub kind: ClosureVariableKind,
 }
 
@@ -434,9 +382,7 @@ pub struct EvalCallerProfile {
 
 /// One named binding visible from a syntactic direct-eval call site.
 ///
-/// Compiler drafts use [`JsString`](crate::engine::value::JsString) names. Runtime publication interns each
-/// name and stores the corresponding [`Atom`] while the owning bytecode node
-/// retains that atom through `auxiliary_atoms`.
+/// Names are [`JsString`](crate::engine::value::JsString)s.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvalBinding<Name> {
     pub name: Name,

@@ -1,13 +1,10 @@
 //! Runtime-independent compilation products.
-#[cfg(test)]
-mod fixtures;
-pub(crate) mod layout;
 pub mod metadata;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::debug::Pc2LineTable;
 
 use crate::engine::value::{JsString, PrimitiveValue};
-use crate::regexp::CompiledRegExp;
+use oxide_regexp::CompiledRegExp;
 
 use metadata::*;
 use std::{error::Error, fmt, rc::Rc};
@@ -15,10 +12,6 @@ use std::{error::Error, fmt, rc::Rc};
 /// Why a value cannot enter a runtime-independent constant pool draft.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UnlinkedConstantError {
-    /// Objects are runtime heap identities and must be linked through raw edges.
-    RuntimeBoundObject,
-    /// Symbols are runtime atom identities and need a dedicated linked form.
-    RuntimeBoundSymbol,
     /// A template site must contain one or more aligned cooked/raw segments.
     InvalidTemplateObject,
 }
@@ -26,12 +19,6 @@ pub enum UnlinkedConstantError {
 impl fmt::Display for UnlinkedConstantError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::RuntimeBoundObject => {
-                formatter.write_str("an object cannot enter a runtime-independent constant pool")
-            }
-            Self::RuntimeBoundSymbol => {
-                formatter.write_str("a symbol cannot enter a runtime-independent constant pool")
-            }
             Self::InvalidTemplateObject => formatter.write_str(
                 "a template object requires equal non-empty cooked and raw segment lists",
             ),
@@ -67,8 +54,6 @@ enum UnlinkedConstantKind {
     },
     Child(Box<UnlinkedFunction>),
 }
-
-type TemplateObjectPayload = (Box<[Option<JsString>]>, Box<[JsString]>);
 
 /// One constant in a compiler draft, before runtime publication.
 ///
@@ -167,25 +152,6 @@ impl UnlinkedConstant {
         }
     }
 
-    /// Consume a RegExp literal payload without cloning its matcher program.
-    /// Non-RegExp constants are returned unchanged to preserve their private
-    /// representation invariant for the ordinary publication path.
-    pub fn into_regexp(self) -> Result<(JsString, Rc<CompiledRegExp>), Self> {
-        match self.0 {
-            UnlinkedConstantKind::RegExp { pattern, program } => Ok((pattern, program)),
-            other => Err(Self(other)),
-        }
-    }
-
-    /// Consume a template-site payload without exposing the private constant
-    /// representation to the publisher.
-    pub fn into_template_object(self) -> Result<TemplateObjectPayload, Self> {
-        match self.0 {
-            UnlinkedConstantKind::TemplateObject { cooked, raw } => Ok((cooked, raw)),
-            other => Err(Self(other)),
-        }
-    }
-
     /// Borrow the child draft, or return `None` for another constant kind.
     #[must_use]
     #[cfg_attr(not(test), allow(dead_code))]
@@ -196,28 +162,6 @@ impl UnlinkedConstant {
             | UnlinkedConstantKind::RegExp { .. }
             | UnlinkedConstantKind::TemplateObject { .. } => None,
             UnlinkedConstantKind::Child(function) => Some(function),
-        }
-    }
-
-    /// Consume this constant for transactional runtime publication.
-    ///
-    /// RegExp payloads are first consumed by [`Self::into_regexp`]. For the
-    /// remaining kinds, exactly one optional tuple field is `Some`; the middle
-    /// flag marks the atom-string representation of a primitive payload.
-    /// Returning output-only parts keeps the private invariant from being
-    /// bypassed by callers.
-    #[must_use]
-    pub fn into_parts(self) -> (Option<PrimitiveValue>, bool, Option<UnlinkedFunction>) {
-        match self.0 {
-            UnlinkedConstantKind::Primitive(value) => (Some(value), false, None),
-            UnlinkedConstantKind::AtomString(value) => (Some(value), true, None),
-            UnlinkedConstantKind::RegExp { .. } => {
-                unreachable!("RegExp constants must use into_regexp before ordinary publication")
-            }
-            UnlinkedConstantKind::TemplateObject { .. } => unreachable!(
-                "template constants must use into_template_object before ordinary publication"
-            ),
-            UnlinkedConstantKind::Child(function) => (None, false, Some(*function)),
         }
     }
 }
@@ -242,7 +186,6 @@ impl TryFrom<PrimitiveValue> for UnlinkedConstant {
 #[derive(Debug)]
 pub struct UnlinkedFunction {
     code: Vec<Instruction>,
-    numeric_regions: Vec<super::region::NumericRegion>,
     constants: Vec<UnlinkedConstant>,
     metadata: FunctionMetadata,
     parameter_environment: Option<ParameterEnvironmentLayout>,
@@ -314,17 +257,6 @@ impl UnlinkedVariableDefinition {
         }
     }
 
-    #[cfg(test)]
-    fn eval_variable_object() -> Self {
-        Self {
-            name: Some(crate::engine::value::JsString::from_static("<var>")),
-            is_lexical: false,
-            is_const: false,
-            is_parameter_initializer: false,
-            kind: ClosureVariableKind::EvalVariableObject,
-        }
-    }
-
     fn arg_eval_variable_object() -> Self {
         Self {
             name: Some(crate::engine::value::JsString::from_static("<arg_var>")),
@@ -358,21 +290,6 @@ pub struct UnlinkedFunctionDebug {
     pub source: Option<Box<[u8]>>,
 }
 
-/// Owned pieces crossing the one-way publication boundary.
-pub struct UnlinkedFunctionParts {
-    pub code: Vec<Instruction>,
-    pub numeric_regions: Vec<super::region::NumericRegion>,
-    pub constants: Vec<UnlinkedConstant>,
-    pub metadata: FunctionMetadata,
-    pub parameter_environment: Option<ParameterEnvironmentLayout>,
-    pub func_name: Option<crate::engine::value::JsString>,
-    pub argument_definitions: Vec<UnlinkedVariableDefinition>,
-    pub local_definitions: Vec<UnlinkedVariableDefinition>,
-    pub closure_variables: Vec<ClosureVariable>,
-    pub eval_environments: Vec<EvalEnvironment<JsString>>,
-    pub debug: Option<UnlinkedFunctionDebug>,
-}
-
 impl UnlinkedFunction {
     /// Assemble a compiler draft with producer-authored binding definitions.
     /// Publication validates counts, flags and captured binding sources.
@@ -387,7 +304,6 @@ impl UnlinkedFunction {
     ) -> Self {
         Self {
             code,
-            numeric_regions: Vec::new(),
             constants,
             metadata,
             parameter_environment: None,
@@ -450,16 +366,6 @@ impl UnlinkedFunction {
         self
     }
 
-    /// Attach sparse compiler plans; publication authenticates every entry.
-    #[must_use]
-    pub(crate) fn with_numeric_regions(
-        mut self,
-        regions: Vec<super::region::NumericRegion>,
-    ) -> Self {
-        self.numeric_regions = regions;
-        self
-    }
-
     #[must_use]
     #[cfg_attr(not(test), allow(dead_code))]
     pub fn code(&self) -> &[Instruction] {
@@ -518,24 +424,6 @@ impl UnlinkedFunction {
     #[must_use]
     pub const fn debug(&self) -> Option<&UnlinkedFunctionDebug> {
         self.debug.as_ref()
-    }
-
-    /// Consume the draft at the immutable publication boundary.
-    #[must_use]
-    pub fn into_parts(self) -> UnlinkedFunctionParts {
-        UnlinkedFunctionParts {
-            code: self.code,
-            numeric_regions: self.numeric_regions,
-            constants: self.constants,
-            metadata: self.metadata,
-            parameter_environment: self.parameter_environment,
-            func_name: self.func_name,
-            argument_definitions: self.argument_definitions,
-            local_definitions: self.local_definitions,
-            closure_variables: self.closure_variables,
-            eval_environments: self.eval_environments,
-            debug: self.debug,
-        }
     }
 }
 
