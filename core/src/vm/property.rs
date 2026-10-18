@@ -777,8 +777,8 @@ pub(crate) fn set_failed(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) ->
     {
         return error::type_error(cx, "object is not extensible");
     }
-    let message = format!("'{}' is read-only", atom_text(cx.heap, key));
-    error::type_error(cx, &message)
+    let message = error::atom_message(cx.heap, "'", key, "' is read-only");
+    error::throw_units(cx, error::ErrorKind::Type, &message)
 }
 
 /// A strict write of a property a primitive's prototype chain (from
@@ -794,8 +794,8 @@ fn primitive_set_error(cx: &mut Cx<'_>, prototype: ObjectId, key: PropertyKey) -
         }
         if let Some((_, property)) = cx.heap.lookup_own(holder, key) {
             if !property.has(PropertyFlags::ACCESSOR) && !property.has(PropertyFlags::WRITABLE) {
-                let message = format!("'{}' is read-only", atom_text(cx.heap, key));
-                return error::type_error(cx, &message);
+                let message = error::atom_message(cx.heap, "'", key, "' is read-only");
+                return error::throw_units(cx, error::ErrorKind::Type, &message);
             }
             break;
         }
@@ -825,8 +825,8 @@ fn call_setter(
 
 fn read_only(cx: &mut Cx<'_>, key: PropertyKey, strict: bool) -> Result<(), Throw> {
     if strict {
-        let message = format!("'{}' is read-only", atom_text(cx.heap, key));
-        Err(error::type_error(cx, &message))
+        let message = error::atom_message(cx.heap, "'", key, "' is read-only");
+        Err(error::throw_units(cx, error::ErrorKind::Type, &message))
     } else {
         Ok(())
     }

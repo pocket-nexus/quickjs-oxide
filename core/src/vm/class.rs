@@ -474,13 +474,12 @@ fn super_base_error(cx: &mut Cx<'_>, base: Value, key: PropertyKey) -> Throw {
 #[cold]
 fn binding_error(cx: &mut Cx<'_>, kind: ErrorKind, key: PropertyKey, after: &str) -> Throw {
     // QuickJS quotes the name except in `{name} is not initialized`.
-    let name = property::atom_text(cx.heap, key);
     let message = if after == " is not initialized" {
-        format!("{name}{after}")
+        error::atom_message(cx.heap, "", key, after)
     } else {
-        format!("'{name}'{after}")
+        error::atom_message(cx.heap, "'", key, &format!("'{after}"))
     };
-    error::throw(cx, kind, &message)
+    error::throw_units(cx, kind, &message)
 }
 
 /// `DefineClass`: the prototype object of the class made from `closure`,

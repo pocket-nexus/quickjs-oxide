@@ -394,12 +394,59 @@ pub(crate) fn heap_error(cx: &Cx<'_>, _: HeapError) -> Throw {
     out_of_memory(cx)
 }
 
-/// A new `kind` error with `message`.
+/// A new `kind` error with `message`, formatted as QuickJS's
+/// `JS_ThrowError2` buffer leaves it ([`buffered_message`]).
 #[inline(never)]
 pub(crate) fn throw(cx: &mut Cx<'_>, kind: ErrorKind, message: &str) -> Throw {
+    let units: Vec<u16> = message.encode_utf16().collect();
+    throw_units(cx, kind, &units)
+}
+
+/// QuickJS's `JS_ThrowError2` message: the formatted text through a
+/// 256-byte `vsnprintf` buffer (255 bytes of its WTF-8, cut at a NUL), read
+/// back by `JS_NewString`, which turns a sequence the cut split into one
+/// U+FFFD.
+pub(crate) fn buffered_message(units: &[u16]) -> Vec<u16> {
+    const BUFFER: usize = 255;
+    let mut out = Vec::with_capacity(units.len().min(BUFFER));
+    let mut used = 0;
+    let mut index = 0;
+    while index < units.len() {
+        let unit = units[index];
+        if unit == 0 {
+            break;
+        }
+        let pair = (0xd800..0xdc00).contains(&unit)
+            && units
+                .get(index + 1)
+                .is_some_and(|next| (0xdc00..0xe000).contains(next));
+        let (bytes, count) = match unit {
+            _ if pair => (4, 2),
+            0..0x80 => (1, 1),
+            0x80..0x800 => (2, 1),
+            _ => (3, 1),
+        };
+        if used + bytes > BUFFER {
+            if used < BUFFER {
+                out.push(0xfffd);
+            }
+            break;
+        }
+        out.extend_from_slice(&units[index..index + count]);
+        used += bytes;
+        index += count;
+    }
+    out
+}
+
+/// [`throw`] of a message given as UTF-16 units (a name with a lone
+/// surrogate keeps it).
+#[inline(never)]
+pub(crate) fn throw_units(cx: &mut Cx<'_>, kind: ErrorKind, units: &[u16]) -> Throw {
+    let units = buffered_message(units);
     let result = cx
         .heap
-        .alloc_string(message)
+        .alloc_string_units(&units)
         .and_then(|text| new_error(cx, kind, Value::string(text)));
     match result {
         Ok(error) => Throw(error),
@@ -490,11 +537,64 @@ pub(crate) fn stack_overflow(cx: &mut Cx<'_>) -> Throw {
 #[cold]
 #[inline(never)]
 pub(crate) fn not_a_constructor(cx: &mut Cx<'_>, value: Value) -> Throw {
-    let name = function_name(cx, value);
-    match name {
-        Some(name) => type_error(cx, &format!("{name} is not a constructor")),
+    match function_name_units(cx, value) {
+        Some(mut name) => {
+            name.extend(" is not a constructor".encode_utf16());
+            throw_units(cx, ErrorKind::Type, &name)
+        }
         None => type_error(cx, "not a constructor"),
     }
+}
+
+/// QuickJS's `JS_AtomGetStr` into its 64-byte buffer, as a `%s` of a key
+/// prints: an ASCII name whole (to a NUL), any other a unit at a time
+/// (UTF-8, a surrogate on its own) while 58 bytes are used at most, and
+/// an index in decimal.
+pub(crate) fn atom_units(heap: &crate::Heap, key: crate::PropertyKey) -> Vec<u16> {
+    let units: Vec<u16> = match key.kind() {
+        crate::KeyKind::String(id) => heap.string(id).repr().units().collect(),
+        _ => {
+            return super::property::atom_text(heap, key)
+                .encode_utf16()
+                .collect();
+        }
+    };
+    let mut out = Vec::new();
+    if units.iter().all(|&unit| unit < 0x80) {
+        out = units;
+    } else {
+        const LIMIT: usize = 64 - 6;
+        let mut used = 0;
+        for &unit in &units {
+            if used >= LIMIT {
+                break;
+            }
+            used += match unit {
+                0..0x80 => 1,
+                0x80..0x800 => 2,
+                _ => 3,
+            };
+            out.push(unit);
+        }
+    }
+    // `%s` stops at a NUL.
+    if let Some(end) = out.iter().position(|&unit| unit == 0) {
+        out.truncate(end);
+    }
+    out
+}
+
+/// `{before}{key}{after}` with the key as [`atom_units`] prints it.
+pub(crate) fn atom_message(
+    heap: &crate::Heap,
+    before: &str,
+    key: crate::PropertyKey,
+    after: &str,
+) -> Vec<u16> {
+    let mut units: Vec<u16> = before.encode_utf16().collect();
+    units.extend(atom_units(heap, key));
+    units.extend(after.encode_utf16());
+    units
 }
 
 /// QuickJS's `JS_CallConstructor` failure on `value`: a non-object is
@@ -510,7 +610,7 @@ pub(crate) fn construct_error(cx: &mut Cx<'_>, value: Value) -> Throw {
 
 /// QuickJS's `get_prop_string(func, "name")` on a callable `value`, cut at
 /// the first NUL as `%s` prints it.
-fn function_name(cx: &Cx<'_>, value: Value) -> Option<String> {
+fn function_name_units(cx: &Cx<'_>, value: Value) -> Option<Vec<u16>> {
     let object = value.as_object()?;
     let heap = &cx.heap;
     if !heap
@@ -540,7 +640,7 @@ fn function_name(cx: &Cx<'_>, value: Value) -> Option<String> {
         .iter()
         .position(|&unit| unit == 0)
         .unwrap_or(units.len());
-    Some(String::from_utf16_lossy(&units[..end]))
+    Some(units[..end].to_vec())
 }
 
 /// `"{class} object expected"`, QuickJS's `JS_ThrowTypeErrorInvalidClass`.

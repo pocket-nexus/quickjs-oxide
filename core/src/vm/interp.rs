@@ -812,14 +812,15 @@ fn construct_exotic(
 #[cold]
 #[inline(never)]
 fn key_error(cx: &mut Cx<'_>, kind: ErrorKind, insn: Insn, before: &str, after: &str) -> Throw {
-    let mut name = property::atom_text(cx.heap, insn.key());
+    let mut message = error::atom_message(cx.heap, before, insn.key(), after);
     // A binding whose name was stripped (`-s`, no direct eval) is QuickJS's
     // `JS_ATOM_NULL` in `JS_ThrowReferenceErrorUninitialized`.
-    if name.is_empty() && after == " is not initialized" {
-        name = "lexical variable".into();
+    if message.len() == before.len() + after.len() && after == " is not initialized" {
+        message = format!("{before}lexical variable{after}")
+            .encode_utf16()
+            .collect();
     }
-    let message = format!("{before}{name}{after}");
-    error::throw(cx, kind, &message)
+    error::throw_units(cx, kind, &message)
 }
 
 /// [`key_error`] of a script's declaration prologue: QuickJS checks the
@@ -833,11 +834,8 @@ fn prologue_error(
     before: &str,
     after: &str,
 ) -> Throw {
-    let message = format!(
-        "{before}{}{after}",
-        property::atom_text(cx.heap, insn.key())
-    );
-    error::throw_prologue(cx, kind, &message)
+    let message = error::atom_message(cx.heap, before, insn.key(), after);
+    error::throw_prologue(cx, kind, &String::from_utf16_lossy(&message))
 }
 
 /// A new cell (a one-slot scope object) holding `value`, which must be
