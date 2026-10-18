@@ -21,9 +21,9 @@ pass rate is 79.815%.
   `num-traits`, for the front end's BigInt literals and the embedding API's
   BigInt values.
 - **Performance close to QuickJS.** On the 37 fixed-work programs of the
-  V8 v7, Octane 2.0 and AWFY suites, quickjs-oxide takes 0.91× QuickJS
-  2026-06-04's time over V8 v7's eight programs, 1.12× over Octane's 15 and
-  0.97× over AWFY's 14 (geometric means of release builds on one Linux
+  V8 v7, Octane 2.0 and AWFY suites, quickjs-oxide takes 0.94× QuickJS
+  2026-06-04's time over V8 v7's eight programs, 1.15× over Octane's 15 and
+  0.99× over AWFY's 14 (geometric means of release builds on one Linux
   machine; `scripts/benchmark/suite_matrix.py` runs the
   [matrix](scripts/benchmark/README.md#fixed-work-v8-v7-octane-and-awfy-matrix)).
 - **ECMAScript first, QuickJS where it is open.** ECMA-262 and Test262 decide
