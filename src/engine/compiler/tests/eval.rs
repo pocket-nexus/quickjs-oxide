@@ -672,7 +672,8 @@ fn compiler_keeps_eval_lexicals_local_and_compiles_eval_declarations() {
     let root = compile_unlinked_eval_with_filename(
         "let answer = 40; const increment = 2; answer + increment",
         "<eval>",
-        DebugInfoMode::StripDebug,
+        // `-s` strips the names, as it does a script's.
+        DebugInfoMode::Full,
         EvalCompileContext::indirect(),
     )
     .unwrap();
