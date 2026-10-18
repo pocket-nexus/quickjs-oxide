@@ -506,6 +506,9 @@ fn call_other(
         Value::UNDEFINED
     };
     match target {
+        Callee::Native(native) if native.frameless() && !construct => {
+            call_native(cx, native, at, this, argc, construct, function, new_target)
+        }
         Callee::Native(native) if !construct || native.is_constructor() => {
             let site = super::NativeSite {
                 depth: cx.heap.vm.frames.len() as u32,
@@ -644,7 +647,7 @@ pub(super) fn call_from_rust(
 /// gives every C function call a stack frame).
 #[inline(never)]
 fn native_from_rust(cx: &mut Cx<'_>, native: Native, site: CallSite) -> Result<Value, Throw> {
-    if std::mem::take(&mut cx.heap.vm.frameless_native) {
+    if std::mem::take(&mut cx.heap.vm.frameless_native) || native.frameless() {
         return native::call(cx, native, site);
     }
     cx.heap.vm.natives.push(super::NativeSite {

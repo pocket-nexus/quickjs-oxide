@@ -53,6 +53,33 @@ use crate::vm::{Cx, Throw, ops};
 /// A native's entry point.
 pub(crate) type NativeFn = fn(&mut Cx<'_>, CallSite) -> Result<Value, Throw>;
 
+impl Native {
+    /// Whether QuickJS runs it without a stack frame of its own, so that a
+    /// backtrace does not list it: a promise resolving function (a class
+    /// with its own call handler) or a `JS_NewCFunctionData` closure.
+    pub(crate) const fn frameless(self) -> bool {
+        matches!(
+            self,
+            Native::PromiseResolveFunction
+                | Native::PromiseRejectFunction
+                | Native::PromiseCapabilityExecutor
+                | Native::PromiseThenFinally
+                | Native::PromiseCatchFinally
+                | Native::PromiseValueThunk
+                | Native::PromiseThrower
+                | Native::PromiseAllResolveElement
+                | Native::PromiseAllSettledResolveElement
+                | Native::PromiseAllSettledRejectElement
+                | Native::PromiseAnyRejectElement
+                | Native::ProxyRevoke
+                | Native::AsyncFromSyncUnwrap
+                | Native::AsyncFromSyncCloseRejected
+                | Native::ModuleAsyncRejected
+                | Native::ModuleImportRejected
+        )
+    }
+}
+
 macro_rules! natives {
     ($($(#[$doc:meta])* $name:ident => $function:path, $js:expr, $length:expr $(, $constructor:ident)?;)*) => {
         /// A host function, stored by index in its function record.
