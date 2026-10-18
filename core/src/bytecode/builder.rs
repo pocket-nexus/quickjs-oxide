@@ -200,6 +200,7 @@ impl CodeBuilder {
             length: layout.length,
             source: layout.source,
             direct_eval_sites: Box::new([]),
+            lexical_globals: Box::new([]),
         }
     }
 }

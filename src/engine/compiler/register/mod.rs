@@ -669,6 +669,7 @@ struct Lowerer<'a, 'c> {
     /// Register PCs of the calls written as a direct `eval` (for the
     /// backtrace, which QuickJS gives no native frame there).
     direct_eval_sites: Vec<u32>,
+    lexical_globals: Vec<u32>,
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {
@@ -725,6 +726,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             fixups: Vec::new(),
             origins: Vec::new(),
             direct_eval_sites: Vec::new(),
+            lexical_globals: Vec::new(),
             pc: 0,
             last_dest: None,
             checked: HashSet::new(),
@@ -2561,6 +2563,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
 
     fn global_read(&mut self, op: Opcode, closure: u16) -> Result<(), LowerError> {
         let key = self.closure_key(closure)?;
+        if self
+            .function
+            .closure_variables()
+            .get(closure as usize)
+            .is_some_and(|variable| variable.is_lexical)
+        {
+            self.lexical_globals.push(key.raw());
+        }
         let dst = self.result_register()?;
         let at = self.emit(|b| b.a_key(op, dst, key));
         self.push_result(at);
@@ -2810,6 +2820,10 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .and_then(|debug| debug.pc2line.as_ref())
             .and_then(|table| table.definition.one_based());
         unit.direct_eval_sites = self.direct_eval_sites.into();
+        let mut lexical_globals = self.lexical_globals;
+        lexical_globals.sort_unstable();
+        lexical_globals.dedup();
+        unit.lexical_globals = lexical_globals.into();
         Ok((unit, self.pool))
     }
 

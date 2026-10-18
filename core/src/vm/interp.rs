@@ -1198,12 +1198,23 @@ fn get_global(cx: &mut Cx<'_>, insn: Insn, site: usize) -> Result<Value, Throw> 
     let global = cx.realm.global();
     let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
     let heap = &*cx.heap;
+    // A global-object property read past an uninitialized lexical binding
+    // of the same name is not cached: the binding shadows it once set.
+    let mut shadowed = false;
     for holder in [lexical, global] {
         if let Some((slot, property)) = heap.lookup_own(holder, key)
             && !property.has(PropertyFlags::ACCESSOR)
         {
             let value = heap.get_slot(holder, slot);
             if value.is_empty() {
+                // QuickJS's `OP_get_var`: only a reference compiled as
+                // lexical reports the TDZ (a later script's reads of a
+                // poisoned binding look on the global object).
+                let unit = cx.code.get(cx.heap.vm.frames.last().expect("a frame").unit);
+                if unit.lexical_globals.binary_search(&key.raw()).is_err() {
+                    shadowed = true;
+                    continue;
+                }
                 cx.heap.ics.count_miss(site, false);
                 return Err(key_error(
                     cx,
@@ -1214,7 +1225,8 @@ fn get_global(cx: &mut Cx<'_>, insn: Insn, site: usize) -> Result<Value, Throw> 
                 ));
             }
             let entry = global_entry(heap, holder, slot, property);
-            let filled = insn.site() != Some(GLOBAL_NO_SITE) && cx.heap.ics.record(site, entry);
+            let filled =
+                !shadowed && insn.site() != Some(GLOBAL_NO_SITE) && cx.heap.ics.record(site, entry);
             cx.heap.ics.count_miss(site, filled);
             return Ok(value);
         }

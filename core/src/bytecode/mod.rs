@@ -266,6 +266,11 @@ pub struct CodeUnit {
     /// indirect eval (phase 0): a backtrace lists no native frame for them,
     /// as QuickJS's direct eval has none.
     pub direct_eval_sites: Box<[u32]>,
+    /// Sorted raw keys of the globals this code reads as lexical bindings
+    /// (declared by its script). QuickJS's `OP_get_var` throws a TDZ error
+    /// for an uninitialized global only through such a reference; any other
+    /// read of it falls back to the global object.
+    pub lexical_globals: Box<[u32]>,
 }
 
 impl CodeUnit {

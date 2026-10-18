@@ -12,7 +12,7 @@ use super::error;
 use super::iter;
 use super::jobs;
 use super::native::CallSite;
-use super::suspend::{self, COMPLETED, EXECUTING, Resumption, START, YIELD};
+use super::suspend::{self, AWAIT, COMPLETED, EXECUTING, Resumption, START, YIELD};
 use super::{Cx, Throw};
 use crate::heap::object::InternalTag;
 use crate::runtime::Intrinsic;
@@ -117,10 +117,19 @@ fn after_run(
             let value = result?;
             root(cx, value);
             complete_step(cx, generator, Ok(value), false)?;
-            if queue_len(cx, generator) > 0 {
-                return resume_with_request(cx, generator);
+            if queue_len(cx, generator) == 0 {
+                return Ok(());
             }
-            Ok(())
+            if suspend::state(cx, generator) == AWAIT {
+                // Settling the request re-entered `next`, which resumed the
+                // body up to an `await`. QuickJS's driver loop finds the
+                // generator executing with a request left and resumes it at
+                // once, the `await` reading the slot it cleared: undefined.
+                let result =
+                    suspend::resume(cx, generator, Resumption::Fulfilled(Value::UNDEFINED));
+                return after_run(cx, generator, result);
+            }
+            resume_with_request(cx, generator)
         }
         EXECUTING => {
             suspend::complete(cx, generator);
@@ -187,6 +196,11 @@ pub(crate) fn resume_await(
         };
         complete_step(cx, generator, outcome, true)?;
         return drain(cx, generator);
+    }
+    if suspend::state(cx, generator) != AWAIT {
+        // The driver already resumed past this `await` (above): QuickJS's
+        // resolve function ignores a generator that is not executing.
+        return Ok(());
     }
     let result = suspend::resume(cx, generator, resumption);
     after_run(cx, generator, result)
