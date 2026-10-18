@@ -140,20 +140,22 @@ fn after_run(
     }
 }
 
-/// `AsyncGeneratorDrainQueue`.
+/// A completed generator's turn of QuickJS's `js_async_generator_resume_next`:
+/// the first queued request is serviced and the driver stops (`goto
+/// done`), so each driver entry settles one trailing request.
 fn drain(cx: &mut Cx<'_>, generator: ObjectId) -> Result<(), Throw> {
-    while queue_len(cx, generator) > 0 {
-        let (kind, value) = first(cx, generator);
-        match kind {
-            RETURN => {
-                suspend::set_state(cx, generator, AWAITING_RETURN);
-                return await_return(cx, generator, value);
-            }
-            THROW => complete_step(cx, generator, Err(Throw(value)), true)?,
-            _ => complete_step(cx, generator, Ok(Value::UNDEFINED), true)?,
-        }
+    if queue_len(cx, generator) == 0 {
+        return Ok(());
     }
-    Ok(())
+    let (kind, value) = first(cx, generator);
+    match kind {
+        RETURN => {
+            suspend::set_state(cx, generator, AWAITING_RETURN);
+            await_return(cx, generator, value)
+        }
+        THROW => complete_step(cx, generator, Err(Throw(value)), true),
+        _ => complete_step(cx, generator, Ok(Value::UNDEFINED), true),
+    }
 }
 
 /// `AsyncGeneratorAwaitReturn`: awaits the value of the first (a `return`)
@@ -174,8 +176,7 @@ fn await_return(cx: &mut Cx<'_>, generator: ObjectId, value: Value) -> Result<()
         }
         Err(throw) => {
             suspend::set_state(cx, generator, COMPLETED);
-            complete_step(cx, generator, Err(throw), true)?;
-            drain(cx, generator)
+            complete_step(cx, generator, Err(throw), true)
         }
     }
 }
@@ -194,8 +195,8 @@ pub(crate) fn resume_await(
             Resumption::Fulfilled(value) => Ok(value),
             _ => Ok(Value::UNDEFINED),
         };
-        complete_step(cx, generator, outcome, true)?;
-        return drain(cx, generator);
+        // QuickJS's resolve function settles the request and stops.
+        return complete_step(cx, generator, outcome, true);
     }
     if suspend::state(cx, generator) != AWAIT {
         // The driver already resumed past this `await` (above): QuickJS's
@@ -227,7 +228,7 @@ fn request(cx: &mut Cx<'_>, site: CallSite, kind: i32) -> Result<Value, Throw> {
         suspend::complete(cx, generator);
         state = COMPLETED;
     }
-    if state == COMPLETED && kind != RETURN {
+    if state == COMPLETED && kind != RETURN && queue_len(cx, generator) == 0 {
         if kind == THROW {
             super::call(cx, capability[2], Value::UNDEFINED, &[value])?;
         } else {
@@ -255,10 +256,8 @@ fn request(cx: &mut Cx<'_>, site: CallSite, kind: i32) -> Result<Value, Throw> {
             suspend::set_state(cx, generator, AWAITING_RETURN);
             await_return(cx, generator, value)?;
         }
-        COMPLETED if kind == RETURN => {
-            suspend::set_state(cx, generator, AWAITING_RETURN);
-            await_return(cx, generator, value)?;
-        }
+        // A request queued behind trailing ones services the first.
+        COMPLETED => drain(cx, generator)?,
         START | YIELD if queue_len(cx, generator) == 1 => resume_with_request(cx, generator)?,
         _ => {}
     }
