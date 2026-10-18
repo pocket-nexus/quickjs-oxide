@@ -89,34 +89,6 @@ pub(crate) fn int_property(
 
 // Helpers shared verbatim by several oracle modules.
 
-pub(crate) fn object(value: Value) -> ObjectRef {
-    let Value::Object(value) = value else {
-        panic!("expected an object");
-    };
-    value
-}
-
-pub(crate) fn define_context_global(context: &mut Context, name: &str, value: Value) {
-    let runtime = context.runtime().clone();
-    let key = runtime.intern_property_key(name).unwrap();
-    let global = context.global_object().unwrap();
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &key,
-                &OrdinaryPropertyDescriptor {
-                    value: DescriptorField::Present(value),
-                    writable: DescriptorField::Present(true),
-                    enumerable: DescriptorField::Present(true),
-                    configurable: DescriptorField::Present(true),
-                    ..OrdinaryPropertyDescriptor::new()
-                },
-            )
-            .unwrap()
-    );
-}
-
 pub(crate) fn expect_object(value: Value, description: &str) -> ObjectRef {
     let Value::Object(object) = value else {
         panic!("{description} did not produce an object");

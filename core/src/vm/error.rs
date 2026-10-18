@@ -263,6 +263,24 @@ pub(crate) fn add_stack_at(
             }
             (Some(file), None) => writeln!(text, "    at {name} ({file})"),
         };
+        // Entered through a rewritten `call` or `apply` (section 5.2): the
+        // native QuickJS ran between this frame and its caller.
+        if frame.flags & frame_flags::VIA != 0 {
+            let vias = vm
+                .via
+                .frames
+                .iter()
+                .rev()
+                .filter(|(at, _)| *at as usize == index);
+            for &(_, via) in vias {
+                let name = via
+                    .as_object()
+                    .map(|via| native_name(cx, via))
+                    .unwrap_or_default();
+                let _ = writeln!(text, "    at {name} (native)");
+                line_index += 1;
+            }
+        }
     }
     let text = cx.heap.alloc_string(&text)?;
     let key = Names::key(cx.realm.names.stack);
@@ -290,9 +308,11 @@ fn native_name(cx: &Cx<'_>, function: ObjectId) -> String {
             if flags.has(PropertyFlags::ACCESSOR) {
                 String::new()
             } else {
+                // A rope (`JS_TAG_STRING_ROPE`) reads as absent.
                 cx.heap
                     .get_slot(object, slot)
                     .as_string()
+                    .filter(|id| cx.heap.strings.get(id.0).flat().is_some())
                     .map(|id| cx.heap.string_text(id))
                     .unwrap_or_default()
             }
@@ -626,9 +646,12 @@ fn function_name_units(cx: &Cx<'_>, value: Value) -> Option<Vec<u16>> {
         if flags.has(PropertyFlags::ACCESSOR) {
             return Some(None);
         }
+        // `get_prop_string` takes only `JS_TAG_STRING`: a rope reads as
+        // absent.
         Some(
             heap.get_slot(object, slot)
                 .as_string()
+                .filter(|id| heap.strings.get(id.0).flat().is_some())
                 .map(|id| heap.string(id).repr().units().collect()),
         )
     };

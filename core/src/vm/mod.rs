@@ -28,6 +28,7 @@ pub(crate) mod property;
 pub(crate) mod proxy;
 pub(crate) mod suspend;
 pub(crate) mod typed;
+pub(crate) mod via;
 pub(crate) mod waiter;
 // Not called yet: `Number.prototype.toString` and the parsers land with the
 // phase 3 builtins. Public for the root crate's differential test.
@@ -62,6 +63,10 @@ pub mod frame_flags {
     pub const CONSTRUCT: u8 = 1 << 1;
     /// Entered by a tail call: its result is also its caller's result.
     pub const TAIL: u8 = 1 << 2;
+    /// Called through `Function.prototype.call` or `apply` (the rewrite of
+    /// section 5.2): `VmStack::via_frames` holds the natives QuickJS would
+    /// list after its backtrace line.
+    pub const VIA: u8 = 1 << 3;
 }
 
 /// One activation. `return_pc` and `return_dst` belong to the caller: where
@@ -155,6 +160,9 @@ pub struct VmStack {
     /// forwarded to: QuickJS throws `proxy: cannot set property` or `proxy:
     /// defineProperty exception` only for the former.
     pub(crate) proxy_refused: bool,
+    /// The bookkeeping of rewritten `call`s and `apply`s (section 5.2),
+    /// boxed to keep the loop's hot fields where they were.
+    pub(crate) via: Box<via::ViaCalls>,
 }
 
 impl Default for VmStack {
@@ -171,6 +179,7 @@ impl Default for VmStack {
             native_depth: u32::MAX,
             natives: Vec::new(),
             frameless_native: false,
+            via: Box::default(),
             unpositioned: None,
             active: Vec::new(),
             proxy_refused: false,

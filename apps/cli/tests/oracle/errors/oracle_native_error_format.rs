@@ -107,18 +107,31 @@ fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
     };
     let name_key = runtime.intern_property_key("name").unwrap();
     let message_key = runtime.intern_property_key("message").unwrap();
-    let mut names = cases
+    let names = cases
         .iter()
         .map(|units| JsString::try_from_utf16(units.iter().copied()).unwrap())
         .collect::<Vec<_>>();
-    names.push(
-        JsString::try_from_utf8(&"A".repeat(8193))
-            .unwrap()
-            .try_concat(&JsString::try_from_utf8(&"B".repeat(513)).unwrap())
-            .unwrap(),
-    );
+    let observe = |context: &mut quickjs_oxide::engine::api::core::Context| {
+        assert_eq!(
+            context.eval("\nnew Number.isFinite"),
+            Err(RuntimeError::Exception)
+        );
+        let Some(Value::Object(error)) = context.take_exception().unwrap() else {
+            panic!("native constructor failure did not install an Error object");
+        };
+        let Value::String(name) = context.get_property(&error, &name_key).unwrap() else {
+            panic!("native Error name was not a String");
+        };
+        let Value::String(message) = context.get_property(&error, &message_key).unwrap() else {
+            panic!("native Error message was not a String");
+        };
+        Observation {
+            name: name.utf16_units().collect(),
+            message: message.utf16_units().collect(),
+        }
+    };
 
-    names
+    let mut observations = names
         .into_iter()
         .map(|name| {
             assert!(
@@ -136,25 +149,21 @@ fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
                     )
                     .unwrap()
             );
-            assert_eq!(
-                context.eval("\nnew Number.isFinite"),
-                Err(RuntimeError::Exception)
-            );
-            let Some(Value::Object(error)) = context.take_exception().unwrap() else {
-                panic!("native constructor failure did not install an Error object");
-            };
-            let Value::String(name) = context.get_property(&error, &name_key).unwrap() else {
-                panic!("native Error name was not a String");
-            };
-            let Value::String(message) = context.get_property(&error, &message_key).unwrap() else {
-                panic!("native Error message was not a String");
-            };
-            Observation {
-                name: name.utf16_units().collect(),
-                message: message.utf16_units().collect(),
-            }
+            observe(&mut context)
         })
-        .collect()
+        .collect::<Vec<_>>();
+    // A rope-valued name, which only JavaScript makes (the API flattens
+    // strings at its boundary): QuickJS's `get_prop_string` ignores it.
+    drop(
+        context
+            .eval(
+                "Object.defineProperty(Number.isFinite, 'name', \
+                 { value: 'A'.repeat(8193) + 'B'.repeat(513), configurable: true })",
+            )
+            .unwrap(),
+    );
+    observations.push(observe(&mut context));
+    observations
 }
 
 fn oracle_observations(oracle: &OsStr, cases: &[Vec<u16>]) -> Vec<Observation> {

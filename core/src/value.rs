@@ -26,7 +26,7 @@ const TAG_BIGINT: u64 = 0xFFFE;
 
 /// Lowest boxed bit pattern; everything below it is a double.
 const BOXED_MIN: u64 = TAG_INT32 << TAG_SHIFT;
-/// The canonical NaN every NaN input is rewritten to.
+/// The NaN a NaN in the boxed range is rewritten to.
 pub const CANONICAL_NAN: u64 = 0x7FF8_0000_0000_0000;
 
 const SPECIAL_BOOL: u64 = 0;
@@ -98,13 +98,17 @@ impl Value {
     /// slots. Never a JavaScript value.
     pub const EMPTY: Value = Value(boxed(TAG_SPECIAL, SPECIAL_EMPTY as u32));
 
-    /// A double. NaN is canonicalized; no attempt is made to produce an Int32.
+    /// A double; no attempt is made to produce an Int32. A NaN keeps its
+    /// bits, as QuickJS's unboxed doubles do (x86's `0.0 / 0.0` is
+    /// `0xFFF8_0000_0000_0000`, which a `Float64Array` shows), unless they
+    /// fall in the boxed range: those become [`CANONICAL_NAN`].
     #[inline]
     pub fn number(value: f64) -> Value {
-        if value.is_nan() {
+        let bits = value.to_bits();
+        if bits >= BOXED_MIN {
             Value(CANONICAL_NAN)
         } else {
-            Value(value.to_bits())
+            Value(bits)
         }
     }
 
@@ -355,14 +359,21 @@ mod tests {
     }
 
     #[test]
-    fn nan_is_canonical() {
+    fn nan_keeps_its_bits_below_the_boxed_range() {
         assert_eq!(Value::number(f64::NAN).0, 0x7FF8_0000_0000_0000);
         for bits in [
             0x7FF8_0000_0000_0001u64,
             0x7FF0_0000_0000_0001, // signalling
             0xFFF8_0000_0000_0000, // negative quiet
-            0xFFF9_0000_0000_0000, // would alias Int32
-            0xFFFB_0000_0000_0007, // would alias Object(7)
+        ] {
+            let value = Value::number(f64::from_bits(bits));
+            assert_eq!(value.0, bits, "{bits:#x}");
+            assert_eq!(value.kind(), Kind::Number);
+            assert!(value.as_f64().unwrap().is_nan());
+        }
+        for bits in [
+            0xFFF9_0000_0000_0000u64, // would alias Int32
+            0xFFFB_0000_0000_0007,    // would alias Object(7)
             0xFFFF_FFFF_FFFF_FFFF,
         ] {
             let value = Value::number(f64::from_bits(bits));

@@ -148,21 +148,24 @@
     class ArrowDerived extends RelayBase {
         constructor() { (() => super(42))(); }
     }
+    class ParameterDerived extends RelayBase {
+        constructor(value = super(42)) {}
+    }
+    add("relay", [
+        new ArrowDerived().value,
+        new ParameterDerived().value
+    ]);
+
+    return out.join("\n");
+})()
+// case: direct eval relays super() from a derived constructor
+(function () {
+    class RelayBase { constructor(value) { this.value = value; } }
     class EvalDerived extends RelayBase {
         constructor() { eval("super(42)"); }
     }
     class NestedEvalDerived extends RelayBase {
         constructor() { eval("eval('super(42)')"); }
     }
-    class ParameterDerived extends RelayBase {
-        constructor(value = super(42)) {}
-    }
-    add("relay", [
-        new ArrowDerived().value,
-        new EvalDerived().value,
-        new NestedEvalDerived().value,
-        new ParameterDerived().value
-    ]);
-
-    return out.join("\n");
+    return [new EvalDerived().value, new NestedEvalDerived().value].join("|");
 })()

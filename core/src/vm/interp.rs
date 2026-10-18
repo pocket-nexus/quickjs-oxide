@@ -64,6 +64,31 @@ fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
     enter_frame(cx, unit, frame)
 }
 
+/// A call whose frame could not be entered (`throw`, a stack overflow): an
+/// async function's call returns its promise rejected with it, as
+/// QuickJS's `js_async_function_call` makes the promise before the body's
+/// `JS_CallInternal` overflows. A tail call keeps the throw.
+#[cold]
+#[inline(never)]
+fn entry_failed(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    throw: Throw,
+    tail: bool,
+) -> Result<Value, Throw> {
+    if tail || !unit.has(flags::ASYNC) || unit.has(flags::GENERATOR) {
+        return Err(throw);
+    }
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(throw.0);
+    let prototype = cx.realm.intrinsic(Intrinsic::PromisePrototype);
+    let promise = super::jobs::new_promise(cx, prototype);
+    cx.heap.roots().truncate(mark);
+    let promise = promise?;
+    super::jobs::reject_promise(cx, promise, throw.0);
+    Ok(Value::object(promise))
+}
+
 /// [`enter`], inlined into the loop's call.
 #[inline(always)]
 fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
@@ -381,8 +406,11 @@ pub(crate) fn set_function_name(
 /// the receiver `function` becomes the callee, the window moves onto the
 /// `thisArg`, and `apply`'s list replaces it from the next register. Repeats
 /// while the new callee is one of the two. Returns the callee, the window,
-/// `this` and the argument count.
+/// `this`, the argument count, and `frame_flags::VIA` for a bytecode callee
+/// with the `call`s and `apply`s recorded in `VmStack::via_frames` (for any
+/// other, `VmStack::via_call` holds them).
 #[inline(never)]
+#[allow(clippy::type_complexity)]
 fn rewrite_call(
     cx: &mut Cx<'_>,
     base: usize,
@@ -390,18 +418,30 @@ fn rewrite_call(
     mut function: Value,
     mut this: Value,
     mut argc: usize,
-) -> Result<(Callee, Value, usize, Value, usize), Throw> {
+) -> Result<(Callee, Value, usize, Value, usize, u8), Throw> {
+    super::via::begin(cx);
     loop {
         let target = callee(cx.heap, function);
         let Callee::Native(native @ (Native::FunctionCall | Native::FunctionApply)) = target else {
-            return Ok((target, function, window, this, argc));
+            match target {
+                Callee::Bytecode(..) => {
+                    super::via::enter_bytecode(cx);
+                    return Ok((target, function, window, this, argc, frame_flags::VIA));
+                }
+                // A frameless native lists nothing; `call_other` lists them
+                // while anything else runs.
+                Callee::Native(native) if native.frameless() => super::via::abandon(cx),
+                _ => {}
+            }
+            return Ok((target, function, window, this, argc, 0));
         };
+        super::via::record(cx, function);
         let apply = function;
         function = this;
         window += 1;
         let at = base + window;
-        argc = if native == Native::FunctionCall {
-            arguments::call_window(cx, at, argc)?
+        let result = if native == Native::FunctionCall {
+            arguments::call_window(cx, at, argc)
         } else {
             // A throw reading the list lists `apply` in the backtrace.
             cx.heap.vm.natives.push(super::NativeSite {
@@ -411,8 +451,9 @@ fn rewrite_call(
             });
             let result = arguments::apply_window(cx, at, argc);
             cx.heap.vm.natives.pop();
-            result?
+            result
         };
+        argc = result.inspect_err(|_| super::via::abandon(cx))?;
         this = cx.heap.vm.registers[at];
     }
 }
@@ -510,6 +551,9 @@ fn call_other(
             call_native(cx, native, at, this, argc, construct, function, new_target)
         }
         Callee::Native(native) if !construct || native.is_constructor() => {
+            // Reached through a rewritten `call` or `apply`: those natives
+            // are listed below this one.
+            let via = super::via::list(cx, pc);
             let site = super::NativeSite {
                 depth: cx.heap.vm.frames.len() as u32,
                 pc: pc as u32,
@@ -518,6 +562,7 @@ fn call_other(
             cx.heap.vm.natives.push(site);
             let result = call_native(cx, native, at, this, argc, construct, function, new_target);
             cx.heap.vm.natives.pop();
+            super::via::unlist(cx, via);
             result
         }
         Callee::Native(_) => Err(error::not_a_constructor(cx, function)),
@@ -537,9 +582,15 @@ fn call_other(
                 if construct {
                     return Err(construct_failure(cx, function, pc));
                 }
-                return Err(error::type_error(cx, "not a function"));
+                let via = super::via::list(cx, pc);
+                let throw = error::type_error(cx, "not a function");
+                super::via::unlist(cx, via);
+                return Err(throw);
             }
-            call_exotic(cx, function, at, this, argc, construct, new_target)
+            let via = super::via::list(cx, pc);
+            let result = call_exotic(cx, function, at, this, argc, construct, new_target);
+            super::via::unlist(cx, via);
+            result
         }
     }
 }
@@ -620,7 +671,10 @@ pub(super) fn call_from_rust(
             if !cx.heap.vm.enter_native() {
                 return Err(error::stack_overflow(cx));
             }
-            let result = enter(cx, unit, frame).and_then(|()| run(cx));
+            let result = match enter(cx, unit, frame) {
+                Ok(()) => run(cx),
+                Err(throw) => entry_failed(cx, unit, throw, false),
+            };
             cx.heap.vm.leave_native();
             result
         }
@@ -2257,12 +2311,13 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     // Section 5.2: `f.call(…)` and `f.apply(…)` move the window
                     // onto their `thisArg` and dispatch on `f`.
                     let mut target = callee(cx.heap, function);
+                    let mut via = 0;
                     if let Callee::Native(Native::FunctionCall | Native::FunctionApply) = target
                         && !construct
                     {
                         match rewrite_call(cx, base, window, function, this, argc) {
                             Ok(rewritten) => {
-                                (target, function, window, this, argc) = rewritten;
+                                (target, function, window, this, argc, via) = rewritten;
                             }
                             Err(throw) => break 'op Err(throw),
                         }
@@ -2288,7 +2343,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 }
                             }
                             cx.heap.vm.registers[base + window] = this;
-                            let mut frame_flags = 0;
+                            let mut frame_flags = via;
                             if construct {
                                 frame_flags |= frame_flags::CONSTRUCT;
                             }
@@ -2306,7 +2361,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 flags: frame_flags,
                             };
                             if let Err(throw) = enter_frame(cx, callee_unit, callee_frame) {
-                                break 'op Err(throw);
+                                break 'op write!(
+                                    'dispatch,
+                                    insn.a,
+                                    entry_failed(cx, callee_unit, throw, tail)
+                                );
                             }
                             if construct {
                                 write_new_target(cx, base + window, callee_unit, new_target);

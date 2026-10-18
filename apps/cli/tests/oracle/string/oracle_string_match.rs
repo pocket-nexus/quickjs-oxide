@@ -1,6 +1,6 @@
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_value;
-use quickjs_oxide::engine::api::core::Value;
+use quickjs_oxide::engine::api::core::{Value, declare_thread_stack};
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.match branch (`quickjs.c` 45609-45657), abstract RegExpExec
@@ -9,10 +9,14 @@ use quickjs_oxide::engine::api::core::Value;
 
 #[test]
 fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
+    // A declared stack sizes the native re-entry budget; a debug build's
+    // frames need more of it than QuickJS's C frames.
+    const STACK: usize = 32 * 1024 * 1024;
     std::thread::Builder::new()
         .name("string-regexp-match-stack-proof".into())
-        .stack_size(2 * 1024 * 1024)
+        .stack_size(STACK)
         .spawn(|| {
+            declare_thread_stack(STACK);
             let (_runtime, mut context) = host_runtime_context();
             drop(
                 context
@@ -37,9 +41,8 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
                     .unwrap(),
             );
 
-            // The legacy engine uses the original physical native-frame ceiling.
-            // Owned callbacks retain the unchanged logical-frame budget instead:
-            // a long finite chain completes, while -1 never reaches the base case.
+            // A long finite chain completes, while -1 never reaches the base
+            // case.
 
             let (safe_depth, overflow_depth) = (256, -1);
 
@@ -78,7 +81,7 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
                 "the runtime did not recover after mixed match overflow",
             );
         })
-        .expect("2 MiB String/RegExp match stack-proof thread did not start")
+        .expect("String/RegExp match stack-proof thread did not start")
         .join()
-        .expect("2 MiB String/RegExp match stack-proof thread panicked");
+        .expect("String/RegExp match stack-proof thread panicked");
 }

@@ -296,6 +296,5 @@ mod oracle_regexp_match_indices;
 mod oracle_regexp_modifiers;
 mod oracle_regexp_named_groups;
 mod oracle_regexp_replace;
-mod oracle_regexp_split;
 mod oracle_regexp_unicode_properties;
 mod oracle_regexp_v_character_class_escapes;

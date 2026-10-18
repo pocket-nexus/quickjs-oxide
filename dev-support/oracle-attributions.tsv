@@ -1,4 +1,5 @@
 case	deviation
+arguments/spread / eval / direct eval accepts an empty leading spread and ignores later arguments	NEWCORE-DIRECT-EVAL-001
 array/assignment / nested target Reference is prepared after the outer step and before the inner step	NEWCORE-WITH-001
 array/assignment / with resolves a missing identifier before IteratorNext adds that property	NEWCORE-WITH-001
 array/assignment / with retains an existing property Reference across IteratorNext deletion	NEWCORE-WITH-001
@@ -37,7 +38,12 @@ array/slice_splice / species result uses CreateDataProperty and leaves preseeded
 array/slice_splice / splice finishes the removed result before moving and inserting on source	NEWCORE-SPECIES-001
 binary_data/array_buffer / slice species ordering and post-constructor revalidation	NEWCORE-SPECIES-001
 class_initialization/base / a computed key's eval runs sloppy code	NEWCORE-WITH-001
+class_initialization/derived / direct eval relays super() from a derived constructor	NEWCORE-DIRECT-EVAL-001
+class_initialization/public_init / arguments context boundaries and QuickJS shorthand capture	NEWCORE-DIRECT-EVAL-001
 control_flow/annex_b_statements / with containing an if would reopen Annex B once with is implemented	NEWCORE-WITH-001
+control_flow/catch_destructuring / direct eval reads and writes a pattern binding	NEWCORE-DIRECT-EVAL-001
+control_flow/catch_destructuring / direct eval var cannot redeclare a pattern catch binding	NEWCORE-DIRECT-EVAL-001
+control_flow/catch_destructuring / direct eval var reuses a simple catch binding	NEWCORE-DIRECT-EVAL-001
 control_flow/for_of / nested var binding prepares its with reference after inner acquisition and before step	NEWCORE-WITH-001
 control_flow/for_of / var declaration prepares a with reference before iterator step	NEWCORE-WITH-001
 control_flow/for_of / var for-of binding prepares a with reference before inner step	NEWCORE-WITH-001
@@ -68,7 +74,23 @@ control_flow/with / single-statement contextual let honors ASI after with	NEWCOR
 control_flow/with / unscopables skips the inner binding and preserves nested fallback order	NEWCORE-WITH-001
 control_flow/with / with applies ToObject and rejects nullish values	NEWCORE-WITH-001
 control_flow/with / with methods receive the object while lexical fallback receives undefined	NEWCORE-WITH-001
+eval/intrinsic / catch lexicals and implicit bindings	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / declaration conflicts and global flags	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / direct and indirect eval syntax	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / eval environment	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / global Proxy binding internal methods	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / labelled functions	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / nested direct eval environment relay	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / primitive string directness	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / private function expression names	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / strict and indirect eval declarations	NEWCORE-DIRECT-EVAL-001
+eval/intrinsic / var objects and source order	NEWCORE-DIRECT-EVAL-001
+eval/var_destructuring	NEWCORE-DIRECT-EVAL-001
 function_semantics/arrow / direct-eval / an eval-created arrow and nested eval retain with and unscopables	NEWCORE-WITH-001
+function_semantics/arrow / direct-eval / direct eval in an arrow observes the outer new target	NEWCORE-DIRECT-EVAL-001
+function_semantics/arrow / direct-eval / direct eval in an arrow sees its parameter and outer lexical bindings	NEWCORE-DIRECT-EVAL-001
+function_semantics/arrow / direct-eval / strict direct eval preserves typeof this as an authenticated pseudo read	NEWCORE-DIRECT-EVAL-001
+function_semantics/arrow / lookahead / a strict reserved word cannot be an arrow parameter	NEWCORE-DIRECT-EVAL-001
 function_semantics/arrow / with / an escaped arrow retains with lookup and honors unscopables	NEWCORE-WITH-001
 object/accessors / direct-eval / direct eval resolves accessor-owned this arguments and new target	NEWCORE-DIRECT-EVAL-001
 object/assignment / for-of prepares a with Reference independently for each yielded object	NEWCORE-WITH-001
@@ -93,6 +115,33 @@ object/super_eval / nested-eval / method and arrow nested direct eval recursivel
 object/super_eval / strictness / caller and eval-source strictness govern rejected direct-eval super writes	NEWCORE-DIRECT-EVAL-001
 object/super_eval / update / direct-eval postfix and prefix super updates preserve values receiver and ordering	NEWCORE-DIRECT-EVAL-001
 object/super_eval / write / computed direct-eval super assignment writes through the current receiver	NEWCORE-DIRECT-EVAL-001
+operators/optional_chaining / eval / eval optional call is indirect and cannot see the caller lexical environment	NEWCORE-DIRECT-EVAL-001
+parameters/binding_patterns / direct eval observes initialized pattern BoundNames	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / a descendant arrow arguments capture is appended to the caller closure suffix seen by eval	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an arrow parameter eval may create arguments in the argument variable object	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an authored arguments capture is appended to the caller closure suffix seen by eval	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an authored body function named arguments precedes the body eval variable object	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an authored body var named arguments precedes the body eval variable object	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an eval var cannot redeclare a named arguments parameter	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an eval var cannot redeclare the synthetic parameter arguments cell	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / dynamic object / a repeated object-backed var declaration resets the property to undefined	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / dynamic object / an eval function closure survives deletion of its dynamic binding	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / environment split / a function created by body eval captures the body binding	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / environment split / body eval creates a body variable that shadows the argument eval variable	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / environment split / body eval updates exact body bindings without overwriting the argument variable object	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / environment split / nested body eval targets the body variable object before the argument variable object	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / a BindingPattern copies its final parameter cell value into the body environment	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / a closure created by parameter eval captures the parameter cell rather than the body copy	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / a default anywhere moves a preceding plain formal into the parameter lexical environment	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval assignment mutates the parameter cell while the body keeps its copied argument	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval assignment to a later parameter observes its temporal dead zone	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval function cannot redeclare a later parameter lexical cell	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval var cannot redeclare a later parameter lexical cell	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval var cannot redeclare an earlier parameter lexical cell	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / scope switch / a computed parameter key without any default remains in the function variable scope	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / strict eval / a strict eval source mutates imported parameters but does not leak its var declaration	NEWCORE-DIRECT-EVAL-001
+parameters/direct_eval / strict eval / direct eval inherits strictness from the containing function bytecode	NEWCORE-DIRECT-EVAL-001
+parameters/rest / direct eval observes the initialized rest binding	NEWCORE-DIRECT-EVAL-001
 regexp/dotall / matchAll preserves s while split preserves s and appends sticky	NEWCORE-SPECIES-001
 regexp/match_all / empty global matches advance by code unit or Unicode code point from matcher lastIndex	NEWCORE-SPECIES-001
 regexp/match_all / exec throws and primitive results leave the iterator retryable	NEWCORE-SPECIES-001
@@ -115,4 +164,7 @@ regexp/split / primitive constructor and nonconstructor species are TypeErrors b
 regexp/split / recursive String and RegExp split protocol calls are catchable and recover	NEWCORE-SPECIES-001
 regexp/split / split appends sticky once and uses u or v for surrogate-pair advancement	NEWCORE-SPECIES-001
 regexp/split / zero limit still constructs the species but never executes it	NEWCORE-SPECIES-001
+templates/tagged / dynamic-compilation-sites / authored eval and separately constructed Function bytecode own distinct sites	NEWCORE-DIRECT-EVAL-001
+templates/tagged / super-member-this / super member tags and direct eval preserve the method receiver	NEWCORE-DIRECT-EVAL-001
+templates/tagged / with-receiver / an identifier tag resolved through with receives the with object as this	NEWCORE-WITH-001
 typed_array/of / static from shares only the direct constructor diagnostic seam	NEWCORE-SPECIES-001
