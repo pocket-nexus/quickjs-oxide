@@ -569,3 +569,89 @@ Eleven variants pass on M2 and fail on M3, and none moves the other way:
 Seventy more rows change only their failure detail. The full receipt is
 re-frozen (milestone `new-core-phase6-m3`) and the metrics regenerate to
 **81,434 of 83,562 (97.453%)**.
+
+## M4: the deletion
+
+### What went
+
+The old engine and everything only it used: `src/engine/{builtins, vm,
+object, heap, value (all but the front end's strings, BigInts and number
+printing), atom, realm, jobs, modules, host}`, the old API (`Runtime`,
+`Context` and the rest over `RuntimeState`), the profiling build and its
+JSONL records, most of `src/engine/code` (`ExecCode`, the publication
+records, the fast entries, rooted bytecode), `src/regexp.rs` (the front end
+and the oracle tests call `oxide-regexp` directly), and the Cargo features
+`profiling`, `checked-handles` and `dropped-features-probe`. In the front
+end: the numeric-region planner (`flow.rs` keeps the stack-size
+computation and the block entries the optimizer reads), the opcode table's
+execution numbers and operand contracts, the stack instructions the front
+end never emits (tail calls, `return_undef`, the fused type tests,
+`push_atom_value`, the eval-variable reads and writes), the parse-time
+import-attribute checker (the API checks attributes in the loader), and the
+toFixed/parseInt kernels the old builtins used.
+
+`cargo tree -p quickjs-oxide -e normal` lists `oxide-core`, `oxide-regexp`,
+`num-bigint` and `num-traits`; the last two stay for the front end's BigInt
+literals and the API's `JsBigInt`.
+
+| Crate or module | M3 (`27198aa0`) | M4 |
+| --- | ---: | ---: |
+| root crate `src/` | 292,778 | 47,314 |
+| of which `src/engine/compiler` | 35,046 | 33,922 |
+| `src/engine/value` | 9,763 | 4,846 |
+| `src/engine/api` | 9,661 | 3,775 |
+| `src/engine/code` | 9,037 | 3,403 |
+| **workspace** | **366,148** | **120,609** |
+
+Against the phase's baseline (360,936 at `c2d8345b`) the workspace is 66.6%
+smaller. Both numbers are inside the plan's projections (root crate
+45,000–55,000, workspace 115,000–125,000).
+
+### The tests
+
+The tests that compared the two cores now compare against what the old core
+printed at M3, when both printed the same: the 44 corpus programs'
+outputs are frozen beside them (`core/tests/corpus/*.out`) and the 20 fixed
+probes' in a table in `run_tests.rs`. The front end's unit tests run on
+`api::core`; the ones that read published stack code read the unlinked
+tree, which `Context::compile` keeps under `cfg(test)`. The number-kernel
+oracle tests run their generated scripts on `qjs` and the pinned QuickJS,
+so they check the core's `toString(radix)`, `toFixed`, `toExponential`,
+`toPrecision`, `parseInt` and `parseFloat`. Deleted: the tests of old-core
+internals (atom counts, heap counts, the global lexical records, reference
+counts), the cross-realm halves of three tests (`NEWCORE-REALMS-001`), the
+ten tests M3 had kept behind `dropped-features-probe` (direct eval and
+`with`; four of them keep their front-end assertions), and the tests of the
+deleted kernels and the import-attribute checker. `check-source-layout.py`
+and the Test262 host-boundary metadata name the remaining layout; the
+layout check failed at M3's head on the API root's re-exports and passes
+again.
+
+### Gates
+
+The instruction gate: `qjs` built by `build.py --plain-only` at M3's head
+(`27198aa0`) and at the deletion (`e80d99ca`), `fixed.py --repeat 4 --order
+abba --cpu 2 --linux-counters`, medians.
+
+| Program | M3 G instr | M4 G instr | Change |
+| --- | ---: | ---: | ---: |
+| richards | 18.088 | 18.087 | −0.00% |
+| deltablue | 17.475 | 17.474 | −0.00% |
+| crypto | 15.052 | 15.050 | −0.01% |
+| raytrace | 15.234 | 15.233 | −0.00% |
+| earley-boyer | 12.661 | 12.659 | −0.02% |
+| regexp | 21.221 | 21.210 | −0.05% |
+| splay | 19.529 | 19.529 | −0.00% |
+| navier-stokes | 21.798 | 21.797 | −0.00% |
+
+`run_at` is 15,226 bytes in both. `qjs` is 3,454,552 bytes (M3: 3,504,312).
+
+| Gate | Result |
+| --- | --- |
+| clippy (`--all-targets --all-features`, `--lib --bins`, the `test262-host` sets), fmt | pass |
+| `cargo test --workspace --all-targets`, `--features test262-host`, `oxide-core --features gc-stress`, the lowering under `gc-stress` | pass |
+| `check-new-core-stress.py` | 20 probes and 44 corpus programs at `--gc-stress=1` |
+| oracle corpus | 205 pass, 1 ignored |
+| `test-quickjs-fixtures.sh --all`, `test-quickjs-c-oracles.sh`, `test-parity-slice.sh` | 13 of 13, 9 of 9, pass |
+| `check-source-layout.py`, `check-test262-host-boundary.sh`, `check-no-test262-special-casing.sh`, `check-rust-only.sh` | pass |
+| `test-test262.sh --focused` | 6,814 of 6,844, matching the M3 receipt |
