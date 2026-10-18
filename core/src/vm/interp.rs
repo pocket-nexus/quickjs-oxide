@@ -1430,15 +1430,8 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
                 .map_err(|error| error::heap_error(cx, error))
         }
         Opcode::CheckGlobalVar => {
-            if cx.heap.lookup_own(lexical, key).is_some() {
-                return Err(prologue_error(
-                    cx,
-                    ErrorKind::Syntax,
-                    insn,
-                    "redeclaration of '",
-                    "'",
-                ));
-            }
+            // QuickJS's `JS_CheckDefineGlobalVar`: the global object's
+            // property first, then a lexical declaration of the name.
             let declarable = match cx.heap.lookup_own(global, key) {
                 None => cx
                     .heap
@@ -1458,6 +1451,15 @@ fn declare_global(cx: &mut Cx<'_>, insn: Insn) -> Result<(), Throw> {
                     ErrorKind::Type,
                     insn,
                     "cannot define variable '",
+                    "'",
+                ));
+            }
+            if cx.heap.lookup_own(lexical, key).is_some() {
+                return Err(prologue_error(
+                    cx,
+                    ErrorKind::Syntax,
+                    insn,
+                    "redeclaration of '",
                     "'",
                 ));
             }
