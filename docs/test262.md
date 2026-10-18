@@ -10,20 +10,20 @@ pinned in [`compat/upstream.toml`](../compat/upstream.toml) and mirrored by
 <!-- current-test262-metrics:start -->
 Metrics are reported in this order:
 
-1. **QuickJS-scope pass:** 81,445 / 83,562 (97.467%). The denominator is
+1. **QuickJS-scope pass:** 81,434 / 83,562 (97.453%). The denominator is
    every variant the pinned QuickJS `test262.conf` runs; it excludes the
    18,475 `skipped-*` variants that QuickJS itself skips.
-2. **Full pass:** 81,445 / 102,037 (79.819%). Every frozen Test262 variant is in
+2. **Full pass:** 81,434 / 102,037 (79.808%). Every frozen Test262 variant is in
    the denominator.
 3. **Eligible coverage:** 83,354 / 102,037 (81.690%). This measures how much of
    the full vector the current profile admits to execution.
-4. **Runnable pass quality:** 81,445 / 83,354 (97.710%). This diagnoses
+4. **Runnable pass quality:** 81,434 / 83,354 (97.697%). This diagnoses
    admitted behavior and complements the coverage metrics above.
 
 The frozen outcome summary is:
 
 ```text
-fail-async=16 fail-async-done-count=53 fail-parse=324 fail-runtime=1516 pass=81445 skipped-config-exclude=6700 skipped-feature=11775 unsupported-module=121 unsupported-negative-provenance=87
+fail-async=16 fail-async-done-count=53 fail-parse=324 fail-runtime=1527 pass=81434 skipped-config-exclude=6700 skipped-feature=11775 unsupported-module=121 unsupported-negative-provenance=87
 ```
 <!-- current-test262-metrics:end -->
 

@@ -16,10 +16,10 @@ quickjs-oxide is a Rust JavaScript engine available through its command-line app
 <!-- current-test262-metrics:start -->
 The authoritative Test262 vector has:
 
-- 81,445 passes out of the 83,562 variants in QuickJS 2026-06-04's scope (97.467%)
-- 81,445 full-corpus passes out of 102,037 variants (79.819%)
+- 81,434 passes out of the 83,562 variants in QuickJS 2026-06-04's scope (97.453%)
+- 81,434 full-corpus passes out of 102,037 variants (79.808%)
 - 83,354 eligible variants out of 102,037 (81.690%)
-- 1,909 failures and no timeouts among the 83,354 eligible variants
+- 1,920 failures and no timeouts among the 83,354 eligible variants
 <!-- current-test262-metrics:end -->
 
 The profile, admission vector and result hashes are recorded in [`dev-support/test262/current.conf`](../dev-support/test262/current.conf). [Test262 guidance](test262.md) explains the runner and metric definitions.
