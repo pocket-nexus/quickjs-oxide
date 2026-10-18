@@ -32,6 +32,10 @@ test-support = []
 gc-stress = ["oxide-core/gc-stress"]
 # `qjs --ic-stats`: the core's inline-cache counters.
 ic-stats = ["oxide-core/ic-stats"]
+# Lowers every function as one whose operand stack passes the register
+# window, with two temporaries in registers, so the corpora run the spill
+# paths (new-core phase 6 M4b, section 4).
+register-stress = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
 oxide-regexp = { workspace = true, features = ["test-hooks"] }

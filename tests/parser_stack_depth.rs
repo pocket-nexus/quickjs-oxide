@@ -280,9 +280,6 @@ fn eval_string(context: &mut Context, source: &str) -> String {
 }
 
 #[test]
-#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
-            declines a function whose operand stack passes the 256-register \
-            window, so nesting past about 250 levels fails to compile"]
 fn depth_boundaries_throw_a_catchable_syntax_error() {
     run_on_parser_stack(|| {
         let runtime = Runtime::new_with_host_services(SystemHost::default());
@@ -310,9 +307,6 @@ fn depth_boundaries_throw_a_catchable_syntax_error() {
 }
 
 #[test]
-#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
-            declines a function whose operand stack passes the 256-register \
-            window, so nesting past about 250 levels fails to compile"]
 fn right_recursive_forms_throw_at_their_reference_depths() {
     run_on_parser_stack(|| {
         let runtime = Runtime::new_with_host_services(SystemHost::default());
@@ -353,9 +347,6 @@ fn right_recursive_forms_throw_at_their_reference_depths() {
 }
 
 #[test]
-#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
-            declines a function whose operand stack passes the 256-register \
-            window, so nesting past about 250 levels fails to compile"]
 fn direct_sources_share_the_eval_boundaries() {
     run_on_parser_stack(|| {
         let runtime = Runtime::new_with_host_services(SystemHost::default());
@@ -425,9 +416,6 @@ fn deep_nesting_never_aborts_far_beyond_the_logical_boundary() {
 const ORACLE_TOLERANCE_PERCENT: usize = 10;
 
 #[test]
-#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
-            declines a function whose operand stack passes the 256-register \
-            window, so nesting past about 250 levels fails to compile"]
 fn pinned_oracle_agrees_outside_the_tolerance_band() {
     let Some(oracle) = std::env::var_os("QJS_ORACLE") else {
         eprintln!("SKIP parser-depth differential: set QJS_ORACLE to the pinned qjs");

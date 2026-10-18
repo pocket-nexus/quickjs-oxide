@@ -206,8 +206,8 @@ fn fixed_probes_match_the_old_core() {
     assert!(failures.is_empty(), "{failures:#?}");
 }
 
-/// Opcodes no compiled program lowers to: the wide shuttles (no function
-/// needs more than 256 registers yet), stack-code forms the current compiler
+/// Opcodes no compiled program lowers to: the wide shuttles (locals and
+/// temporaries past the window live in spill slots), stack-code forms the current compiler
 /// never emits (tail calls, `return_undef`, the fused `typeof`/nullish tests,
 /// a field-form `delete`), and `JUndefinedOrNull`, which fuses only the
 /// for-of iterator-close pattern. `core/tests/vm.rs` runs each of them from

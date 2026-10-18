@@ -90,10 +90,6 @@ fn template_concat_getter_fault_sites_match_pinned_quickjs() {
 }
 
 #[test]
-#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
-            declines a function whose operand stack passes the 256-register \
-            window, so a call or template with more than about 250 operands \
-            fails to compile"]
 fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
     let oracle = require_qjs_oracle!("template stack differential");
 
