@@ -1121,6 +1121,8 @@ fn install_rooted(cx: &mut Cx<'_>) -> Result<ObjectId, HeapError> {
         Value::number(f64::INFINITY),
         constant,
     )?;
+    // QuickJS's `js_global_funcs`: `[Symbol.toStringTag]: "global"`.
+    to_string_tag(cx, global, "global")?;
     methods(
         cx,
         global,
