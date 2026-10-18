@@ -108,6 +108,9 @@ struct Parser<'a> {
     extended: bool,
     /// Units standing for invalid UTF-8 of a module's bytes, sorted.
     invalid: &'a [u32],
+    /// Units QuickJS's byte columns do not count, sorted: among the
+    /// invalid ones, the stray continuation bytes.
+    no_column: &'a [u32],
 }
 
 fn heap_failure(cx: &mut Cx<'_>, error: HeapError) -> Failure {
@@ -191,6 +194,32 @@ impl Parser<'_> {
         !self.invalid.is_empty() && self.invalid.binary_search(&(at as u32)).is_ok()
     }
 
+    /// Whether the unit at `at` stands for a stray continuation byte.
+    fn is_continuation(&self, at: usize) -> bool {
+        self.is_invalid(at) && self.no_column.binary_search(&(at as u32)).is_ok()
+    }
+
+    /// QuickJS's `Unexpected token '%c'` of the first byte at `at` (or the
+    /// end), read back by `JS_NewString`: a NUL ends the text, any other
+    /// non-ASCII byte is U+FFFD, and a stray continuation byte swallows the
+    /// closing quote.
+    fn unexpected_token<T>(&self, at: usize) -> Parsed<T> {
+        let message = match self.units.get(at) {
+            None | Some(0) => "Unexpected token '".to_owned(),
+            Some(_) if self.is_continuation(at) => "Unexpected token '\u{fffd}".to_owned(),
+            Some(&unit) if unit < 0x80 && !self.is_invalid(at) => {
+                format!("Unexpected token '{}'", unit as u8 as char)
+            }
+            Some(_) => "Unexpected token '\u{fffd}'".to_owned(),
+        };
+        Err(Failure::Syntax(message, self.cursor))
+    }
+
+    /// An error at unit `at` rather than at the cursor.
+    fn syntax_at<T>(&self, message: &str, at: usize) -> Parsed<T> {
+        Err(Failure::Syntax(message.to_owned(), at))
+    }
+
     /// QuickJS's byte-level parser meets invalid UTF-8 here.
     fn bad_utf8<T>(&self, at: usize) -> Parsed<T> {
         Err(Failure::Syntax("Bad UTF-8 sequence".to_owned(), at))
@@ -215,8 +244,9 @@ impl Parser<'_> {
             return self.syntax("Unexpected end of JSON input");
         };
         let start = self.cursor;
+        // `json_next_token` rejects any byte past ASCII in token context.
         if self.is_invalid(start) {
-            return self.bad_utf8(start);
+            return self.syntax("unexpected character");
         }
         // QuickJS's budget runs out at a value nested this deep, a leaf
         // included (an empty innermost container is one value shallower).
@@ -290,7 +320,7 @@ impl Parser<'_> {
             loop {
                 self.skip_space()?;
                 if self.is_invalid(self.cursor) {
-                    return self.bad_utf8(self.cursor);
+                    return self.syntax("unexpected character");
                 }
                 let name = match self.peek() {
                     Some(0x22) => self.string()?,
@@ -389,7 +419,10 @@ impl Parser<'_> {
             self.cursor += 1;
             match unit {
                 _ if unit == separator => return Ok(output),
-                0x00..=0x1f => return self.syntax("Bad control character in string literal"),
+                0x00..=0x1f => {
+                    return self
+                        .syntax_at("Bad control character in string literal", self.cursor - 1);
+                }
                 0x5c => {
                     let Some(escaped) = self.peek() else {
                         return self.syntax("Unexpected end of JSON input");
@@ -416,7 +449,7 @@ impl Parser<'_> {
                             }
                             value
                         }
-                        _ => return self.syntax("Bad escaped character"),
+                        _ => return self.syntax_at("Bad escaped character", self.cursor - 1),
                     });
                 }
                 _ => output.push(unit),
@@ -457,18 +490,7 @@ impl Parser<'_> {
                 self.cursor += 2;
                 let digit = |unit: u16| hex_value(unit).filter(|&d| u32::from(d) < radix);
                 if self.peek().and_then(digit).is_none() {
-                    return match self.peek() {
-                        None => self.syntax("Unexpected token '"),
-                        Some(unit) => {
-                            // QuickJS prints the first UTF-8 byte with `%c`.
-                            let unit = if unit < 0x80 {
-                                unit as u8 as char
-                            } else {
-                                '\u{fffd}'
-                            };
-                            self.syntax(&format!("Unexpected token '{unit}'"))
-                        }
-                    };
+                    return self.unexpected_token(self.cursor);
                 }
                 let mut value = 0.0f64;
                 while let Some(d) = self.peek().and_then(digit) {
@@ -493,15 +515,7 @@ impl Parser<'_> {
                 }
             }
             Some(0x31..=0x39) => self.digits(),
-            Some(unit) => {
-                // QuickJS prints the first UTF-8 byte with `%c`.
-                let unit = if unit < 0x80 {
-                    unit as u8 as char
-                } else {
-                    '\u{fffd}'
-                };
-                return self.syntax(&format!("Unexpected token '{unit}'"));
-            }
+            Some(_) => return self.unexpected_token(self.cursor),
         }
         if self.peek() == Some(0x2e) {
             self.digits_after_point()?;
@@ -587,6 +601,7 @@ fn parse_text(
         records,
         extended,
         invalid,
+        no_column: &[],
     };
     match parser.document(cx) {
         Ok(parsed) => Ok(parsed),
@@ -631,6 +646,7 @@ pub(crate) fn json_module_text(
         records: false,
         extended,
         invalid: &text.invalid,
+        no_column: &text.no_column,
     };
     match parser.document(cx) {
         Ok((value, _)) => Ok(value),

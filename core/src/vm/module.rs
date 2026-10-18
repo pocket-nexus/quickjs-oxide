@@ -116,8 +116,9 @@ pub struct JsonText {
     pub units: Vec<u16>,
     /// Sorted indices into `units`.
     pub invalid: Vec<u32>,
-    /// Sorted indices of the low halves of four-byte sequences, which
-    /// QuickJS's byte columns do not count (a CESU-8 pair counts twice).
+    /// Sorted indices of the low halves of four-byte sequences and of stray
+    /// continuation bytes, which QuickJS's byte columns do not count (a
+    /// CESU-8 pair counts twice).
     pub no_column: Vec<u32>,
 }
 
@@ -163,6 +164,10 @@ impl JsonText {
                     offset += used;
                 }
                 _ => {
+                    // A stray continuation byte adds no column either.
+                    if (0x80..0xc0).contains(&byte) {
+                        text.no_column.push(text.units.len() as u32);
+                    }
                     text.invalid.push(text.units.len() as u32);
                     text.units.push(0x7f);
                     offset += 1;
