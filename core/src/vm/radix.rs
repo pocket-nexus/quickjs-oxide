@@ -303,13 +303,15 @@ fn free_big(value: f64, radix: u32) -> String {
 /// (trailing zeros removed) and the decimal point's position.
 ///
 /// Where the nearest stops round-tripping, a sequence of that count may
-/// still: below a power of two the rounding interval is half the one
-/// above, so the neighbor above can hit where the nearest misses (QuickJS
-/// stops there: `2**-24` prints 17 digits, 16 round-trip). `Number::
-/// toString` takes the fewest digits that round-trip (6.1.6.1.20 step 5),
-/// which Rust's shortest formatting gives; QuickJS's choice stands when it
-/// is as short.
+/// still at a power of two: below one the rounding interval is half the
+/// one above, so the neighbor above can hit where the nearest misses
+/// (QuickJS stops there: `2**-24` prints 17 digits, 16 round-trip).
+/// `Number::toString` takes the fewest digits that round-trip (6.1.6.1.20
+/// step 5), which Rust's shortest formatting gives; QuickJS's choice stands
+/// when it is as short. Elsewhere the interval is symmetric, so the
+/// farther neighbor misses whenever the nearest does.
 fn decimal_sequence(value: f64) -> (String, i32) {
+    let power_of_two = value.to_bits() & ((1 << 52) - 1) == 0;
     let split = |text: &str| {
         let (mantissa, exponent) = text.split_once('e').expect("an exponent");
         let exponent: i32 = exponent.parse().expect("a decimal exponent");
@@ -324,9 +326,11 @@ fn decimal_sequence(value: f64) -> (String, i32) {
     loop {
         let text = format!("{:.*e}", (digits - 1) as usize, value);
         if best.is_some() && text.parse::<f64>() != Ok(value) {
-            let shortest = split(&format!("{value:e}"));
-            if shortest.0.len() as i32 <= digits {
-                best = Some(shortest);
+            if power_of_two {
+                let shortest = split(&format!("{value:e}"));
+                if shortest.0.len() as i32 <= digits {
+                    best = Some(shortest);
+                }
             }
             break;
         }
