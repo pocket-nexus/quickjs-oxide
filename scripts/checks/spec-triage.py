@@ -5,7 +5,7 @@ Every case under `apps/cli/tests/oracle/cases` runs on `qjs` (built with
 `test262-host`), the pinned QuickJS and Node (V8, a third implementation).
 What the specification leaves to the implementation is normalized away:
 error messages and `stack` (a thrown object compares by its constructor's
-name), the printer (`print` writes `String` of each argument), and functions'
+name, and the text after an error name in a result is dropped), the printer (`print` writes `String` of each argument), and functions'
 source text (a function compares as `function`). A case where QuickJS and
 Node disagree is a candidate departure; each candidate is decided by the
 specification clause, never by majority.
@@ -23,6 +23,7 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -33,6 +34,29 @@ CASES = ROOT / "apps/cli/tests/oracle/cases"
 PRELUDES = ROOT / "apps/cli/tests/oracle/preludes"
 ATTRIBUTIONS = ROOT / "dev-support/oracle-attributions.tsv"
 SEPARATOR = "\n// ---\n"
+# Cases often splice `String(error)`, or an error's name and message as two
+# `|` fields, into their results: the text after the name is a message, which
+# the specification leaves to the implementation. A stack overflow is a
+# resource limit, whatever error reports it.
+STACK_OVERFLOW = re.compile(
+    r"\b(?:InternalError|RangeError)\b(?::|: |\|)(?:stack overflow|Maximum call stack size exceeded)")
+MESSAGE = re.compile(r"\b([A-Z][A-Za-z]*Error)(?::|: |\|)[^|;,\n\]\"]*")
+
+
+def normalized(observation):
+    observation = STACK_OVERFLOW.sub("<stack overflow>", observation)
+    return MESSAGE.sub(r"\1", observation)
+
+
+def verdict(observed):
+    if "<timeout>" in observed.values():
+        return "timeout"
+    if normalized(observed["quickjs"]) != normalized(observed["node"]):
+        return "candidate"
+    if normalized(observed["qjs"]) != normalized(observed["quickjs"]):
+        return "qjs-differs"
+    return "agree"
+
 
 # The observer each engine runs: `__evalScript` evaluates one global script,
 # `__out` writes one line. It runs the scripts in order and prints one
@@ -197,13 +221,7 @@ def main():
         rows = []
         for index, case in enumerate(runnable):
             observed = {engine: futures[(index, engine)].result() for engine in executables}
-            if observed["quickjs"] != observed["node"]:
-                verdict = "candidate"
-            elif observed["qjs"] != observed["quickjs"]:
-                verdict = "qjs-differs"
-            else:
-                verdict = "agree"
-            rows.append((case["name"], case["mode"], verdict,
+            rows.append((case["name"], case["mode"], verdict(observed),
                          attributed.get(case["name"], "-"), observed))
 
     with open(args.output, "w") as output:
