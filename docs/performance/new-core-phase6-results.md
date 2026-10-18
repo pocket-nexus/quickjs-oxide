@@ -738,11 +738,31 @@ QuickJS departures M4b records and leaves, by area:
 | templates | 4 | a template calls the patchable `String.prototype.concat`, converting after every substitution is evaluated (13.2.8.6) |
 | references | 4 | `(a?.#m)()` loses its receiver; `null[k] = v` converts `k` before `ToObject`; a strict write to a sloppy function's name binding |
 | lexer | 2 | `08.1_2`; `for (async <!-- …` |
-| `%ThrowTypeError%` | 1 | returns `undefined` for a sloppy function's `caller`/`arguments`, which keeps `f.caller` from throwing; following 10.2.4.1 needs own properties on sloppy functions or a throwing `f.caller` |
+| `%ThrowTypeError%` | 1 | returns `undefined` for a sloppy function's `caller`/`arguments` (below) |
 
-Also kept: `Function.prototype.toString` prints the current `name`
-property where 20.2.3.5 asks for `[[InitialName]]` (natives do not store
-it), and `Atomics.waitAsync` is missing (both engines).
+Also missing in both engines: `Atomics.waitAsync`.
+
+Two departures the maintainer decided to record and leave unfixed in M4b:
+
+- **`%ThrowTypeError%` and a sloppy function's `caller`/`arguments`**
+  (10.2.4.1, 17.1). QuickJS's `%ThrowTypeError%` returns `undefined` when
+  its receiver is a sloppy ordinary function, so `(function(){}).caller`
+  is `undefined`; the clause makes it throw on every call
+  (`Object.getOwnPropertyDescriptor(Function.prototype, "caller").get.call(function(){})`
+  is a `TypeError` in V8). Following the clause either makes `f.caller`
+  throw in sloppy code, where every major engine returns a value, or
+  gives sloppy functions own `caller`/`arguments` properties (`null`), as
+  V8 does and 17.1 permits: two more properties per sloppy function, and
+  `getOwnPropertyNames` lists them. Pinned Test262 does not reach it.
+- **`Function.prototype.toString` of a built-in** (20.2.3.5) prints the
+  function's current own `name` where the clause asks for its
+  `[[InitialName]]`: after `Object.defineProperty(Function.prototype.call,
+  "name", {value: "foo"})` it prints `function foo()` (V8:
+  `function call()`), and a non-PropertyName name prints none. Natives do
+  not store their initial name; storing it costs a function-record field,
+  or a column in the native table and a check of every native's creation
+  site. Only a renamed built-in shows it; pinned Test262 does not reach
+  it.
 
 ### The register window
 
