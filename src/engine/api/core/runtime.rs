@@ -77,6 +77,14 @@ pub(crate) struct Inner {
     temps: Vec<Handle>,
 }
 
+/// Host stack an outermost entry keeps below the loop's re-entry budget for
+/// the frames that build and unwind a stack overflow error.
+const NATIVE_RESERVE: usize = if cfg!(debug_assertions) {
+    256 * 1024
+} else {
+    64 * 1024
+};
+
 thread_local! {
     /// The runtimes with an entry in progress on this thread, innermost
     /// last: how the core's module and compile callbacks find the API.
@@ -477,6 +485,19 @@ impl Runtime {
             .try_borrow_mut()
             .map_err(|_| RuntimeError::Reentered)?;
         self.shared.drain_released(&mut inner);
+        if CURRENT.with(|current| current.borrow().is_empty()) {
+            // The loop's re-entries may use the thread's stack past what this
+            // entry needs to unwind an error: QuickJS's one-MiB budget, which
+            // its frames reach at the depths its nesting tests pin, takes
+            // larger debug frames here.
+            let available = crate::engine::compiler::stack_guard::available_stack();
+            let budget = available
+                .saturating_sub(available / 8)
+                .saturating_sub(NATIVE_RESERVE);
+            inner.core.set_native_stack_budget(
+                budget.max(oxide_core::vm::NATIVE_STACK_BUDGET.min(available / 2)),
+            );
+        }
         CURRENT.with(|current| current.borrow_mut().push(Rc::clone(&self.shared)));
         Ok(Entry {
             inner,

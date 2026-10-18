@@ -218,9 +218,14 @@ impl Parser<'_> {
         if self.is_invalid(start) {
             return self.bad_utf8(start);
         }
+        // QuickJS's budget runs out at a value nested this deep, a leaf
+        // included (an empty innermost container is one value shallower).
+        if depth > MAX_DEPTH {
+            return self.syntax("stack overflow");
+        }
         let value = match unit {
             0x7b | 0x5b => {
-                if depth > MAX_DEPTH || !cx.heap.vm.enter_native() {
+                if !cx.heap.vm.enter_native() {
                     return self.syntax("stack overflow");
                 }
                 let result = if unit == 0x7b {
@@ -677,6 +682,7 @@ pub(super) fn parse(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let mut reviving = Reviving {
         units: &units,
         reviver,
+        depth: 0,
     };
     reviving.internalize(cx, root, empty, record.as_ref())
 }
@@ -684,7 +690,14 @@ pub(super) fn parse(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 struct Reviving<'a> {
     units: &'a [u16],
     reviver: Value,
+    /// Nested `InternalizeJSONProperty` calls.
+    depth: usize,
 }
+
+/// The most nested `InternalizeJSONProperty` calls: the holder's, then one
+/// per value, as deep as QuickJS 2026-06-04's `internalize_json_property`
+/// recursion reaches within its stack budget (3,630 nested arrays).
+const MAX_REVIVER_DEPTH: usize = 3_631;
 
 impl Reviving<'_> {
     /// `InternalizeJSONProperty(holder, name, reviver)` with the parse
@@ -697,13 +710,15 @@ impl Reviving<'_> {
         name: PropertyKey,
         record: Option<&Record>,
     ) -> Result<Value, Throw> {
-        if !cx.heap.vm.enter_native() {
+        if self.depth >= MAX_REVIVER_DEPTH || !cx.heap.vm.enter_native() {
             return Err(error::stack_overflow(cx));
         }
+        self.depth += 1;
         let mark = cx.heap.roots().mark();
         let result = self.internalize_rooted(cx, holder, name, record);
         cx.heap.roots().truncate(mark);
         cx.heap.vm.leave_native();
+        self.depth -= 1;
         result
     }
 

@@ -633,6 +633,13 @@ impl Runtime {
         self.heap.vm.limit = registers;
     }
 
+    /// Sets the bytes of host stack nested re-entries into the loop may use
+    /// ([`RuntimeOptions::native_stack_budget`]): a host that knows how much
+    /// stack the thread has left sets it before an outermost entry.
+    pub fn set_native_stack_budget(&mut self, bytes: usize) {
+        self.heap.vm.native_budget = bytes;
+    }
+
     #[inline]
     pub fn heap(&self) -> &Heap {
         &self.heap

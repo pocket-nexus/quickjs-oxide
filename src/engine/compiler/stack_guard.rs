@@ -239,6 +239,17 @@ fn stack_floor(entry: usize) -> usize {
     entry.saturating_sub(PARSER_THREAD_FALLBACK)
 }
 
+/// Host stack below the caller down to this thread's floor (declared, or
+/// read from the stack mapping, else the conservative fallback).
+pub(crate) fn available_stack() -> usize {
+    let entry = current_stack_address();
+    let floor = DECLARED_STACK_FLOOR
+        .with(Cell::get)
+        .filter(|floor| *floor < entry)
+        .unwrap_or_else(|| stack_floor(entry));
+    entry.saturating_sub(floor)
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ParserStackOverflow;
 
