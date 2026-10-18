@@ -419,7 +419,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
 }
 
 #[test]
-fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
+fn program_var_preflight_conflicts_and_parser_scope() {
     let (runtime, mut context) = test_context();
     assert_eq!(
         context.eval("let existingLexical=1").unwrap(),
@@ -474,15 +474,15 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
     let Value::Object(error) = sealed.take_exception().unwrap().unwrap() else {
         panic!("sealed global var declaration did not throw an Error object");
     };
+    // 16.1.7 step 4: a var name with a lexical declaration is a
+    // SyntaxError before the global object's definability is checked.
     assert_eq!(
         sealed.get_property(&error, &name).unwrap(),
-        Value::String(JsString::from_static("TypeError"))
+        Value::String(JsString::from_static("SyntaxError"))
     );
     assert_eq!(
         sealed.get_property(&error, &message).unwrap(),
-        Value::String(JsString::from_static(
-            "cannot define variable 'sealedLexical'"
-        ))
+        Value::String(JsString::from_static("redeclaration of 'sealedLexical'"))
     );
 
     let atomic_runtime = Runtime::new();
@@ -541,7 +541,7 @@ fn program_var_preflight_conflicts_and_parser_scope_match_quickjs() {
 }
 
 #[test]
-fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
+fn program_global_lexical_preflight_and_failed_initializers() {
     let (runtime, mut context) = test_context();
     let name = runtime.intern_property_key("name").unwrap();
     let message = runtime.intern_property_key("message").unwrap();
@@ -605,8 +605,10 @@ fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
         context.eval("captured"),
         Err(RuntimeError::Exception)
     ));
+    // The binding stays uninitialized: every reference to it is in its TDZ
+    // (9.1.1.4.6 GetBindingValue), `typeof` too.
     let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("later eval did not materialize a missing-global ReferenceError");
+        panic!("later eval did not throw the global lexical's TDZ error");
     };
     assert_eq!(
         context.get_property(&error, &name).unwrap(),
@@ -614,12 +616,13 @@ fn program_global_lexical_preflight_and_failed_initializers_match_quickjs() {
     );
     assert_eq!(
         context.get_property(&error, &message).unwrap(),
-        Value::String(JsString::from_static("'captured' is not defined"))
+        Value::String(JsString::from_static("captured is not initialized"))
     );
-    assert_eq!(
-        context.eval("typeof captured").unwrap(),
-        Value::String(JsString::from_static("undefined"))
-    );
+    assert!(matches!(
+        context.eval("typeof captured"),
+        Err(RuntimeError::Exception)
+    ));
+    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("delete captured").unwrap(), Value::Bool(false));
     assert!(matches!(
         context.eval("let captured=1"),

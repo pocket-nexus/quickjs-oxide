@@ -503,6 +503,12 @@ pub mod global {
     pub const FUNCTION: u8 = 1 << 0;
     /// The code is `eval` code: its bindings are configurable.
     pub const EVAL: u8 = 1 << 1;
+    /// `CheckGlobalVar`: only whether a lexical declaration has the name
+    /// (16.1.7 step 4).
+    pub const LEXICAL_CONFLICT: u8 = 1 << 2;
+    /// `CheckGlobalVar`: only whether the global object can take the
+    /// declaration (CanDeclareGlobalFunction or CanDeclareGlobalVar).
+    pub const DEFINABLE: u8 = 1 << 3;
 }
 
 /// The flags of `DefineMethod` and `DefineMethodComputed`.

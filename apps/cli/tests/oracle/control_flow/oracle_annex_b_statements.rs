@@ -6,8 +6,15 @@ use quickjs_oxide::engine::api::core::{
     AccessorValue, DescriptorField, OrdinaryPropertyDescriptor, Value,
 };
 
+/// QuickJS runs the first script and leaves a masked global lexical, which
+/// quickjs-oxide keeps (the specification makes the script an early
+/// SyntaxError: the labelled function is var-declared beside `let`, recorded
+/// in the M4b Annex B backlog). The last read follows the global
+/// Environment Record: an uninitialized lexical binding is a ReferenceError
+/// for every reference (QUICKJS-SPEC-025), where QuickJS reads the global
+/// object.
 #[test]
-fn program_label_annex_global_state_matches_pinned_quickjs() {
+fn program_label_annex_global_state() {
     let oracle = require_qjs_oracle!("Program label global-state differential");
     let description = "Program labelled Annex precedes a later global lexical";
     let sources = [
@@ -21,9 +28,19 @@ fn program_label_annex_global_state_matches_pinned_quickjs() {
         .map(|source| observe_rust_eval(&runtime, &mut context, source, description))
         .collect::<Vec<_>>()
         .join("\n");
+    let quickjs = observe_oracle_sequence(&oracle, &sources, description);
+    let (rust_last, quickjs_last) = (rust.lines().last(), quickjs.lines().last());
     assert_eq!(
-        rust,
-        observe_oracle_sequence(&oracle, &sources, description)
+        rust.lines().take(2).collect::<Vec<_>>(),
+        quickjs.lines().take(2).collect::<Vec<_>>()
+    );
+    assert_eq!(
+        rust_last,
+        Some("throw|object|ReferenceError|orderedLabelCollision is not initialized")
+    );
+    assert_ne!(
+        rust_last, quickjs_last,
+        "QUICKJS-SPEC-025 no longer differs"
     );
 }
 

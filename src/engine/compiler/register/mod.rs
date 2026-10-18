@@ -662,7 +662,6 @@ struct Lowerer<'a, 'c> {
     /// Register PCs of the calls written as a direct `eval` (for the
     /// backtrace, which QuickJS gives no native frame there).
     direct_eval_sites: Vec<u32>,
-    lexical_globals: Vec<u32>,
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {
@@ -719,7 +718,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             fixups: Vec::new(),
             origins: Vec::new(),
             direct_eval_sites: Vec::new(),
-            lexical_globals: Vec::new(),
             pc: 0,
             last_dest: None,
             checked: HashSet::new(),
@@ -1153,7 +1151,12 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             self.emit(|b| b.a_count(Opcode::NewSpill, spill, slots));
         }
         if self.is_script {
-            // Section 5.7: every name is checked before any binding is made.
+            // Section 5.7: every name is checked before any binding is made,
+            // in GlobalDeclarationInstantiation's passes (16.1.7 steps 3, 4,
+            // 10 and 11): the lexical names, then every var and function
+            // name against the lexical declarations, then whether the
+            // global object can take each function, then each var.
+            use oxide_core::bytecode::opcode::global;
             let mut declarations = Vec::new();
             let eval = self.global_flags();
             for index in 0..self.function.closure_variables().len() {
@@ -1161,23 +1164,39 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 match variable.source {
                     ClosureSource::GlobalDeclaration => {
                         let key = self.closure_key(index as u16)?;
-                        let (check, declare) = match (variable.is_lexical, variable.is_const) {
-                            (false, _) => (Opcode::CheckGlobalVar, Opcode::DeclareGlobal),
-                            (true, false) => (Opcode::CheckGlobalLexical, Opcode::DeclareGlobalLet),
-                            (true, true) => {
-                                (Opcode::CheckGlobalLexical, Opcode::DeclareGlobalConst)
-                            }
+                        let declare = match (variable.is_lexical, variable.is_const) {
+                            (false, _) => Opcode::DeclareGlobal,
+                            (true, false) => Opcode::DeclareGlobalLet,
+                            (true, true) => Opcode::DeclareGlobalConst,
                         };
                         let flags = if variable.kind == ClosureVariableKind::GlobalFunction {
-                            eval | oxide_core::bytecode::opcode::global::FUNCTION
+                            eval | global::FUNCTION
                         } else {
                             eval
                         };
-                        self.emit(|b| b.raw(oxide_core::Insn::new(check, 0, flags, 0, key.raw())));
                         declarations.push((declare, flags, key));
                     }
                     ClosureSource::Global => {}
                     _ => return Err(LowerError::unsupported("script closure source")),
+                }
+            }
+            let checks = [
+                (|d: Opcode, _: u8| d != Opcode::DeclareGlobal) as fn(Opcode, u8) -> bool,
+                |d, _| d == Opcode::DeclareGlobal,
+                |d, f| d == Opcode::DeclareGlobal && f & global::FUNCTION != 0,
+                |d, f| d == Opcode::DeclareGlobal && f & global::FUNCTION == 0,
+            ];
+            for (pass, selected) in checks.iter().enumerate() {
+                for &(declare, flags, key) in &declarations {
+                    if !selected(declare, flags) {
+                        continue;
+                    }
+                    let (check, flags) = match pass {
+                        0 => (Opcode::CheckGlobalLexical, flags),
+                        1 => (Opcode::CheckGlobalVar, flags | global::LEXICAL_CONFLICT),
+                        _ => (Opcode::CheckGlobalVar, flags | global::DEFINABLE),
+                    };
+                    self.emit(|b| b.raw(oxide_core::Insn::new(check, 0, flags, 0, key.raw())));
                 }
             }
             for (declare, flags, key) in declarations {
@@ -2521,14 +2540,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
 
     fn global_read(&mut self, op: Opcode, closure: u16) -> Result<(), LowerError> {
         let key = self.closure_key(closure)?;
-        if self
-            .function
-            .closure_variables()
-            .get(closure as usize)
-            .is_some_and(|variable| variable.is_lexical)
-        {
-            self.lexical_globals.push(key.raw());
-        }
         let dst = self.result_register()?;
         let at = self.emit(|b| b.a_key(op, dst, key));
         self.push_result(at);
@@ -2778,10 +2789,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .and_then(|debug| debug.pc2line.as_ref())
             .and_then(|table| table.definition.one_based());
         unit.direct_eval_sites = self.direct_eval_sites.into();
-        let mut lexical_globals = self.lexical_globals;
-        lexical_globals.sort_unstable();
-        lexical_globals.dedup();
-        unit.lexical_globals = lexical_globals.into();
         Ok((unit, self.pool))
     }
 

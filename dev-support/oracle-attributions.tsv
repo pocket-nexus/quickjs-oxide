@@ -221,3 +221,10 @@ proxy_reflect/proxy / pinned ownKeys rechecks revocation after the trap returns	
 proxy_reflect/proxy / pinned noncallable Proxy reads apply before reporting not a function	QUICKJS-SPEC-024
 proxy_reflect/proxy / pinned trap dispatch enters a noncallable Proxy before rejecting it	QUICKJS-SPEC-024
 proxy_reflect/proxy / nested ownKeys fallback rechecks the Proxy which supplied the trap	QUICKJS-SPEC-024
+program_declarations/functions_global_properties / global property matrix	QUICKJS-SPEC-026
+program_declarations/lexicals / failed initializer keeps the pinned poisoned lexical	QUICKJS-SPEC-025
+program_declarations/lexicals / poisoned lexical distinguishes typed and precompiled global descriptors	QUICKJS-SPEC-025
+program_declarations/lexicals / partial initialization preserves initialized and poisoned cells	QUICKJS-SPEC-025
+function_declarations/block_functions / Annex global var precedes a later global lexical	QUICKJS-SPEC-025
+control_flow/annex_b_statements / first Annex descriptor controls direct reads before and after lexical initialization	QUICKJS-SPEC-025
+control_flow/annex_b_statements / first Annex descriptor relays through nested reads before and after lexical initialization	QUICKJS-SPEC-025
