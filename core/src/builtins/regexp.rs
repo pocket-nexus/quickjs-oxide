@@ -11,7 +11,7 @@ use oxide_regexp::{ExecError, RegExpFlags, RegExpMatch};
 use super::string::{substitution, substring_value};
 use super::{
     Native, accessor, install_constructor, link_constructor, methods, plain_object, string_units,
-    symbol_method, this_string, to_string_id, to_string_tag,
+    symbol_method, to_string_id, to_string_tag,
 };
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind};
@@ -169,14 +169,17 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     } else {
         (pattern, flags)
     };
-    let prototype =
-        internal::prototype_from_constructor(cx, new_target, Intrinsic::RegExpPrototype)?;
-    root(cx, Value::object(prototype));
+    // QuickJS converts the pattern before reading the prototype and the
+    // flags after it.
     let source = if source.is_undefined() {
         cx.realm.names.empty
     } else {
         atom(cx, source)?
     };
+    root(cx, Value::string(source));
+    let prototype =
+        internal::prototype_from_constructor(cx, new_target, Intrinsic::RegExpPrototype)?;
+    root(cx, Value::object(prototype));
     let flags = if flags.is_undefined() {
         cx.realm.names.empty
     } else {
@@ -790,10 +793,80 @@ fn intrinsic_exec(cx: &mut Cx<'_>, object: ObjectId) -> Result<bool, Throw> {
         property::Lookup::Hit(property::Found::Data(exec)) => exec,
         _ => return Ok(false),
     };
-    Ok(exec.as_object().is_some_and(|exec| {
+    let intrinsic = exec.as_object().is_some_and(|exec| {
         cx.heap.object_kind(exec) == ObjectKind::Function
             && cx.heap.function_record(exec).native == Native::RegExpExec.index()
-    }))
+    });
+    // Every caller goes on to `Get(R, "exec")`, which materializes
+    // QuickJS's AutoInit `exec`.
+    if intrinsic {
+        cx.realm.regexp_exec_read.set(true);
+    }
+    Ok(intrinsic)
+}
+
+/// Whether `value` is a native function of `native`.
+fn is_native(cx: &Cx<'_>, value: Value, native: Native) -> bool {
+    value.as_object().is_some_and(|function| {
+        cx.heap.object_kind(function) == ObjectKind::Function
+            && cx.heap.function_record(function).native == native.index()
+    })
+}
+
+/// QuickJS's `js_is_standard_regexp`, the condition of its
+/// `Symbol.replace` fast path for a string replacement: a RegExp object
+/// with an own numeric `lastIndex`, a materialized intrinsic `exec` and the
+/// intrinsic `flags`, `global` and `unicode` getters (the other flag
+/// getters are not checked), found on the object or its prototypes up to
+/// an exotic one, and no named groups. The fast path then works from the
+/// program's own flags.
+fn standard_regexp(cx: &Cx<'_>, object: ObjectId) -> Option<RegExpFlags> {
+    let heap = &*cx.heap;
+    if heap.object_kind(object) != ObjectKind::RegExp || !cx.realm.regexp_exec_read.get() {
+        return None;
+    }
+    let names = cx.realm.names;
+    let (slot, property) = heap.lookup_own(object, Names::key(names.last_index))?;
+    if property.has(PropertyFlags::ACCESSOR) || !heap.get_slot(object, slot).is_number() {
+        return None;
+    }
+    // `find_property_regexp`: the value or the getter, and whether it is
+    // an accessor.
+    let find = |key: crate::PropertyKey| -> Option<(Value, bool)> {
+        let mut current = object;
+        loop {
+            if let Some((slot, property)) = heap.lookup_own(current, key) {
+                return Some((
+                    heap.get_slot(current, slot),
+                    property.has(PropertyFlags::ACCESSOR),
+                ));
+            }
+            current = heap.prototype_of(current)?;
+            // QuickJS's exotic objects include arrays and `arguments`.
+            let kind = heap.object_kind(current);
+            if kind.is_exotic() || matches!(kind, ObjectKind::Array | ObjectKind::Arguments) {
+                return None;
+            }
+        }
+    };
+    let cache = cx.realm.regexp_flags.get()?;
+    let checks = [
+        (Names::key(names.exec), false, Native::RegExpExec),
+        (Names::key(names.flags), true, Native::RegExpFlags),
+        (cache.keys[1], true, Native::RegExpGlobal),
+        (cache.keys[5], true, Native::RegExpUnicode),
+    ];
+    for (key, accessor, native) in checks {
+        let (value, is_accessor) = find(key)?;
+        if is_accessor != accessor || !is_native(cx, value, native) {
+            return None;
+        }
+    }
+    let program = cx.regexps.program(heap.header(object).payload);
+    if program.group_names().is_some() {
+        return None;
+    }
+    Some(program.flags())
 }
 
 /// `RegExpExec(R, S)`.
@@ -829,16 +902,33 @@ pub(super) fn exec(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 }
 
 pub(super) fn test(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    // QuickJS's `JS_RegExpExec(this, input)`: `exec` is read from any
+    // receiver and a custom one receives the unconverted input.
     let this = site.this(cx);
-    let Some(object) = this.as_object() else {
-        return Err(error::object_expected(cx, "RegExp"));
-    };
-    let string = site.arg(cx, 0);
-    let string = to_string_id(cx, string)?;
-    if cx.heap.object_kind(object) == ObjectKind::RegExp && intrinsic_exec(cx, object)? {
+    let input = site.arg(cx, 0);
+    if let Some(object) = regexp_object(cx, this)
+        && intrinsic_exec(cx, object)?
+    {
+        let string = to_string_id(cx, input)?;
         return Ok(Value::bool(builtin_match(cx, object, string)?.is_some()));
     }
-    Ok(Value::bool(!regexp_exec(cx, object, string)?.is_null()))
+    let exec = property::get(cx, this, Names::key(cx.realm.names.exec))?;
+    if ops::is_callable(cx.heap, exec) {
+        root(cx, exec);
+        let result = crate::vm::call(cx, exec, this, &[input])?;
+        if result.as_object().is_none() && !result.is_null() {
+            return Err(error::type_error(
+                cx,
+                "RegExp exec method must return an object or null",
+            ));
+        }
+        return Ok(Value::bool(!result.is_null()));
+    }
+    let Some(object) = regexp_object(cx, this) else {
+        return Err(error::object_expected(cx, "RegExp"));
+    };
+    let string = to_string_id(cx, input)?;
+    Ok(Value::bool(builtin_match(cx, object, string)?.is_some()))
 }
 
 // ---- the Symbol protocol ----
@@ -963,6 +1053,7 @@ pub(super) fn symbol_match_all(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
     let object = this_object(cx, &site)?;
     let string = site.arg(cx, 0);
     let string = to_string_id(cx, string)?;
+    root(cx, Value::string(string));
     let flags = flags_text(cx, object)?;
     let flags_value = string_units(cx, &flags)?;
     root(cx, flags_value);
@@ -1046,7 +1137,13 @@ pub(super) fn symbol_replace(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
         let replacement = to_string_id(cx, replace_value)?;
         Some(units(cx, replacement))
     };
-    if let Some(flags) = pristine_exec_flags(cx, object)? {
+    let fast = if functional {
+        // Unobservably the generic path's work.
+        pristine_exec_flags(cx, object)?
+    } else {
+        standard_regexp(cx, object)
+    };
+    if let Some(flags) = fast {
         return replace_pristine(cx, object, string, flags, replace_value, replacement);
     }
     let flags = flags_text(cx, object)?;
@@ -1076,7 +1173,10 @@ pub(super) fn symbol_replace(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
     let mut next_position = 0usize;
     for result in results {
         let result_object = result.as_object().expect("a match result");
-        let result_length = internal::length_of_array_like(cx, result_object)?;
+        // QuickJS's `js_get_length32`: `ToUint32(Get(result, "length"))`.
+        let result_length =
+            internal::get_property(cx, result_object, Names::key(cx.realm.names.length))?;
+        let result_length = crate::vm::number::to_uint32(ops::to_number(cx, result_length)?);
         let capture_count = result_length.saturating_sub(1);
         let matched = matched_text(cx, result)?;
         root(cx, Value::string(matched));
@@ -1084,7 +1184,7 @@ pub(super) fn symbol_replace(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
         let index = internal::get_property(cx, result_object, Names::key(cx.realm.names.index))?;
         let position =
             internal::to_integer_or_infinity(cx, index)?.clamp(0.0, length as f64) as usize;
-        let mut captures: Vec<Value> = Vec::with_capacity(capture_count as usize);
+        let mut captures: Vec<Value> = Vec::new();
         for n in 1..=capture_count {
             let key = internal::number_key(cx, n as f64)?;
             let capture = internal::get_property(cx, result_object, key)?;
@@ -1105,6 +1205,13 @@ pub(super) fn symbol_replace(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
             args.push(Value::string(string));
             if !groups.is_undefined() {
                 args.push(groups);
+            }
+            // QuickJS calls the function through `apply` over the array.
+            if args.len() > 65_534 {
+                return Err(error::range_error(
+                    cx,
+                    "too many arguments in function call (only 65534 allowed)",
+                ));
             }
             let value = crate::vm::call(cx, replace_value, Value::UNDEFINED, &args)?;
             let value = to_string_id(cx, value)?;
@@ -1270,46 +1377,39 @@ fn substitute_with_groups(
     groups: Option<ObjectId>,
     replacement: &[u16],
 ) -> Result<Vec<u16>, Throw> {
-    // Group values are read in replacement order first: `Get` may run
-    // getters, which `substitution`'s callback cannot.
-    let mut named: Vec<(Vec<u16>, Option<Vec<u16>>)> = Vec::new();
-    if let Some(groups) = groups {
-        let mut at = 0;
-        while at + 1 < replacement.len() {
-            if replacement[at] == u16::from(b'$') && replacement[at + 1] == u16::from(b'<') {
-                if let Some(close) = replacement[at + 2..]
-                    .iter()
-                    .position(|&unit| unit == u16::from(b'>'))
-                {
-                    let name = replacement[at + 2..at + 2 + close].to_vec();
-                    let key = cx
-                        .heap
-                        .property_key_units(&name)
-                        .map_err(|error| error::heap_error(cx, error))?;
-                    let value = internal::get_property(cx, groups, key)?;
-                    let value = if value.is_undefined() {
-                        None
-                    } else {
-                        let value = to_string_id(cx, value)?;
-                        Some(units(cx, value))
-                    };
-                    named.push((name, value));
-                    at += close + 3;
-                    continue;
-                }
-                break;
-            }
-            at += 1;
-        }
+    let Some(groups) = groups else {
+        return substitution(text, position, matched, captures, &|_| None, replacement)
+            .ok_or_else(|| error::string_too_long(cx));
+    };
+    // `Get` may run getters, which `substitution`'s callback cannot: a first
+    // pass records the `$<name>` tokens in order, each is then read (and
+    // converted) once per token as QuickJS does, and a second pass
+    // consumes the values in that order.
+    let names = std::cell::RefCell::new(Vec::<Vec<u16>>::new());
+    let record = |name: &[u16]| -> Option<Option<Vec<u16>>> {
+        names.borrow_mut().push(name.to_vec());
+        Some(None)
+    };
+    let _ = substitution(text, position, matched, captures, &record, replacement);
+    let mut values = Vec::new();
+    for name in names.into_inner() {
+        let key = cx
+            .heap
+            .property_key_units(&name)
+            .map_err(|error| error::heap_error(cx, error))?;
+        let value = internal::get_property(cx, groups, key)?;
+        values.push(if value.is_undefined() {
+            None
+        } else {
+            let value = to_string_id(cx, value)?;
+            Some(units(cx, value))
+        });
     }
-    let lookup = |name: &[u16]| -> Option<Option<Vec<u16>>> {
-        groups?;
-        Some(
-            named
-                .iter()
-                .find(|(key, _)| key.as_slice() == name)
-                .and_then(|(_, value)| value.clone()),
-        )
+    let next = std::cell::Cell::new(0usize);
+    let lookup = |_: &[u16]| -> Option<Option<Vec<u16>>> {
+        let index = next.get();
+        next.set(index + 1);
+        Some(values.get(index).cloned().flatten())
     };
     substitution(text, position, matched, captures, &lookup, replacement)
         .ok_or_else(|| error::string_too_long(cx))
@@ -1343,6 +1443,7 @@ pub(super) fn symbol_split(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     let object = this_object(cx, &site)?;
     let string = site.arg(cx, 0);
     let string = to_string_id(cx, string)?;
+    root(cx, Value::string(string));
     let mut flags = flags_text(cx, object)?;
     let unicode = has(&flags, b'u') || has(&flags, b'v');
     // A non-sticky original searches for the next match where the sticky
@@ -1394,7 +1495,7 @@ pub(super) fn symbol_split(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
         }
         return internal::array_from_list(cx, &parts).map(Value::object);
     }
-    let fast = intrinsic_exec(cx, splitter)?;
+    let fast = cx.heap.object_kind(splitter) == ObjectKind::RegExp && intrinsic_exec(cx, splitter)?;
     let push = |cx: &mut Cx<'_>, parts: &mut Vec<Value>, value: Value| {
         root(cx, value);
         parts.push(value);
@@ -1435,25 +1536,37 @@ pub(super) fn symbol_split(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
                 _ => (None, Vec::new()),
             }
         } else {
+            // QuickJS's order: the captures are read only after the piece
+            // before the match is pushed, and only up to the limit.
             set_last_index(cx, splitter, index_value(q as u64))?;
             let result = regexp_exec(cx, splitter, string)?;
-            match result.as_object() {
-                None => (None, Vec::new()),
-                Some(result_object) => {
-                    root(cx, result);
-                    let end = last_index(cx, splitter)?.min(size as u64) as usize;
-                    let count =
-                        internal::length_of_array_like(cx, result_object)?.saturating_sub(1);
-                    let mut captures = Vec::new();
-                    for n in 1..=count {
-                        let key = internal::number_key(cx, n as f64)?;
-                        let value = internal::get_property(cx, result_object, key)?;
-                        root(cx, value);
-                        captures.push(value);
-                    }
-                    (Some(end), captures)
+            let Some(result_object) = result.as_object() else {
+                q = advance(cx, string, q as u64, unicode) as usize;
+                continue 'split;
+            };
+            root(cx, result);
+            let end = last_index(cx, splitter)?.min(size as u64) as usize;
+            if end == p {
+                q = advance(cx, string, q as u64, unicode) as usize;
+                continue 'split;
+            }
+            let piece = substring_value(cx, string, p, q)?;
+            push(cx, &mut parts, piece);
+            if parts.len() == limit {
+                break 'split;
+            }
+            p = end;
+            let count = internal::length_of_array_like(cx, result_object)?;
+            for n in 1..count {
+                let key = internal::number_key(cx, n as f64)?;
+                let value = internal::get_property(cx, result_object, key)?;
+                push(cx, &mut parts, value);
+                if parts.len() == limit {
+                    break 'split;
                 }
             }
+            q = p;
+            continue 'split;
         };
         match end {
             Some(end) if end != p => {
@@ -1530,27 +1643,64 @@ pub(crate) fn delegate(
     crate::vm::call(cx, method, argument, &call_args).map(Some)
 }
 
-/// `String.prototype.match`/`matchAll`/`search` without a delegate: a new
-/// RegExp over the argument, then its `Symbol` method.
-pub(crate) fn create_and_invoke(
+/// `String.prototype.match`, `matchAll` (`global`) and `search`: QuickJS's
+/// `js_string_match`. An object argument's `Symbol` method is read (and
+/// for `matchAll` the `g` flag of a regular expression checked) and called
+/// unless nullish; otherwise the receiver is converted and a new `%RegExp%`
+/// constructed over the argument (with `"g"` for `matchAll`) has its
+/// method invoked.
+pub(crate) fn string_match(
     cx: &mut Cx<'_>,
     site: &CallSite,
     symbol: crate::SymbolId,
-    flags: &str,
+    global: bool,
 ) -> Result<Value, Throw> {
-    let string = this_string(cx, site)?;
+    let this = site.this(cx);
+    if this.is_undefined() || this.is_null() {
+        return Err(error::type_error(cx, "cannot convert to object"));
+    }
     let argument = site.arg(cx, 0);
-    let source = if argument.is_undefined() {
-        cx.realm.names.empty
-    } else {
-        atom(cx, argument)?
-    };
-    let flags = cx
-        .heap
-        .intern(flags)
-        .map_err(|error| error::heap_error(cx, error))?;
-    let regexp = crate::vm::regexp::regexp_object(cx, source, flags)?;
-    root(cx, regexp);
     let key = WellKnown::key(symbol);
+    if let Some(object) = argument.as_object() {
+        let method = internal::get_property(cx, object, key)?;
+        root(cx, method);
+        if global {
+            check_global_flag(cx, object)?;
+        }
+        if !method.is_undefined() && !method.is_null() {
+            return crate::vm::call(cx, method, argument, &[this]);
+        }
+    }
+    let string = to_string_id(cx, this)?;
+    root(cx, Value::string(string));
+    let constructor = Value::object(cx.realm.intrinsic(Intrinsic::RegExp));
+    let regexp = if global {
+        let flags = Value::string(
+            cx.heap
+                .intern("g")
+                .map_err(|error| error::heap_error(cx, error))?,
+        );
+        crate::vm::construct(cx, constructor, &[argument, flags], constructor)?
+    } else {
+        crate::vm::construct(cx, constructor, &[argument], constructor)?
+    };
+    root(cx, regexp);
     internal::invoke(cx, regexp, key, &[Value::string(string)])
+}
+
+/// QuickJS's `check_regexp_g_flag`: a regular expression (`IsRegExp`)
+/// must have a `flags` with `g`.
+pub(crate) fn check_global_flag(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
+    if !is_regexp(cx, Value::object(object))? {
+        return Ok(());
+    }
+    let flags = internal::get_property(cx, object, Names::key(cx.realm.names.flags))?;
+    if flags.is_undefined() || flags.is_null() {
+        return Err(error::type_error(cx, "cannot convert to object"));
+    }
+    let flags = to_string_id(cx, flags)?;
+    if !units(cx, flags).contains(&u16::from(b'g')) {
+        return Err(error::type_error(cx, "regexp must have the 'g' flag"));
+    }
+    Ok(())
 }

@@ -507,7 +507,8 @@ pub(super) fn repeat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let string = this_string(cx, &site)?;
     let count = site.arg(cx, 0);
     let count = integer(cx, count)?;
-    if count < 0.0 || count == f64::INFINITY {
+    // QuickJS's `JS_ToInt64Sat`, then an Int32 count.
+    if !(0.0..=2_147_483_647.0).contains(&count) {
         return Err(error::range_error(cx, "invalid repeat count"));
     }
     let text = units(cx, string);
@@ -871,27 +872,9 @@ pub(crate) fn substitution(
 fn replace_impl(cx: &mut Cx<'_>, site: CallSite, all: bool) -> Result<Value, Throw> {
     let pattern = site.arg(cx, 0);
     let replace_value = site.arg(cx, 1);
-    if all && !pattern.is_undefined() && !pattern.is_null() {
+    if all && let Some(object) = pattern.as_object() {
         // `replaceAll` with a regular expression requires the `g` flag.
-        if let Some(object) = pattern.as_object() {
-            let key = crate::runtime::WellKnown::key(cx.realm.symbols.match_);
-            let matcher = internal::get_property(cx, object, key)?;
-            let is_regexp = if matcher.is_undefined() {
-                cx.heap.object_kind(object) == ObjectKind::RegExp
-            } else {
-                ops::to_boolean(cx.heap, matcher)
-            };
-            if is_regexp {
-                let flags = internal::get_property(cx, object, Names::key(cx.realm.names.flags))?;
-                if flags.is_undefined() || flags.is_null() {
-                    return Err(error::type_error(cx, "cannot convert to object"));
-                }
-                let flags = to_string_id(cx, flags)?;
-                if !units(cx, flags).contains(&u16::from(b'g')) {
-                    return Err(error::type_error(cx, "regexp must have the 'g' flag"));
-                }
-            }
-        }
+        super::regexp::check_global_flag(cx, object)?;
     }
     let symbol = cx.realm.symbols.replace;
     if let Some(result) = super::regexp::delegate(cx, &site, symbol, &[replace_value])? {
@@ -965,48 +948,19 @@ pub(super) fn replace_all(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 /// `match(regexp)`.
 pub(super) fn match_(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let symbol = cx.realm.symbols.match_;
-    if let Some(result) = super::regexp::delegate(cx, &site, symbol, &[])? {
-        return Ok(result);
-    }
-    super::regexp::create_and_invoke(cx, &site, symbol, "")
+    super::regexp::string_match(cx, &site, symbol, false)
 }
 
 /// `matchAll(regexp)`: a regular expression must be global.
 pub(super) fn match_all(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let pattern = site.arg(cx, 0);
-    if let Some(object) = pattern.as_object() {
-        let key = crate::runtime::WellKnown::key(cx.realm.symbols.match_);
-        let matcher = internal::get_property(cx, object, key)?;
-        let is_regexp = if matcher.is_undefined() {
-            cx.heap.object_kind(object) == ObjectKind::RegExp
-        } else {
-            ops::to_boolean(cx.heap, matcher)
-        };
-        if is_regexp {
-            let flags = internal::get_property(cx, object, Names::key(cx.realm.names.flags))?;
-            if flags.is_undefined() || flags.is_null() {
-                return Err(error::type_error(cx, "cannot convert to object"));
-            }
-            let flags = to_string_id(cx, flags)?;
-            if !units(cx, flags).contains(&u16::from(b'g')) {
-                return Err(error::type_error(cx, "regexp must have the 'g' flag"));
-            }
-        }
-    }
     let symbol = cx.realm.symbols.match_all;
-    if let Some(result) = super::regexp::delegate(cx, &site, symbol, &[])? {
-        return Ok(result);
-    }
-    super::regexp::create_and_invoke(cx, &site, symbol, "g")
+    super::regexp::string_match(cx, &site, symbol, true)
 }
 
 /// `search(regexp)`.
 pub(super) fn search(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let symbol = cx.realm.symbols.search;
-    if let Some(result) = super::regexp::delegate(cx, &site, symbol, &[])? {
-        return Ok(result);
-    }
-    super::regexp::create_and_invoke(cx, &site, symbol, "")
+    super::regexp::string_match(cx, &site, symbol, false)
 }
 
 // ---- case ----
@@ -1092,7 +1046,11 @@ fn html(
     let string = this_string(cx, &site)?;
     let mut out: Vec<u16> = format!("<{tag}").encode_utf16().collect();
     if let Some(attribute) = attribute {
+        // QuickJS's `JS_ToStringCheckObject`.
         let value = site.arg(cx, 0);
+        if value.is_undefined() || value.is_null() {
+            return Err(error::type_error(cx, "null or undefined are forbidden"));
+        }
         let value = to_string_id(cx, value)?;
         out.extend(format!(" {attribute}=\"").encode_utf16());
         for unit in cx.heap.string(value).repr().units() {

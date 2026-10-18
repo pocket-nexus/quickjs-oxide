@@ -80,4 +80,26 @@ object/bindings / nested var prepares its leaf reference after the outer get and
 object/rest / rest target Put fault follows copy then closes the outer iterator	NEWCORE-WITH-001
 object/rest / sloppy with resolves a missing rest target before copy adds that name	NEWCORE-WITH-001
 object/rest / sloppy with retains an existing rest target reference after copy deletes it	NEWCORE-WITH-001
+regexp/dotall / matchAll preserves s while split preserves s and appends sticky	NEWCORE-SPECIES-001
+regexp/match_all / empty global matches advance by code unit or Unicode code point from matcher lastIndex	NEWCORE-SPECIES-001
+regexp/match_all / exec throws and primitive results leave the iterator retryable	NEWCORE-SPECIES-001
+regexp/match_all / iterator next result objects preserve match identity and stable done state	NEWCORE-SPECIES-001
+regexp/match_all / match zero and empty-match lastIndex errors leave the iterator retryable	NEWCORE-SPECIES-001
+regexp/match_all / matchAll abrupt completions stop at exact construction boundaries	NEWCORE-SPECIES-001
+regexp/match_all / matchAll converts input then resolves species flags construction and lastIndex	NEWCORE-SPECIES-001
+regexp/match_all / non-global iterators finish after one match while global iterators run to null	NEWCORE-SPECIES-001
+regexp/match_all / source lastIndex is ToLength copied once without mutating the source	NEWCORE-SPECIES-001
+regexp/match_indices / matchAll preserves d and g while split preserves d and appends sticky	NEWCORE-SPECIES-001
+regexp/split / RegExp split observes input constructor species flags construct limit and exec order	NEWCORE-SPECIES-001
+regexp/split / abstract exec accepts branded fallback and rejects missing or primitive results	NEWCORE-SPECIES-001
+regexp/split / capture values remain raw and are read only through the active limit	NEWCORE-SPECIES-001
+regexp/split / empty input executes once without setting lastIndex and distinguishes hit from miss	NEWCORE-SPECIES-001
+regexp/split / empty matches advance and a retreating lastIndex is consumed exactly	NEWCORE-SPECIES-001
+regexp/split / lastIndex is clamped to input length after a successful abstract exec	NEWCORE-SPECIES-001
+regexp/split / loop abrupt completions stop at setter exec end length and capture boundaries	NEWCORE-SPECIES-001
+regexp/split / prefix abrupt completions stop at each input species flags construct and limit boundary	NEWCORE-SPECIES-001
+regexp/split / primitive constructor and nonconstructor species are TypeErrors before flags	NEWCORE-SPECIES-001
+regexp/split / recursive String and RegExp split protocol calls are catchable and recover	NEWCORE-SPECIES-001
+regexp/split / split appends sticky once and uses u or v for surrogate-pair advancement	NEWCORE-SPECIES-001
+regexp/split / zero limit still constructs the species but never executes it	NEWCORE-SPECIES-001
 typed_array/of / static from shares only the direct constructor diagnostic seam	NEWCORE-SPECIES-001
