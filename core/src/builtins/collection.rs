@@ -1,6 +1,5 @@
-//! `Map`, `Set`, `WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry`
-//! (phase 4, section 6.1 row 10), over the ordered table of
-//! `heap::table` and the collector's weak references (section 3.4).
+//! `Map`, `Set`, `WeakMap`, `WeakSet`, `WeakRef` and `FinalizationRegistry`,
+//! over the ordered table of `heap::table` and the collector's weak references.
 //!
 //! A collection is an internal record (tags `Map`, `Set`, `WeakMap`,
 //! `WeakSet`) whose slots are its entries. A collection iterator's slots

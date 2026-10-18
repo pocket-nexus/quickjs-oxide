@@ -1,4 +1,4 @@
-// globalThis members (section 6.2): parseInt, parseFloat, isNaN, isFinite.
+// globalThis members: parseInt, parseFloat, isNaN, isFinite.
 print(parseInt('42'), parseInt('  -0x1F'), parseInt('ff', 16), parseInt('0x10', 16), parseInt('z', 36));
 print(parseInt('12px'), parseInt(''), parseInt('abc'), parseInt('10', 2), parseInt('10', 37), parseInt('10', 1));
 print(parseInt('123456789012345678901234567890'), parseInt('-0'), 1 / parseInt('-0'), parseInt(4.7), parseInt('0.00001'));

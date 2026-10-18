@@ -1,4 +1,4 @@
-// Regular-expression literals (section 5.3): a new object per evaluation,
+// Regular-expression literals: a new object per evaluation,
 // `lastIndex` as an own writable property.
 function make() { return /ab+c/gi; }
 var first = make(), second = make();

@@ -1,9 +1,8 @@
-//! Proxy exotic objects (phase 4, section 3.1): every internal method
-//! through the handler's trap, with the invariant checks of 10.5.1–10.5.13
-//! against the target. A proxy's
-//! internal slot 0 is the target, slot 1 the handler and slot 2 whether it
-//! is revoked: as in QuickJS, a revoked proxy keeps both, so an internal
-//! method that was running when its trap revoked the proxy still has them.
+//! Proxy exotic objects: every internal method through the handler's trap, with
+//! the invariant checks of 10.5.1–10.5.13 against the target. A proxy's
+//! internal slot 0 is the target, slot 1 the handler and slot 2 whether it is
+//! revoked: as in QuickJS, a revoked proxy keeps both, so an internal method
+//! that was running when its trap revoked the proxy still has them.
 
 use super::error;
 use super::object::{self, Descriptor};

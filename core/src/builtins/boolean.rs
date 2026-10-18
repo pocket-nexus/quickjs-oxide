@@ -1,5 +1,5 @@
 //! `Boolean`: `Boolean(v)` and `Boolean.prototype.toString` and `valueOf`.
-//! `new Boolean` makes a wrapper object, which is phase 4's.
+//! `new Boolean` makes a wrapper object.
 
 use super::{Native, install_constructor, link_constructor, methods};
 use crate::heap::HeapError;

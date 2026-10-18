@@ -1,6 +1,5 @@
-//! The URI functions and the Annex B `escape` and `unescape` (phase 4,
-//! section 6.1 row 5): QuickJS's codecs over UTF-16 code units, ported
-//! from the current engine's `builtins::uri`.
+//! The URI functions and the Annex B `escape` and `unescape`: QuickJS's codecs
+//! over UTF-16 code units.
 
 use super::{Native, methods, string_units, to_string_id};
 use crate::heap::HeapError;

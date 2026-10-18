@@ -1,19 +1,18 @@
-//! Functions whose operand stack passes the register window
-//! (`docs/performance/new-core-phase6-m4b.md`, section 4.3): their deeper
+//! Functions whose operand stack passes the register window: their deeper
 //! temporaries live in spill slots, a call or array past the window builds
 //! on scratch registers or an argument array, and records, catches and
 //! `finally` returns reached at those depths go through the slots.
 
-use super::run_tests::run_new_core;
+use super::run_tests::run_on_core;
 
-/// [`run_new_core`] on a thread with room for the front end's recursion
+/// [`run_on_core`] on a thread with room for the front end's recursion
 /// over sources this deep.
 fn run_deep(source: String) -> String {
     std::thread::Builder::new()
         .stack_size(256 << 20)
         .spawn(move || {
             crate::engine::compiler::stack_guard::declare_thread_stack(256 << 20);
-            run_new_core(&source)
+            run_on_core(&source)
         })
         .unwrap()
         .join()

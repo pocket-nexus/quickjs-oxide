@@ -8,8 +8,7 @@ use quickjs_oxide::engine::api::core::{
 
 /// QuickJS runs the first script and leaves a masked global lexical, which
 /// quickjs-oxide keeps (the specification makes the script an early
-/// SyntaxError: the labelled function is var-declared beside `let`, recorded
-/// in the M4b Annex B backlog). The last read follows the global
+/// SyntaxError: the labelled function is var-declared beside `let`). The last read follows the global
 /// Environment Record: an uninitialized lexical binding is a ReferenceError
 /// for every reference (QUICKJS-SPEC-025), where QuickJS reads the global
 /// object.

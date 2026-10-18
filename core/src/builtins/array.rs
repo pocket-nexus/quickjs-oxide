@@ -1,10 +1,10 @@
-//! `Array` (phase 4, section 6.1 row 2): the constructor, `from`, `of`,
-//! `isArray`, and every `Array.prototype` method, in the specification's
-//! step order over generic array-likes, with direct element access for a
-//! plain array (an `Array` whose elements are dense and whose prototypes
-//! have no index properties). `Symbol.species` is dropped (phase 0): the
-//! methods that would create a species instance create a plain array.
-//! `sort` is QuickJS's `rqsort` with its comparison and write-back shortcuts.
+//! `Array`: the constructor, `from`, `of`, `isArray`, and every
+//! `Array.prototype` method, in the specification's step order over generic
+//! array-likes, with direct element access for a plain array (an `Array` whose
+//! elements are dense and whose prototypes have no index properties).
+//! `Symbol.species` is dropped: the methods that would create a species
+//! instance create a plain array. `sort` is QuickJS's `rqsort` with its
+//! comparison and write-back shortcuts.
 
 use std::cmp::Ordering;
 
@@ -107,8 +107,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         Value::object(values),
         PropertyFlags::data(true, false, true),
     )?;
-    // `Array.prototype[Symbol.unscopables]`: unscopables are dropped
-    // (phase 0), the object is still there.
+    // `Array.prototype[Symbol.unscopables]`: unscopables are dropped, the
+    // object is still there.
     let unscopables = plain_object(cx, None, 16)?;
     for name in [
         "at",

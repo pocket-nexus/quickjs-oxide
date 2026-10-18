@@ -1,14 +1,12 @@
-//! The realm's builtins (new-core phase 3, section 6.2): exactly what the
-//! V8 v7 programs call, plus the members a program reaches through them, as
-//! leaf natives. One file per builtin object.
+//! The realm's builtins, as natives. One file per builtin object.
 //!
 //! Every native reads its receiver and arguments through [`CallSite`]. A
 //! conversion that may run JavaScript (`ToString` of an object, `ToNumber`
-//! through `valueOf`) goes through the re-entrant [`call`](crate::vm::call);
-//! a native that holds a value across an allocation roots it first (the
-//! phase 1 rule, enforced by `gc-stress`). Natives that call back into
-//! JavaScript for their own work (`sort` with a comparator, `replace` with a
-//! function) are phase 4's Step/Resume machines and are not here.
+//! through `valueOf`) goes through the re-entrant [`call`](crate::vm::call); a
+//! native that holds a value across an allocation roots it first (the rooting
+//! rule, enforced by `gc-stress`). Natives that call back into JavaScript for
+//! their own work (`sort` with a comparator, `replace` with a function) use the
+//! same re-entrant call.
 
 pub mod agent;
 mod array;
@@ -130,9 +128,8 @@ natives! {
     /// qjs's `print`: the arguments' strings joined by a space, then a
     /// newline.
     Print => global::print, "print", 1;
-    /// `Function.prototype.call`. The loop rewrites a call of it into a call
-    /// of its receiver (section 5.2); the native runs only where no call
-    /// site is rewritten.
+    /// `Function.prototype.call`. The loop rewrites a call of it into a call of
+    /// its receiver; the native runs only where no call site is rewritten.
     FunctionCall => function::call, "call", 1;
     /// `Function.prototype.apply`, rewritten by the loop as `call` is.
     FunctionApply => function::apply, "apply", 2;
@@ -1349,8 +1346,7 @@ pub(crate) fn install_qjs_helpers(
     result
 }
 
-/// A typed array's length, or a `TypeError` when it is out of bounds
-/// (section 6.1 row 9).
+/// A typed array's length, or a `TypeError` when it is out of bounds.
 pub(crate) fn typed_array_length_or_throw(cx: &mut Cx<'_>, object: ObjectId) -> Result<u64, Throw> {
     match crate::vm::typed::length(cx.heap, object) {
         Some(length) => Ok(length as u64),
@@ -1361,7 +1357,7 @@ pub(crate) fn typed_array_length_or_throw(cx: &mut Cx<'_>, object: ObjectId) -> 
     }
 }
 
-/// `$262.detachArrayBuffer(buffer)` (section 6.1 row 9).
+/// `$262.detachArrayBuffer(buffer)`.
 pub(crate) fn detach_array_buffer(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     // QuickJS's `JS_DetachArrayBuffer`: anything but an ArrayBuffer is
     // ignored, and the result is `undefined`.

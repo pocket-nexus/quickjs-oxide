@@ -1,5 +1,5 @@
-// Script-level `let` and `const` are global properties in phase 2 (no TDZ
-// there yet); every binding here is function-scoped.
+// The temporal dead zone of `let` and `const` inside functions; every
+// binding here is function-scoped.
 function program() {
     function before() { return x; }
     try { before(); } catch (e) { print(e.name + ': ' + e.message); }

@@ -1,4 +1,4 @@
-// for-in (section 5.4).
+// for-in.
 function keys(o) { var s = ''; for (var k in o) s += k + ','; return s; }
 print(keys({ a: 1, b: 2, c: 3 }));
 print(keys([10, 20, 30]), keys([]), keys(null), keys(undefined), keys(5), keys('ab'));

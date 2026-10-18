@@ -1,4 +1,4 @@
-//! The API's error type (phase 6, sections 2.1 and 2.7).
+//! The API's error type.
 
 use std::fmt;
 
@@ -14,7 +14,7 @@ pub enum RuntimeError {
     /// An API call was made from inside a host callback without its
     /// [`Scope`](super::Scope).
     Reentered,
-    /// The new core does not have this (`"realms"`).
+    /// The engine does not have this (`"realms"`).
     Unsupported(&'static str),
     /// The front end rejected the source.
     Compile(Error),

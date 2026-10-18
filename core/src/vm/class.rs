@@ -1,6 +1,6 @@
-//! The class, `super` and private-name opcodes (phase 4, section 5.1), the
-//! object spread copies and the environment references of destructuring
-//! (section 5.2). All run out of line through [`class_op`].
+//! The class, `super` and private-name opcodes, the object spread copies and
+//! the environment references of destructuring. All run out of line through
+//! [`class_op`].
 //!
 //! A class with private methods brands its instances: its home object holds
 //! a fresh private symbol under the realm's brand key, and the instance

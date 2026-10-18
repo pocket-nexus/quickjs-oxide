@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Three-way differential of the JavaScript oracle cases (phase 6 M4b, section 2.2).
+"""Three-way differential of the JavaScript oracle cases.
 
 Every case under `apps/cli/tests/oracle/cases` runs on `qjs` (built with
 `test262-host`), the pinned QuickJS and Node (V8, a third implementation).

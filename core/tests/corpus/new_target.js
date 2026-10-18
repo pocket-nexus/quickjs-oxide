@@ -1,4 +1,4 @@
-// new.target (section 5.5).
+// new.target.
 function Probe() { return new.target === Probe ? 'new' : 'call'; }
 function Holder() { this.kind = new.target === undefined ? 'call' : 'new'; }
 print(Probe(), typeof new Probe(), new Holder().kind);

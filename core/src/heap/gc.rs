@@ -20,7 +20,7 @@ use crate::vm::ic::Record;
 pub struct RootMark(usize);
 
 /// Values Rust code holds across an allocation. The only legal way to keep an
-/// index alive across a safepoint in phase 1.
+/// index alive across a safepoint.
 #[derive(Default)]
 pub struct RootStack {
     values: Vec<Value>,
@@ -471,7 +471,7 @@ impl Heap {
                             if self.payloads.internals.mark(header.payload) {
                                 let internal = self.payloads.internals.get(header.payload);
                                 match internal.tag {
-                                    // Ephemerons and weak targets: section 3.4.
+                                    // Ephemerons and weak targets.
                                     InternalTag::WeakMap
                                     | InternalTag::WeakSet
                                     | InternalTag::WeakRef => {
@@ -718,7 +718,7 @@ impl Heap {
     }
 
     /// Clears the cache entries that name a record about to be swept, before
-    /// its index can be recycled (phase 3, section 2.1).
+    /// its index can be recycled.
     fn prune_caches(&mut self) {
         let (objects, shapes, cells) = (&self.objects, &self.shapes, &self.cells);
         self.ics.prune(|record| match record {
@@ -751,9 +751,9 @@ impl Heap {
         freed
     }
 
-    /// Post-collection verification (phase 0, section 3): every live record is
-    /// reachable and every reachable record is live; no free-list entry is
-    /// live or marked; every value-heap range has exactly one owner.
+    /// Post-collection verification: every live record is reachable and every
+    /// reachable record is live; no free-list entry is live or marked; every
+    /// value-heap range has exactly one owner.
     pub fn verify(&mut self) {
         self.mark_from_roots();
         fn check<T: super::arena::Record>(name: &str, arena: &super::arena::Arena<T>) {

@@ -1,5 +1,5 @@
-//! Register bytecode (new-core phase 2, section 2): fixed-width instructions,
-//! code units and the store that owns them.
+//! Register bytecode: fixed-width instructions, code units and the store that
+//! owns them.
 //!
 //! A code unit is built once by the lowering, checked once by
 //! [`validate`](validate::validate) when it is published to the
@@ -62,10 +62,9 @@ impl Insn {
         PropertyKey::from_raw(self.imm)
     }
 
-    /// The cache site of an instruction that has one (phase 3, section 2.1):
-    /// `c` for `GetField` and `SetField`, `b | c << 8` for the global forms,
-    /// `imm` for `New`. An index into the unit's entries of the
-    /// [`IcStore`](crate::vm::ic::IcStore).
+    /// The cache site of an instruction that has one: `c` for `GetField` and
+    /// `SetField`, `b | c << 8` for the global forms, `imm` for `New`. An index
+    /// into the unit's entries of the [`IcStore`](crate::vm::ic::IcStore).
     #[inline]
     pub const fn site(self) -> Option<u32> {
         match self.op {
@@ -143,9 +142,8 @@ pub mod flags {
     /// (`arguments` or a rest parameter): entering it keeps the extra
     /// arguments above its registers.
     pub const ARGUMENTS: u16 = 1 << 4;
-    /// The function reads `new.target` (phase 4, section 4.5): its first
-    /// local, right after the parameters, receives it when it is entered by
-    /// a construction.
+    /// The function reads `new.target`: its first local, right after the
+    /// parameters, receives it when it is entered by a construction.
     pub const NEW_TARGET: u16 = 1 << 5;
     /// A class constructor: calling it without `new` throws.
     pub const CLASS_CONSTRUCTOR: u16 = 1 << 6;
@@ -235,7 +233,7 @@ pub struct CodeUnit {
     pub local_count: u16,
     pub flags: u16,
     /// Distinct `this.x =` names in a constructor body: the slots `New`
-    /// reserves on the receiver (section 3.3).
+    /// reserves on the receiver.
     pub this_slots: u16,
     /// The length of the constant table attached on the heap.
     pub constant_count: u32,
@@ -265,8 +263,8 @@ pub struct CodeUnit {
     /// its three-byte form, as QuickJS's `JS_ToCStringLen2` keeps it).
     pub source: Option<Box<[u8]>>,
     /// Sorted indices of the calls written as a direct `eval`, which runs as
-    /// indirect eval (phase 0): a backtrace lists no native frame for them,
-    /// as QuickJS's direct eval has none.
+    /// indirect eval: a backtrace lists no native frame for them, as QuickJS's
+    /// direct eval has none.
     pub direct_eval_sites: Box<[u32]>,
 }
 
@@ -288,7 +286,7 @@ impl CodeUnit {
     }
 }
 
-/// Marks a [`CodeUnitId`] in the dynamic store (section 5.5).
+/// Marks a [`CodeUnitId`] in the dynamic store.
 const DYNAMIC: u32 = 1 << 31;
 /// Units in the first dynamic chunk; each next chunk holds twice as many.
 const FIRST_CHUNK: u32 = 64;

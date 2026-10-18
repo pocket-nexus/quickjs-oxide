@@ -1,9 +1,9 @@
-//! Regular-expression objects (phase 3, section 5.3): the program store and
-//! the `RegExp` object kind. A literal allocates a new object on every
-//! evaluation, as the specification requires, over one compiled program per
-//! distinct `(source, flags)`, compiled on first use; `new RegExp(source,
-//! flags)` shares the store, so a program built in a loop does not grow it
-//! without bound. The store is append-only, like the code store.
+//! Regular-expression objects: the program store and the `RegExp` object kind.
+//! A literal allocates a new object on every evaluation, as the specification
+//! requires, over one compiled program per distinct `(source, flags)`, compiled
+//! on first use; `new RegExp(source, flags)` shares the store, so a program
+//! built in a loop does not grow it without bound. The store is append-only,
+//! like the code store.
 
 use oxide_regexp::CompiledRegExp;
 

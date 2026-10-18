@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """The pinned V8-v7 bodies with a fixed diagnostic driver, never a Score: the
-shared workload generator of `iterate_v8.py` and the Callgrind probes. Its
-profiling-build front end went with the profiling API (new-core phase 6).
+shared workload generator of `iterate_v8.py` and the Callgrind probes.
 """
 import hashlib
 import json

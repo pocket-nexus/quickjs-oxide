@@ -1,6 +1,6 @@
-//! Loop probe (phase 2, section 9, Table C): runs `empty_loop` or
-//! `numeric_local_loop` as the lowering emits them, for `perf stat` slopes
-//! and for the size and assembly of `vm::interp::run`.
+//! Loop probe: runs `empty_loop` or `numeric_local_loop` as the lowering emits
+//! them, for `perf stat` slopes and for the size and assembly of
+//! `vm::interp::run`.
 //!
 //! ```sh
 //! cargo build --release -p oxide-core --example loop_probe

@@ -1,10 +1,9 @@
-//! `String` (phase 4, section 6.1 row 3): the constructor, `fromCharCode`,
-//! `fromCodePoint`, `raw`, and every `String.prototype` method including
-//! the Annex B HTML methods, `substr` and the `trimLeft`/`trimRight`
-//! aliases. `match`, `matchAll`, `replace`, `replaceAll`, `search` and
-//! `split` delegate to their argument's `Symbol` method first. `localeCompare`
-//! is QuickJS's code-unit comparison; the locale case mappings are the
-//! plain ones.
+//! `String`: the constructor, `fromCharCode`, `fromCodePoint`, `raw`, and every
+//! `String.prototype` method including the Annex B HTML methods, `substr` and
+//! the `trimLeft`/`trimRight` aliases. `match`, `matchAll`, `replace`,
+//! `replaceAll`, `search` and `split` delegate to their argument's `Symbol`
+//! method first. `localeCompare` is QuickJS's code-unit comparison; the locale
+//! case mappings are the plain ones.
 
 use super::{
     Native, install_constructor, link_constructor, methods, string_repr, string_units, this_string,

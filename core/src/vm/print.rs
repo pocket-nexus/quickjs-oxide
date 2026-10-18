@@ -1,8 +1,7 @@
-//! QuickJS's `JS_PrintValue` (phase 6, section 2.7): what `print`,
-//! `console.log` and an uncaught-exception dump show for a value. It runs
-//! no JavaScript: no accessor, proxy trap, coercion or lazy intrinsic.
-//! Ported from the current engine's `qjs_value_printer`, which matched the
-//! pinned QuickJS.
+//! QuickJS's `JS_PrintValue`: what `print`, `console.log` and an
+//! uncaught-exception dump show for a value. It runs no JavaScript: no
+//! accessor, proxy trap, coercion or lazy intrinsic. It matches the pinned
+//! QuickJS.
 
 use super::Cx;
 use crate::heap::atom::{KeyKind, PropertyKey};

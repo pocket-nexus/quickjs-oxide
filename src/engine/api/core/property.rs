@@ -1,5 +1,4 @@
-//! Property keys and descriptors (phase 6, section 2.7), in the current
-//! API's shapes.
+//! Property keys and descriptors.
 
 use super::RuntimeError;
 use super::value::{CallableRef, SymbolRef, Value};

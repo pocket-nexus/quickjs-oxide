@@ -1,5 +1,4 @@
-//! The worker (new-core phase 4, section 7.1; the runner's one backend since
-//! phase 6 M2): the harness order, admissions, phases and classification
+//! The worker: the harness order, admissions, phases and classification
 //! over `api::core::test262`.
 
 use std::fs;
@@ -24,7 +23,7 @@ use super::{
 };
 
 /// What the shared worker prologue established about the test.
-pub(super) struct NewCoreTest<'a> {
+pub(super) struct WorkerTest<'a> {
     pub(super) options: &'a WorkerOptions,
     pub(super) admissions: Rc<AdmissionCatalog>,
     pub(super) path: &'a Path,
@@ -92,8 +91,8 @@ fn engine_fault(outcome: &str, phase: &str, detail: String) -> WorkerResult {
     WorkerResult::failure(outcome, phase, "EngineError", detail)
 }
 
-pub(super) fn run_worker(test: NewCoreTest<'_>) -> Result<WorkerResult, String> {
-    let NewCoreTest {
+pub(super) fn run_worker(test: WorkerTest<'_>) -> Result<WorkerResult, String> {
+    let WorkerTest {
         options,
         admissions,
         path,
@@ -110,7 +109,7 @@ pub(super) fn run_worker(test: NewCoreTest<'_>) -> Result<WorkerResult, String> 
         !metadata.flags.contains("CanBlockIsFalse"),
         Box::new(quickjs_oxide_host::SystemHost::default()),
     )
-    .map_err(|error| format!("create new-core worker runtime: {error}"))?;
+    .map_err(|error| format!("create worker runtime: {error}"))?;
     let goal = if exact_module.is_some_and(ExactModuleTest::is_fixture_graph) {
         Some(ModuleGraphRootGoal::StaticModule)
     } else if exact_dynamic_import && !parse_rejected_dynamic_import {

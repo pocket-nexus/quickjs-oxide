@@ -9,7 +9,7 @@ use quickjs_oxide::engine::api::core::Value;
 #[test]
 fn array_sort_atom_literal_identity_matches_quickjs() {
     // QuickJS calls no comparator for two identical atoms. The embedding
-    // API copies strings across its boundary (new-core phase 6, 2.7), so
+    // API copies strings across its boundary, so
     // only the identities JavaScript itself makes are observable.
     let runtime = host_runtime();
     let mut caller = runtime.new_context().expect("create context");

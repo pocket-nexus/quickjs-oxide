@@ -1,8 +1,7 @@
-//! The new quickjs-oxide core (issue #122): 8-byte NaN-boxed values, typed
-//! arenas, a value heap with range allocation and a non-moving mark-sweep
-//! collector (phase 1); register bytecode and the loop that runs it (phase 2). See
-//! `docs/performance/new-core-phase1.md`, `new-core-phase2.md` and
-//! `core/README.md`.
+//! The quickjs-oxide core: 8-byte NaN-boxed values, typed arenas, a value heap
+//! with range allocation and a non-moving mark-sweep collector; register
+//! bytecode and the loop that runs it; the builtins, the host boundary and the
+//! embedder's entries. See `core/README.md`.
 
 #![forbid(unsafe_code)]
 

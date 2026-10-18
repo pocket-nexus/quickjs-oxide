@@ -1,6 +1,5 @@
-//! `qjs`: the command-line interpreter on the new core (new-core phase 6,
-//! section 3.1). Its options are QuickJS's `qjs`'s, plus the new core's
-//! measurement and test options taken over from the former `oxide-run`.
+//! `qjs`: the command-line interpreter. Its options are QuickJS's `qjs`'s,
+//! plus the core's measurement and test options.
 
 use quickjs_oxide::QUICKJS_COMPAT_VERSION;
 use quickjs_oxide::engine::api::core::{
@@ -25,7 +24,7 @@ enum SourceGoal {
 /// QuickJS bounds its parser with a one-MiB C stack budget, where recursive
 /// descent frames are small. The Rust parser approximates the same nesting
 /// depths with a weighted budget, but some productions have larger Rust
-/// frames, and the new core re-enters its loop for calls from natives and
+/// frames, and the core re-enters its loop for calls from natives and
 /// for generators. An explicitly sized thread lets them reach QuickJS's
 /// depths. The reservation is virtual address space, not resident memory.
 /// Debug frames are roughly an order of magnitude larger than release

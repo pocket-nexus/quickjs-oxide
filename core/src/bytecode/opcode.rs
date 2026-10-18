@@ -233,8 +233,8 @@ opcodes! {
     /// A script-level declaration: defines global `imm` as `undefined` unless
     /// it exists; `b` holds the [`global`] flags.
     DeclareGlobal: Key,
-    /// A script-level `let` or `class` (section 5.7): a binding of the global
-    /// lexical environment, in the TDZ.
+    /// A script-level `let` or `class`: a binding of the global lexical
+    /// environment, in the TDZ.
     DeclareGlobalLet: Key,
     /// A script-level `const`.
     DeclareGlobalConst: Key,
@@ -277,7 +277,7 @@ opcodes! {
     /// Slot `imm` of the spill scope in `b` = `a`.
     StoreSlot: ABInt,
 
-    // ---- the phase 3 surface ----
+    // ---- rare forms, out of line ----
     /// `a` = a new `arguments` object of the running frame: `imm` 1 for the
     /// mapped form (the parameters' registers hold their cells), 0 for the
     /// unmapped one.
@@ -303,11 +303,11 @@ opcodes! {
     /// outside the surface, reached at run time).
     ThrowInternal: Key,
 
-    // ---- the phase 4 surface (out of line) ----
+    // ---- classes, modules, iteration and suspension (out of line) ----
     /// Throws `TypeError` when `a` (the `new.target` register) is
     /// `undefined`: a class constructor called without `new`.
     CheckCtor: A,
-    /// `a` = the running function's home object (section 5.1).
+    /// `a` = the running function's home object.
     LoadHomeObject: A,
     /// `a = ToObject(b)`.
     ToObject: AB,
@@ -327,11 +327,11 @@ opcodes! {
     ThrowType: Key,
     /// Throws `ReferenceError` whose message is the atom `imm`.
     ThrowReference: Key,
-    /// `a = import(b, c)` (section 5.6): the promise of module `b`'s
-    /// namespace, with the options in `c`.
+    /// `a = import(b, c)`: the promise of module `b`'s namespace, with the
+    /// options in `c`.
     ImportCall: ABC,
 
-    // ---- iteration (section 4.2): a record is three registers ----
+    // ---- iteration: a record is three registers ----
     /// The record at `a` (iterator, `next`, done flag; or array, the
     /// `Value::EMPTY` mark, index) for the iterable in `b`; with `imm` set
     /// always the generic protocol.
@@ -360,7 +360,7 @@ opcodes! {
     /// done flag to `c` (the record is open again unless done).
     IterResult: ABC,
 
-    // ---- classes (section 5.1) ----
+    // ---- classes ----
     /// `a` = the class constructor made from the closure in `b` with the
     /// parent in `a` (`c` 1 when it has a heritage) and `b` = its
     /// prototype; `imm` is the class name.
@@ -397,7 +397,7 @@ opcodes! {
     /// becomes the `this` in `b` for `undefined`; anything else throws.
     CheckDerivedReturn: AB,
 
-    // ---- private names (section 5.1) ----
+    // ---- private names ----
     /// `a` = a new private name described by atom `imm`.
     NewPrivateName: AKey,
     /// Sets the home object of method `a` to `b` and gives `b` a brand.
@@ -423,7 +423,7 @@ opcodes! {
     /// `a` = whether `b` carries the brand of private method `c`.
     PrivateBrandIn: ABC,
 
-    // ---- suspension (section 4.3) ----
+    // ---- suspension ----
     /// A generator suspends before its body: the call returns the
     /// generator object.
     InitialYield: None,

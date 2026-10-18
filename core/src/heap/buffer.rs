@@ -1,4 +1,4 @@
-//! Array buffer storage and typed-array views (phase 4, section 3.2).
+//! Array buffer storage and typed-array views.
 //!
 //! An `ArrayBuffer` owns its bytes; a `SharedArrayBuffer`'s bytes are an
 //! `Arc` of atomic bytes, allocated at the maximum length for a growable

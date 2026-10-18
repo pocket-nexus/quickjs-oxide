@@ -1,9 +1,7 @@
-//! `Number.prototype.toString(radix)`, `parseInt` and `parseFloat` (phase 3,
-//! section 6.2), ported from the current engine's `value/number/format.rs`
-//! and `value/number_parse.rs` with their QuickJS-exact rules: the FREE
-//! formatter keeps the shortest digits that round-trip after rounding to
-//! nearest, ties to even, and the parsers keep only QuickJS's
-//! `atod_max_digits` significant digits.
+//! `Number.prototype.toString(radix)`, `parseInt` and `parseFloat`, with
+//! QuickJS-exact rules: the FREE formatter keeps the shortest digits that
+//! round-trip after rounding to nearest, ties to even, and the parsers keep
+//! only QuickJS's `atod_max_digits` significant digits.
 //!
 //! The common cases stay on plain machine arithmetic: a power-of-two radix
 //! prints the binary digits exactly, an integer below 2^53 prints from a
@@ -745,7 +743,7 @@ fn digit_value(unit: u16) -> Option<u32> {
     }
 }
 
-// ---- toFixed, toExponential, toPrecision (phase 4, section 6.1 row 5) ----
+// ---- toFixed, toExponential, toPrecision ----
 
 /// The largest digit count `toFixed`, `toExponential` and `toPrecision`
 /// accept.

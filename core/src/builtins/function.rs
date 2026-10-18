@@ -1,7 +1,6 @@
-//! `Function`: `%Function.prototype%` (callable, returning `undefined`) and
-//! its `call`, `apply`, `bind`, `toString` and `Symbol.hasInstance`, and
-//! `%ThrowTypeError%`. `new Function` compiles source through the compile
-//! host (section 5.5).
+//! `Function`: `%Function.prototype%` (callable, returning `undefined`) and its
+//! `call`, `apply`, `bind`, `toString` and `Symbol.hasInstance`, and
+//! `%ThrowTypeError%`. `new Function` compiles source through the compile host.
 
 use super::{
     Native, define_name_length, getter, install_constructor, link_constructor, methods,
@@ -134,8 +133,8 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     crate::vm::compile::function_constructor(cx, site, crate::vm::compile::FunctionKind::Normal)
 }
 
-/// `Function.prototype.toString`: the source text of a bytecode function
-/// (section 5.5), QuickJS's native form for the rest.
+/// `Function.prototype.toString`: the source text of a bytecode function,
+/// QuickJS's native form for the rest.
 pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let this = site.this(cx);
     if !ops::is_callable(cx.heap, this) {

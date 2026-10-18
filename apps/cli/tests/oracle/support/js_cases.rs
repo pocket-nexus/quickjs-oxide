@@ -25,8 +25,7 @@
 // Set `ORACLE_CASE=<substring>` to run only matching `dir/file/case` names.
 //
 // A case named in `dev-support/oracle-attributions.tsv` differs from QuickJS
-// by one of the deviation ledger's dropped features (new-core phase 6, M3):
-// it must still differ, so that a row outlives no difference.
+// by one of the deviation ledger's dropped features: it must still differ, so that a row outlives no difference.
 use crate::quickjs_array_completion_oracle::observe_array_completion;
 use crate::runtime_completion_oracle::ORACLE_NORMALIZER;
 use crate::runtime_observation::host_runtime_context;

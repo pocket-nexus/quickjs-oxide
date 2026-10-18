@@ -1,4 +1,4 @@
-// `arguments`, mapped and unmapped (phase 3, section 5.1).
+// `arguments`, mapped and unmapped.
 function count() { return arguments.length; }
 print(count(), count(1), count(1, 2, 3), count(undefined));
 function mapped(a, b) {

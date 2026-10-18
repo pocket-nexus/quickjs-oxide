@@ -1,7 +1,6 @@
-//! Phase 6, section 2.4: the memory report reads the heap without a
-//! collection, its reserved total is what the cap compares against, and its
-//! live counts follow a known object graph exactly. Passes under
-//! `--features gc-stress`.
+//! The memory report reads the heap without a collection, its reserved total is
+//! what the cap compares against, and its live counts follow a known object
+//! graph exactly. Passes under `--features gc-stress`.
 
 use oxide_core::{Runtime, RuntimeOptions, Value};
 

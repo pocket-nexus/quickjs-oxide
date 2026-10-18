@@ -1,6 +1,6 @@
-//! `Promise` (section 6.1 row 7): the constructor, `then`, `catch`,
-//! `finally` and the static combinators, over `vm::jobs`. `Symbol.species`
-//! is dropped (phase 0): `then` and `finally` use `%Promise%`.
+//! `Promise`: the constructor, `then`, `catch`, `finally` and the static
+//! combinators, over `vm::jobs`. `Symbol.species` is dropped: `then` and
+//! `finally` use `%Promise%`.
 
 use super::{
     Native, accessor, install_constructor, link_constructor, methods, native_closure, native_data,

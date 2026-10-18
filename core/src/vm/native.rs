@@ -1,10 +1,9 @@
-//! The native ABI (phase 4, section 2): host functions that read their
-//! receiver and arguments from the register file by index and call back
-//! into JavaScript through the re-entrant [`call`](super::call) and
-//! [`construct`](super::construct) as straight-line Rust. A native roots
-//! what it holds across an allocation or a call on the root stack, which is
-//! cut back when it returns. The natives themselves are the realm's
-//! builtins (`crate::builtins`).
+//! The native ABI: host functions that read their receiver and arguments from
+//! the register file by index and call back into JavaScript through the
+//! re-entrant [`call`](super::call) and [`construct`](super::construct) as
+//! straight-line Rust. A native roots what it holds across an allocation or a
+//! call on the root stack, which is cut back when it returns. The natives
+//! themselves are the realm's builtins (`crate::builtins`).
 
 use super::{Cx, Throw};
 use crate::builtins::Native;

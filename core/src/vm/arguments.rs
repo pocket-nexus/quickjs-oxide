@@ -1,5 +1,5 @@
-//! A frame's actual arguments (phase 3, section 5.1) and the argument lists
-//! of `apply`, `call` and spread calls (section 5.2).
+//! A frame's actual arguments and the argument lists of `apply`, `call` and
+//! spread calls.
 //!
 //! A function that reads its actual arguments (the `ARGUMENTS` unit flag)
 //! finds the first `parameter_count` of them in its parameter registers and

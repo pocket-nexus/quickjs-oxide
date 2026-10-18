@@ -15,7 +15,7 @@ expected_packages = {
     "quickjs-oxide-host", "quickjs-oxide-cli",
     "quickjs-oxide-web", "quickjs-oxide-test262",
     # The engine (#122) and the regular-expression engine and Unicode
-    # tables it uses (phase 3, section 6.1).
+    # tables it uses.
     "oxide-core",
     "oxide-regexp",
 }

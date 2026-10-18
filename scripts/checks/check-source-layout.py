@@ -104,7 +104,7 @@ if re.search(r"\bpub\s+use\b", root_code):
     errors.append("lib.rs must not reexport legacy module paths or API items")
 if set(re.findall(r"\bpub\s+mod\s+(\w+)", engine_code)) != {"api"}:
     errors.append("engine::api must be the only public engine module")
-# The embedding API (new-core phase 6, section 2) keeps its implementation
+# The embedding API keeps its implementation
 # private: its items are its own, the API root's, the front end's (errors,
 # strings, compile options, import attributes) or `oxide-core`'s.
 core_api = rust_code_only((src / "engine/api/core/mod.rs").read_text())

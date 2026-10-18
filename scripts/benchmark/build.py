@@ -89,18 +89,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", type=Path, default=ROOT, help="clean source worktree; this script remains in the tooling checkout")
     parser.add_argument("--plain-target", type=Path, default=ROOT / "target")
-    parser.add_argument("--profile-target", type=Path, default=ROOT / "target/profile-feature")
-    selected = parser.add_mutually_exclusive_group()
-    selected.add_argument("--plain-only", action="store_true")
-    selected.add_argument("--profile-only", action="store_true")
+    parser.add_argument("--plain-only", action="store_true",
+                        help="build the plain CLI (the only build); PGO requires it explicitly")
     parser.add_argument("--jobs", type=int, default=2)
     parser.add_argument("--explicit-target", help="explicit Cargo target; keeps host build scripts uninstrumented")
     parser.add_argument("--optimization", choices=("none", "profile-generate", "profile-use"), default="none")
     parser.add_argument("--profile-data", type=Path, help="new raw directory or merged profdata, according to optimization")
     parser.add_argument("--training-receipt", type=Path, help="verified training chain for profile-use")
     args = parser.parse_args()
-    if args.jobs < 1 or args.plain_target.resolve() == args.profile_target.resolve():
-        parser.error("jobs must be positive; build directories must differ")
+    if args.jobs < 1:
+        parser.error("jobs must be positive")
     repo_path = args.repo.resolve()
     source = git_metadata(repo_path)
     if (source["commit"]["exit_code"] or source["tree"]["exit_code"]
@@ -145,17 +143,13 @@ def main():
     cargo = command_output(["cargo", "-V"], repo_path)
     if rustc["exit_code"] or cargo["exit_code"]:
         parser.error("rustc and cargo must be available on the build host")
-    # The profiling build went with the profiling API (new-core phase 6,
-    # section 2.4): every build is the plain CLI.
-    if args.profile_only:
-        parser.error("the profiling build was removed; use qjs --gc-stats, --ic-stats or --memory-report")
-    selected_builds = [("plain", args.plain_target, [])]
-    if repo_path != ROOT and any(target.resolve() in ((ROOT / "target").resolve(),
-                                                  (ROOT / "target/profile-feature").resolve())
-                                 for _, target, _ in selected_builds):
-        parser.error("external --repo requires distinct --plain-target / --profile-target paths")
-    for name, target, enabled in selected_builds:
-        features = ["--features", ",".join(enabled)] if enabled else []
+    # Every build is the plain CLI with no optional features; counters come
+    # from `qjs --gc-stats`, `--ic-stats` and `--memory-report`.
+    selected_builds = [("plain", args.plain_target)]
+    if repo_path != ROOT and any(target.resolve() == (ROOT / "target").resolve()
+                                 for _, target in selected_builds):
+        parser.error("external --repo requires a distinct --plain-target path")
+    for name, target in selected_builds:
         target = target.resolve()
         target_triple = args.explicit_target or env.get("CARGO_BUILD_TARGET")
         artifact_dir = target / target_triple / "release" if target_triple else target / "release"
@@ -169,7 +163,7 @@ def main():
             snapshot.write_bytes(contents)
             tooling_snapshots[filename] = {"path": str(snapshot), "sha256": digest(snapshot)}
         command = ["cargo", "build", "--locked", "--release", "--verbose", "-p", "quickjs-oxide-cli",
-                   "--no-default-features", "--target-dir", str(target), "--jobs", str(args.jobs), *features]
+                   "--no-default-features", "--target-dir", str(target), "--jobs", str(args.jobs)]
         if args.explicit_target:
             command += ["--target", args.explicit_target]
         with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
@@ -191,7 +185,7 @@ def main():
                              "data_sha256": digest(args.profile_data) if args.optimization == "profile-use" else None,
                              "training_receipt": {"path": str(args.training_receipt.resolve()),
                                                   "sha256": digest(args.training_receipt)} if args.training_receipt else None},
-            "vm_configuration": "stack-vm", "features": enabled,
+            "features": [],
             "commit": revision, "source": source, "binary_sha256": digest(binary),
             "tooling": {"repository": tooling_repository, "snapshots": tooling_snapshots},
             "command": command, "cwd": str(repo_path), "exit_code": result.returncode,

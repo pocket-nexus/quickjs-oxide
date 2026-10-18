@@ -170,9 +170,9 @@ impl CodeBuilder {
         &self.code
     }
 
-    /// The unit, with the layout and counts the lowering decided, and its
-    /// cache sites numbered (section 2.1 of phase 3): the named-property
-    /// sites first, in instruction order, then the global and `new` sites.
+    /// The unit, with the layout and counts the lowering decided, and its cache
+    /// sites numbered: the named-property sites first, in instruction order,
+    /// then the global and `new` sites.
     pub fn finish(mut self, layout: UnitLayout) -> CodeUnit {
         let ic_count = number_sites(&mut self.code);
         CodeUnit {

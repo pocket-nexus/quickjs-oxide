@@ -1,6 +1,5 @@
-//! Async generators (phase 4, section 4.3): the request queue and the
-//! `AsyncGenerator*` abstract operations over the suspension of
-//! `vm::suspend`.
+//! Async generators: the request queue and the `AsyncGenerator*` abstract
+//! operations over the suspension of `vm::suspend`.
 //!
 //! The record's second slot is the queue: an object whose internal slots
 //! hold five values per request (kind, value, and the capability's promise,

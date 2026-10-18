@@ -13,8 +13,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use quickjs_oxide::engine::api::core::Host;
 use tz::TimeZone;
 
-/// The core's host over the system clock and the host TZif/POSIX rules
-/// (new-core phase 6, section 2.2); output and files are the process's.
+/// The core's host over the system clock and the host TZif/POSIX
+/// rules; output and files are the process's.
 #[derive(Debug, Default)]
 pub struct SystemHost {
     cached_time_zone: RefCell<Option<CachedTimeZone>>,

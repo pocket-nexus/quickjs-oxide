@@ -143,8 +143,8 @@ pub(crate) const MAX_STRING_LEN: usize = (1 << 30) - 1;
 
 /// `a + b` for two strings.
 ///
-/// A result of at least [`ROPE_MIN`] units is a rope (section 3.3); a
-/// shorter one is copied, which keeps short keys flat.
+/// A result of at least [`ROPE_MIN`] units is a rope; a shorter one is copied,
+/// which keeps short keys flat.
 pub(crate) fn concat(cx: &mut Cx<'_>, a: StringId, b: StringId) -> Result<Value, Throw> {
     let (left_len, right_len) = (cx.heap.string_len(a), cx.heap.string_len(b));
     if right_len == 0 {
@@ -866,7 +866,7 @@ fn ordinary_instance_of(
     }
     let names = cx.realm.names;
     // The constructor's own data `prototype` is read straight from its slot
-    // (phase 3 M5, on Earley-Boyer's `instanceof` tests).
+    // (measured on Earley-Boyer's `instanceof` tests).
     let prototype = match cx.heap.lookup_own(function, Names::key(names.prototype)) {
         Some((slot, flags)) if !flags.has(crate::shape::PropertyFlags::ACCESSOR) => {
             cx.heap.get_slot(function, slot)

@@ -1,5 +1,4 @@
-//! Release-assembly probe for `Value::kind` and `Value::as_object` (phase 1,
-//! M1 acceptance). Build with
+//! Release-assembly probe for `Value::kind` and `Value::as_object`. Build with
 //! `cargo build --release -p oxide-core --example value_asm` and disassemble
 //! the `probe_*` symbols.
 

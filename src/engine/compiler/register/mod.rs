@@ -1,7 +1,6 @@
-//! Lowering from the compiler's stack code to the new core's register code
-//! (`docs/performance/new-core-phase2.md`, section 3).
+//! Lowering from the compiler's stack code to `oxide-core`'s register code.
 //!
-//! The input is the [`UnlinkedFunction`] tree the current engine publishes:
+//! The input is the [`UnlinkedFunction`] tree the front end compiles:
 //! QuickJS-shaped stack code whose operand-stack depth is static at every
 //! instruction. The stack depth is the register allocator. Register 0 is
 //! `this`, then the parameters, then the locals, then one temporary `T(d)` per
@@ -56,9 +55,10 @@ use crate::engine::value::{JsString, PrimitiveValue};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum LowerError {
-    /// A construct outside the phase 2 surface (section 3.4).
+    /// A construct the lowering does not support (direct eval code, or an
+    /// instruction or constant it has no form for).
     Unsupported(String),
-    /// A construct phase 0 made an early `SyntaxError` (`with`).
+    /// A dropped feature that is an early `SyntaxError` (`with`).
     Syntax(String),
     /// The input broke an invariant the stack code guarantees.
     Internal(String),
@@ -97,7 +97,7 @@ impl From<ValidateError> for LowerError {
     }
 }
 
-/// A script lowered and instantiated on the new core.
+/// A script lowered and instantiated on the core.
 pub(crate) struct LoweredScript {
     pub(crate) root: CodeUnitId,
     /// The script's function object. Unrooted: the caller holds it before
@@ -137,7 +137,7 @@ pub(crate) fn lower_script_into(
 
 /// Lowers a compiled module's function tree into `runtime` and describes
 /// its bindings, requests, imports and exports for the core's module
-/// records (phase 4, section 5.6); also returns the root unit.
+/// records; also returns the root unit.
 pub(crate) fn lower_module_tree_into(
     runtime: &mut Compiler<'_>,
     module: &crate::engine::code::module::UnlinkedModule,
@@ -346,8 +346,7 @@ fn lower_function(
 /// A function whose operand stack does not fit either keeps its first
 /// `temp_registers` depths in registers and the deeper ones in the spill
 /// scope's slots after the spilled locals, reached through [`SCRATCH`]
-/// registers above the temporaries (`docs/performance/new-core-phase6-m4b.md`,
-/// section 4.2).
+/// registers above the temporaries.
 #[derive(Clone, Copy, Debug)]
 struct Layout {
     first_local: u32,
@@ -359,8 +358,7 @@ struct Layout {
     temp_registers: u32,
     /// The spill slot of depth `temp_registers`.
     first_temp_slot: u32,
-    /// The register a construction writes `new.target` into (phase 4,
-    /// section 4.5): a hidden local right after the parameters.
+    /// The register a construction writes `new.target` into: a hidden local right after the parameters.
     new_target: Option<u32>,
 }
 
@@ -458,7 +456,7 @@ impl Layout {
 
 /// Rejects whole-function features outside the surface.
 fn check_surface(function: &UnlinkedFunction) -> Result<(), LowerError> {
-    // Phase 0 dropped `with`: an early `SyntaxError`, as in strict code.
+    // `with` is a dropped feature: an early `SyntaxError`, as in strict code.
     if function
         .local_definitions()
         .iter()
@@ -470,8 +468,8 @@ fn check_surface(function: &UnlinkedFunction) -> Result<(), LowerError> {
     }
     let metadata = function.metadata();
     let unsupported = if metadata.eval_kind == EvalKind::Direct {
-        // Direct eval code: a direct `eval` runs as indirect eval (phase 0,
-        // section 5.5), so only indirect eval code is compiled.
+        // Direct eval code: a direct `eval` runs as indirect eval (a dropped
+        // feature), so only indirect eval code is compiled.
         Some("direct eval code")
     } else {
         None
@@ -611,7 +609,7 @@ fn binary(instruction: &Instruction) -> Option<(Opcode, Option<Opcode>)> {
 }
 
 /// What an instruction outside the surface belongs to, for `Unsupported`:
-/// the construct when it is one of section 3.4's, else the stack-code name.
+/// the construct when it is a named one, else the stack-code name.
 fn unsupported_instruction(instruction: &Instruction) -> LowerError {
     use Instruction as I;
     let construct = match instruction {
@@ -753,7 +751,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             }
         }
         let code = function.code();
-        // Section 5.1: a mapped `arguments` object aliases the parameters
+        // A mapped `arguments` object aliases the parameters
         // through cells, so every parameter of such a function is one.
         if code
             .iter()
@@ -1403,7 +1401,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     // ---- function entry ----
 
     fn prologue(&mut self) -> Result<(), LowerError> {
-        // Section 4.3: an async function returns its promise; the body runs
+        // An async function returns its promise; the body runs
         // as a resumption from here.
         if self.function.metadata().function_kind == FunctionKind::Async {
             self.emit(|b| b.op(Opcode::AsyncStart));
@@ -1413,7 +1411,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             self.emit(|b| b.a_count(Opcode::NewSpill, spill, slots));
         }
         if self.is_script {
-            // Section 5.7: every name is checked before any binding is made,
+            // Every name is checked before any binding is made,
             // in GlobalDeclarationInstantiation's passes (16.1.7 steps 3, 4,
             // 10 and 11): the lexical names, then every var and function
             // name against the lexical declarations, then whether the
@@ -1961,7 +1959,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.emit(|b| b.key(Opcode::ThrowConstAssign, key));
             }
 
-            // ---- the phase 3 surface ----
+            // ---- arguments, rest, construction, for-in, spread and eval ----
             I::Arguments(kind) => {
                 let dst = self.result_register()?;
                 let mapped = i32::from(kind == ArgumentsKind::Mapped);
@@ -2044,7 +2042,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.call(op, 0, 3)?;
             }
             // A direct `eval` is a call of whatever `eval` resolves to, which
-            // runs as indirect eval (phase 0, section 5.5).
+            // runs as indirect eval (a dropped feature).
             I::Eval { argument_count, .. } => {
                 let at = self.call(Opcode::Call, argument_count, 1)?;
                 self.direct_eval_sites.push(at);
@@ -2073,7 +2071,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::DynamicEnvironmentObject(_) => self.stack.push(Entry::Undefined),
             I::DeleteDynamicBinding { .. } => self.stack.push(Entry::Bool(true)),
 
-            // ---- iteration (phase 4, section 4.2) ----
+            // ---- iteration ----
             I::ForOfStart | I::IteratorStart => {
                 let generic = i32::from(matches!(instruction, I::IteratorStart));
                 let (depth, [iterable]) = self.pop_operands::<1>()?;
@@ -2199,7 +2197,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.push_canon(1);
             }
 
-            // ---- suspension (section 4.3) ----
+            // ---- suspension ----
             I::InitialYield => {
                 self.emit(|b| b.op(Opcode::InitialYield));
             }
@@ -2228,7 +2226,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.last_dest = None;
             }
 
-            // ---- classes (section 5.1) ----
+            // ---- classes ----
             I::DefineClass { name, has_heritage } => {
                 let key = self.name_key(name)?;
                 let base = self.stack.len() - 2;
@@ -2431,7 +2429,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.push_result(at)?;
             }
 
-            // ---- object spread and references (section 5.2) ----
+            // ---- object spread and references ----
             I::CopyDataProperties => {
                 let (_, [source]) = self.pop_operands::<1>()?;
                 let target = self.operand(self.stack.len() - 1)?;
@@ -2581,8 +2579,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         Ok(at)
     }
 
-    /// A call whose window reaches the spill scope (section 4.2 of
-    /// `new-core-phase6-m4b.md`): on a run of scratch registers when it
+    /// A call whose window reaches the spill scope: on a run of scratch registers when it
     /// fits, else as a spread call over an array of the arguments
     /// (`CallSpread` copies a dense array without the iterator protocol).
     fn call_from_slots(
@@ -2719,7 +2716,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         Ok(2)
     }
 
-    // ---- phase 4 helpers ----
+    // ---- iterator records, `new.target`, private names, templates ----
 
     /// Pushes `count` canonical entries (values an instruction wrote to the
     /// temporaries at their depths).
@@ -3067,7 +3064,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             self.origins.extend([origin, origin]);
             self.builder.patch_target(at, start);
         }
-        // Section 4.2: an exception leaving an iterator record's range closes
+        // An exception leaving an iterator record's range closes
         // the iterator (unless it is done) and propagates. Each record gets a
         // stub after the code, reached through its own handler entry.
         let mut stubs = vec![None; self.analysis.catches.len()];

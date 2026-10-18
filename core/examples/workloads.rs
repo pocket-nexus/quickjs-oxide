@@ -1,4 +1,4 @@
-//! Phase 1, M5 and M6: Rust-driven micro-workloads for the new heap.
+//! Rust-driven micro-workloads for the heap.
 //!
 //! `workloads <name> <iterations> [--cap-mib N] [--min-heap-mib N] [--ring N] [--props 1..4] [--report]`
 //!
@@ -15,7 +15,7 @@
 //! | `alloc-only` | new object with four reserved slots, no property |
 //! | `closures` | one scope (parent: a fixed outer scope) and one function holding it |
 //! | `proto-read` | uncached read of a property found three prototypes up |
-//! | `proto-read-cached` | the phase 3 IC check: shape compare, validity cell, holder slot load |
+//! | `proto-read-cached` | the prototype IC check: shape compare, validity cell, holder slot load |
 //! | `churn` | allocate an object or an array of 1–64 elements into a ring of 4096 live entries (`--ring`) |
 
 use std::hint::black_box;

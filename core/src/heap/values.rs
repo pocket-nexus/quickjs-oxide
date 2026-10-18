@@ -2,11 +2,10 @@
 //!
 //! Every property value, dense element and scope slot lives in a range. Size
 //! classes 1, 2, 4, …, 256 each keep a free list; larger ranges are also
-//! power-of-two blocks and use the same per-class lists (the "large-block
-//! list" of the plan is the classes above 256). A range's length is always its
-//! class size, which lets an object header store it as one `u8` exponent.
-//! Phase 1 does not compact; [`ValueHeap::fragmentation`] reports what churn
-//! leaves behind.
+//! power-of-two blocks and use the same per-class lists. A range's length is
+//! always its class size, which lets an object header store it as one `u8`
+//! exponent. The value heap does not compact; [`ValueHeap::fragmentation`]
+//! reports what churn leaves behind.
 
 use crate::value::Value;
 

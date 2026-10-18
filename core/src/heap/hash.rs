@@ -1,5 +1,5 @@
 //! A small multiplicative hasher for the heap's internal tables, whose keys are
-//! 32-bit indices and are not attacker-chosen hash-flooding inputs in phase 1.
+//! 32-bit indices and are not attacker-chosen hash-flooding inputs.
 
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};

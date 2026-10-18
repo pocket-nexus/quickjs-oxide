@@ -1,13 +1,13 @@
 //! The atom table and `PropertyKey`.
 //!
 //! An atom is a string record with `is_atom` set, found by content through the
-//! table. In phase 1 atoms are strong roots.
+//! table. Atoms are strong roots: the collector marks every one.
 //!
-//! `PropertyKey(u32)` keeps the current core's tagging: bit 31 marks an
-//! immediate array index (`0 ..= 2^31 - 1`), which never enters the atom
-//! table; otherwise bit 30 separates symbols from atoms. Array indices from
-//! `2^31` to `2^32 - 2` are atoms whose record caches the index, so key
-//! ordering still treats them as indices.
+//! `PropertyKey(u32)` is tagged: bit 31 marks an immediate array index
+//! (`0 ..= 2^31 - 1`), which never enters the atom table; otherwise bit 30
+//! separates symbols from atoms. Array indices from `2^31` to `2^32 - 2` are
+//! atoms whose record caches the index, so key ordering still treats them as
+//! indices.
 
 use std::fmt;
 

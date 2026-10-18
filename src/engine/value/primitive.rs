@@ -16,8 +16,8 @@ use crate::engine::value::bigint::JsBigInt;
 #[derive(Clone)]
 pub struct JsString(Rc<StringRepr>);
 
-/// Non-owning handle used by the runtime atom table to recover the identity of
-/// an atom-backed String value without keeping otherwise-dead strings alive.
+/// Non-owning handle to a String value ([`JsString::downgrade`]): `upgrade`
+/// recovers the same string while another handle keeps it alive.
 #[derive(Clone)]
 pub struct WeakJsString(Weak<StringRepr>);
 
@@ -37,8 +37,10 @@ impl fmt::Debug for WeakJsString {
     }
 }
 
-/// Fallible string-kernel operations which map to JavaScript-visible QuickJS
-/// InternalErrors at the VM/native realm boundary.
+/// Why a string-kernel operation failed. It becomes a QuickJS InternalError
+/// (`ErrorKind::JsInternal`) in the front end's errors, and a
+/// [`RuntimeError`](crate::engine::api::core::RuntimeError) in the embedding
+/// API.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum JsStringError {
     TooLong,

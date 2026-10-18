@@ -1,5 +1,4 @@
-//! `Proxy` and `Proxy.revocable` (section 3.1); the internal methods are in
-//! `vm::proxy`.
+//! `Proxy` and `Proxy.revocable`; the internal methods are in `vm::proxy`.
 
 use super::{Native, define, methods, native_closure, native_data};
 use crate::heap::HeapError;

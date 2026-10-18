@@ -1,6 +1,5 @@
-//! M3 acceptance: the tests of `src/engine/object/shape.rs` ported to the
-//! transition tree, plus dictionary mode, dense arrays, scopes and validity
-//! cells.
+//! Shapes: the transition tree, dictionary mode, dense arrays, scopes and
+//! validity cells.
 
 use oxide_core::heap::gc::HeapLimits;
 use oxide_core::shape::{DICTIONARY_THRESHOLD, TABLE_THRESHOLD};
@@ -27,7 +26,6 @@ fn add(heap: &mut Heap, object: ObjectId, key: PropertyKey) {
         .unwrap();
 }
 
-/// Ported: `small_shape_lookup_allocates_only_above_eight_entries`.
 #[test]
 fn lookup_table_exists_only_above_eight_properties() {
     let mut heap = Heap::default();
@@ -53,7 +51,6 @@ fn lookup_table_exists_only_above_eight_properties() {
     }
 }
 
-/// Ported: `constructor_builds_lookup_and_rejects_invalid_entries`.
 #[test]
 fn lookup_positions_and_duplicate_keys() {
     let mut heap = Heap::default();
@@ -72,7 +69,6 @@ fn lookup_positions_and_duplicate_keys() {
     assert_eq!(heap.get_slot(object, 0), Value::int32(first.raw() as i32));
 }
 
-/// Ported: `transitions_preserve_or_update_insertion_positions`.
 #[test]
 fn reflag_keeps_slot_delete_and_readd_moves_to_end() {
     let mut heap = Heap::default();
@@ -123,7 +119,6 @@ fn reflag_keeps_slot_delete_and_readd_moves_to_end() {
     assert_eq!(heap.own_keys(twin), [alpha, beta]);
 }
 
-/// Ported: `own_keys_follow_array_string_symbol_order_and_hide_private_names`.
 #[test]
 fn own_keys_order_indices_strings_symbols_and_hide_private_names() {
     let mut heap = Heap::default();
@@ -171,7 +166,6 @@ fn own_keys_order_indices_strings_symbols_and_hide_private_names() {
     );
 }
 
-/// Ported: `delete_then_readd_moves_non_index_key_to_category_end`.
 #[test]
 fn delete_then_readd_leaves_other_objects_alone() {
     let mut heap = Heap::default();
@@ -393,9 +387,8 @@ fn cells_and_prototype_infos_die_with_their_objects() {
     assert_eq!(heap.live_cells(), 1, "only the static cell is left");
 }
 
-/// Phase 3, section 3: an accessor takes two consecutive slots (getter,
-/// setter) in the transition tree and in dictionary mode, and the properties
-/// after it keep their own.
+/// An accessor takes two consecutive slots (getter, setter) in the transition
+/// tree and in dictionary mode, and the properties after it keep their own.
 #[test]
 fn accessors_take_two_slots() {
     let mut heap = Heap::default();

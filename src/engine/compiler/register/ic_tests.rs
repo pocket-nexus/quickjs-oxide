@@ -1,4 +1,4 @@
-//! Phase 3 M2 acceptance: the `SetField`, global and constructor caches and
+//! The `SetField`, global and constructor caches and
 //! polymorphic sites, on lowered programs. Debug builds count cache hits, so
 //! there each test checks that the path it names was taken as well as what
 //! the program printed and the entries it left; a release test run (no

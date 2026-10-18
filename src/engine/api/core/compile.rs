@@ -1,5 +1,5 @@
-//! The front end and the lowering as the core's compile host (phase 4,
-//! section 6.3): scripts, `eval` code and modules are compiled by the
+//! The front end and the lowering as the core's compile host:
+//! scripts, `eval` code and modules are compiled by the
 //! shared front end and lowered to register code in the running runtime.
 
 use oxide_core::vm::compile::{CompileError, CompileKind, CompileRequest, Compiler};

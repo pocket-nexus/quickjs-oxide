@@ -1,8 +1,7 @@
-//! `Iterator` and the iterator helpers (phase 4, section 6.1 row 8): the
-//! abstract constructor, `Iterator.from` and `Iterator.concat`, and on
-//! `%Iterator.prototype%` the lazy helpers (`map`, `filter`, `take`,
-//! `drop`, `flatMap`) and the eager consumers (`reduce`, `toArray`,
-//! `forEach`, `some`, `every`, `find`).
+//! `Iterator` and the iterator helpers: the abstract constructor,
+//! `Iterator.from` and `Iterator.concat`, and on `%Iterator.prototype%` the
+//! lazy helpers (`map`, `filter`, `take`, `drop`, `flatMap`) and the eager
+//! consumers (`reduce`, `toArray`, `forEach`, `some`, `every`, `find`).
 //!
 //! A helper is an internal record (tag `IteratorHelper`) whose slots hold
 //! the underlying iterator and its `next`, the helper's kind, its callback,

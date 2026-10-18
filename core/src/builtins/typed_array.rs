@@ -1,8 +1,7 @@
-//! `%TypedArray%` and the twelve typed-array constructors (phase 4, section
-//! 6.1 row 9). A typed array is an `ObjectKind::TypedArray` record over a
-//! buffer (`vm::typed`). `Symbol.species` is not consulted (phase 0): the
-//! methods that create a typed array make one of the receiver's kind
-//! through its intrinsic constructor.
+//! `%TypedArray%` and the twelve typed-array constructors. A typed array is an
+//! `ObjectKind::TypedArray` record over a buffer (`vm::typed`).
+//! `Symbol.species` is not consulted: the methods that create a typed array
+//! make one of the receiver's kind through its intrinsic constructor.
 
 use std::cmp::Ordering;
 

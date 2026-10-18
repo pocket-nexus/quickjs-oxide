@@ -1,7 +1,6 @@
-//! M2 acceptance for the lowering: the symbolic-stack rules, captured
-//! bindings, handlers, and the corpus. The loop that runs this code is M3/M4;
-//! until then these tests check the code itself, and every lowered unit
-//! passes the publication validator.
+//! The lowering's code: the symbolic-stack rules, captured bindings,
+//! handlers, and the corpus. These tests check the code itself (`run_tests`
+//! runs it), and every lowered unit passes the code store's validator.
 
 use std::path::Path;
 
@@ -302,10 +301,10 @@ fn handler_resumes_above_live_operands() {
     );
 }
 
-/// The constructs phase 3 declined lower from phase 4 on; only eval code and
-/// modules are still declined (until M7).
+/// Generators, classes, for-of, spread, destructuring, methods, async
+/// functions and private names all lower.
 #[test]
-fn phase4_surface_lowers() {
+fn generators_classes_and_iteration_lower() {
     for source in [
         "function* g() { yield 1; }",
         "class C {}",
@@ -381,7 +380,7 @@ fn corpus_lowers_or_is_reported_unsupported() {
                     );
                 }
             }
-            // `with` is the early `SyntaxError` of phase 0.
+            // `with` is a dropped feature: an early `SyntaxError`.
             Err(LowerError::Unsupported(construct) | LowerError::Syntax(construct)) => {
                 unsupported += 1;
                 *reasons.entry(construct).or_insert(0) += 1;
@@ -393,7 +392,7 @@ fn corpus_lowers_or_is_reported_unsupported() {
     assert!(lowered > 50, "lowered {lowered}, unsupported {unsupported}");
 }
 
-/// The fixed probes inside the phase 2 surface all lower.
+/// These fixed probes lower.
 #[test]
 fn fixed_probes_lower() {
     let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/performance/probes/fixed");

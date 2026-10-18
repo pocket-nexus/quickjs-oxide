@@ -126,7 +126,7 @@ intrinsics! {
     ArrayBuffer,
     /// `Array.prototype.values`, which is also `arguments[@@iterator]`.
     ArrayValues,
-    /// The global lexical environment's dictionary (section 5.7).
+    /// The global lexical environment's dictionary.
     GlobalLexical,
 }
 
@@ -272,8 +272,7 @@ impl WellKnown {
     }
 }
 
-/// The single realm of a runtime (phase 0, section 2). Its objects are fixed
-/// roots of the heap.
+/// The single realm of a runtime. Its objects are fixed roots of the heap.
 pub struct Realm {
     global: ObjectId,
     /// Cells so the builtins can record the intrinsics they create while the
@@ -281,8 +280,7 @@ pub struct Realm {
     intrinsics: [std::cell::Cell<ObjectId>; Intrinsic::COUNT],
     pub(crate) names: Names,
     pub(crate) symbols: WellKnown,
-    /// The private key under which a home object keeps its class's brand
-    /// (section 5.1).
+    /// The private key under which a home object keeps its class's brand.
     pub(crate) brand: SymbolId,
     /// `%RegExp.prototype%`'s flag accessors as installed, for the `flags`
     /// getter's fast path.
@@ -312,17 +310,17 @@ impl Realm {
 pub struct Runtime {
     pub(crate) heap: Heap,
     /// Beside the heap, not in it: the main loop borrows the running unit's
-    /// code across heap calls (phase 2, section 2).
+    /// code across heap calls.
     pub(crate) code: CodeStore,
     pub(crate) realm: Realm,
     pub(crate) host: Services,
-    /// The regular-expression programs (phase 3, section 5.3): append-only,
-    /// beside the heap like the code store.
+    /// The regular-expression programs: append-only, beside the heap like the
+    /// code store.
     pub(crate) regexps: RegExpStore,
 }
 
-/// How a runtime is configured (phase 6, section 2.4). `Default` is the
-/// behavior every runtime had before the options existed.
+/// How a runtime is configured. `Default` is the behavior every runtime had
+/// before the options existed.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RuntimeOptions {
     /// The heap cap; `usize::MAX` bytes for none.
@@ -429,8 +427,8 @@ impl Runtime {
         let boolean_prototype = root(&mut heap, boolean_prototype);
         let global = heap.alloc_object(ObjectKind::GlobalObject, Some(object_prototype), 16)?;
         let global = root(&mut heap, global);
-        // The global lexical environment (section 5.7): a dictionary like the
-        // global object, sharing its generation.
+        // The global lexical environment: a dictionary like the global object,
+        // sharing its generation.
         let lexical = heap.alloc_object(ObjectKind::GlobalObject, None, 16)?;
         let lexical = root(&mut heap, lexical);
         let names = Names::new(&mut heap)?;
@@ -510,8 +508,8 @@ impl Runtime {
         self.host.can_block = can_block;
     }
 
-    /// Installs the embedder's hooks (section 6.3) and seeds `Math.random`
-    /// from [`Host::random_seed`](crate::host::Host::random_seed).
+    /// Installs the embedder's hooks and seeds `Math.random` from
+    /// [`Host::random_seed`](crate::host::Host::random_seed).
     pub fn set_host(&mut self, mut hooks: Box<dyn crate::host::Host>) {
         let seed = hooks.random_seed();
         self.host.seed_random(seed);
@@ -584,8 +582,8 @@ impl Runtime {
         self.call(Value::object(script), global, &[])
     }
 
-    /// Runs pending jobs until the queue is empty (section 5.4); the host
-    /// calls it at its boundary. A job that throws stops the drain.
+    /// Runs pending jobs until the queue is empty; the host calls it at its
+    /// boundary. A job that throws stops the drain.
     pub fn run_jobs(&mut self) -> Result<(), Throw> {
         crate::vm::jobs::run_jobs(&mut self.cx())
     }
@@ -677,21 +675,21 @@ impl Runtime {
     }
 
     /// The heap, the code store and the realm, for a compilation before the
-    /// program runs (section 5.5).
+    /// program runs.
     pub fn compiler(&mut self) -> crate::vm::compile::Compiler<'_> {
         crate::vm::compile::Compiler::owned(&mut self.heap, &mut self.code, &self.realm)
     }
 
     /// Installs the embedder's compiler, for `eval`, the `Function`
-    /// constructors and `$262.evalScript` (section 6.3).
+    /// constructors and `$262.evalScript`.
     pub fn set_compiler(&mut self, compile: crate::vm::compile::CompileFn) {
         self.host.compile = Some(compile);
     }
 
-    /// The inline-cache report of section 2.6, when the counters exist (the
-    /// `ic-stats` feature or a debug build): hits and misses per cache kind,
-    /// the site states, and the `worst` sites with the most misses (unit
-    /// name, instruction index, key).
+    /// The inline-cache report, when the counters exist (the `ic-stats` feature
+    /// or a debug build): hits and misses per cache kind, the site states, and
+    /// the `worst` sites with the most misses (unit name, instruction index,
+    /// key).
     pub fn ic_report(&self, worst: usize) -> Option<String> {
         use std::fmt::Write;
 
@@ -786,9 +784,9 @@ impl Runtime {
         self.realm.intrinsic(intrinsic)
     }
 
-    /// A tagged template's site object (phase 4, section 5.2): a frozen
-    /// array of the cooked strings with a frozen `raw` array of the raw
-    /// ones. The values need no rooting (atoms and `undefined`).
+    /// A tagged template's site object: a frozen array of the cooked strings
+    /// with a frozen `raw` array of the raw ones. The values need no rooting
+    /// (atoms and `undefined`).
     pub fn template_object(
         &mut self,
         cooked: &[Value],
@@ -877,8 +875,8 @@ impl Runtime {
         })
     }
 
-    /// What every part of the runtime holds (phase 6, section 2.4), read
-    /// without a collection. Its reserved total equals [`Heap::bytes`].
+    /// What every part of the runtime holds, read without a collection. Its
+    /// reserved total equals [`Heap::bytes`].
     pub fn memory_report(&self) -> crate::heap::report::MemoryReport {
         let mut report = self.heap.report();
         let code = &mut report.code;

@@ -1,4 +1,4 @@
-//! Module loading (phase 6, sections 2.2, 2.3 and 2.7): the embedder's
+//! Module loading: the embedder's
 //! [`ModuleLoader`], the [`Scope`] a host callback receives, and the shims
 //! the core's module host calls.
 
@@ -75,7 +75,7 @@ pub trait ModuleLoader {
     ) -> Result<ModuleSource, Value>;
 }
 
-/// A host callback's view of the runtime (section 2.3): creating strings,
+/// A host callback's view of the runtime: creating strings,
 /// objects and errors, compiling a module source. Values made through it are
 /// handles like any other and outlive the callback.
 pub struct Scope<'a> {

@@ -1,8 +1,8 @@
-//! `JSON` (phase 4, section 6.1 row 6): `parse` with a reviver and the
-//! JSON.parse source text access proposal's `context.source`, `stringify`,
-//! and `rawJSON`/`isRawJSON`. The parser reports QuickJS's messages; the
-//! serializer is the spec's `SerializeJSONProperty` over the internal
-//! methods, so proxies, getters and `toJSON` are observed in spec order.
+//! `JSON`: `parse` with a reviver and the JSON.parse source text access
+//! proposal's `context.source`, `stringify`, and `rawJSON`/`isRawJSON`. The
+//! parser reports QuickJS's messages; the serializer is the spec's
+//! `SerializeJSONProperty` over the internal methods, so proxies, getters and
+//! `toJSON` are observed in spec order.
 
 use super::{Native, define, methods, to_string_tag};
 use crate::ErrorKind;

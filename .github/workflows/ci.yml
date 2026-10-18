@@ -106,13 +106,13 @@ jobs:
           cargo test --locked --features test262-host \
             --test oracle test262_
           ./scripts/checks/check-oracle-registry.sh --compiled
-          # New core: the whole suite again with a collection at every allocation.
+          # The core's whole suite again with a collection at every allocation.
           cargo test --locked -p oxide-core --features gc-stress
           # The lowering and the corpus under stress.
           cargo test --locked -p quickjs-oxide --features gc-stress --lib compiler::register
           # The driver under stress: the fixed probes at smoke size and the corpus.
           cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
-          python3 scripts/checks/check-new-core-stress.py --qjs target/debug/qjs
+          python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 
       - name: Lint targets
         run: |
@@ -168,8 +168,7 @@ jobs:
       - name: Replay the frozen focused Test262 vector
         run: ./scripts/test262/test-test262.sh --spec dev-support/test262/current.conf --focused
 
-  # New core, phase 3 section 7 and phase 4 section 8: the 37 suite programs
-  # at one run() per benchmark under the stress collector, against a one-run
+  # The 37 benchmark suite programs at one run() per benchmark under the stress collector, against a one-run
   # suite manifest.
   # The suite build needs the pinned upstream checkouts, so it is nightly.
   suite-stress:
@@ -209,7 +208,7 @@ jobs:
       - name: Run the suite programs under the stress collector
         run: |
           cargo build --locked --release -p quickjs-oxide-cli --features gc-stress --bin qjs
-          python3 scripts/checks/check-new-core-suite.py \
+          python3 scripts/checks/check-suite-gc-stress.py \
             --qjs target/release/qjs --suite "$RUNNER_TEMP/suite"
 
   quickjs-differential:

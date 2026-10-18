@@ -1,4 +1,4 @@
-//! Release-assembly probe for the property-hit path (phase 1, M3 acceptance).
+//! Release-assembly probe for the property-hit path.
 //! `cargo build --release -p oxide-core --example property_asm`, then
 //! disassemble the `probe_*` functions.
 //!

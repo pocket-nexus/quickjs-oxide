@@ -1,8 +1,7 @@
-//! `Date` (phase 4, section 6.1 row 6): the constructor and its statics
-//! (`now`, `parse`, `UTC`), and `Date.prototype` with the Annex B `getYear`,
-//! `setYear` and `toGMTString`. The calendar, formatting and parsing kernels
-//! are the old engine's, which follow QuickJS 2026-06-04; the clock and the
-//! time zone come from the host (section 6.3).
+//! `Date`: the constructor and its statics (`now`, `parse`, `UTC`), and
+//! `Date.prototype` with the Annex B `getYear`, `setYear` and `toGMTString`.
+//! The calendar, formatting and parsing kernels follow QuickJS 2026-06-04; the
+//! clock and the time zone come from the host.
 
 mod calendar;
 mod format;

@@ -111,16 +111,15 @@ pub struct Heap {
     pub(crate) objects: Arena<ObjectHeader>,
     pub(crate) shapes: Arena<Shape>,
     pub(crate) strings: Arena<StringRecord>,
-    /// `WeakRef` targets kept alive until the current job ends (section 3.4).
+    /// `WeakRef` targets kept alive until the current job ends.
     pub(crate) kept: Vec<Value>,
-    /// The rejected promises without a handler, in rejection order, while
-    /// the embedder tracks rejections (phase 6, section 2.2). Roots.
+    /// The rejected promises without a handler, in rejection order, while the
+    /// embedder tracks rejections. Roots.
     pub(crate) rejections: Vec<Value>,
-    /// Arrays that have had a hole (phase 6): QuickJS prints them by their
-    /// index properties even after the hole is gone. Weak.
+    /// Arrays that have had a hole: QuickJS prints them by their index
+    /// properties even after the hole is gone. Weak.
     pub(crate) holey: crate::heap::hash::FxHashSet<u32>,
-    /// Every module record (section 5.6): modules live as long as the
-    /// runtime.
+    /// Every module record: modules live as long as the runtime.
     pub(crate) modules: Vec<Value>,
     /// Bytes of flattened ropes (the arena counts a rope as empty).
     pub(crate) rope_bytes: std::cell::Cell<usize>,
@@ -144,30 +143,30 @@ pub struct Heap {
     pub(crate) prototypes: FxHashMap<ObjectId, PrototypeInfo>,
     pub(crate) roots: Roots,
     pub(crate) gc: GcState,
-    /// The register file and the frame table (phase 2, section 4.1): fixed
-    /// roots, so a safepoint marks the running frames with no parameter.
+    /// The register file and the frame table: fixed roots, so a safepoint marks
+    /// the running frames with no parameter.
     pub(crate) vm: VmStack,
-    /// The inline caches (phase 3, section 2.1): beside the code store in
-    /// spirit, inside the heap so that every collection prunes them.
+    /// The inline caches: beside the code store in spirit, inside the heap so
+    /// that every collection prunes them.
     pub(crate) ics: IcStore,
-    /// The global object's dictionary generation (phase 3, section 2.4):
-    /// bumped by every insert, remove and reflag of its properties, never by
-    /// a value write. A global cache entry hits while it is unchanged.
+    /// The global object's dictionary generation: bumped by every insert,
+    /// remove and reflag of its properties, never by a value write. A global
+    /// cache entry hits while it is unchanged.
     pub(crate) global_generation: u32,
-    /// No object used as a prototype has an index property or is exotic
-    /// (phase 4, section 3.1): a write into an element hole cannot meet an
-    /// inherited setter or read-only index, so the loop's dense write may
-    /// fill it. Cleared for good the first time that stops holding.
+    /// No object used as a prototype has an index property or is exotic: a
+    /// write into an element hole cannot meet an inherited setter or read-only
+    /// index, so the loop's dense write may fill it. Cleared for good the first
+    /// time that stops holding.
     pub(crate) holes_writable: bool,
     /// The shapes `MakeClosure` gives a new function (`length`, `name`, and
     /// `prototype` for the third), per function kind: learned from the first
-    /// closure of each kind and marked as roots (phase 4, section 3.2).
+    /// closure of each kind and marked as roots.
     pub(crate) closure_shapes: [Option<ShapeId>; CLOSURE_SHAPES],
     /// The shapes of a new `arguments` object (`length`, `@@iterator`,
     /// `callee`), sloppy then strict: learned from the first of each and
     /// marked as roots.
     pub(crate) arguments_shapes: [Option<ShapeId>; 2],
-    /// The job queue (phase 4, section 5.4): roots until each runs.
+    /// The job queue: roots until each runs.
     pub(crate) jobs: std::collections::VecDeque<crate::vm::jobs::Job>,
 }
 
@@ -374,10 +373,10 @@ impl Heap {
         }
     }
 
-    /// An object of a kind with internal slots (phase 4, section 3.2): an
-    /// [`Internal`] record holding `slots` (rooted for the call) and `data`,
-    /// with room for `slot_capacity` named properties. `extra_flags` adds
-    /// `CALLABLE` and `CONSTRUCTOR` for the callable kinds.
+    /// An object of a kind with internal slots: an [`Internal`] record holding
+    /// `slots` (rooted for the call) and `data`, with room for `slot_capacity`
+    /// named properties. `extra_flags` adds `CALLABLE` and `CONSTRUCTOR` for
+    /// the callable kinds.
     #[allow(clippy::too_many_arguments)]
     pub fn alloc_internal(
         &mut self,
@@ -616,8 +615,9 @@ impl Heap {
     }
 
     /// Stores an element, growing the dense range; indices skipped over become
-    /// holes. An array's length follows. Phase 1 has no sparse fallback: the
-    /// heap cap bounds a far index.
+    /// holes. An array's length follows. There is no sparse fallback here: the
+    /// heap cap bounds a far index, and an object goes sparse only through
+    /// [`Heap::make_sparse`].
     pub fn set_element(
         &mut self,
         object: ObjectId,
@@ -627,8 +627,8 @@ impl Heap {
         let header = *self.objects.get(object.0);
         let mut elements = header.elements();
         if index >= elements.len {
-            // Doubling until 1,024 elements, then 1.5× (phase 3, section 3):
-            // the value heap rounds each range up to a power of two anyway.
+            // Doubling until 1,024 elements, then 1.5×: the value heap rounds
+            // each range up to a power of two anyway.
             let grown = if elements.len < 1024 {
                 elements.len * 2
             } else {
@@ -665,10 +665,9 @@ impl Heap {
         Ok(())
     }
 
-    /// Moves every element of `object` into a named property with an index
-    /// key and marks it [`flags::SPARSE`] (phase 4, section 3.1), so element
-    /// attributes and extensibility follow the ordinary rules. The element
-    /// range is freed.
+    /// Moves every element of `object` into a named property with an index key
+    /// and marks it [`flags::SPARSE`], so element attributes and extensibility
+    /// follow the ordinary rules. The element range is freed.
     pub fn make_sparse(&mut self, object: ObjectId) -> Result<(), HeapError> {
         let header = *self.objects.get(object.0);
         if header.has(flags::SPARSE) {
@@ -844,10 +843,10 @@ impl Heap {
         (scope != NONE).then_some(ScopeId(scope))
     }
 
-    /// A function object over the root of a published code-unit tree, with
-    /// one bytecode record per unit (the constant tables and the child links
-    /// of section 2). `tree[0]` is the root; `children` index into `tree`.
-    /// The constants are rooted for the call.
+    /// A function object over the root of a published code-unit tree, with one
+    /// bytecode record per unit (the constant tables and the child links).
+    /// `tree[0]` is the root; `children` index into `tree`. The constants are
+    /// rooted for the call.
     pub fn alloc_bytecode_function(
         &mut self,
         prototype: Option<ObjectId>,

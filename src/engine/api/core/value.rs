@@ -1,4 +1,4 @@
-//! Values (phase 6, section 2.7): primitives as Rust data copied out of the
+//! Values: primitives as Rust data copied out of the
 //! core, objects and symbols as handles in the core's handle table.
 
 use std::fmt;

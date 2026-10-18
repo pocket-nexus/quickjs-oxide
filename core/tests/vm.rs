@@ -1,6 +1,6 @@
-//! Phase 2 M3/M4: the loop on hand-built units, for the opcodes no compiled
-//! program lowers to (the root crate's corpus runs the others on both
-//! cores), and the runtime's call API. Passes under `--features gc-stress`.
+//! The loop on hand-built units, for the opcodes no compiled program lowers to
+//! (the root crate's corpus runs the others), and the runtime's call API.
+//! Passes under `--features gc-stress`.
 
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{CodeBuilder, CodeUnitId, Opcode, flags};

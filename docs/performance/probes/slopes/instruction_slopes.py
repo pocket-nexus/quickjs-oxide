@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""New core phase 2, M3/M4: per-iteration instruction slopes.
+"""Per-iteration instruction slopes of the fixed probes and feature probes.
 
 Runs each probe at N and 2N under `perf stat -e instructions:u`, pinned to
 one CPU, and reports the per-iteration slope (I(2N) - I(N)) / N, the median
@@ -9,13 +9,13 @@ nothing else is subtracted. The engine is the root crate's measurement hook
 src/engine/compiler/register/run_tests.rs):
 
     cargo test --release --lib --no-run   # prints the binary path
-    python3 docs/performance/probes/new-core/phase2.py \\
+    python3 docs/performance/probes/slopes/instruction_slopes.py \\
         --binary target/release/deps/quickjs_oxide-HASH --cpu 2 --repeat 3
 
 or any engine run as `PATH FILE` (each named column):
 
-    python3 docs/performance/probes/new-core/phase2.py --engine quickjs=$QJS \\
-        --engine new=target/release/qjs
+    python3 docs/performance/probes/slopes/instruction_slopes.py --engine quickjs=$QJS \\
+        --engine oxide=target/release/qjs
 """
 import argparse
 import json
@@ -28,14 +28,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[4]
 FIXED = ROOT / "docs/performance/probes/fixed"
 
-# Section 9, Table A: the fixed probes (their own sources, N substituted).
+# The fixed probes (their own sources, N substituted).
 TABLE_A = [
     "empty_loop", "numeric_local_loop", "local_read", "local_read_with_setup",
     "local_move", "argument_move", "call0", "prop_read", "prop_write",
     "array_read", "array_write", "tdz", "type_error", "bigint_64",
 ]
 
-# Section 9, Table B: the phase 1 workloads as JavaScript.
+# The heap workloads of core/examples/workloads.rs as JavaScript.
 TABLE_B = {
     "literal": "function work(n){ var s; for (var i=0;i<n;i++){ s={a:i,b:i}; } return s.a; }\n"
                "print(work(N));\n",
@@ -52,8 +52,9 @@ TABLE_B = {
                     "print(work(N));\n",
 }
 
-# Phase 4, section 10, Table B: the probes of the new surface.
-TABLE_PHASE4 = {
+# Iteration, spread, classes, generators, typed arrays, collections, string
+# building and sorting.
+TABLE_FEATURES = {
     "for_of_array": "var a=[1,2,3,4,5,6,7,8];\n"
                     "function work(n){ var s=0; for (var i=0;i<n;i++){ for (var x of a) s+=x; } return s; }\n"
                     "print(work(N));\n",
@@ -92,7 +93,7 @@ def fixed_source(name: str) -> str:
 def sources() -> dict:
     probes = {name: fixed_source(name) for name in TABLE_A}
     probes.update(TABLE_B)
-    probes.update(TABLE_PHASE4)
+    probes.update(TABLE_FEATURES)
     return probes
 
 
@@ -142,7 +143,7 @@ def main():
     args = parser.parse_args()
     engines = {}
     if args.binary:
-        engines["new"] = hook(args.binary)
+        engines["oxide"] = hook(args.binary)
     for spec in args.engine:
         name, path = spec.split("=", 1)
         engines[name] = ([path], {})

@@ -18,7 +18,7 @@ workspace = true
 [dependencies]
 # The engine (#122): the lowering's target and the API's runtime.
 oxide-core = { workspace = true }
-# The regular-expression engine and Unicode tables (phase 3, section 6.1).
+# The regular-expression engine and Unicode tables.
 oxide-regexp = { workspace = true }
 num-bigint = { workspace = true }
 num-traits = { workspace = true }
@@ -34,7 +34,7 @@ gc-stress = ["oxide-core/gc-stress"]
 ic-stats = ["oxide-core/ic-stats"]
 # Lowers every function as one whose operand stack passes the register
 # window, with two temporaries in registers, so the corpora run the spill
-# paths (new-core phase 6 M4b, section 4).
+# paths.
 register-stress = []
 [dev-dependencies]
 quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }

@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
-"""New core phase 1, M5: per-iteration instruction slopes.
+"""Per-iteration instruction slopes of the heap workloads.
 
-Runs each new-core Rust workload (core/examples/workloads.rs) and its
-current-core JavaScript counterpart at N and 2N under `perf stat -e
+Runs each Rust heap workload (core/examples/workloads.rs) and its
+JavaScript counterpart on `qjs` at N and 2N under `perf stat -e
 instructions:u`, pinned to one CPU, and reports the per-iteration slope
 (I(2N) - I(N)) / N, the median over the repeats. Setup cost cancels in the
-slope. The empty loop of each engine is subtracted, so the current core's
-numbers exclude loop dispatch but include whatever the probe's own bytecode
-does (the constructor call, the closure instantiation).
+slope. Each side's empty loop is subtracted, so the JavaScript numbers
+exclude loop dispatch but include whatever the probe's own bytecode does
+(the constructor call, the closure instantiation). In the report, `new` is
+the Rust workload and `old` its JavaScript counterpart.
 
-    python3 docs/performance/probes/new-core/phase1.py \
+    python3 docs/performance/probes/slopes/heap_workloads.py \
         --workloads target/core/release/examples/workloads \
         --qjs target/release/qjs --cpu 2 --repeat 5 --output OUT.json
 """
@@ -36,7 +37,7 @@ JS = {
                   "print(work(N));\n",
 }
 
-# new-core workload -> current-core probe
+# Rust workload -> JavaScript counterpart
 PAIRS = [
     ("alloc-only", None),
     ("constructor", "constructor"),

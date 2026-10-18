@@ -1,7 +1,6 @@
-//! Error objects the loop throws. Phase 2 has no `Error` builtins beyond the
-//! constructors and prototypes `instanceof` needs: an error is an ordinary
-//! object with the kind's prototype and an own `message`; `name` lives on the
-//! prototype.
+//! Error objects the loop and the natives throw: an ordinary object flagged
+//! `ERROR`, with the kind's prototype and an own `message`; `name` lives on the
+//! prototype. Each carries QuickJS's `stack` backtrace.
 
 use std::fmt::Write;
 
@@ -263,8 +262,8 @@ pub(crate) fn add_stack_at(
             }
             (Some(file), None) => writeln!(text, "    at {name} ({file})"),
         };
-        // Entered through a rewritten `call` or `apply` (section 5.2): the
-        // native QuickJS ran between this frame and its caller.
+        // Entered through a rewritten `call` or `apply`: the native QuickJS ran
+        // between this frame and its caller.
         if frame.flags & frame_flags::VIA_CALL != 0 {
             let _ = writeln!(text, "    at call (native)");
             line_index += 1;

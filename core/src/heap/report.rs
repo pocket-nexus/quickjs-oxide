@@ -1,7 +1,7 @@
-//! The memory report (phase 6, section 2.4): what every part of a runtime
-//! holds, read from the bitmaps, free lists and capacities without a
-//! collection. [`MemoryReport::reserved_bytes`] equals [`Heap::bytes`], the
-//! total the heap cap compares against.
+//! The memory report: what every part of a runtime holds, read from the
+//! bitmaps, free lists and capacities without a collection.
+//! [`MemoryReport::reserved_bytes`] equals [`Heap::bytes`], the total the heap
+//! cap compares against.
 
 use std::fmt;
 

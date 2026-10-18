@@ -1,5 +1,5 @@
-//! Function, parameter, closure, and eval descriptors shared by compilation and execution.
-//! Heap allocation and published-node ownership remain in the heap module.
+//! Function, parameter, closure, and eval descriptors of the compiler's stack
+//! code, which the register lowering reads.
 
 /// Body storage selected for one named physical parameter after its
 /// initializer-visible lexical cell has been initialized. Ordinary parameter
@@ -8,10 +8,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ParameterBodyStorage {
     Argument(u16),
-    #[allow(
-        dead_code,
-        reason = "Recognized by validation; current producers do not emit this form."
-    )]
+    #[allow(dead_code, reason = "No producer emits this form.")]
     Local(u16),
 }
 
@@ -38,7 +35,7 @@ pub enum ParameterDefaultSource {
     RestPattern(u16),
 }
 
-/// Immutable, publication-authenticated description of QuickJS's parentless
+/// Immutable description of QuickJS's parentless
 /// argument scope. `Some` with empty cell arrays is semantically meaningful:
 /// a standalone `=` can create a zero-cell environment whose expressions are
 /// still barred from the function's variable scope.
@@ -81,9 +78,7 @@ pub struct FunctionMetadata {
     /// every leading cell an argument or pattern-copy role.
     pub parameter_environment_local_count: u16,
     /// Number of physical argument slots whose authored formal is a
-    /// BindingPattern rather than a BindingIdentifier. The exact positions are
-    /// cross-checked against anonymous argument definitions at publication;
-    /// keeping the count explicit distinguishes semantic anonymity from
+    /// BindingPattern rather than a BindingIdentifier. Keeping the count explicit distinguishes semantic anonymity from
     /// ordinary bytecode whose debug argument names were erased.
     pub pattern_argument_count: u16,
     /// Bytecode PC of the authenticated Nop separating BindingPattern
@@ -124,14 +119,14 @@ pub struct FunctionMetadata {
     pub super_call_allowed: bool,
     /// Whether `super.` or `super[]` is syntactically permitted in this
     /// bytecode. This is parser authority, distinct from `needs_home_object`,
-    /// which only controls whether closure publication retains an object edge.
+    /// which records whether the closure holds a home object.
     pub super_allowed: bool,
     /// QuickJS parser capability inherited by class field/static-block arrows
     /// and direct eval. When set, an implicit `arguments` binding is a syntax
     /// error rather than a lookup which can fall through to an outer/global
     /// environment.
     pub arguments_forbidden: bool,
-    /// Whether closure publication must accept a method HomeObject. QuickJS
+    /// Whether the closure holds a method HomeObject. QuickJS
     /// derives this from `home_object_var_idx`/`need_home_object`; ordinary
     /// functions leave the flag clear and therefore retain no object edge.
     pub needs_home_object: bool,
@@ -150,8 +145,8 @@ pub struct FunctionMetadata {
     pub constructor_kind: ConstructorKind,
     /// Synthetic class-element program emitted by `js_parse_class`-equivalent
     /// lowering.  Keeping this role orthogonal to ordinary/generator/async
-    /// function kind lets publication and the VM reject forged initializer
-    /// calls without exposing a JavaScript-visible marker.
+    /// function kind marks the synthetic programs without exposing a
+    /// JavaScript-visible marker.
     pub class_initializer_kind: Option<ClassInitializerKind>,
     /// Whether an aggregate instance/static class initializer owns the
     /// hidden brand lifecycle for private methods on that class side.
@@ -218,8 +213,8 @@ pub enum ClosureSource {
     ParentGlobal(u16),
     /// Attach the synthetic direct-eval root to the exact live caller binding
     /// at this flattened environment index. This source is valid only on a
-    /// verified direct-eval root and is instantiated from caller-owned
-    /// `VarRef` roots in the same synchronous operation that publishes it.
+    /// direct-eval root, which the register lowering declines (a direct `eval`
+    /// runs as indirect eval).
     EvalEnvironment(u16),
     /// Root VarRef owned by an ECMAScript Module Environment Record.
     ModuleDeclaration,
@@ -309,8 +304,7 @@ pub struct ClosureVariable {
 /// Storage occupied by a binding visible to one syntactic direct-eval site.
 ///
 /// Unlike [`ClosureSource`], these sources always refer to the function whose
-/// bytecode contains the eval instruction.  Publication verifies the source
-/// against that function's authoritative argument/local/closure metadata.
+/// bytecode contains the eval instruction.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EvalBindingSource {
     Local(u16),
@@ -347,8 +341,8 @@ pub enum EvalVariableEnvironment {
     StrictLocal(u16),
     /// Sloppy direct eval writes declarations through one exact hidden
     /// variable-object binding. `scope` identifies the descriptor scope which
-    /// must contain `source`; publication rejects an Argument source and
-    /// authenticates whether it is the body `<var>` or parameter `<arg_var>`.
+    /// must contain `source`, which is never an Argument source: it is the
+    /// body `<var>` or the parameter `<arg_var>`.
     VariableObject {
         scope: u16,
         source: EvalBindingSource,

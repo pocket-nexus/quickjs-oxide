@@ -43,7 +43,7 @@ class BuildReceiptTests(unittest.TestCase):
                 return SimpleNamespace(returncode=0)
 
             argv = ["build.py", "--repo", str(source), "--plain-only",
-                    "--plain-target", str(target), "--profile-target", str(root / "profile")]
+                    "--plain-target", str(target)]
             with mock.patch.object(sys, "argv", argv), \
                  mock.patch.object(build, "git_metadata", side_effect=git_metadata), \
                  mock.patch.object(build, "command_output", side_effect=command_output), \
@@ -63,7 +63,6 @@ class BuildReceiptTests(unittest.TestCase):
             self.assertEqual(receipt["target"]["observed_target_feature"], "+neon")
             self.assertEqual(Path(receipt["stdout"]["path"]).read_bytes(), b"complete stdout\n")
             self.assertTrue(Path(receipt["stderr"]["path"]).is_file())
-            self.assertFalse((root / "profile").exists())
 
 
 if __name__ == "__main__":

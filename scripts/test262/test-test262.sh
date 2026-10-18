@@ -59,8 +59,8 @@ esac
 
 required_keys='schema milestone quickjs test262 test262_patch_sha256 test262_config_sha256 test262_metadata_records test262_metadata_sha256 engine_fingerprint_tool engine_fingerprint_tool_lines engine_fingerprint_tool_sha256 engine_semantics_files engine_semantics_trees engine_semantics_sha256 upstream upstream_lines upstream_sha256 admissions admissions_lines admissions_sha256 profile profile_lines profile_sha256 negative_diagnostics negative_diagnostics_lines negative_diagnostics_sha256 negative_diagnostic_rules negative_diagnostic_rules_lines negative_diagnostic_rules_sha256 negative_diagnostic_audit_tool negative_diagnostic_audit_tool_lines negative_diagnostic_audit_tool_sha256 negative_diagnostic_exemptions negative_diagnostic_exemptions_lines negative_diagnostic_exemptions_sha256 manifest manifest_lines manifest_sha256 focused_tsv focused_tsv_lines focused_tsv_sha256 focused_jsonl focused_jsonl_lines focused_jsonl_sha256 mode timeout_ms focused_variants focused_eligible focused_runnable focused_passes focused_summary full_variants full_eligible full_runnable full_passes full_tsv_lines full_tsv_body_sha256 full_jsonl_lines full_jsonl_body_sha256 full_summary dropped_variants dropped_variants_lines dropped_variants_sha256 dropped_variants_count'
 
-# The spec names the frozen list of variants the dropped features cost (new-core
-# phase 4, section 7.1); nothing is optional since the runner has one backend.
+# The spec names the frozen list of variants the dropped features cost; nothing
+# is optional since the runner has one backend.
 optional_keys=''
 
 # Parse as inert data. In particular, this gate never sources or evaluates a spec.

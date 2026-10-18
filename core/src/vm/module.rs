@@ -1,4 +1,4 @@
-//! ECMAScript modules (phase 4, section 5.6).
+//! ECMAScript modules.
 //!
 //! A module record is an internal record (tag `Module`) whose slots hold
 //! the module's environment (the scope its root function captures: one cell
@@ -1261,7 +1261,7 @@ pub(crate) fn module_import_rejected(cx: &mut Cx<'_>, site: CallSite) -> Result<
 }
 
 impl crate::Runtime {
-    /// Installs the embedder's module loader (section 6.3).
+    /// Installs the embedder's module loader.
     pub fn set_module_host(&mut self, host: ModuleHost) {
         self.host.module_host = Some(host);
     }

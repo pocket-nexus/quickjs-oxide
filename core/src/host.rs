@@ -1,7 +1,6 @@
-//! The host boundary (phase 4, section 6.3): what the core asks of its
-//! embedder. `oxide-core` reaches the platform only through this trait, so
-//! it stays dependency-free and a port (the PSP build of phase 5) supplies
-//! its own implementation.
+//! The host boundary: what the core asks of its embedder. `oxide-core` reaches
+//! the platform only through this trait, so it stays dependency-free and a port
+//! supplies its own implementation.
 
 /// Which output stream `print` and the console write to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -74,7 +73,7 @@ pub trait Host {
     }
 
     /// The text of the file at `path`, for the CLI's `load` and `read`
-    /// (`oxide-run --std`). The default reads the process's file system.
+    /// (`qjs --std`). The default reads the process's file system.
     fn read_file(&mut self, path: &str) -> Option<String> {
         std::fs::read_to_string(path).ok()
     }

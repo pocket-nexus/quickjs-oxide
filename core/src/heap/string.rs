@@ -1,4 +1,4 @@
-//! String records: flat, or a rope (phase 4, section 3.3).
+//! String records: flat, or a rope.
 //!
 //! The flat representation is canonical: a string whose code units all fit
 //! in one byte is always `OneByte`, so two records with equal content have

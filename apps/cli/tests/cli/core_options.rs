@@ -1,5 +1,4 @@
-//! The options `qjs` took over from the new core's former driver,
-//! `oxide-run` (new-core phase 6, section 3.1): disassembly, the heap cap,
+//! The core's options of `qjs` beyond QuickJS's: disassembly, the heap cap,
 //! the stress collector and the reports.
 
 use std::path::PathBuf;

@@ -1,7 +1,7 @@
-//! Phase 2 M1 acceptance: the instruction format, the builder, the
-//! publication validator, the disassembler, and the code-store and bytecode
-//! attach path. Every test follows the rooting rule, so the suite also passes
-//! under `--features gc-stress`.
+//! The instruction format, the builder, the publication validator, the
+//! disassembler, and the code-store and bytecode attach path. Every test
+//! follows the rooting rule, so the suite also passes under
+//! `--features gc-stress`.
 
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{
@@ -553,7 +553,7 @@ fn runtime_disassembly_spells_atom_keys() {
     );
 }
 
-/// Phase 3, section 2.1: field sites first in instruction order, then the
+/// Cache-site numbering: field sites first in instruction order, then the
 /// global forms, then `new`; one entry per site.
 #[test]
 fn cache_sites_are_numbered_per_unit() {

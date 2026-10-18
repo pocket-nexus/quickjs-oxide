@@ -1,7 +1,7 @@
-//! Suspension (phase 4, section 4.3): generator, async-function and
-//! async-generator activations copy their register window out into a heap
-//! record when they suspend and back in on top of the register file when
-//! they resume, where they run as an entry frame of a nested loop.
+//! Suspension: generator, async-function and async-generator activations copy
+//! their register window out into a heap record when they suspend and back in
+//! on top of the register file when they resume, where they run as an entry
+//! frame of a nested loop.
 //!
 //! The record is the generator (or async state) object itself: internal
 //! slot 0 the function, slot 1 the kind's own state (an async function's

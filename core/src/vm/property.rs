@@ -5,9 +5,9 @@
 //! most a few times past the range); a far index becomes a named property
 //! with an index key, and every read checks the elements first.
 //!
-//! An accessor property occupies two slots, the getter then the setter
-//! (phase 3, section 3); the slow paths call them through the re-entrant
-//! [`call`](super::call). No accessor is cached.
+//! An accessor property occupies two slots, the getter then the setter; the
+//! slow paths call them through the re-entrant [`call`](super::call). No
+//! accessor is cached.
 
 use super::error;
 use super::ic::{IcEntry, IcKind, STRING_RECEIVER_TAG};
@@ -65,8 +65,8 @@ fn slot_value(heap: &Heap, object: ObjectId, slot: u32, property: PropertyFlags)
 pub(crate) enum Lookup {
     Hit(Found),
     Miss,
-    /// The walk met an exotic object (section 3.1): the lookup continues
-    /// through `vm::object`'s internal methods from this holder.
+    /// The walk met an exotic object: the lookup continues through
+    /// `vm::object`'s internal methods from this holder.
     Exotic(ObjectId),
 }
 
@@ -208,13 +208,13 @@ pub(crate) fn get(cx: &mut Cx<'_>, receiver: Value, key: PropertyKey) -> Result<
     get_from(cx, object, key, receiver)
 }
 
-/// `GetField`'s miss path (phase 3, section 2.2): a probe of a polymorphic
-/// row, then the uncached read, and a fill of cache entry `site` when it ends
-/// in a data property of an object in transition-tree mode, found on the
-/// receiver itself, on its prototype chain, or on `%String.prototype%`'s
-/// chain for a string receiver. Accessors, dictionary-mode receivers and
-/// holders, index keys and complete misses leave the entry as it was.
-/// `fill` is false for the reserved no-cache site.
+/// `GetField`'s miss path: a probe of a polymorphic row, then the uncached
+/// read, and a fill of cache entry `site` when it ends in a data property of an
+/// object in transition-tree mode, found on the receiver itself, on its
+/// prototype chain, or on `%String.prototype%`'s chain for a string receiver.
+/// Accessors, dictionary-mode receivers and holders, index keys and complete
+/// misses leave the entry as it was. `fill` is false for the reserved no-cache
+/// site.
 #[inline(never)]
 pub(crate) fn get_cached(
     cx: &mut Cx<'_>,
@@ -369,12 +369,11 @@ pub(crate) fn get_cached(
     Ok(heap.get_slot(holder, slot))
 }
 
-/// `SetField`'s miss path (phase 3, section 2.3): a probe of a polymorphic
-/// row, then the uncached write, and a fill when the write stored to an
-/// existing own writable data property, or added a data property through a
-/// transition of a non-dictionary, extensible object that is not a
-/// prototype. Accessors, read-only properties and dictionary objects go
-/// uncached.
+/// `SetField`'s miss path: a probe of a polymorphic row, then the uncached
+/// write, and a fill when the write stored to an existing own writable data
+/// property, or added a data property through a transition of a non-dictionary,
+/// extensible object that is not a prototype. Accessors, read-only properties
+/// and dictionary objects go uncached.
 #[inline(never)]
 pub(crate) fn set_cached(
     cx: &mut Cx<'_>,
@@ -1056,7 +1055,7 @@ fn units_atom_text(units: &[u16]) -> String {
     String::from_utf16_lossy(&units[..end])
 }
 
-// ---- for-in (phase 3, section 5.4) ----
+// ---- for-in ----
 
 /// `ForInStart`: QuickJS's `build_for_in_iterator`. The enumeration keeps
 /// the object of the level it walks (slot 0), its key count (slot 1), the

@@ -1,8 +1,7 @@
-//! `ArrayBuffer`, `SharedArrayBuffer` and `DataView` (phase 4, section 6.1
-//! row 9). A buffer is an internal record (tags `ArrayBuffer`,
-//! `SharedArrayBuffer`) holding a [`Buffer`]; a `DataView` (tag `DataView`)
-//! holds the buffer in slot 0 and a byte [`View`]. `Symbol.species` is not
-//! consulted (phase 0): `slice` makes an intrinsic buffer.
+//! `ArrayBuffer`, `SharedArrayBuffer` and `DataView`. A buffer is an internal
+//! record (tags `ArrayBuffer`, `SharedArrayBuffer`) holding a [`Buffer`]; a
+//! `DataView` (tag `DataView`) holds the buffer in slot 0 and a byte [`View`].
+//! `Symbol.species` is not consulted: `slice` makes an intrinsic buffer.
 
 use super::bigint::to_index;
 use super::{

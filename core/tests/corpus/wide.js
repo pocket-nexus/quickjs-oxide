@@ -1,4 +1,4 @@
-// A function with more than 256 registers (phase 3): its locals past the
+// A function with more than 256 registers: its locals past the
 // register window are reached through LoadWide and StoreWide, captured or
 // not, `var` and `let`, and its temporaries stay in the window.
 function wide(seed) {

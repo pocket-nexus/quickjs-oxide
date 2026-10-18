@@ -1,6 +1,6 @@
-//! Phase 3 M1: the `GetField` cache (own, prototype and string-receiver
-//! entries), its invalidation and its pruning at sweep. Every test checks the
-//! value read as well as the entry, and passes under `--features gc-stress`.
+//! The `GetField` cache (own, prototype and string-receiver entries), its
+//! invalidation and its pruning at sweep. Every test checks the value read as
+//! well as the entry, and passes under `--features gc-stress`.
 
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{CodeBuilder, Opcode, flags};
@@ -332,7 +332,7 @@ fn string_receivers_cache_their_prototype_chain() {
     assert_eq!(reader.entry().w1, object_prototype.index());
     reader.add(string_prototype, "shared", 4);
     assert_eq!(reader.read(Value::string(text)), Value::int32(4));
-    // `length` on a string caches as the length entry (phase 3 M5).
+    // `length` on a string caches as the length entry.
     let mut reader = Reader::new("length");
     let text = reader.runtime.heap_mut().intern("abcd").unwrap();
     assert_eq!(reader.read(Value::string(text)), Value::int32(4));
@@ -345,8 +345,8 @@ fn object_prototype_of(reader: &Reader) -> ObjectId {
     reader.runtime.intrinsic(Intrinsic::ObjectPrototype)
 }
 
-/// The recycled-id hazard of section 11: an entry filled for a shape that
-/// dies must not hit for the shape that reuses its index.
+/// The recycled-id hazard: an entry filled for a shape that dies must not hit
+/// for the shape that reuses its index.
 #[test]
 fn a_recycled_shape_does_not_hit_a_stale_entry() {
     let mut reader = Reader::new("x");
@@ -403,8 +403,8 @@ fn a_recycled_shape_does_not_hit_a_stale_entry() {
     }
 }
 
-/// Phase 3 M5: an array's `length` is a length entry that reads each
-/// array's current length; an ordinary object's `length` stays a slot.
+/// An array's `length` is a length entry that reads each array's current
+/// length; an ordinary object's `length` stays a slot.
 #[test]
 fn array_length_reads_through_the_length_entry() {
     let mut reader = Reader::new("length");
@@ -428,8 +428,8 @@ fn array_length_reads_through_the_length_entry() {
     assert_eq!(reader.read(Value::object(array)), Value::int32(1));
 }
 
-/// Phase 3 M5: a prototype in dictionary mode (more than 64 properties, or
-/// a deletion) is a cacheable holder; its changes clear the cell.
+/// A prototype in dictionary mode (more than 64 properties, or a deletion) is a
+/// cacheable holder; its changes clear the cell.
 #[test]
 fn a_dictionary_prototype_is_a_cacheable_holder() {
     let mut reader = Reader::new("x");

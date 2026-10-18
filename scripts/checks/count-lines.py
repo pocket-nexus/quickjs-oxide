@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Count the workspace's non-test Rust lines (new-core phase 6, section 0).
+"""Count the workspace's non-test Rust lines.
 
 Non-test lines are the lines of every `.rs` file that is not under a `tests/`
 directory and is not named `tests.rs` or `*_tests.rs`. Files under `target/`

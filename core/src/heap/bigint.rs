@@ -1,6 +1,6 @@
 //! BigInt records. Every BigInt is a heap record: an `i64` does not fit the
-//! 32-bit payload. Phase 1 defines the record and its tracing only; arithmetic
-//! and single-limb small BigInts are phase 4.
+//! 32-bit payload. This module defines the record and its tracing; the
+//! arithmetic is `vm::bigint`'s.
 
 use super::arena::Record;
 

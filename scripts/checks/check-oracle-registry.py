@@ -115,14 +115,14 @@ ORACLE_ATTRIBUTIONS = ROOT / 'dev-support/oracle-attributions.tsv'
 SPEC_DEPARTURES = ROOT / 'dev-support/quickjs-spec-departures.tsv'
 SPEC_DEPARTURE = re.compile(r'^QUICKJS-SPEC-\d{3}$')
 LEDGER_ENTRY = re.compile(r'^### ([A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3})$', re.MULTILINE)
-# The fields every new-core entry carries (new-core phase 6, section 5).
+# The fields every `NEWCORE-` entry (a dropped feature) carries.
 NEWCORE_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
                   'Baseline evidence', 'Acceptance', 'Specification')
 
 
 def spec_departures():
-    """The registry of QuickJS's departures from ECMA-262 (phase 6 M4b,
-    section 2.3): identifiers in order, each with its clause and summary."""
+    """The registry of QuickJS's departures from ECMA-262: identifiers in
+    order, each with its clause and summary."""
     rows = SPEC_DEPARTURES.read_text().splitlines()
     if rows[0] != 'id\tclause\tsummary\ttest262':
         fail('QuickJS spec departures lack their id/clause/summary/test262 header')
@@ -140,7 +140,7 @@ def spec_departures():
 
 
 def ledger_entries():
-    """The deviation ledger's entry identifiers; checks the new-core entries'
+    """The deviation ledger's entry identifiers; checks the `NEWCORE-` entries'
     form and that every fixture and oracle-case attribution names an entry or
     a QuickJS spec departure, and every departure is attributed."""
     text = LEDGER.read_text()
@@ -160,7 +160,7 @@ def ledger_entries():
     expected = {'NEWCORE-WITH-001', 'NEWCORE-UNSCOPABLES-001', 'NEWCORE-DIRECT-EVAL-001',
                 'NEWCORE-REALMS-001', 'NEWCORE-SPECIES-001'}
     if newcore != expected:
-        fail(f'deviation ledger new-core entries differ: {sorted(newcore ^ expected)}')
+        fail(f'deviation ledger NEWCORE entries differ: {sorted(newcore ^ expected)}')
     departures = spec_departures()
     used = set()
     rows = FIXTURE_GATES.read_text().splitlines()

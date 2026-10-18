@@ -1,11 +1,11 @@
-//! Section 2.6: the two-core corpus through `Context::eval` prints what the
-//! driver prints.
+//! The corpus (`core/tests/corpus`) through `Context::eval` prints what the
+//! lowering's driver prints.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::{QjsHelpers, Runtime, RuntimeError, RuntimeOptions, Value};
-use crate::engine::compiler::register::run_tests::{corpus, run_new_core};
+use crate::engine::compiler::register::run_tests::{corpus, run_on_core};
 
 #[derive(Default)]
 struct Capture(Rc<RefCell<String>>);
@@ -48,7 +48,7 @@ fn the_corpus_prints_through_the_api_what_the_driver_prints() {
     assert_eq!(programs.len(), 44);
     let mut failures = Vec::new();
     for (name, source) in programs {
-        let expected = run_new_core(&source);
+        let expected = run_on_core(&source);
         let actual = run_api(&source);
         if expected != actual {
             failures.push(format!(

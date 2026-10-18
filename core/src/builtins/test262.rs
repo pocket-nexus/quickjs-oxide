@@ -1,7 +1,6 @@
-//! The Test262 host object `$262` (phase 4, section 6.1 row 12):
-//! `createRealm` throws (realms are dropped), `gc` collects, `global` is the
-//! global object; `evalScript`, `detachArrayBuffer` and `agent` arrive with
-//! the compile host and buffers.
+//! The Test262 host object `$262`: `createRealm` throws (realms are dropped),
+//! `gc` collects, `global` is the global object; `evalScript`,
+//! `detachArrayBuffer` and `agent` arrive with the compile host and buffers.
 
 use super::{Native, define, plain_object};
 use crate::heap::HeapError;

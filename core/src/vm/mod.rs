@@ -1,6 +1,5 @@
-//! The register machine (new-core phase 2, section 4): the register file and
-//! frame table, the main loop, its slow paths, exception unwinding and the
-//! leaf-native ABI.
+//! The register machine: the register file and frame table, the main loop, its
+//! slow paths, exception unwinding and the leaf-native ABI.
 //!
 //! A frame owns a window of the register file: register 0 is `this`, then
 //! the parameters, the locals and the operand temporaries of its code unit. A
@@ -30,8 +29,7 @@ pub(crate) mod suspend;
 pub(crate) mod typed;
 pub(crate) mod via;
 pub(crate) mod waiter;
-// Not called yet: `Number.prototype.toString` and the parsers land with the
-// phase 3 builtins. Public for the root crate's differential test.
+// Public for the root crate's differential test.
 #[doc(hidden)]
 pub mod radix;
 pub mod regexp;
@@ -63,8 +61,8 @@ pub mod frame_flags {
     pub const CONSTRUCT: u8 = 1 << 1;
     /// Entered by a tail call: its result is also its caller's result.
     pub const TAIL: u8 = 1 << 2;
-    /// Called through `Function.prototype.call` (the rewrite of section
-    /// 5.2): QuickJS lists `at call (native)` after its backtrace line.
+    /// Called through `Function.prototype.call` (the loop's rewrite): QuickJS
+    /// lists `at call (native)` after its backtrace line.
     pub const VIA_CALL: u8 = 1 << 3;
     /// Called through `Function.prototype.apply`, likewise.
     pub const VIA_APPLY: u8 = 1 << 4;
@@ -155,16 +153,16 @@ pub struct VmStack {
     /// Rust, which re-entered the loop): per frame, its depth and its line
     /// of the backtrace. Each loop the throw unwinds through places its own.
     pub(crate) unpositioned: Option<(ObjectId, Vec<(u32, u32)>)>,
-    /// The suspendable activations running, innermost last (phase 4,
-    /// section 4.3): where `Yield` and `Await` save their frame.
+    /// The suspendable activations running, innermost last: where `Yield` and
+    /// `Await` save their frame.
     pub(crate) active: Vec<ObjectId>,
     /// Whether the last proxy `[[Set]]` or `[[DefineOwnProperty]]` that
     /// returned false was refused by a trap rather than by the target it
     /// forwarded to: QuickJS throws `proxy: cannot set property` or `proxy:
     /// defineProperty exception` only for the former.
     pub(crate) proxy_refused: bool,
-    /// The bookkeeping of rewritten `call`s and `apply`s (section 5.2),
-    /// boxed to keep the loop's hot fields where they were.
+    /// The bookkeeping of rewritten `call`s and `apply`s, boxed to keep the
+    /// loop's hot fields where they were.
     pub(crate) via: Box<via::ViaCalls>,
 }
 
@@ -270,7 +268,7 @@ pub enum Output {
 /// stream, the symbol registry, and the embedder's [`Host`](crate::host::Host).
 pub struct Services {
     pub output: Output,
-    /// The embedder's hooks (phase 4, section 6.3).
+    /// The embedder's hooks.
     pub(crate) hooks: Box<dyn crate::host::Host>,
     /// `Math.random`'s xorshift64* state; never zero.
     random_state: u64,
@@ -279,9 +277,9 @@ pub struct Services {
     pub(crate) symbol_registry: crate::heap::hash::FxHashMap<Vec<u16>, crate::SymbolId>,
     /// Whether `Atomics.wait` may block this agent.
     pub can_block: bool,
-    /// The embedder's compiler (section 6.3).
+    /// The embedder's compiler.
     pub(crate) compile: Option<compile::CompileFn>,
-    /// The embedder's module loader (section 6.3).
+    /// The embedder's module loader.
     pub(crate) module_host: Option<module::ModuleHost>,
     /// The module records by normalized name.
     pub(crate) modules: crate::heap::hash::FxHashMap<String, ObjectId>,

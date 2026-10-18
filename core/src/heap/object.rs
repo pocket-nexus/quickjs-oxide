@@ -17,23 +17,23 @@ pub enum ObjectKind {
     /// parent scope (or [`NONE`]).
     Scope,
     GlobalObject,
-    /// An `arguments` object (phase 3, section 5.1). Its elements hold the
-    /// values of unmapped indices; a mapped one's `payload` is a scope object
-    /// whose slot 0 is the mapped count and slots 1.. the parameters' cells,
-    /// `Value::EMPTY` once an index is unmapped. An unmapped one's payload is
-    /// [`NONE`].
+    /// An `arguments` object. Its elements hold the values of unmapped indices;
+    /// a mapped one's `payload` is a scope object whose slot 0 is the mapped
+    /// count and slots 1.. the parameters' cells, `Value::EMPTY` once an index
+    /// is unmapped. An unmapped one's payload is [`NONE`].
     Arguments,
     /// A regular expression: `payload` indexes the runtime's program store;
     /// `lastIndex` is an own data property.
     RegExp,
-    /// A `for-in` enumeration (section 5.4), never exposed to JavaScript: the
-    /// elements are the key snapshot, slot 0 the object, slot 1 the key
-    /// count, `payload` the cursor.
+    /// A `for-in` enumeration, never exposed to JavaScript: the elements are
+    /// the key snapshot, slot 0 the object, slot 1 the key count, `payload` the
+    /// cursor.
     ForInIterator,
-    /// Placeholder for the builtin kinds ported in phase 4.
+    /// A plain kind no builtin allocates: a host function is a
+    /// [`ObjectKind::Function`] with a `native` index.
     Native,
-    /// `new String(s)` (phase 4, section 3.2): internal slot 0 the string.
-    /// Its indices are exotic; `length` is an own data property.
+    /// `new String(s)`: internal slot 0 the string. Its indices are exotic;
+    /// `length` is an own data property.
     StringWrapper,
     /// `new Number(n)`: internal slot 0 the number.
     NumberWrapper,
@@ -51,12 +51,11 @@ pub enum ObjectKind {
     /// A proxy: internal slot 0 the target, slot 1 the handler (`null` once
     /// revoked).
     Proxy,
-    /// A typed array (section 3.1): internal slot 0 the buffer, the data
-    /// its view. Canonical numeric keys are its elements, never properties.
+    /// A typed array: internal slot 0 the buffer, the data its view. Canonical
+    /// numeric keys are its elements, never properties.
     TypedArray,
-    /// A module namespace (section 5.6): internal slot 0 the module, then
-    /// per export (the data's sorted keys) its cell or, for a namespace
-    /// export, its module.
+    /// A module namespace: internal slot 0 the module, then per export (the
+    /// data's sorted keys) its cell or, for a namespace export, its module.
     ModuleNamespace,
     /// An object whose internal slots hold builtin state the natives read:
     /// iterators, promises, collections and the like. `Internal::tag` says
@@ -107,9 +106,9 @@ impl ObjectKind {
         )
     }
 
-    /// Kinds whose internal methods are not the ordinary ones for every key
-    /// (section 3.1): property lookups that meet one leave the heap-only
-    /// fast paths for `vm::property`'s dispatch.
+    /// Kinds whose internal methods are not the ordinary ones for every key:
+    /// property lookups that meet one leave the heap-only fast paths for
+    /// `vm::property`'s dispatch.
     #[inline]
     pub const fn is_exotic(self) -> bool {
         matches!(
@@ -131,10 +130,10 @@ pub mod flags {
     /// An error object (`new_error` sets it), so `Object.prototype.toString`
     /// and the error checks need no prototype walk.
     pub const ERROR: u8 = 1 << 5;
-    /// Index properties live as named properties only (phase 4, section
-    /// 3.1): the element range is empty and stays so. Set when an element
-    /// gets attributes other than writable, enumerable, configurable, or the
-    /// object stops being extensible.
+    /// Index properties live as named properties only: the element range is
+    /// empty and stays so. Set when an element gets attributes other than
+    /// writable, enumerable, configurable, or the object stops being
+    /// extensible.
     pub const SPARSE: u8 = 1 << 6;
     /// An array whose `length` is not writable.
     pub const LENGTH_READONLY: u8 = 1 << 7;
@@ -229,8 +228,7 @@ pub struct FunctionRecord {
     /// A [`Native`](crate::vm::native::Native) index for a host function, or
     /// [`NONE`].
     pub native: u32,
-    /// The home object of a method that uses `super` (phase 4, section 5.1),
-    /// or [`NONE`].
+    /// The home object of a method that uses `super`, or [`NONE`].
     pub home_object: u32,
     /// A class constructor's instance-field initializer function, or
     /// [`NONE`].
@@ -298,8 +296,8 @@ pub enum InternalTag {
     WrapForValidIterator,
     AsyncFromSyncIterator,
     Promise,
-    /// A `then` record (section 5.4): the capability's promise, resolve and
-    /// reject, the two handlers, and the async frame an `await` resumes.
+    /// A `then` record: the capability's promise, resolve and reject, the two
+    /// handlers, and the async frame an `await` resumes.
     PromiseReaction,
     Map,
     Set,
@@ -323,7 +321,7 @@ pub enum InternalTag {
     HtmlDda,
     /// A `JSON.rawJSON` object (its brand).
     RawJson,
-    /// A module record (section 5.6).
+    /// A module record.
     Module,
     /// An object the `Iterator` constructor made for a subclass: QuickJS's
     /// `JS_CLASS_ITERATOR`, which its printer names.
@@ -336,8 +334,8 @@ pub enum InternalData {
     #[default]
     None,
     Bytes(Vec<u8>),
-    /// A suspended generator or async frame (phase 4, section 4.3); its
-    /// registers are the record's slots from [`FRAME_SLOTS`].
+    /// A suspended generator or async frame; its registers are the record's
+    /// slots from [`FRAME_SLOTS`].
     Frame(SavedFrame),
     /// A collection's index; its entries are the record's slots.
     Table(Box<super::table::Table>),

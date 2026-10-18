@@ -15,7 +15,7 @@
 //! validity cell and the list of prototype objects that inherit from it. Any
 //! change to a prototype object clears its cell and, through the dependents
 //! lists, every cell downstream. A shape caches its prototype's cell; the
-//! phase 3 prototype IC records `(holder, slot, cell)` and tests one boolean.
+//! prototype IC records `(holder, slot, cell)` and tests one boolean.
 
 use std::cell::OnceCell;
 use std::fmt;
@@ -739,9 +739,9 @@ impl Heap {
         Ok(())
     }
 
-    /// Bumps the global generation (phase 3, section 2.4) when `object` is the
-    /// global object: an insert, remove or reflag of its dictionary moves a
-    /// slot or a flag that a global cache entry may hold.
+    /// Bumps the global generation when `object` is the global object: an
+    /// insert, remove or reflag of its dictionary moves a slot or a flag that a
+    /// global cache entry may hold.
     #[inline]
     fn dictionary_changed(&mut self, object: ObjectId) {
         if self.objects.get(object.0).kind == ObjectKind::GlobalObject {
@@ -1126,9 +1126,9 @@ impl Heap {
 
     /// The cell guarding the chain that starts at `prototype`: valid until
     /// `prototype` or any object above it changes. It is the cell
-    /// [`Heap::validity_cell`] gives an object whose prototype is
-    /// `prototype`; the string-receiver cache (phase 3, section 2.2) uses it
-    /// for `%String.prototype%`, which no object inherits from.
+    /// [`Heap::validity_cell`] gives an object whose prototype is `prototype`;
+    /// the string-receiver cache uses it for `%String.prototype%`, which no
+    /// object inherits from.
     pub fn chain_cell(&mut self, prototype: ObjectId) -> Result<ValidityCellId, HeapError> {
         self.chain_cell_keeping(prototype, Value::UNDEFINED)
     }

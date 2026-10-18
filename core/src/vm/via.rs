@@ -1,8 +1,7 @@
-//! What QuickJS's frames for the `Function.prototype.call`s and `apply`s
-//! the loop rewrites (section 5.2) would show in a backtrace: the rewrite
-//! records them, a bytecode callee's frame carries `frame_flags::VIA_CALL`,
-//! `VIA_APPLY` or (for a chain) `VIA_CHAIN`, and a native callee runs with
-//! them listed below it.
+//! What QuickJS's frames for the `Function.prototype.call`s and `apply`s the
+//! loop rewrites would show in a backtrace: the rewrite records them, a
+//! bytecode callee's frame carries `frame_flags::VIA_CALL`, `VIA_APPLY` or (for
+//! a chain) `VIA_CHAIN`, and a native callee runs with them listed below it.
 //!
 //! Kept out of `interp` so the loop's code does not move.
 

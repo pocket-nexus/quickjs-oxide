@@ -5,8 +5,9 @@
 //! `get_closure_var` helper also installs relay closure slots on intervening
 //! functions.  This module keeps the same boundary in typed form: parsing emits
 //! `IrOp`s into a recursive `FunctionIr` arena, identifier resolution runs
-//! child-first, and only then are VM instructions and recursive unlinked
-//! function constants produced. The parser owns its Lexer and requests tokens
+//! child-first, and only then are stack-code instructions and recursive
+//! unlinked function constants produced; `register` lowers that stack code
+//! into `oxide-core` register code. The parser owns its Lexer and requests tokens
 //! through fallible advances, so an error on later source cannot preempt a
 //! diagnostic on the current token. Directive-prologue probes clone and seek
 //! the lexer, then the committed stream is rescanned under its strict context.

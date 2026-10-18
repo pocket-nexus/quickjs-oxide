@@ -1,4 +1,4 @@
-//! M4: atom-table size for a Test262-sized key set.
+//! Atom-table size for a Test262-sized key set.
 //!
 //! Interns every identifier name and string-literal body of the given
 //! JavaScript files (a superset of the property keys and names a run of those

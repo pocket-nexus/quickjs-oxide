@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Run the new core's driver under its stress collector (new-core phase 2,
-section 6).
+"""Run `qjs` under its stress collector.
 
 Generates the fixed probes at smoke size and runs each through
 `qjs --gc-stress=N`, comparing stdout with the manifest; then runs
-every program of the two-core corpus (`core/tests/corpus`) with and without
+every program of the core's corpus (`core/tests/corpus`) with and without
 stress and requires the same stdout and exit status. `qjs` must be
 built with the `gc-stress` feature:
 
     cargo build -p quickjs-oxide-cli --features gc-stress --bin qjs
-    python3 scripts/checks/check-new-core-stress.py --qjs target/debug/qjs
+    python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 """
 import argparse
 import json
@@ -58,7 +57,7 @@ def main() -> int:
     if failures:
         print("\n".join(failures), file=sys.stderr)
         return 1
-    print(f"new-core stress: {len(workloads)} probes and {len(corpus)} corpus programs "
+    print(f"gc stress: {len(workloads)} probes and {len(corpus)} corpus programs "
           f"pass at --gc-stress={args.interval}")
     return 0
 

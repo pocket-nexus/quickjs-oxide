@@ -179,10 +179,9 @@ var catchResult = Promise.prototype.catch.call(receiver, 'reject-handler');
     drain(&runtime);
 }
 
-/// `HostPromiseRejectionTracker` through the new core's host hook
-/// (new-core phase 6, section 2.2): an unhandled rejection reports
-/// `Rejected`, a handler attached later `Handled`, and the tracked list
-/// keeps only what stays unhandled.
+/// `HostPromiseRejectionTracker` through the core's host hook: an unhandled
+/// rejection reports `Rejected`, a handler attached later `Handled`, and the
+/// tracked list keeps only what stays unhandled.
 #[derive(Default)]
 struct RejectionRecorder(Rc<RefCell<Vec<RejectionEvent>>>);
 

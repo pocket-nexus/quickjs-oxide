@@ -1,5 +1,4 @@
-//! The embedding API over the new core (new-core phase 6, section 2.6):
-//! every method of sections 2.1–2.4 through the public surface.
+//! The embedding API: every method through the public surface.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -71,7 +70,7 @@ fn errors_are_pending_exceptions() {
         thrown(&mut context),
         "SyntaxError: unexpected token in expression: ';'\n    at f.js:1:9"
     );
-    // A dropped feature (phase 0) is an early SyntaxError.
+    // A dropped feature (`with`) is an early SyntaxError.
     assert_eq!(context.eval("with ({}) {}"), Err(RuntimeError::Exception));
     assert!(thrown(&mut context).starts_with("SyntaxError: with statements are not supported"));
 }

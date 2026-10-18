@@ -1,7 +1,6 @@
-//! The embedder's entries (phase 6, section 2): the object, property,
-//! conversion and value-construction operations the root crate's API
-//! exposes, each one engine entry over the internal operations the loop
-//! uses.
+//! The embedder's entries: the object, property, conversion and
+//! value-construction operations the root crate's API exposes, each one engine
+//! entry over the internal operations the loop uses.
 //!
 //! Rooting: every `Value` passed in must be rooted by the caller (a handle
 //! from [`Runtime::hold`], a fixed root, or a value the caller just received

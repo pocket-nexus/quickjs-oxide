@@ -1,8 +1,8 @@
-//! `Number` (phase 4, section 6.1 row 5): the constructor and wrapper, the
-//! constants and `isFinite`, `isInteger`, `isNaN`, `isSafeInteger`,
-//! `parseFloat` and `parseInt` (the global functions themselves), and
-//! `Number.prototype`'s `toString(radix)`, `toFixed`, `toExponential`,
-//! `toPrecision`, `toLocaleString` and `valueOf` with QuickJS's digits.
+//! `Number`: the constructor and wrapper, the constants and `isFinite`,
+//! `isInteger`, `isNaN`, `isSafeInteger`, `parseFloat` and `parseInt` (the
+//! global functions themselves), and `Number.prototype`'s `toString(radix)`,
+//! `toFixed`, `toExponential`, `toPrecision`, `toLocaleString` and `valueOf`
+//! with QuickJS's digits.
 
 use super::{Native, define, install_constructor, link_constructor, methods, string_text};
 use crate::heap::HeapError;

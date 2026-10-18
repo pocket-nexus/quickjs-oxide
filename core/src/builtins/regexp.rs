@@ -1,10 +1,10 @@
-//! `RegExp` (phase 4, section 6.1 row 4): the constructor with `IsRegExp`,
-//! `RegExp.escape`, `%RegExp.prototype%`'s `exec` (with `groups` and
-//! `indices`), `test`, `toString`, `compile`, the flag accessors and the
-//! `Symbol.match`, `matchAll`, `replace`, `search` and `split` protocol, and
-//! `%RegExpStringIteratorPrototype%`. Programs run on a string's own
-//! one-byte or two-byte storage. `Symbol.species` is dropped (phase 0):
-//! `matchAll` and `split` construct `%RegExp%`.
+//! `RegExp`: the constructor with `IsRegExp`, `RegExp.escape`,
+//! `%RegExp.prototype%`'s `exec` (with `groups` and `indices`), `test`,
+//! `toString`, `compile`, the flag accessors and the `Symbol.match`,
+//! `matchAll`, `replace`, `search` and `split` protocol, and
+//! `%RegExpStringIteratorPrototype%`. Programs run on a string's own one-byte
+//! or two-byte storage. `Symbol.species` is dropped: `matchAll` and `split`
+//! construct `%RegExp%`.
 
 use oxide_regexp::{ExecError, RegExpFlags, RegExpMatch};
 

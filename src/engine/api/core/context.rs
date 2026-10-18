@@ -1,4 +1,4 @@
-//! The realm's handle (phase 6, section 2.1): evaluation, calls, objects and
+//! The realm's handle: evaluation, calls, objects and
 //! properties, the intrinsics, the pending exception.
 
 use std::rc::Rc;

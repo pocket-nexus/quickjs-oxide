@@ -1,5 +1,5 @@
 // Getters and setters in literals, inherited accessors, and the slow paths
-// that call them (phase 3, section 3).
+// that call them.
 var log = '';
 var point = {
   x: 1,

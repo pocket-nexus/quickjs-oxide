@@ -1,6 +1,5 @@
-//! Typed-array elements (phase 4, sections 3.1 and 4.4): the
-//! integer-indexed exotic object's element reads and writes, the element
-//! conversions, and the loop's inline paths.
+//! Typed-array elements: the integer-indexed exotic object's element reads and
+//! writes, the element conversions, and the loop's inline paths.
 
 use super::{Cx, Throw, error, number, ops};
 use crate::heap::Heap;
@@ -240,7 +239,7 @@ pub(crate) fn write_converted(heap: &mut Heap, object: ObjectId, index: f64, byt
     buffer_mut(heap, store).write(view.byte_offset + position * size, &bytes[..size]);
 }
 
-// ---- the loop's inline paths (section 4.4) ----
+// ---- the loop's inline paths ----
 
 /// `a[i]` for a typed array and an int32 index: the element, or `None` to
 /// take the slow path (BigInt kinds, out-of-range or detached reads, which

@@ -1,9 +1,8 @@
-//! `$262.agent` (phase 4, section 6.1 row 12): Test262's multi-agent host,
-//! as QuickJS's `run-test262` implements it. Each agent is a thread with
-//! its own runtime running a script through the embedder's
-//! [`ScriptRunner`]; a broadcast hands every agent the shared bytes of a
-//! `SharedArrayBuffer` (an `Arc`, so no heap crosses threads) and waits
-//! until each has taken them; reports are strings in a shared queue.
+//! `$262.agent`: Test262's multi-agent host, as QuickJS's `run-test262`
+//! implements it. Each agent is a thread with its own runtime running a script
+//! through the embedder's [`ScriptRunner`]; a broadcast hands every agent the
+//! shared bytes of a `SharedArrayBuffer` (an `Arc`, so no heap crosses threads)
+//! and waits until each has taken them; reports are strings in a shared queue.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};

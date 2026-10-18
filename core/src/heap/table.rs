@@ -1,5 +1,4 @@
-//! The ordered hash table of `Map`, `Set`, `WeakMap` and `WeakSet` (phase
-//! 4, section 3.2).
+//! The ordered hash table of `Map`, `Set`, `WeakMap` and `WeakSet`.
 //!
 //! The entries live in the record's internal slots, one or two values each
 //! (`width`), in insertion order; a deleted entry's key is `Value::EMPTY`.

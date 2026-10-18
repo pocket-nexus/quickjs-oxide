@@ -1,4 +1,4 @@
-//! The API's runtime (phase 6, section 2.1): one `Rc<RefCell<…>>` at the
+//! The API's runtime: one `Rc<RefCell<…>>` at the
 //! boundary around `oxide_core::Runtime`. Every method borrows the cell for
 //! one engine entry; a host callback that calls back in without its
 //! [`Scope`](super::Scope) gets [`RuntimeError::Reentered`].

@@ -17,8 +17,8 @@ use super::requirements::{
 };
 use super::{Variant, WorkerOptions, validate_relative_test_path};
 
-#[path = "new_core.rs"]
-mod new_core;
+#[path = "worker.rs"]
+mod worker;
 
 pub(super) const WORKER_HOST_CAPABILITIES: HostCapabilities = HostCapabilities {
     agent: false,
@@ -225,7 +225,7 @@ pub(super) fn run_worker(options: &WorkerOptions) -> Result<WorkerResult, String
     {
         return Err("unsupported test reached worker".to_owned());
     }
-    new_core::run_worker(new_core::NewCoreTest {
+    worker::run_worker(worker::WorkerTest {
         options,
         admissions,
         path: &path,
@@ -820,7 +820,7 @@ mod tests {
         .unwrap_err();
         fs::remove_dir_all(suite).unwrap();
 
-        // The new core compiles `import('')`, so the root is refused before
+        // The engine compiles `import('')`, so the root is refused before
         // any host policy could stand in for the expected SyntaxError.
         assert!(error.contains("parse-rejected"), "{error}");
         assert!(error.contains("unexpectedly compiled"), "{error}");
@@ -1366,7 +1366,7 @@ if (buffer.byteLength !== 4 || buffer.maxByteLength !== 8 ||
     !buffer.resizable || buffer.detached) {
     throw new Error("ArrayBuffer pre-detach state changed");
 }
-// A detached buffer's maxByteLength is engine semantics (the new core
+// A detached buffer's maxByteLength is engine semantics (quickjs-oxide
 // returns 0 as ECMAScript says, QuickJS keeps 8), not the host's concern.
 if ($262.detachArrayBuffer.call(ordinary, buffer) !== undefined ||
     buffer.byteLength !== 0 || !buffer.resizable || !buffer.detached) {

@@ -110,7 +110,7 @@ def main():
     print("building optimized CLI", flush=True)
     binary, command = build(args.use_target, args.jobs, PROFILE_USE.format(merged))
     revision = git_metadata(ROOT)["commit"]["stdout"]
-    manifest = {"schema": "oxide-build-v1", "mode": "pgo", "vm_configuration": "stack-vm", "features": [],
+    manifest = {"schema": "oxide-build-v1", "mode": "pgo", "features": [],
                 "commit": revision, "binary_sha256": digest(binary), "command": command,
                 "rustc": command_output(["rustc", "-vV"]), "cargo": command_output(["cargo", "-V"]),
                 "cargo_toml_sha256": digest(ROOT / "Cargo.toml"), "cargo_lock_sha256": digest(ROOT / "Cargo.lock"),

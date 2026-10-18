@@ -281,8 +281,8 @@ run_case() {
     compare_transcript "pinned QuickJS 2026-06-04 ($fixture_case_id)" "$expected_path" "$quickjs_out"
 
     if [[ -n "$oxide" && "$fixture_deviation" != - ]]; then
-        # Attributed to a dropped feature of the deviation ledger (new-core
-        # phase 6): quickjs-oxide must still differ.
+        # Attributed to a dropped feature of the deviation ledger:
+        # quickjs-oxide must still differ.
         oxide_out=$tmp_dir/$fixture_case_id.oxide.out
         oxide_err=$tmp_dir/$fixture_case_id.oxide.err
         if "$oxide" "${oxide_args[@]}" >"$oxide_out" 2>"$oxide_err" \

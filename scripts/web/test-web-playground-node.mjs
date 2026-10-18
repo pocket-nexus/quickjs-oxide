@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-// The new core resumes a delegated generator by re-entering its loop, so a
+// The core resumes a delegated generator by re-entering its loop, so a
 // yield* chain uses the host's stack; the playground bounds re-entries at 600
 // (apps/web/src/lib.rs), which a 400-deep chain stays within.
 const deepYieldStarDepth = 400;

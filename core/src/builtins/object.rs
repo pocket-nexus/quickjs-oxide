@@ -1,5 +1,5 @@
-//! `Object` (phase 4, section 6.1 row 1): the constructor and its static
-//! functions, and `Object.prototype` with the Annex B accessors.
+//! `Object`: the constructor and its static functions, and `Object.prototype`
+//! with the Annex B accessors.
 
 use super::{
     Native, accessor, install_constructor, link_constructor, methods, string_text, this_object,

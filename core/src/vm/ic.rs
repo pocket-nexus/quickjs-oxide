@@ -1,13 +1,13 @@
-//! Inline caches (new-core phase 3, section 2): one 16-byte entry per cache
-//! site, in a store beside the code store.
+//! Inline caches: one 16-byte entry per cache site, in a store beside the code
+//! store.
 //!
-//! The loop borrows the running unit's code from the [`CodeStore`] across
-//! every heap call, so a cache cannot live in a [`CodeUnit`]. Entries live
-//! here instead, indexed by the unit's `ic_base` plus the site operand of the
-//! instruction (section 2.1). The store sits inside the [`Heap`], as the
-//! register file does, so the collector prunes it at every collection
-//! without a parameter: shape, object and cell indices are recycled, and an
-//! entry naming a dead record would hit on a recycled id. Entries are weak.
+//! The loop borrows the running unit's code from the [`CodeStore`] across every
+//! heap call, so a cache cannot live in a [`CodeUnit`]. Entries live here
+//! instead, indexed by the unit's `ic_base` plus the site operand of the
+//! instruction. The store sits inside the [`Heap`], as the register file does,
+//! so the collector prunes it at every collection without a parameter: shape,
+//! object and cell indices are recycled, and an entry naming a dead record
+//! would hit on a recycled id. Entries are weak.
 //!
 //! [`CodeStore`]: crate::bytecode::CodeStore
 //! [`CodeUnit`]: crate::bytecode::CodeUnit
@@ -25,14 +25,14 @@ use crate::value::{ShapeId, ValidityCellId, Value};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 #[repr(u8)]
 pub enum IcKind {
-    /// `GetField`: `shape`, `holder`, `slot`, `cell` (section 2.2).
+    /// `GetField`: `shape`, `holder`, `slot`, `cell`.
     Get,
-    /// `SetField`: `shape_before`, `shape_after`, `slot`, `cell` (section 2.3).
+    /// `SetField`: `shape_before`, `shape_after`, `slot`, `cell`.
     Set,
-    /// `GetGlobal`, `GetGlobalOrUndefined`, `SetGlobal`: `generation`,
-    /// `slot`, `flags` (section 2.4).
+    /// `GetGlobal`, `GetGlobalOrUndefined`, `SetGlobal`: `generation`, `slot`,
+    /// `flags`.
     Global,
-    /// `New`: `fn_shape`, `proto_slot`, `slots` (section 2.5).
+    /// `New`: `fn_shape`, `proto_slot`, `slots`.
     Construct,
 }
 
@@ -97,9 +97,9 @@ pub const MEGA_TAG: u32 = NONE - 3;
 pub const LENGTH_TAG: u32 = NONE - 4;
 /// Entries a polymorphic site probes, in order, on the out-of-line path.
 pub const POLY: usize = 4;
-/// Entries of the table megamorphic `GetField` sites share (phase 3 M5): a
-/// direct-mapped cache keyed by receiver shape and property key, as V8's
-/// megamorphic stub cache is.
+/// Entries of the table megamorphic `GetField` sites share: a direct-mapped
+/// cache keyed by receiver shape and property key, as V8's megamorphic stub
+/// cache is.
 pub const MEGA_ENTRIES: usize = 4096;
 
 impl IcEntry {
@@ -128,10 +128,9 @@ impl IcEntry {
     }
 }
 
-/// A `GetField` hit (section 2.2): an own hit is one shape compare and a
-/// load; a prototype or string-receiver hit adds the cell test. It takes the
-/// heap's arenas rather than the heap, so the loop keeps its register window
-/// borrowed across it.
+/// A `GetField` hit: an own hit is one shape compare and a load; a prototype or
+/// string-receiver hit adds the cell test. It takes the heap's arenas rather
+/// than the heap, so the loop keeps its register window borrowed across it.
 #[inline(always)]
 pub(crate) fn get_hit(
     objects: &Arena<ObjectHeader>,
@@ -178,10 +177,10 @@ fn length_value(length: usize) -> Value {
     }
 }
 
-/// A `SetField` hit (section 2.3): a write to an existing own data property
-/// when the shape matches; a transition when the shape matches, the chain's
-/// cell holds, the slot is inside the reserved range and the object is
-/// extensible and not a prototype (whose shape change must invalidate).
+/// A `SetField` hit: a write to an existing own data property when the shape
+/// matches; a transition when the shape matches, the chain's cell holds, the
+/// slot is inside the reserved range and the object is extensible and not a
+/// prototype (whose shape change must invalidate).
 #[inline(always)]
 pub(crate) fn set_hit(
     objects: &mut Arena<ObjectHeader>,
@@ -212,9 +211,9 @@ pub(crate) fn set_hit(
     true
 }
 
-/// Hit and miss counters per cache kind (section 2.6), kept with the
-/// `ic-stats` feature and in debug builds (so tests can see hits): release
-/// builds without the feature carry no counter.
+/// Hit and miss counters per cache kind, kept with the `ic-stats` feature and
+/// in debug builds (so tests can see hits): release builds without the feature
+/// carry no counter.
 #[derive(Clone, Debug, Default)]
 pub struct IcStats {
     /// Monomorphic hits, by [`IcKind`].
@@ -228,8 +227,8 @@ pub struct IcStats {
     pub unfilled: [u64; 4],
     /// Misses per entry, both kinds.
     pub site_misses: Vec<u64>,
-    /// `IterStart`s that walked a pristine array by index, and the ones
-    /// that ran the protocol (phase 4, Table C).
+    /// `IterStart`s that walked a pristine array by index, and the ones that
+    /// ran the protocol.
     pub iter_pristine: u64,
     pub iter_generic: u64,
 }

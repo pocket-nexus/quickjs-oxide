@@ -1,4 +1,4 @@
-// Math: the functions and constants of section 6.2, with NaN and ±0.
+// Math: the functions and constants, with NaN and ±0.
 print(Math.abs(-3), Math.abs(-0), 1 / Math.abs(-0), Math.abs('x'), Math.abs(-2147483648));
 print(Math.floor(1.7), Math.floor(-1.2), 1 / Math.floor(-0), Math.ceil(1.2), Math.ceil(-1.7), 1 / Math.ceil(-0.5));
 print(Math.round(2.5), Math.round(-2.5), Math.round(0.49999999999999994), 1 / Math.round(-0.4), Math.round(1e20), Math.round(-0.5), Math.round(0.5), Math.round(NaN));

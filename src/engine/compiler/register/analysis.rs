@@ -2,8 +2,9 @@
 //! operand-stack depth at every reachable instruction, the catch regions
 //! active there, and which instructions are join points.
 //!
-//! This is `compute_stack_size` (`code/bytecode.rs`) restricted to the phase 2
-//! surface, keeping per-PC results instead of only the maximum.
+//! This is `compute_stack_size` (`code/bytecode.rs`) restricted to the
+//! instructions the lowering supports, keeping per-PC results instead of only
+//! the maximum.
 
 use std::collections::VecDeque;
 
@@ -11,7 +12,7 @@ use super::LowerError;
 use crate::engine::code::bytecode::Instruction;
 
 /// One `Catch` instruction: the stack depth of its marker and its handler;
-/// or one iterator record (`ForOfStart` and friends, phase 4 section 4.2):
+/// or one iterator record (`ForOfStart` and friends):
 /// the depth of its three slots, and no handler of its own (the lowering
 /// adds one that closes the iterator and rethrows).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

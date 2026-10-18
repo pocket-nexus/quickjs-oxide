@@ -1,4 +1,4 @@
-//! Source compilation request options; publication gets its own input contract.
+//! Source compilation request options.
 
 use crate::engine::code::function::metadata::{
     ClosureVariableKind, EvalCallerProfile, EvalCallerVariableTarget, EvalKind, EvalRootBinding,
@@ -32,8 +32,9 @@ impl Default for CompileOptions {
 
 /// Internal compilation context for one synthetic eval root.
 ///
-/// Direct eval imports the exact live caller bindings described by R1w.
-/// Indirect eval has no external bindings and resolves against the defining
+/// A direct context compiles against the caller bindings it lists; the front
+/// end's tests use it, and the register lowering declines direct eval code (a
+/// direct `eval` runs as indirect eval). Indirect eval has no external bindings and resolves against the defining
 /// realm's global environment. `caller_strict` is ignored for indirect eval,
 /// matching QuickJS's `JS_EVAL_TYPE_INDIRECT` path.
 #[derive(Clone, Debug, PartialEq, Eq)]

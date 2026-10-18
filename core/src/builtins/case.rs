@@ -1,6 +1,6 @@
 //! Full Unicode case mapping for `toLowerCase` and `toUpperCase` past their
-//! ASCII pass, from the tables of `oxide-regexp` (the current core's own),
-//! including the final-sigma rule and the multi-unit expansions.
+//! ASCII pass, from the tables of `oxide-regexp`, including the final-sigma
+//! rule and the multi-unit expansions.
 
 use oxide_regexp::unicode::case::convert_case_with_limit;
 use oxide_regexp::unicode::{CodeUnitBuf, MAX_STRING_LEN};

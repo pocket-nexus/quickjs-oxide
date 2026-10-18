@@ -1,5 +1,5 @@
-//! The iterator protocol for natives and the loop's slow paths (phase 4,
-//! section 4.2): `GetIterator`, `IteratorStepValue` and `IteratorClose`.
+//! The iterator protocol for natives and the loop's slow paths: `GetIterator`,
+//! `IteratorStepValue` and `IteratorClose`.
 //!
 //! An [`Iter`] over an unmodified `Array` (no own `@@iterator`, and the
 //! realm's array iteration still pristine) walks the elements directly and
@@ -235,10 +235,9 @@ pub(crate) fn result_object(cx: &mut Cx<'_>, value: Value, done: bool) -> Result
 use super::Frame;
 use crate::bytecode::{Insn, Opcode};
 
-/// Runs one iteration opcode (section 4.2) with the root stack cut back
-/// afterwards. A record occupies three registers: the iterator, its `next`
-/// and a done flag; or, for a pristine array, the array, `Value::EMPTY` and
-/// the next index.
+/// Runs one iteration opcode with the root stack cut back afterwards. A record
+/// occupies three registers: the iterator, its `next` and a done flag; or, for
+/// a pristine array, the array, `Value::EMPTY` and the next index.
 #[inline(never)]
 pub(super) fn iter_op(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Throw> {
     let mark = cx.heap.roots().mark();

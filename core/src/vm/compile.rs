@@ -1,6 +1,6 @@
-//! Code compiled at run time (phase 4, section 5.5): `eval`, the `Function`
-//! constructors, `$262.evalScript` and `Function.prototype.toString`'s
-//! source text, through the compile host the embedder installs.
+//! Code compiled at run time: `eval`, the `Function` constructors,
+//! `$262.evalScript` and `Function.prototype.toString`'s source text, through
+//! the compile host the embedder installs.
 //!
 //! The core has no front end. The embedder installs a [`CompileFn`] that
 //! compiles and lowers source into a [`Compiler`], the part of the runtime a
@@ -234,7 +234,7 @@ impl<'a> Compiler<'a> {
 }
 
 impl Compiler<'_> {
-    /// A tagged template's frozen site object (section 5.2).
+    /// A tagged template's frozen site object.
     pub fn template_object(
         &mut self,
         cooked: &[Value],
@@ -400,7 +400,7 @@ fn run(cx: &mut Cx<'_>, source: &[u16], kind: CompileKind) -> Result<Value, Thro
     result
 }
 
-/// `%eval%(x)`: a direct eval runs as an indirect one (phase 0).
+/// `%eval%(x)`: a direct eval runs as an indirect one.
 pub(crate) fn eval(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let source = site.arg(cx, 0);
     let Some(string) = source.as_string() else {
@@ -560,8 +560,8 @@ fn wtf8_units(bytes: &[u8]) -> Vec<u16> {
     units
 }
 
-/// `$262.evalScript(source)`: the source as a separate script.
-/// qjs's `load(path)` (`oxide-run --std`): the file, run as a script.
+/// `$262.evalScript(source)`: the source as a separate script. qjs's
+/// `load(path)` (`qjs --std`): the file, run as a script.
 pub(crate) fn load(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     load_script(cx, site).map(|_| Value::UNDEFINED)
 }
@@ -586,7 +586,7 @@ pub(crate) fn load_script(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     result
 }
 
-/// qjs's `read(path)` (`oxide-run --std`): the file's text.
+/// qjs's `read(path)` (`qjs --std`): the file's text.
 pub(crate) fn read(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let path = site.arg(cx, 0);
     let path = ops::to_string(cx, path)?;

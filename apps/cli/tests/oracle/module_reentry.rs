@@ -18,8 +18,8 @@ struct CallbackEvent {
     subject: String,
 }
 
-/// A loader that compiles every module through its `Scope` (new-core
-/// phase 6, section 2.3), for `import()` of a two-module graph.
+/// A loader that compiles every module through its `Scope`, for `import()`
+/// of a two-module graph.
 #[derive(Debug)]
 struct DynamicReentryLoader {
     events: Rc<RefCell<Vec<CallbackEvent>>>,

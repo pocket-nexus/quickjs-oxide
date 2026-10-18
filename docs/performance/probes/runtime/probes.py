@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
-"""Per-iteration Ir and per-function self-cost diffs for binding, property, array, call and construct probes.
+"""Per-iteration Ir and per-function self-cost diffs for allocation, binding, property, array, call and construct probes.
 
 Every probe is a `work(n)` loop with the same shape as `empty_loop` and a checked
 result. Each probe runs under Callgrind at N, 2N and 4N; the slope (2N - N) / N is
 the per-iteration Ir and (4N - 2N) / 2N checks linearity. Self cost per function
-is diffed the same way (2N - N), which stays meaningful on aarch64 where inlining
-makes the caller-chain phase split of `allocation/ledger.py` unreliable. "Net"
-values subtract the matching `empty_loop` figure.
+is diffed the same way (2N - N). "Net" values subtract the matching
+`empty_loop` figure.
 
 With `--v8`, fixed-iteration V8-v7 Richards/DeltaBlue/NavierStokes bodies (driver
 from `scripts/benchmark/profile_v8.fixed_driver`) also run under Callgrind with
-cache simulation for total Ir/Dw and the self-Ir share of reference counting.
+cache simulation for total Ir/Dw and the per-function self Ir.
 """
 import argparse
 import collections
@@ -23,12 +22,17 @@ import sys
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent / "allocation"))
 sys.path.insert(0, str(HERE.parents[3] / "scripts" / "benchmark"))
-import ledger  # noqa: E402  (empty_loop/object_literal/constructor probes)
-
-# Binding, property, array, call and construct probes. `i` equals n after the loop.
-NEW_PROBES = {
+# The empty loop and the allocation probes, then binding, property, array, call
+# and construct probes. `i` equals n after the loop.
+PROBES = {
+    "empty_loop": ("function work(n){ var s; for (var i=0;i<n;i++){ s=i; } return s; }\n",
+                   lambda n: n - 1),
+    "object_literal": ("function work(n){ var s; for (var i=0;i<n;i++){ s={a:i,b:i}; } return s.a; }\n",
+                       lambda n: n - 1),
+    "constructor": ("function P(x){ this.a=x; this.b=x; }\n"
+                    "function work(n){ var s; for (var i=0;i<n;i++){ s=new P(i); } return s.a; }\n",
+                    lambda n: n - 1),
     "s=o": ("function work(n){ var o={x:1}; var s; for (var i=0;i<n;i++){ s=o; } return s.x+i; }\n",
             lambda n: n + 1),
     "s=o.x": ("function work(n){ var o={x:1}; var s; for (var i=0;i<n;i++){ s=o.x; } return s+i; }\n",
@@ -56,15 +60,6 @@ NEW_PROBES = {
                 "function work(n){ var s; for (var i=0;i<n;i++){ s=new E(); } return (s instanceof E) ? i : -1; }\n",
                 lambda n: n),
 }
-PROBES = {name: (template.replace("print(work(N));\n", ""), ledger.EXPECTED[name])
-          for name, template in ledger.PROBES.items()}
-PROBES.update(NEW_PROBES)
-
-# Reference counting functions reported individually (matched on the last path segment).
-REFCOUNT = ("copy_reference_in_state", "dup_jsvalue", "retain_raw_root", "retain_object", "retain_raw",
-            "retain_string_fast", "retain_string", "retain_string_shared", "retain_string_handle",
-            "release_jsvalue", "release_heap_reference", "try_release_nonfinal",
-            "validate_slot_identity", "release_owned_jsvalue")
 V8_CASES = ("richards", "deltablue", "navier-stokes")
 
 
@@ -146,14 +141,6 @@ def measure_probe(qjs, name, n, out: Path):
             "functions": dict(sorted(functions.items(), key=lambda kv: -abs(kv[1])))}
 
 
-def by_leaf(functions, names):
-    found = collections.Counter()
-    for fn, value in functions.items():
-        if leaf(fn) in names:
-            found[leaf(fn)] += value
-    return {name: round(found[name], 2) for name in names if name in found}
-
-
 def finish_probes(report, top):
     base = report["probes"]["empty_loop"]
     for name, entry in report["probes"].items():
@@ -164,8 +151,6 @@ def finish_probes(report, top):
                              sorted(entry["functions"].items(), key=lambda kv: -kv[1])[:top]]
         entry["top_net_self"] = [[fn, round(v, 2)] for fn, v in
                                  sorted(net.items(), key=lambda kv: -abs(kv[1]))[:top] if abs(v) >= 0.5]
-        entry["refcount_self"] = by_leaf(entry["functions"], REFCOUNT)
-        entry["refcount_self_total"] = round(sum(entry["refcount_self"].values()), 2)
 
 
 def measure_v8(qjs, v8_root: Path, case, iterations, out: Path, top):
@@ -183,13 +168,7 @@ def measure_v8(qjs, v8_root: Path, case, iterations, out: Path, top):
         sys.exit(f"{case}: unexpected output {stdout[-300:]!r}")
     _, totals, costs = parse_callgrind(data)
     ir = {fn: c["Ir"] for fn, c in costs.items()}
-    refcount = {k: v for k, v in by_leaf(ir, REFCOUNT).items()}
-    mechanism = sum(v for fn, v in ir.items()
-                    if ledger.mechanism_of(ledger.short(fn)) == "refcount, release and collection")
     return {"iterations": iterations, "Ir": totals["Ir"], "Dw": totals.get("Dw"), "Dr": totals.get("Dr"),
-            "refcount_self": refcount,
-            "refcount_share": sum(refcount.values()) / totals["Ir"],
-            "refcount_mechanism_share": mechanism / totals["Ir"],
             "top_self": [[fn, v, round(v / totals["Ir"], 4)] for fn, v in
                          sorted(ir.items(), key=lambda kv: -kv[1])[:top]],
             "self": {fn: v for fn, v in ir.items() if v}}
@@ -236,17 +215,16 @@ def main():
             report["v8"][case] = job.result()
     finish_probes(report, args.top)
     Path(args.json or out / "probes.json").write_text(json.dumps(report, ensure_ascii=False, indent=1))
-    print(f"{'probe':<16}{'Ir/iter':>9}{'net':>9}{'2N→4N':>9}{'refcount':>10}")
+    print(f"{'probe':<16}{'Ir/iter':>9}{'net':>9}{'2N→4N':>9}")
     for name, entry in report["probes"].items():
         print(f"{name:<16}{entry['per_iteration']:9.0f}{entry['net_per_iteration']:9.0f}"
-              f"{entry['per_iteration_2n_4n']:9.0f}{entry['refcount_self_total']:10.0f}")
+              f"{entry['per_iteration_2n_4n']:9.0f}")
     for name, entry in report["probes"].items():
         print(f"\n## {name}: net {entry['net_per_iteration']:.0f}")
         for fn, value in entry["top_self"][:12]:
             print(f"  {value:8.1f}  {leaf(fn)}")
     for case, entry in report["v8"].items():
-        print(f"\n## {case} x{entry['iterations']}: Ir {entry['Ir']:,} Dw {entry['Dw']:,} "
-              f"refcount {entry['refcount_share']:.2%} (mechanism {entry['refcount_mechanism_share']:.2%})")
+        print(f"\n## {case} x{entry['iterations']}: Ir {entry['Ir']:,} Dw {entry['Dw']:,}")
 
 
 if __name__ == "__main__":

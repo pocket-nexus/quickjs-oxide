@@ -36,18 +36,19 @@ impl Error for UnlinkedConstantError {}
 enum UnlinkedConstantKind {
     Primitive(PrimitiveValue),
     /// Source String lowered through QuickJS `emit_push_const(..., as_atom=1)`.
-    /// Publication canonicalizes non-immediate atoms in the runtime domain.
+    /// The register lowering interns it into the runtime's atom table, as it
+    /// does every string constant not spelling an integer index.
     AtomString(PrimitiveValue),
     /// Runtime-independent RegExp literal source and its compile-once matcher
     /// program. Both payloads are reference-counted leaves with no heap or
-    /// atom identity, so the draft remains safe to publish into any runtime.
+    /// atom identity, so the draft can be lowered into any runtime.
     RegExp {
         pattern: JsString,
         program: Rc<CompiledRegExp>,
     },
-    /// Runtime-independent template-site data. Runtime publication replaces
-    /// this pair with one realm-local frozen cooked Array whose `raw` property
-    /// points at the corresponding frozen raw Array.
+    /// Runtime-independent template-site data. The register lowering replaces
+    /// this pair with the runtime's template object: a frozen cooked Array whose
+    /// `raw` property points at the corresponding frozen raw Array.
     TemplateObject {
         cooked: Box<[Option<JsString>]>,
         raw: Box<[JsString]>,
@@ -55,13 +56,12 @@ enum UnlinkedConstantKind {
     Child(Box<UnlinkedFunction>),
 }
 
-/// One constant in a compiler draft, before runtime publication.
+/// One constant in a compiler draft, before the register lowering.
 ///
 /// Primitive constants may contain undefined, null, booleans, numbers,
 /// BigInts, and strings. RegExp constants own only pure-Rust String/Rc leaves.
-/// Symbols are ECMAScript primitives but remain
-/// runtime-owned atom identities, so they intentionally use a future dedicated
-/// linked representation instead of this draft variant.
+/// Symbols are ECMAScript primitives but runtime-owned atom identities, so a
+/// draft has no symbol constant.
 #[derive(Debug)]
 pub struct UnlinkedConstant(UnlinkedConstantKind);
 
@@ -176,13 +176,12 @@ impl TryFrom<PrimitiveValue> for UnlinkedConstant {
 
 /// Mutable compiler output which has not entered a runtime domain yet.
 ///
-/// The draft owns its vectors, but its fields stay private.  Publication
-/// consumes the whole value through [`Self::into_parts`], checks selected
-/// published metadata, interns runtime atoms, recursively publishes child
-/// functions, retains all outgoing edges transactionally, and only then
-/// returns an engine `FunctionBytecodeRef`. The compiler validates bytecode
-/// stack flow during lowering.
-/// Published bytecode therefore has no mutation path back to this draft.
+/// The draft owns its vectors, but its fields stay private. The register
+/// lowering (`compiler::register`) reads it through the accessors, lowers its
+/// child functions first, interns the atoms it needs into the runtime, and
+/// publishes each lowered unit into the runtime's code store, which validates
+/// it. The lowering checks the stack code's operand-stack flow as it goes.
+/// Published code therefore has no mutation path back to this draft.
 #[derive(Debug)]
 pub struct UnlinkedFunction {
     code: Vec<Instruction>,
@@ -200,8 +199,8 @@ pub struct UnlinkedFunction {
 /// Runtime-independent form of QuickJS's `JSVarDef`/argument metadata.
 ///
 /// Names remain optional because synthetic locals do not have an observable
-/// identifier. Publication interns every present name and transfers the
-/// resulting atom ownership to immutable function bytecode.
+/// identifier. The register lowering interns a name where the lowered code
+/// needs it as a property key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnlinkedVariableDefinition {
     pub name: Option<crate::engine::value::JsString>,
@@ -239,8 +238,8 @@ impl UnlinkedVariableDefinition {
         }
     }
 
-    /// Retain compiler-authored parameter-initializer scope provenance across
-    /// the publication boundary.
+    /// Retain compiler-authored parameter-initializer scope provenance for the
+    /// register lowering.
     #[must_use]
     pub const fn with_parameter_initializer(mut self, value: bool) -> Self {
         self.is_parameter_initializer = value;
@@ -280,9 +279,9 @@ impl UnlinkedVariableDefinition {
 
 /// Runtime-independent debug payload produced by the compiler.
 ///
-/// Publication interns the filename separately for every function. Function
-/// source is an independent byte copy so a nested closure does not retain its
-/// complete enclosing script.
+/// The register lowering copies the filename into every lowered function.
+/// Function source is an independent byte copy so a nested closure does not
+/// retain its complete enclosing script.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UnlinkedFunctionDebug {
     pub filename: crate::engine::value::JsString,
@@ -292,7 +291,8 @@ pub struct UnlinkedFunctionDebug {
 
 impl UnlinkedFunction {
     /// Assemble a compiler draft with producer-authored binding definitions.
-    /// Publication validates counts, flags and captured binding sources.
+    /// The register lowering lays out the function's registers and captures
+    /// from them.
     #[must_use]
     pub fn new(
         code: Vec<Instruction>,
@@ -359,7 +359,7 @@ impl UnlinkedFunction {
         self
     }
 
-    /// Attach compiler-produced source metadata before publication.
+    /// Attach compiler-produced source metadata before lowering.
     #[must_use]
     pub fn with_debug(mut self, debug: UnlinkedFunctionDebug) -> Self {
         self.debug = Some(debug);

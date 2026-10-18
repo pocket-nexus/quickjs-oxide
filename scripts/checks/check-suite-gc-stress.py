@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
-"""New core, phase 3 section 7 and phase 4 section 8: the suite programs at
-one run() per benchmark under the stress collector.
+"""The benchmark suite programs at one run() per benchmark under the stress
+collector.
 
 Runs every workload (or those starting with `--prefix`) of a suite built with
 `scripts/benchmark/suite_matrix.py build --pilot 1` on `qjs
 --gc-stress=1` (an `qjs` built with the `gc-stress` feature)
 and compares its stdout with the manifest's expected line.
 
-    python3 scripts/checks/check-new-core-suite.py --qjs PATH --suite DIR
+    python3 scripts/checks/check-suite-gc-stress.py --qjs PATH --suite DIR
 """
 import argparse
 import json
@@ -17,9 +17,9 @@ import time
 from pathlib import Path
 
 # Programs whose live set makes a collection at every allocation take hours.
-# Phase 3 M6: Splay's one run() under --gc-stress=1 did not finish in 55
-# minutes; at 100 it takes about 15. Phase 4 M8: every program that took
-# more than 20 minutes at interval 1 (or did not finish in 30) runs at 100.
+# Splay's one run() under --gc-stress=1 does not finish in 55 minutes; at 100
+# it takes about 15. Every program that takes more than 20 minutes at
+# interval 1 (or does not finish in 30) runs at 100.
 INTERVALS = {
     "v8-v7-earley-boyer": "100",
     "v8-v7-splay": "100",
@@ -66,8 +66,8 @@ def main():
         if not ok:
             print(f"  expected {workload['expected']!r}\n  got      {stdout[-200:]!r}\n  {detail}")
     if failures:
-        sys.exit(f"new-core suite: {failures} of {len(workloads)} programs failed under --gc-stress={args.gc_stress}")
-    print(f"new-core suite: {len(workloads)} programs pass at --gc-stress={args.gc_stress}")
+        sys.exit(f"suite gc stress: {failures} of {len(workloads)} programs failed under --gc-stress={args.gc_stress}")
+    print(f"suite gc stress: {len(workloads)} programs pass at --gc-stress={args.gc_stress}")
 
 
 if __name__ == "__main__":

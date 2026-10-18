@@ -1,4 +1,4 @@
-//! M2 acceptance: collection, roots, handles, free-list reuse, the heap cap.
+//! Collection, roots, handles, free-list reuse, the heap cap.
 //!
 //! Every test follows the rooting rule, so the suite also passes under
 //! `--features gc-stress`, where each allocation collects first.

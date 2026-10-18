@@ -1,9 +1,9 @@
-//! The object internal methods (phase 4, section 3.1): `[[GetOwnProperty]]`,
-//! `[[DefineOwnProperty]]`, `[[HasProperty]]`, `[[Get]]`, `[[Set]]`,
-//! `[[Delete]]`, `[[OwnPropertyKeys]]`, `[[GetPrototypeOf]]`,
-//! `[[SetPrototypeOf]]`, `[[PreventExtensions]]` and `[[IsExtensible]]`,
-//! dispatched on the object kind before the ordinary algorithm, and the
-//! abstract operations the builtins share over them.
+//! The object internal methods: `[[GetOwnProperty]]`, `[[DefineOwnProperty]]`,
+//! `[[HasProperty]]`, `[[Get]]`, `[[Set]]`, `[[Delete]]`,
+//! `[[OwnPropertyKeys]]`, `[[GetPrototypeOf]]`, `[[SetPrototypeOf]]`,
+//! `[[PreventExtensions]]` and `[[IsExtensible]]`, dispatched on the object
+//! kind before the ordinary algorithm, and the abstract operations the builtins
+//! share over them.
 //!
 //! These are the slow paths. The loop's inline caches and `vm::property`'s
 //! heap-only walks handle ordinary objects first; they come here when they
@@ -1860,12 +1860,12 @@ pub(crate) fn copy_data_properties(
     result
 }
 
-/// `SpeciesConstructor` is not ported (phase 0 dropped `Symbol.species`):
-/// the intrinsic constructor is used.
+/// `SpeciesConstructor` is not ported (`Symbol.species` is dropped): the
+/// intrinsic constructor is used.
 #[allow(dead_code)]
 pub(crate) const SPECIES_DROPPED: () = ();
 
-/// An `InternalError` for a construct the new core does not support.
+/// An `InternalError` for a construct the core does not support.
 #[cold]
 pub(crate) fn unsupported(cx: &mut Cx<'_>, construct: &str) -> Throw {
     error::throw(

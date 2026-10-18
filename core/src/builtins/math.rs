@@ -1,8 +1,7 @@
-//! `Math` (phase 4, section 6.1 row 5): every function and constant. The
-//! transcendental functions call the platform libm through Rust's `f64`
-//! methods, as the current core does (on the reference machine both use
-//! glibc). `round` is QuickJS's half-up on the bits, `random` its
-//! xorshift64*, `sumPrecise` an exact (Shewchuk) summation.
+//! `Math`: every function and constant. The transcendental functions call the
+//! platform libm through Rust's `f64` methods (glibc's on the reference
+//! machine, as QuickJS's). `round` is QuickJS's half-up on the bits, `random`
+//! its xorshift64*, `sumPrecise` an exact (Shewchuk) summation.
 
 use super::{Native, define, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;
@@ -139,8 +138,8 @@ unary! {
     trunc => f64::trunc;
 }
 
-/// fdlibm's `atanh`, as the current engine computes it: `f64::atanh`'s
-/// single expression loses thousands of ULPs next to -1.
+/// fdlibm's `atanh`: `f64::atanh`'s single expression loses thousands of ULPs
+/// next to -1.
 fn fdlibm_atanh(value: f64) -> f64 {
     let magnitude = value.abs();
     // Tiny inputs are their own correctly rounded result (and keep -0).

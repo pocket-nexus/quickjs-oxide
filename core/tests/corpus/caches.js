@@ -1,6 +1,6 @@
-// Inline caches (phase 3, section 2): monomorphic, polymorphic and
+// Inline caches: monomorphic, polymorphic and
 // megamorphic sites, invalidation by prototype changes, global generations
-// and constructor sizing. Every line must print the same on both cores.
+// and constructor sizing. Every line must print what `caches.out` holds.
 function getX(o) { return o.x; }
 function setX(o, v) { o.x = v; return o; }
 var shapes = [];

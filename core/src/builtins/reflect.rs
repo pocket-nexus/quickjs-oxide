@@ -1,5 +1,4 @@
-//! `Reflect` (section 3.1): the natives over the internal methods and
-//! nothing else.
+//! `Reflect`: the natives over the internal methods and nothing else.
 
 use super::{Native, define, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;

@@ -1,6 +1,5 @@
-//! `BigInt` (phase 4, section 6.1 row 5): the function (callable, not
-//! constructible), `asIntN`, `asUintN`, and `BigInt.prototype`'s
-//! `toString(radix)`, `toLocaleString` and `valueOf`.
+//! `BigInt`: the function (callable, not constructible), `asIntN`, `asUintN`,
+//! and `BigInt.prototype`'s `toString(radix)`, `toLocaleString` and `valueOf`.
 
 use super::{Native, install_constructor, link_constructor, methods, string_text, to_string_tag};
 use crate::heap::HeapError;

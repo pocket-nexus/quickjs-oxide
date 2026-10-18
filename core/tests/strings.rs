@@ -1,4 +1,4 @@
-//! M4 acceptance: interning, property keys, symbols and BigInt records.
+//! Interning, property keys, symbols and BigInt records.
 
 use oxide_core::{Heap, KeyKind, ObjectKind, PropertyFlags, PropertyKey, Value};
 

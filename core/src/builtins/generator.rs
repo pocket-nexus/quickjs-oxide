@@ -1,7 +1,7 @@
-//! The generator and async-function intrinsics (section 6.1 rows 7 and 8):
-//! `%GeneratorFunction%` and its prototypes with `%GeneratorPrototype%`'s
-//! `next`, `return` and `throw`; `%AsyncFunction%`; the async generator
-//! counterparts, whose natives are in `vm::async_generator`.
+//! The generator and async-function intrinsics: `%GeneratorFunction%` and its
+//! prototypes with `%GeneratorPrototype%`'s `next`, `return` and `throw`;
+//! `%AsyncFunction%`; the async generator counterparts, whose natives are in
+//! `vm::async_generator`.
 
 use super::{Native, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;

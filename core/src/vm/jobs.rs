@@ -1,4 +1,4 @@
-//! The job queue and the promise machinery (phase 4, section 5.4).
+//! The job queue and the promise machinery.
 //!
 //! A promise is a [`InternalTag::Promise`] object whose internal slots are
 //! its state, its result, whether it is handled, and then its pending

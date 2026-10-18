@@ -1,4 +1,4 @@
-// `Function.prototype.apply` and `call` inside the loop (section 5.2).
+// `Function.prototype.apply` and `call` inside the loop.
 function show(a, b) { return this.name + ':' + a + ',' + b; }
 var self = { name: 'self' };
 print(show.call(self, 1, 2), show.call(self), show.apply(self, [3, 4]));

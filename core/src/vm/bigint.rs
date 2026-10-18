@@ -1,7 +1,6 @@
 //! BigInt arithmetic on sign and magnitude (64-bit limbs, little-endian, no
 //! high zero limbs), the representation of the heap's `BigIntRecord`. Plain
-//! schoolbook algorithms: phase 2 runs the BigInt probes, and phase 4 brings
-//! `ShortBigInt` and the fast paths (phase 1, section 2).
+//! schoolbook algorithms.
 
 use std::cmp::Ordering;
 

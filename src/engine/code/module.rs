@@ -3,8 +3,9 @@
 //! QuickJS keeps a `JSModuleDef` beside the compiled module function.  This
 //! module is the Rust ownership boundary for the same information: parsing
 //! produces request/import/export tables whose local binding indices point at
-//! authenticated closure slots on the module root function.  Runtime
-//! publication consumes the complete draft transactionally.
+//! authenticated closure slots on the module root function. The register
+//! lowering (`lower_module_tree_into`) reads the whole draft and turns it into
+//! the core's module source.
 
 use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::value::JsString;
@@ -175,7 +176,7 @@ pub struct UnlinkedModule {
     star_exports: Box<[ModuleStarExport]>,
 }
 
-/// Compiler-owned module tables published as one sealed aggregate.
+/// Compiler-owned module tables, sealed into one [`UnlinkedModule`].
 pub struct UnlinkedModuleTables {
     pub declaration_order: Vec<u16>,
     pub link_initializers: Vec<ModuleLinkInitializer>,

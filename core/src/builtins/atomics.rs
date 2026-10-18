@@ -1,7 +1,6 @@
-//! `Atomics` (phase 4, section 6.1 row 9). Every operation on shared memory
-//! runs inside the process-wide coordinator of `vm::waiter`, which orders
-//! them sequentially consistently across agents; `wait` and `notify` queue
-//! on the same coordinator.
+//! `Atomics`. Every operation on shared memory runs inside the process-wide
+//! coordinator of `vm::waiter`, which orders them sequentially consistently
+//! across agents; `wait` and `notify` queue on the same coordinator.
 
 use std::time::Duration;
 

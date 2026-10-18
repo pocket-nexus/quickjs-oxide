@@ -1,7 +1,6 @@
-//! The embedding API over the new core (phase 6, section 2): one realm per
-//! runtime, values as Rust data or handles, the host as one trait, module
-//! loaders with a [`Scope`]. It keeps the current API's shapes wherever the
-//! new core gives them their meaning (section 2.7).
+//! The embedding API over `oxide-core`: one realm per runtime, values as
+//! Rust data or handles, the host as one trait, module loaders with a
+//! [`Scope`].
 
 pub(crate) mod compile;
 mod context;

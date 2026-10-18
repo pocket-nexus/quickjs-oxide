@@ -1,7 +1,7 @@
-//! `%IteratorPrototype%` and the array iterator (section 6.1 rows 2 and 8):
-//! `Array.prototype.values`, `keys`, `entries` and `[Symbol.iterator]`, and
-//! `%ArrayIteratorPrototype%.next`. An array iterator's internal slots are
-//! the iterated object (`undefined` once done), the next index and the kind.
+//! `%IteratorPrototype%` and the array iterator: `Array.prototype.values`,
+//! `keys`, `entries` and `[Symbol.iterator]`, and
+//! `%ArrayIteratorPrototype%.next`. An array iterator's internal slots are the
+//! iterated object (`undefined` once done), the next index and the kind.
 
 use super::{Native, methods, plain_object, symbol_method, to_string_tag};
 use crate::heap::HeapError;
