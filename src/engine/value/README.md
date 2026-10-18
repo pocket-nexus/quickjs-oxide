@@ -1,22 +1,20 @@
-# Values, strings and numeric conversion
+# Front-end primitive values
 
-value owns the full JS Value, the restricted primitive-constant
-representation, strings and BigInt, and provides the Number algorithms and
-ECMAScript value conversions. The compiler, VM, object and builtins share
-these values and algorithms so that numeric and string semantics have a
-single definition.
+value holds the primitives the front end, its constant pool and the
+embedding API share. JavaScript values at run time are `oxide-core`'s
+(`oxide_core::Value`, NaN-boxed, with strings, symbols, BigInts and objects
+as heap records); the values here are Rust data. The lowering copies constants into the core, and the API
+copies primitives out of it.
 
-Pure numeric, string and collection-key algorithms are separate from runtime
-conversions. Conversions such as ToPrimitive can read properties, call object
-methods and throw arbitrary JS values, so they preserve order, context and
-identity. Direct exact-Number arithmetic does not replace the rules for object
-conversion or mixed BigInt operations.
+| Item | Content |
+| --- | --- |
+| `JsString` | an ECMAScript string as UTF-16 code units, including lone surrogates, stored as a Latin-1 or UTF-16 leaf or a bounded rope; comparison and hashing agree across the storage choices. Source text, identifiers, string literals and the API's `Value::String` use it |
+| `JsStringBuilder`, `JsStringError` | building strings within QuickJS's length limit; `TooLong` and `OutOfMemory` |
+| `JsBigInt` ([bigint.rs](bigint.rs)) | QuickJS's two BigInt representations (an immediate `i64` or a heap integer over `num-bigint`), for BigInt literals and the API's `Value::BigInt` |
+| `PrimitiveValue` | a constant-pool value: `Int`, `Float`, `BigInt` or `String` |
+| `number_to_string` | `Number::toString(value, 10)` as the core prints it (it calls the core's radix conversion), exported by the API |
+| `decode_quickjs_utf8` | QuickJS's UTF-8 decoding (surrogate encodings accepted), used by `SourceText`, the lexer and JSON module text |
 
-Strings carry UTF-16 code-unit semantics, including lone surrogates. Latin1,
-UTF-16 and rope are storage choices, and comparison and hashing give
-consistent results across them; the randomly seeded collection hash and the
-QuickJS content fingerprint serve different purposes.
-
-object manages object identity and property behavior, heap manages raw
-reference edges and the VM manages stack slots and value movement. value owns
-values and their conversion semantics, not active execution frames.
+Conversions that can run JavaScript (`ToPrimitive`, `ToString` of an
+object) are the core's; `PrimitiveValue::to_js_string` covers only the
+primitive kinds.

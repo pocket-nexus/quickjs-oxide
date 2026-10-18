@@ -1,18 +1,16 @@
 # oxide-regexp
 
 The regular-expression engine of quickjs-oxide and the checksum-pinned
-Unicode 17 tables it and the String intrinsics use, as a workspace crate both
-cores depend on (the root crate and `oxide-core`). Phase 3 of the new core
-moved it out of the root crate's `src/regexp` and `src/source/unicode`; the
-plan is [`docs/performance/new-core-phase3.md`](../docs/performance/new-core-phase3.md),
-section 6.1.
+Unicode 17 tables it and the String intrinsics use, as a workspace crate the
+root crate and `oxide-core` depend on.
 
 The crate has `#![forbid(unsafe_code)]` and no dependencies. Its API works on
 UTF-16 code units (`&[u16]`, or Latin-1 `&[u8]` where a function takes
 `CodeUnits`) and plain `u32` code points; it never sees an engine string. The
-root crate keeps its historical paths, `crate::regexp` (`src/regexp.rs`) and
-`crate::source::unicode` (`src/source/unicode.rs`), as re-exports plus thin
-`JsString` wrappers.
+front end validates regular-expression literals through `compile`;
+`crate::source::unicode` (`src/source/unicode.rs`) in the root crate
+re-exports the Unicode functions with thin `JsString` wrappers. RegExp
+objects are `oxide-core`'s (`core/src/builtins/regexp.rs`).
 
 | Module | Content |
 | --- | --- |

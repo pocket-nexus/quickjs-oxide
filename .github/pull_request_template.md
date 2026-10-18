@@ -7,17 +7,17 @@
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo fmt --check`
 - [ ] Tests for the changed areas pass
 
-### New core (`core/`, `src/engine/compiler/register`, `src/engine/api/core`)
+### The core (`core/`, `src/engine/compiler/register`, `src/engine/api/core`)
 
-Only for a pull request that changes code the new core runs
-(docs/performance/new-core-phase4.md, sections 4.1 and 10):
+Only for a pull request that changes code `oxide-core` runs
+(the gates in docs/performance/principles.md):
 
 - [ ] `cargo test -p oxide-core --features gc-stress`, the two-core corpus under
-      `gc-stress`, and `scripts/checks/check-new-core-stress.py`
+      `gc-stress`, and `scripts/checks/check-gc-stress.py`
 - [ ] **Loop size:** `nm --size-sort` of `qjs`, symbol
       `oxide_core::vm::interp::run_at`: ____ bytes (gate: 16 KB)
 - [ ] **Instruction gate:** `instructions:u` of the eight V8 v7 programs at the
-      full fixed work, pinned, against new-core phase 6 M3's `qjs` (`7a3bbd4c`);
+      full fixed work, pinned, against the base branch's `qjs`;
       a program above +2% is explained by a profile or fixed
 
 | Program | Change |

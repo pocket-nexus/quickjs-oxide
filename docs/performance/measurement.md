@@ -4,7 +4,7 @@ This page uses the repository's [`scripts/benchmark`](../../scripts/benchmark/RE
 
 ## Builds and sampling
 
-Plain release builds are used for time and hardware counters. Profiling builds are used for logical events and lifetimes. Both sides use the same toolchain and build configuration, each with its own target directory. `build.py` produces identity receipts for source, tools and binaries.
+Plain release builds are used for time and hardware counters. Cache events come from a build with the `ic-stats` feature (`qjs --ic-stats`); collector and memory figures from `qjs --gc-stats` and `--memory-report` on a plain build. Both sides use the same toolchain and build configuration, each with its own target directory. `build.py` produces identity receipts for source, tools and binaries.
 
 ```sh
 python3 scripts/benchmark/build.py --repo "$SOURCE_TREE"   --plain-only --jobs 2 --plain-target "$OUTPUT/plain"
@@ -12,7 +12,7 @@ python3 docs/performance/probes/build_fixed_matrix.py --check
 python3 scripts/benchmark/fixed.py   --manifest docs/performance/probes/fixed/manifest.json   --workload-dir docs/performance/probes/fixed   --engine reference="$REFERENCE_QJS" --engine candidate="$CANDIDATE_QJS"   --repeat 8 --order abba-baab --output "$OUTPUT/fixed"
 ```
 
-Sampling first establishes time resolution with an A/A comparison of the same binary, then runs interleaved A/B comparisons. Each program fixes its guest workload, and every run validates stdout, stderr and exit status. Applications that write use fresh application state on every run; property experiments start under the recorded cache policy. Fixed iterations, whole-process time, compile probes, formal V8 Score and profiling counts are named separately.
+Sampling first establishes time resolution with an A/A comparison of the same binary, then runs interleaved A/B comparisons. Each program fixes its guest workload, and every run validates stdout, stderr and exit status. Applications that write use fresh application state on every run; property experiments start under the recorded cache policy. Fixed iterations, whole-process time, compile probes, the formal V8 v7 score and profiling counts are named separately.
 
 ## Result fields
 

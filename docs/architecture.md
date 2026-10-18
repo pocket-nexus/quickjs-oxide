@@ -1,90 +1,89 @@
 # Workspace architecture
 
-`quickjs-oxide` is the root engine package. Native and web adapters provide host capabilities; CLI, browser playground and Test262 runner use the engine through its public API. The current execution paths are described in [performance documentation](performance/README.md).
+The engine is three crates. `oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into QuickJS-shaped stack code, the register lowering that turns that code into the core's register code, and the embedding API over the core. The command line, the web playground, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
+
+## Crates
+
+The three engine crates and the workspace members that consume them:
+
+| Crate | Path | Depends on | Content |
+| --- | --- | --- | --- |
+| `oxide-core` | `core/` | `oxide-regexp` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
+| `oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
+| `quickjs-oxide` | `src/` | `oxide-core`, `oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
+| `quickjs-oxide-cli` | `apps/cli` | the root crate, `quickjs-oxide-host` | the `qjs` binary |
+| `quickjs-oxide-web` | `apps/web` | the root crate, `quickjs-oxide-web-host` | the browser playground (WebAssembly) |
+| `quickjs-oxide-host` | `adapters/native` | the root crate | `SystemHost`: the system clock and the TZif/POSIX time-zone rules |
+| `quickjs-oxide-web-host` | `adapters/web` | the root crate | `WebHost`: the browser's clock, time zone and random source |
+| `quickjs-oxide-test262` | `conformance/test262` | the root crate | the process-isolated `run-test262` runner |
+
+Dependencies point one way: `oxide-core` depends only on `oxide-regexp`, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
 
 ## Source owners
 
+The core's modules are listed in the "Layout" table of [`core/README.md`](../core/README.md#layout). The root crate:
+
 ```text
 src/
-  source/          source bytes and positions; `unicode` wraps oxide-regexp's tables
-  regexp.rs        oxide-regexp at its historical path, with `JsString` wrappers
+  lib.rs           the crate root: `engine`, `source`, the version constants
+  source/          exact source bytes, offsets, QuickJS line/column mapping;
+                   `unicode` wraps oxide-regexp's tables for JsString
   engine/
-    compiler/      parsing, resolution, lowering and local operation selection
-    code/          instruction encoding and publication
-    value/         JavaScript values, Number and conversion algorithms
-    object/        properties, shapes and object internal methods
-    atom/          names, symbols and property keys
-    heap/          records, roots, storage, retention and collection
-    vm/            frames, instruction execution, drivers and suspension
-    realm/         global bindings, prototypes and realm initialization
-    builtins/      builtin algorithms and native call dispatch
-    modules/       module loading, linking and evaluation
-    jobs/          queued computations and retained roots
-    host/          environment capability contracts
-    api/           public Runtime, Context and embedding operations
+    compiler/      the front end: lexer, parser, scopes and name resolution,
+                   closure capture, stack-code emission, local optimizations
+      register/    the lowering: stack code to oxide-core register code,
+                   published into the core's code store
+    code/          the front end's output: stack instructions, the opcode
+                   table, stack-size computation, unlinked function and
+                   module records, debug positions
+    value/         the front end's primitives: JsString, JsBigInt, constant
+                   values and the Number-to-string conversion
+    api/           the public embedding boundary; `api::core` is the API over
+                   oxide-core, `api::error` the front end's diagnostics
 ```
 
-The regular-expression engine (pattern compilation and matching) and the Unicode tables live in the `oxide-regexp` workspace crate (`regexp/`), which has no dependencies and works over UTF-16 code units; the root package and `oxide-core` both depend on it.
+`engine::api` is the only public engine module; `compiler`, `code` and `value` are crate-private. `scripts/checks/check-source-layout.py` enforces this layout and the API's re-export boundary.
 
-Adapters and applications depend on the root package, whose production dependencies are `oxide-core`, `oxide-regexp`, `num-bigint` and `num-traits`. Applications supply input and module-loading policy, output, diagnostics and job driving. `Runtime::new_with_host_services` receives the host capability provider.
+## Host boundary
 
-## Compilation and publication
+The core asks its embedder for one trait, `oxide_core::host::Host`, which the API re-exports as `api::core::Host`:
 
-The compiler builds temporary `Instruction` values from parsed and resolved source. Lowering uses a temporary data-flow and effect graph to select bounded numeric operations. `compute_stack_size` in `code/bytecode.rs` computes the reachable stack depth and enforces the QuickJS stack limit. Compiler output is trusted: there is no separate bytecode or layout validator. The encoder in `code/exec.rs` lays out operand widths and instruction boundaries while it builds one `ExecCode` word stream; the temporary instruction graph is then dropped.
+| Method | Used by | Default |
+| --- | --- | --- |
+| `write(stream, text)` | `print`, `console.log`, the `qjs` helpers | the process's stdout and stderr |
+| `now_ms()` | `Date.now`, `new Date()` | the system clock |
+| `local_tz_offset_minutes(utc_ms)` | local-time `Date` methods | UTC |
+| `random_seed()` | the initial `Math.random` state | derived from the clock |
+| `promise_rejection(event, promise)` | `HostPromiseRejectionTracker` (`Rejected`, `Handled`) | ignored |
+| `read_file(path)` | `load` and `read` under `qjs --std` | the process's file system |
 
-Each execution word carries an opcode header and short operand; wide operands occupy following words. The published function keeps constants, linked identities, source positions, instruction boundaries and operation metadata. Runtime frames use execution-word positions for faults, fallthrough and resumption.
+The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output, which the playground captures itself.
 
-The numeric operation set includes local accumulation, product destination writes, array element copies and updates, preincrement-index addition, combined array/local writes and comparison branches. Selection recognizes finite instruction shapes. Runtime admission checks current binding values and genuine Array element storage; success consumes scoped frame or heap access. The ordinary instructions in the same stream provide the semantic continuation for other input states.
+Compilation and module loading are function pointers on the core's services, because the host object lives inside the runtime they borrow. The API installs the front end as the core's compile function (`set_compiler`) and its module shims as the core's `ModuleHost`; an embedder supplies module-loading policy through the API's `ModuleLoader` trait (`normalize`, `load`), whose callbacks receive a `Scope`. Applications choose input, output, module policy and when the job queue drains. [`src/engine/api/README.md`](../src/engine/api/README.md) describes the API's types.
 
-Publication also selects bounded fast entries for Number increments from locals or parameters, dense Array element reads and index updates, direct Number comparisons with branches, and field or array reads feeding a local numeric update. Their runtime guards check current values and output capacity before completing the published span. An admitted scalar `PutArrayEl` can update dense element storage within the execution loop.
+## Compilation
 
-## VM execution
+A source passes four stages:
 
-`src/engine/vm/execute.rs` contains the instruction loop. `FrameCursor` carries the active frame transaction and fault/resume positions. `SlotStore` owns argument, parameter, local and operand windows; `FrameSlots` provides admitted short-lived access. A frame, heap owner or owning pending state roots each value across its lifetime.
+1. **Front end** (`src/engine/compiler`). The parser emits `IrOp`s into a recursive `FunctionIr` tree; identifier resolution runs child-first once every scope is known, as QuickJS's `resolve_scope_var` does; then `lowering` emits QuickJS-shaped stack `Instruction`s, `optimize` applies bounded local rewrites, and `compute_stack_size` (`code/bytecode.rs`) computes each function's maximum operand-stack depth and enforces QuickJS's stack bound. The result is an `UnlinkedFunction` tree (or an `UnlinkedModule` with its request, import and export tables) whose operand-stack depth is static at every instruction.
+2. **Register lowering** (`src/engine/compiler/register`). `analysis` records the stack depth, the active catch regions and the join points at every reachable instruction. The lowering then walks each function with a symbolic stack: register 0 is `this`, then the parameters, the locals and one temporary per stack depth, so the stack depth is the register allocator. Captured bindings become cells. A function whose locals or operand stack pass the 256-register window keeps the rest in the slots of a spill scope, reached through scratch registers at the top of the window. The lowering builds each function as an `oxide_core::bytecode::CodeUnit` with the core's `CodeBuilder`, which numbers the inline-cache sites.
+3. **Publication** (`oxide-core`). `CodeStore::publish` runs the core's validator over each unit once, children first, and assigns its inline-cache entries; code compiled at run time (`eval`, `new Function`, `$262.evalScript`) is published into the store's dynamic chunks while the loop runs. The loop runs a published unit's instructions as they are.
+4. **Instantiation**. `instantiate` allocates one `FunctionBytecode` record per unit (its constant table and its children) under one safepoint and returns the script's function object, which the API runs with `Runtime::run_script`. A module's tree is described to the core's module records (environment cells, imports, exports) and linked and evaluated by the core.
 
-Bytecode call inputs, function/capture owners and active-frame restoration records store owned heap IDs. Retirement releases their edges explicitly through the current `RuntimeState`; uninstalled entries stay under a borrowed cleanup guard before the first fallible reservation. `RunningExecution` and detached activation records carry weak runtime references for abandonment cleanup, with one header registration per execution record. If the runtime has already died, their raw storage is discarded directly. Cold publication, eval and native continuation payloads use public roots and finish outside a held state borrow.
+Debug positions follow the same path: the front end's pc-to-source table becomes the unit's sparse position table, from which errors take `stack`. `DebugInfoMode` (`Runtime::set_debug_info_mode`) chooses what a newly compiled function keeps: `Full`, `StripSource` (positions without source text) or `StripDebug` (neither). `Runtime::disassemble` (`qjs --disassemble`) prints the register code of a source.
 
-An execution segment borrows `RuntimeState` once and admits its current frame through the private `FrameExecution` lease. Ordinary calls, Base constructors and ordinary returns continue in the same opcode loop. The lease lends the actual current frame and slot transaction; ordinary installation and retirement establish the next current window. Internal ordinary transitions use the carried instruction fallthrough and window facts, together with capacity, occupancy and dynamic return-target checks. External entry (`FrameExecution::admit`) authenticates the frame identity, its window and the resume-PC boundary.
+## The loop
 
-State operations in a segment copy, move and release values directly. A selected getter owns its required edges in execution storage before crossing a driver boundary. Cached native selections contain weak domain/function facts and apply only to the actual callee. Cold helpers end the segment's state borrow before they use the public Runtime surface; profiling builds count these boundaries.
+`oxide_core::vm` runs register code. A frame owns a window of one register file; a call's window starts on the callee's operands inside the caller's, so no argument is copied. Calls, returns and `new` on bytecode functions stay in one loop (`vm::interp::run_at`), which matches on the typed opcode of 8-byte `Insn`s, keeps `Int32` and double fast paths inline and moves slow paths out of line (`ops`, `property`, `rare_op`). Named property access, globals and constructor sites go through inline caches stored beside the register file. A throw unwinds through each unit's handler table.
 
-Allocation sites that run under the held state (object and array literals, Base construction, layout-publishing property writes) publish every owner and then service collection pressure with that state. The ready driver and the outermost execution turn service it at public boundaries. Temporary owners remain in state-aware guards until their transfer is complete; cleanup failure quarantines the runtime before further heap traversal.
+Natives are Rust functions that read their receiver and arguments from the register file and call back into JavaScript through the re-entrant `call` and `construct`, which run a nested loop above the caller's frames; such re-entries share a native-stack budget measured from stack addresses. Generators and async functions suspend by copying their register window into a heap record and resume by copying it back. [Execution](performance/execution.md) describes the loop, the cache kinds, the iteration fast path, suspension and the native ABI in depth.
 
-Direct `Put`, `Set` and initialization use `vm/stack/transfer.rs`. `Put` and initialization transfer the operand owner to the destination. `Set` preserves the operand and obtains an additional owner for the destination. The transfer checks the destination and displaced owner in the active frame window, then either commits there or enters the operation's observation path. Captured and special bindings use their binding operations.
+## The heap and the collector
 
-Named reads use the published property site and the selector in `object/ordinary_storage/ic.rs`. The location cache in `object/property_ic.rs` records one to four guarded shapes, an accessor location, or a bounded cooldown; a cold data selection feeds its consumer during the same heap borrow. The selector returns current data, an accessor or complete absence when it can complete the lookup. Ordinary stack reads and borrowed direct-binding reads share that selection. The VM completes admitted data reads in the active frame scope and carries a selected accessor into the property driver. General object semantics remain in the object and property driver modules.
+`oxide_core::heap` owns every record. Values are 8-byte NaN-boxed words; objects, shapes, strings, symbols, BigInts, cells, functions, bytecode records and internal records each live in a typed arena with a free list and side mark and live bitmaps. Property values, dense elements and scope slots live in the value heap, one `Vec<Value>` allocated in power-of-two ranges. Shapes form a transition tree with a dictionary mode and prototype validity cells, which the inline caches test.
 
-The ready driver materializes the frame for actions classified by `VmAction::observes_activation`: `Call` and `Complete` follow their own frame protocols, while other actions enter the materialization step. An already materialized frame publishes its current PC during that step. Driver operations own the state needed for callbacks, conversions, exceptions and suspension; return paths resume at the published operation-specific position.
+The collector is a non-moving mark-sweep. Collection happens only inside an allocating heap call (a safepoint) or on an explicit `Runtime::run_gc`; the rooting rule of [`core/README.md`](../core/README.md#the-rooting-rule) says what a Rust local must root across one. The trigger runs a collection when the bytes allocated since the last one reach a threshold, the live bytes times the growth factor (2 by default) and at least 4 MiB; under `GcPolicy::Manual` collections run only at the cap and on request. A heap cap (`RuntimeOptions::heap`) makes an allocation that would cross it collect first and fail with `OutOfMemory` if that frees too little. The `gc-stress` feature collects at every safepoint and checks every access. `Runtime::memory_report` reads what every arena, the value heap, the code store and the caches hold without collecting. [The heap](heap.md) describes the arenas, the value heap, shapes and the collector in depth.
 
-## Public roots and panic quarantine
+## Language surface
 
-`Runtime` handles share one runtime and its `RuntimeState` through `Rc`.
-Heap roots (`ObjectRef`, `CallableRef`, `PropertyKey`, `SymbolRef`, `Context`,
-and published bytecode roots) expose fallible `try_clone`. `new_context`, configuration and state
-queries also return `Result`. Runtime identity queries and independent
-immutable data remain available without accessing heap state.
-
-An unwind across an engine operation marks a `Cell` in the runtime header as
-poisoned. `Runtime::is_poisoned` observes that status. Subsequent state entries
-return `RuntimeError::Poisoned`; VM adapters report it as an engine internal
-error.
-
-Root, execution and cleanup destructors skip semantic traversal after poison.
-On final teardown, `StateStorage` forgets the entire interrupted state, avoiding
-a secondary panic from destructors inspecting a partially mutated heap. This
-quarantine deliberately leaks the interrupted state. An owned-release failure
-also quarantines the runtime, since cleanup may already have changed the heap.
-Ordinary JS exceptions and recoverable checked resource errors follow normal
-cleanup and transaction rollback.
-
-## Heap and lifecycle
-
-The heap owns raw records, reference edges, roots, reference counts, zero-count cleanup and cycle collection. Object, Context and FunctionBytecode records occupy the shared arena. Captured cells and shapes have separate typed arenas; String and BigInt records share a leaf arena. Their IDs carry complete generation identities. Storage mutation updates owning edges; semantic object, value and builtin algorithms stay in their respective modules.
-
-Borrowed frame slots and heap references end before a callback, suspension, invalidating mutation or observable cleanup. Active frames, heap records and pending operations transfer ownership across those boundaries. [Typed storage](performance/typed-arenas.md) describes the arena layout and collection lifecycle.
-
-## Language and host boundaries
-
-Compiler constants use primitive values. Live runtime values preserve Object and Symbol identity. Source and module inputs preserve exact bytes and positions; strings preserve UTF-16 code units. Module-host callbacks use their initiating Context and propagate thrown JavaScript values with identity. Jobs own pending computation and retained roots; applications choose when to drain the queue.
-
-The public engine surface is `engine::api`. The CLI and adapters consume that API, and the Test262 runner adds host facilities through its feature-gated integration. The [status page](status.md) lists current language coverage and verification commands.
+The core runs the language the front end accepts, with the five differences from QuickJS that the `NEWCORE-*` entries of the [deviation ledger](deviations.md) define: `with`, `Symbol.unscopables`, direct `eval` (it runs as indirect `eval`), one realm per runtime, and `Symbol.species`. Source and module inputs keep exact bytes and positions, and strings keep UTF-16 code units. Jobs own their pending computations; the application drains the queue. The [status page](status.md) lists language coverage and the verification commands.

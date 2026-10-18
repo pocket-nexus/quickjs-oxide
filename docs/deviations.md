@@ -1,32 +1,45 @@
 # Deviation ledger
 
-This ledger lists the approved differences from QuickJS 2026-06-04 described in
-[compatibility](compatibility.md). Each approved target deviation covers exactly
-the observable behavior and test variants named below; any other mismatch is a
-defect.
+This ledger lists where quickjs-oxide departs from QuickJS 2026-06-04, as
+described in [compatibility](compatibility.md). ECMA-262 and Test262 are the
+source of truth; QuickJS 2026-06-04 is the reference only where the
+specification leaves a behavior to the implementation or the host. A
+departure is therefore one of two kinds:
+
+- an **approved target deviation** below: a behavior that differs from both
+  QuickJS and, for the `NEWCORE-*` entries, the specification, by the
+  maintainer's decision, or that follows the specification where pinned
+  QuickJS fails a Test262 variant;
+- a **specification departure of QuickJS**, registered in
+  [`quickjs-spec-departures.tsv`](../dev-support/quickjs-spec-departures.tsv)
+  as `QUICKJS-SPEC-NNN` (see [below](#quickjs-specification-departures)):
+  quickjs-oxide follows the specification clause where QuickJS does not.
+
+Each entry covers exactly the observable behavior and test variants it names;
+any other mismatch with QuickJS where the specification leaves the behavior
+open, and any mismatch with the specification, is a defect.
 
 ## Approved target deviations
 
-The five entries `NEWCORE-*` record the features of
-[new-core phase 0](performance/new-core-phase0.md), section 2, which the
-maintainer decided on 2026-10-16 not to carry into the new core.
+The five entries `NEWCORE-*` record features the maintainer decided on
+2026-10-16 the engine does not implement. Their Test262 evidence is
+[`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv):
+the 1,897 variants (D) that pass with the five features and fail without
+them, each with its reason. Of these, 27 pass anyway (negative `with` tests
+whose expected early error the front end gives either way) and are not
+deviations; the other 1,870 fail by decision.
 
 ### NEWCORE-WITH-001
 
-- Status: approved target deviation (2026-10-17, new-core phase 6 M2, when the
-  new core became the engine the Test262 metric and the playground run).
+- Status: approved target deviation (2026-10-17).
 - Surface: the `with` statement in sloppy code.
-- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
-  0, section 2.
+- Authority: the maintainer's decision of 2026-10-16.
 - Required behavior: `with` is an early `SyntaxError` (`with statements are not
   supported`) in sloppy code, as it is in strict code. Every identifier resolves
   at compile time to a register, a scope slot or a global; no object environment
   enters the scope chain.
-- Baseline evidence: the frozen probe run of new-core phase 4 M0
-  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
-  reason `with`) lists the 311 variants that pass on the current engine with the
-  feature and fail without it. Phase 4 M9's reconciliation applies: of the 1,897
-  variants of D, 31 pass on the new core and are not deviations.
+- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+  lists 311 variants of reason `with`.
 - Acceptance: `with ({}) {}` throws `SyntaxError` before any statement of the
   script runs. The variants of reason `with` fail by decision and are excluded
   from the Test262 metric's difference list; any other variant that fails is a
@@ -42,20 +55,15 @@ with ({ x: 1 }) { print(x); }
 
 ### NEWCORE-UNSCOPABLES-001
 
-- Status: approved target deviation (2026-10-17, new-core phase 6 M2, when the
-  new core became the engine the Test262 metric and the playground run).
+- Status: approved target deviation (2026-10-17).
 - Surface: `Symbol.unscopables`.
-- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
-  0, section 2.
+- Authority: the maintainer's decision of 2026-10-16.
 - Required behavior: `Symbol.unscopables` and
   `Array.prototype[Symbol.unscopables]` exist with their specified values;
   nothing reads them, since no object environment exists to consult them
   (`NEWCORE-WITH-001`).
-- Baseline evidence: the frozen probe run of new-core phase 4 M0
-  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
-  reason `unscopables`) lists the 53 variants that pass on the current engine
-  with the feature and fail without it. Phase 4 M9's reconciliation applies: of
-  the 1,897 variants of D, 31 pass on the new core and are not deviations.
+- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+  lists 53 variants of reason `unscopables`.
 - Acceptance: `typeof Symbol.unscopables` is `"symbol"`; the variants that
   observe a lookup through `with` fail with `NEWCORE-WITH-001`'s `SyntaxError`.
   The variants of reason `unscopables` fail by decision and are excluded from
@@ -72,20 +80,15 @@ print(typeof Symbol.unscopables, Array.prototype[Symbol.unscopables].flat);
 
 ### NEWCORE-DIRECT-EVAL-001
 
-- Status: approved target deviation (2026-10-17, new-core phase 6 M2, when the
-  new core became the engine the Test262 metric and the playground run).
+- Status: approved target deviation (2026-10-17).
 - Surface: direct `eval`.
-- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
-  0, section 2.
+- Authority: the maintainer's decision of 2026-10-16.
 - Required behavior: `eval(src)` at a direct-eval call site runs as indirect
   eval: in the global scope, sloppy unless `src` is strict, with no access to
   the caller's bindings, `this`, `arguments` or `new.target`, and no `var`
   injection into the caller. `new Function` and indirect eval are unchanged.
-- Baseline evidence: the frozen probe run of new-core phase 4 M0
-  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
-  reason `direct-eval`) lists the 517 variants that pass on the current engine
-  with the feature and fail without it. Phase 4 M9's reconciliation applies: of
-  the 1,897 variants of D, 31 pass on the new core and are not deviations.
+- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+  lists 517 variants of reason `direct-eval`.
 - Acceptance: inside `function f() { var x = 2; return eval("x"); }` with a
   global `var x = 1`, `f()` returns `1`. The variants of reason `direct-eval`
   fail by decision and are excluded from the Test262 metric's difference list;
@@ -101,20 +104,15 @@ var x = 1; function f() { var x = 2; return eval('x'); } print(f());
 
 ### NEWCORE-REALMS-001
 
-- Status: approved target deviation (2026-10-17, new-core phase 6 M2, when the
-  new core became the engine the Test262 metric and the playground run).
+- Status: approved target deviation (2026-10-17).
 - Surface: realms.
-- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
-  0, section 2.
+- Authority: the maintainer's decision of 2026-10-16.
 - Required behavior: one realm per runtime. No API creates a second context on a
   runtime (`Context::new` returns the runtime's one realm, and a request for
   another is `RuntimeError::Unsupported`); `$262.createRealm` throws `TypeError:
   realms are not supported`. Isolation uses separate runtimes.
-- Baseline evidence: the frozen probe run of new-core phase 4 M0
-  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
-  reason `realm`) lists the 488 variants that pass on the current engine with
-  the feature and fail without it. Phase 4 M9's reconciliation applies: of the
-  1,897 variants of D, 31 pass on the new core and are not deviations.
+- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+  lists 488 variants of reason `realm`.
 - Acceptance: `$262.createRealm()` under the Test262 host throws a `TypeError`
   with that message. The variants of reason `realm` fail by decision and are
   excluded from the Test262 metric's difference list; any other variant that
@@ -124,11 +122,9 @@ var x = 1; function f() { var x = 2; return eval('x'); } print(f());
 
 ### NEWCORE-SPECIES-001
 
-- Status: approved target deviation (2026-10-17, new-core phase 6 M2, when the
-  new core became the engine the Test262 metric and the playground run).
+- Status: approved target deviation (2026-10-17).
 - Surface: `Symbol.species`.
-- Authority: the maintainer's decision of 2026-10-16, recorded in new-core phase
-  0, section 2.
+- Authority: the maintainer's decision of 2026-10-16.
 - Required behavior: methods of `Array`, `%TypedArray%`, `Promise`, `RegExp`,
   `ArrayBuffer` and `SharedArrayBuffer` that the specification routes through
   `ArraySpeciesCreate`, `SpeciesConstructor` or `TypedArraySpeciesCreate`
@@ -136,11 +132,8 @@ var x = 1; function f() { var x = 2; return eval('x'); } print(f());
   `@@species`. `Symbol.species` and the `get [Symbol.species]` accessors exist;
   nothing reads them. A subclass instance's `map`, `filter`, `slice`, `then` and
   the like return a base-class instance.
-- Baseline evidence: the frozen probe run of new-core phase 4 M0
-  ([`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv),
-  reason `species`) lists the 528 variants that pass on the current engine with
-  the feature and fail without it. Phase 4 M9's reconciliation applies: of the
-  1,897 variants of D, 31 pass on the new core and are not deviations.
+- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+  lists 528 variants of reason `species`.
 - Acceptance: `class A extends Array {}; new A(1, 2).map(x => x) instanceof A`
   is `false`. The variants of reason `species` fail by decision and are excluded
   from the Test262 metric's difference list; any other variant that fails is a
@@ -190,61 +183,6 @@ class A extends Array {} print(new A(1, 2).map(x => x) instanceof A);
   [liveness and execution](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-liveness),
   [ClearKeptObjects](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-clear-kept-objects).
 
-### TEST262-ANNEXB-EVAL-001
-
-- Status: superseded on 2026-10-17 by `NEWCORE-WITH-001`. Its surface, a
-  function declaration made by `eval` inside a `with` environment, no longer
-  exists: `with` is an early `SyntaxError`. The entry stays as the record of
-  the current engine's behavior.
-- Former status: approved target deviation.
-- Approved by: review under the repository maintainer's standing delegation of
-  Feature Parity implementation judgment.
-- Surface: Annex B eval function declarations inside a `with` environment.
-- Exact Test262 key:
-  `test/staging/sm/lexical-environment/block-scoped-functions-annex-b-eval.js`
-  in the `sloppy` variant (`noStrict`).
-- Upstream anchor: the pinned release's `test262_errors.txt` records the
-  location `block-scoped-functions-annex-b-eval.js:11`. Pinned QuickJS produces
-  `outer-gouter-geval-gtruefalseq`; the assertion expects
-  `outer-geval-gwith-gtruefalseq`.
-- Rationale: retain the Rust engine's Test262-conforming Annex B.3.3.3 result
-  instead of reproducing this pinned QuickJS known failure. The declaration
-  updates the eval variable environment without replacing the `with` object's
-  own `g` property.
-- Compatibility impact: code depending on the pinned bug observes the outer
-  binding change and the `with` property remain unchanged in Rust. The
-  deviation is limited to the exact binding interaction represented by the
-  Test262 key above.
-
-Minimal probe:
-
-```js
-var log = "";
-function f() {
-  log += g();
-  function g() { return "outer-g"; }
-  var o = { g: function () { return "with-g"; } };
-  with (o) {
-    eval('{ function g() { return "eval-g"; } }');
-  }
-  log += g();
-  log += o.g();
-}
-f();
-print(log);
-```
-
-From the repository root, run the probe as one line with the pinned oracle and
-the Rust CLI:
-
-```sh
-./target/oracle/quickjs-2026-06-04/qjs -e 'var log="";function f(){log+=g();function g(){return "outer-g"}var o={g:function(){return "with-g"}};with(o){eval("{ function g(){ return \"eval-g\"; } }")}log+=g();log+=o.g()}f();print(log)'
-cargo run --quiet --locked --bin qjs -- -e 'var log="";function f(){log+=g();function g(){return "outer-g"}var o={g:function(){return "with-g"}};with(o){eval("{ function g(){ return \"eval-g\"; } }")}log+=g();log+=o.g()}f();print(log)'
-```
-
-Pinned QuickJS prints `outer-gouter-geval-g`; Rust prints
-`outer-geval-gwith-g`.
-
 ### TEST262-ARROW-FOR-HEAD-001
 
 - Status: approved target deviation.
@@ -288,6 +226,55 @@ cargo run --quiet --locked --bin qjs -- -e 'try{Function("for (x => 0 in 1;;) br
 
 Pinned QuickJS prints `accepted`; Rust prints `SyntaxError`.
 
+## QuickJS specification departures
+
+Where pinned QuickJS departs from a clause of ECMA-262, quickjs-oxide follows
+the clause. Each such behavior is registered in
+[`quickjs-spec-departures.tsv`](../dev-support/quickjs-spec-departures.tsv)
+with an identifier `QUICKJS-SPEC-NNN`, the clause, a summary and, where one
+exists, the Test262 test that reaches it. The 44 entries cover, among others,
+BigInt decrement outside `int64`, a bound function's prototype and
+`toString`, the order of `Object.defineProperties`, the Proxy invariants and
+traps, the Promise combinators, the Atomics, `ArrayBuffer`, `DataView` and
+typed-array check orders, spread and `for await` iterator handling, the
+iterator helpers, the async generator driver, for-in over keys added during
+the loop, global declaration instantiation, `Math.sumPrecise`,
+`BigInt.asIntN`/`asUintN`, and the RegExp and String protocols.
+
+Every oracle case or fixture whose QuickJS output differs for one of these
+reasons is attributed to its entry, in
+[`oracle-attributions.tsv`](../dev-support/oracle-attributions.tsv) or the
+`deviation` column of
+[`quickjs-fixture-gates.tsv`](../dev-support/quickjs-fixture-gates.tsv), and
+the oracle runner requires such a case to still differ from QuickJS.
+`check-oracle-registry.py` requires every registry entry to be attributed and
+every attribution to name a registry entry or a `NEWCORE-*` ledger entry.
+
+What the specification leaves open follows QuickJS and is not a departure:
+error message text and `stack`, the printer, the creation order of the
+intrinsics' properties, the sort comparator's call sequence, for-in order
+within its constraints, NaN bit patterns and resource limits (argument
+counts, string length, nesting and recursion depths).
+
+## Open specification departures
+
+quickjs-oxide still matches pinned QuickJS in these areas where QuickJS
+departs from the specification. Each is a defect to be returned to its
+clause.
+
+| Area | Behavior shared with QuickJS |
+| --- | --- |
+| scoping | per-iteration `for` bindings, `catch` and parameter scopes, binding patterns |
+| Annex B | block-level functions; a global `var` beside a masked global lexical |
+| syntax | early errors and accepted forms around `async` methods, class bodies and directives |
+| TDZ | the error kind a function-body lexical write throws |
+| early errors | a top-level lexical beside a function of the same name (16.1.1); `delete a?.#x` |
+| templates | a template calls the patchable `String.prototype.concat` and converts after every substitution is evaluated (13.2.8.6) |
+| references | `(a?.#m)()` loses its receiver; `null[k] = v` converts `k` before `ToObject`; a strict write to a sloppy function's name binding |
+| lexer | `08.1_2`; `for (async <!-- …` |
+| `%ThrowTypeError%` | it returns `undefined` when its receiver is a sloppy ordinary function, so `(function () {}).caller` is `undefined` (10.2.4.1, 17.1) |
+| `Function.prototype.toString` of a built-in | prints the function's current own `name` instead of its `[[InitialName]]` (20.2.3.5) |
+
 ## Open implementation frontiers
 
 - Deeply nested source throws a catchable `SyntaxError: stack overflow`, and
@@ -316,35 +303,3 @@ Pinned QuickJS prints `accepted`; Rust prints `SyntaxError`.
   6,850 and 2,280. Far beyond the budget, QuickJS reports the overflow one
   token earlier. Parsing also samples the host stack, so a thread too small
   for the budget throws earlier rather than overflowing.
-- Dynamic import retries failed acyclic source graphs as pinned QuickJS does.
-  Parse-in-progress definitions and request prefixes are published in the same
-  callback order as pinned QuickJS, including its one-shot resolution latch.
-  Rust represents a swallowed resolution failure as an explicit incomplete
-  state with no partial raw dependency vector; direct link/execute returns a
-  typed error and dynamic import rejects with a deterministic `InternalError`.
-  If a resolved module still refers to a construction that later fails, Rust
-  keeps that append-only identity as an edge-free `Aborted` sentinel, excludes
-  it from name lookup, and gives a same-name retry a new identity. Pinned
-  QuickJS can instead retain a dangling `JSModuleDef *`; subsequent use enters
-  native undefined behavior and may manifest as a native crash or allocator
-  aliasing. The automated oracle suite omits those unsafe operations, and
-  reproducing those lifetimes is outside the parity target. Rust keeps vacant
-  module-cache slots and orphaned sentinels uncompacted, so repeated failed
-  publications are a resource-hygiene frontier.
-- Admitted ordinary async-generator function, object-method, and public
-  class-method direct-yield/await paths match the pinned driver, including
-  poisoned Promise constructors, iterator-result resolution reentry, and
-  completed-state queue re-entry. Internal allocation/setup failure recovery
-  differs: iterator-result allocation can fail after the VM has advanced, and
-  failure to create or install a private continuation can leave the front
-  request capability pending for a later retry. Admitting these host-error
-  paths requires fault injection and a transactional pending-settlement
-  representation; they are an open hardening frontier.
-- `Promise.all`, `Promise.allSettled`, and `Promise.any` match pinned QuickJS on
-  ordinary JavaScript-observable paths; internal allocation failure routes
-  differently. Failure to allocate the output Array returns a host runtime
-  error instead of rejecting the new capability, and failure to allocate an
-  element callback skips QuickJS's close-then-reject path. Internal `AggregateError` allocation has the same
-  runtime-error boundary. The checked `u32` element index has a theoretical
-  multi-billion-element RangeError boundary instead of QuickJS's C `int`
-  environment behavior. These are open hardening frontiers.

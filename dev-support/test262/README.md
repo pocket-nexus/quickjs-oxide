@@ -66,7 +66,7 @@ hashes sorted repository paths and exact contents of the files and trees listed
 in `engine_semantics_files` and `engine_semantics_trees`: `Cargo.toml`,
 `Cargo.lock`, the profile and upstream pins, the central preparation, gate and
 report-verification scripts, and the `adapters`, `apps`, `conformance`,
-`core` (the new core the engine links), `examples`, `regexp` (the regular-expression crate the engine links), `src` and `tests` trees, plus the pinned `rust-toolchain.toml`. `current.conf` and `dev-support/` lie
+`core` (the core the engine links), `examples`, `regexp` (the regular-expression crate the engine links), `src` and `tests` trees, plus the pinned `rust-toolchain.toml`. `current.conf` and `dev-support/` lie
 outside that coverage and are authenticated separately, which avoids a circular
 checksum. `test-test262.sh` fixes the coverage contract independently of
 profile data and fails if an unlisted implicit build input such as `build.rs`,

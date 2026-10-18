@@ -3,7 +3,7 @@
 The public playground at
 <https://pocket-nexus.github.io/quickjs-oxide/> runs quickjs-oxide itself. The
 Rust crate is compiled to WebAssembly, loaded in the browser, and given each
-editor submission through the public `Runtime` and `Context` APIs. It does not
+editor submission through the embedding API (`api::core`). It does not
 delegate JavaScript execution to the browser's `eval` or `Function`
 implementations.
 
@@ -11,7 +11,13 @@ The editor evaluates Script-goal source through the public
 `eval_with_filename` path. Modules and `import.meta` run through the Rust API
 and CLI; the browser UI has no module loader.
 
-Each run gets a fresh runtime and realm. The WebAssembly boundary returns a
+Each run gets a fresh runtime, with its one realm, over the browser host
+(`WebHost`). The browser's machine stack is not visible to the engine's
+byte measure of the linear-memory stack, so the runtime is created with
+`RuntimeOptions` that bound native re-entry: `native_depth_limit` 600 and
+`native_stack_budget` 512 KiB, half the 1 MiB stack `wasm-ld` reserves. Deep
+recursion through generators, callbacks, getters or proxy traps ends in a
+catchable `InternalError: stack overflow`. The WebAssembly boundary returns a
 small record:
 
 ```text

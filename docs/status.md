@@ -1,15 +1,17 @@
 # Implementation status
 
-quickjs-oxide is a Rust JavaScript engine available through its command-line application, embedding API, native adapter and browser playground. The current module layout and execution contracts are in the [architecture guide](architecture.md). [Execution and performance](performance/README.md) documents the implemented VM paths and their measurement.
+quickjs-oxide is a Rust JavaScript engine available through its command-line application, embedding API, native adapter and browser playground. The crate layout and the host boundary are in the [architecture guide](architecture.md); [Execution](performance/execution.md) and [the heap](heap.md) describe the core's loop, caches, heap and collector, and [Execution and performance](performance/README.md) their measurement.
 
 ## Engine
 
-- The compiler parses Script and ECMAScript Module source, resolves bindings, lowers stack instructions and publishes one `ExecCode` word stream.
-- The VM uses explicit frames and one instruction loop. Published numeric operations, ordinary binding transfers and selected named-property reads complete in the frame access scope when their semantic requirements are satisfied. Drivers handle callbacks, general property operations, conversion, exceptions and suspension.
-- The heap owns full-generation identities, roots, reference edges, typed captured-cell and shape arenas, collection and deferred cleanup.
-- The runtime implements objects, strings, numbers, regular expressions, binary data, collections, weak references, Promises, jobs, modules and the corresponding builtins.
-- Host adapters supply environment capabilities. Applications own file loading, output, diagnostics and job driving.
-- The CLI and browser playground execute the Rust engine. Exact source bytes, malformed string data and diagnostic positions travel through the embedding and loader APIs.
+- The front end (`src/engine/compiler`) parses Script and ECMAScript Module source, resolves bindings and emits stack code; the register lowering (`src/engine/compiler/register`) turns each function into a code unit of `oxide-core`. The core validates each unit once when it is published.
+- The core runs register bytecode in one loop over register windows, with inline caches for property reads and writes, global accesses and construction, a fast path for iterating ordinary arrays, and suspension for generators and async functions. `qjs --disassemble FILE` prints the register code.
+- The heap holds NaN-boxed values, typed arenas, a value heap, shapes with validity cells and a mark-sweep collector that runs on heap growth. `RuntimeOptions` sets the collection threshold, its growth factor, a heap cap and the register file's limit; `MemoryReport` reports what every part of the runtime holds.
+- The core implements objects, strings, numbers, BigInts, regular expressions (through `oxide-regexp`), binary data, collections, weak references, Promises, jobs, modules, `SharedArrayBuffer`/`Atomics` and the corresponding builtins.
+- A runtime has one realm. `with` is an early `SyntaxError`, direct `eval` runs as indirect eval, and nothing reads `Symbol.species` or `Symbol.unscopables`; the [deviation ledger](deviations.md) records each.
+- The embedding API (`quickjs_oxide::engine::api::core`) exposes `Runtime`, `Context`, `Value`, the `Host` trait, module loaders that receive a `Scope`, `RuntimeOptions` and the collector, memory and inline-cache reports.
+- Host adapters supply environment capabilities: `SystemHost` (`adapters/native`) and `WebHost` (`adapters/web`). Applications own file loading, output, diagnostics and job driving.
+- `qjs` and the browser playground run the engine through the embedding API. Exact source bytes, malformed string data and diagnostic positions travel through the embedding and loader APIs.
 
 ## Test262 baseline
 
@@ -29,10 +31,18 @@ The profile, admission vector and result hashes are recorded in [`dev-support/te
 
 ```sh
 cargo test --locked --workspace --all-targets
-cargo test --locked --features test262-host --lib --bins
+cargo test --locked --workspace --features test262-host --lib --bins
+cargo test --locked -p oxide-core --features gc-stress
+cargo build -p quickjs-oxide-cli --features gc-stress --bin qjs
+python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
+./scripts/checks/check-oracle-registry.sh
+./scripts/quickjs/test-quickjs-fixtures.sh --all
 ./scripts/quickjs/test-quickjs-c-oracles.sh --check
+./scripts/checks/test-parity-slice.sh
 ./scripts/test262/test-test262.sh --check
 ./scripts/test262/test-test262.sh --focused
 TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
 ./scripts/web/test-web-playground.sh
 ```
+
+`check-gc-stress.py` runs the fixed probes and the core's corpus programs on `qjs --gc-stress=1`, collecting before every allocation, and compares their output with the normal run.

@@ -3,7 +3,7 @@
 regexp parses patterns, generates regular-expression instructions, runs
 matches and supports bounded interrupt callbacks.
 
-The root crate's `src/engine/builtins/regexp` owns JS RegExp objects,
+`oxide-core`'s `core/src/builtins/regexp.rs` owns JS RegExp objects,
 properties, coercions and user callbacks.
 
 ## Files and subdirectories

@@ -67,16 +67,15 @@ Commit implementation changes first. Build on the chosen measurement host:
 python3 scripts/benchmark/build.py --jobs 2
 ```
 
-This builds ordinary and profiling release CLIs in separate target directories.
-Use `--plain-only` or `--profile-only` when only one is needed. To build a
+This builds the release CLI with no optional features; `--plain-only` names the
+same build explicitly, as PGO requires. To build a
 selected clean worktree with the current tooling, pass `--repo` and a distinct
 target directory, such as `--plain-target /tmp/oxide-base-build`. The receipt
 records source and tooling identities separately, snapshots the build/runner
 scripts, and rejects a build whose source or tool scripts change while Cargo
 runs. It records the release profile and overrides, actual qjs/dependency rustc
 flags for crates Cargo recompiles, and paths/hashes of complete build
-stdout/stderr logs and `vm_configuration: stack-vm`. The source commit is
-embedded in profiling reports. The benchmark runner verifies matching receipts when present. External engines without a
+stdout/stderr logs. The benchmark runner verifies matching receipts when present. External engines without a
 receipt are identified by binary hash/version output; attach their compiler
 and build configuration separately when publishing comparisons.
 
@@ -175,33 +174,15 @@ acceptance results; the report derives no aggregate from isolated scores.
 Compare a final change directly with its baseline rather than multiplying
 separately measured stage gains.
 
-### Fixed V8 function and callsite diagnostic
+### Fixed V8 bodies
 
-```sh
-python3 scripts/benchmark/profile_v8.py \
-  --source ../js-engine-benchmark \
-  --engine "$PWD/target/profile-feature/release/qjs" \
-  --iterations 1 --output /tmp/oxide-v8-fixed-profile
-```
-
-`profile_v8.py` uses the same pinned external source and checks its original
-Benchmark declarations against the expected names and counts for all eight
-subtests. It writes `base.js` plus one unchanged subtest body plus a marked
-driver to the requested output directory outside both repositories. The driver
-calls each Benchmark's `Setup`, `run` and `TearDown` a fixed number of times;
-it does not invoke V8's adaptive `RunSuites`. This is a coverage diagnostic,
-**not a V8 Score or a timing comparison**. Use `--case` repeatedly for a subset.
-
-Each fresh process runs `-d --profile-json` with a separate profile output file.
-The runner requires the exact completion marker, zero exit, empty script stderr,
-one valid compile/VM cost record from a profiling build, and the reported
-omission fields. `metadata.json` records pinned source and individual file
-hashes, generated workload and driver hashes, binary/build receipt, machine,
-and runner identity. `samples.jsonl` and `results.json` retain exact commands,
-raw stdout/stderr/profile JSON paths and hashes, completion status, function/PC
-and callsite entry counts, and any diagnostic omissions. The CLI's callsite
-scope covers selected ordinary driver entry only; it excludes other call and
-construct paths, so a zero count is not evidence that JavaScript did no calls.
+`profile_v8.py` is the workload generator `iterate_v8.py` and the Callgrind
+probes share. It checks the pinned external source's original Benchmark
+declarations against the expected names and counts for all eight subtests and
+writes `base.js` plus one unchanged subtest body plus a marked driver. The
+driver calls each Benchmark's `Setup`, `run` and `TearDown` a fixed number of
+times; it does not invoke the suite's adaptive `RunSuites`, so its programs are
+**not a V8 Score**.
 
 ### Bounded fixed-iteration V8 comparison
 
@@ -307,23 +288,6 @@ Use `--corpus` with any flat directory of `.js` files, or with a manifest produc
 by `compile_workloads.py`. Third-party bundles stay outside the repository.
 The runner records raw samples and per-case ratios in its output directory.
 
-## Profiler collection and overhead
-
-```sh
-python3 scripts/benchmark/probe.py \
-  --plain target/release/qjs --profile target/profile-feature/release/qjs \
-  --reference target/oracle/quickjs-2026-06-04/qjs \
-  --repeat 11 --output target/profile-experiment
-```
-
-This runs an explicitly authored small allocation workload, validates snapshots
-and complete scoped trace lifecycles, saves the reference's original output,
-and records 100 uninstrumented lifecycle samples. Four instrumentation modes
-use the same workload, with mode order rotated between repetitions. Full-process
-wall time includes report I/O, so this measurement is workload/host-specific and
-not pure interpreter overhead. The reference trace/dump share stdout with the
-script, and lifecycle CPU time is kept separate from Oxide wall time.
-
 ## Output and validation
 
 Every invocation requires a new output directory, preserving prior evidence.
@@ -343,9 +307,6 @@ the compile probes below.
 
 ```sh
 python3 -m unittest discover -s scripts/benchmark -p 'test_*.py'
-cargo test --locked -p quickjs-oxide-cli --test profiling
-cargo test --locked -p quickjs-oxide-cli --test profiling --features profiling
-cargo test --locked -p quickjs-oxide --lib --features profiling profiling_
 ```
 
 Run the broader Rust/QuickJS comparison tests and Test262 independently of
@@ -421,8 +382,7 @@ python3 scripts/benchmark/suite_matrix.py table target/suite-results/results.jso
 
 `table` prints the median wall time and instructions per workload and engine,
 each engine's time ratio to the reference, and their geometric mean; a
-workload with any failed sample shows `fail`. The [new core baseline](../../docs/performance/baseline.md)
-is this table on the reference machine.
+workload with any failed sample shows `fail`.
 
 ## Profile-guided optimization
 
@@ -451,8 +411,7 @@ in `target/pgo-profiles`, and writes the optimized CLI to `target/pgo-use`.
 `--repo`, by default `apps/cli/examples/compile_probe.rs`. That probe times
 `Context::compile_with_filename`; source I/O, Runtime/Context creation and
 teardown stay outside its `Instant` interval, and it never executes JavaScript.
-`--profiling` additionally writes phase attribution to stderr, which formal
-replay rejects. The builder copies the checkout's lockfile, rejects dependency
+The builder copies the checkout's lockfile, rejects dependency
 checksum drift, and records toolchain, features and flags.
 
 `replay.py` replays a receipt whose `workloads` entries give `case`, `path`,

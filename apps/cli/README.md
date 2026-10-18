@@ -8,8 +8,10 @@ cargo test -p quickjs-oxide-cli --test cli
 
 See [workspace architecture](../../docs/architecture.md) for dependency and lifetime boundaries.
 
-## Optional diagnostics
+## Diagnostics
 
-Build with `--features profiling` for `-d`, `-T`, `-q -d` and JSON Lines reports.
-[Profiling documentation](../../docs/profiling.md) defines coverage and timing
-boundaries. `src/profiling.rs` owns CLI collection policy and output formatting.
+`--gc-stats`, `--memory-report` and `--disassemble` work in every build;
+`--ic-stats` needs the `ic-stats` feature, `--gc-stress=N` the `gc-stress`
+feature, and `--test262` the `test262-host` feature. `qjs --help` lists the
+options; [profiling documentation](../../docs/profiling.md) describes the
+reports.

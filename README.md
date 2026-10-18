@@ -1,7 +1,10 @@
 # quickjs-oxide
 
 A JavaScript engine written entirely in safe Rust, with zero `unsafe`, that
-reproduces the behavior of [QuickJS](https://bellard.org/quickjs/) 2026-06-04.
+targets the behavior of [QuickJS](https://bellard.org/quickjs/) 2026-06-04.
+Its core, `oxide-core`, compiles every function to register bytecode and runs
+it in one loop with inline caches, over a NaN-boxed value heap and a
+mark-sweep collector.
 
 <!-- current-test262-metrics:start -->
 Within the Test262 scope that QuickJS 2026-06-04 runs, quickjs-oxide passes
@@ -12,15 +15,25 @@ pass rate is 79.815%.
 
 - **Zero `unsafe`.** Every crate in the workspace sets
   `unsafe_code = "forbid"`, so the compiler rejects `unsafe` anywhere in the
-  engine, the CLI and the WebAssembly bindings. The garbage collector,
-  compiler, VM, regular expression engine and Unicode tables are all safe
+  engine, the CLI and the WebAssembly bindings. The collector, the compiler,
+  the loop, the regular expression engine and the Unicode tables are all safe
   Rust; the only third-party code in the engine is `num-bigint` and
-  `num-traits` for BigInt arithmetic.
-- **Fast without `unsafe`.** On the Octane suite it outperforms most Rust
-  JavaScript engines, all of which rely on `unsafe` code.
-- **Same behavior as QuickJS.** Every failing Test262 variant is one QuickJS
-  2026-06-04 also fails, early errors carry QuickJS's exact messages and
-  positions, and a differential suite compares the two engines case by case.
+  `num-traits`, for the front end's BigInt literals and the embedding API's
+  BigInt values.
+- **Performance close to QuickJS.** On the 37 fixed-work programs of the
+  V8 v7, Octane 2.0 and AWFY suites, quickjs-oxide takes 0.91× QuickJS
+  2026-06-04's time over V8 v7's eight programs, 1.12× over Octane's 15 and
+  0.97× over AWFY's 14 (geometric means of release builds on one Linux
+  machine; `scripts/benchmark/suite_matrix.py` runs the
+  [matrix](scripts/benchmark/README.md#fixed-work-v8-v7-octane-and-awfy-matrix)).
+- **ECMAScript first, QuickJS where it is open.** ECMA-262 and Test262 decide
+  correctness; QuickJS 2026-06-04 decides what the specification leaves to
+  the implementation (error messages, `stack`, the printer, property order of
+  the intrinsics), and a differential suite compares the two engines case by
+  case. Five behaviors depart by decision: `with` is a `SyntaxError`, nothing
+  reads `Symbol.unscopables`, direct `eval` runs as indirect eval, a runtime
+  has one realm, and nothing reads `Symbol.species`
+  ([deviation ledger](docs/deviations.md)).
 - **Runs where you need it.** A `qjs` command line, a Rust embedding API and a
   WebAssembly build.
 
@@ -61,11 +74,11 @@ quickjs-oxide-host = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
 ```
 
 ```rust
-use quickjs_oxide::engine::api::{Runtime, Value};
-use quickjs_oxide_host::SystemHostServices;
+use quickjs_oxide::engine::api::core::{Runtime, Value};
+use quickjs_oxide_host::SystemHost;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let runtime = Runtime::new_with_host_services(SystemHostServices::default());
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
     let mut context = runtime.new_context()?;
     let value = context.eval("[1, 2, 3].map((x) => x * 2).join()")?;
     if let Value::String(text) = value {
@@ -76,13 +89,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 `examples/eval.rs` handles every completion value and uncaught exceptions.
-Host services supply time, randomness and output; module loader callbacks let
-an application resolve and load ES modules.
+A host (`SystemHost`, or an application's own `Host`) supplies time,
+randomness and output; a module loader lets an application resolve and load
+ES modules. A runtime has one realm; separate runtimes isolate code.
 
 ## Compatibility
 
 The language, built-ins and ES modules (static and dynamic `import`,
-top-level `await`, import attributes, JSON modules) follow QuickJS 2026-06-04.
+top-level `await`, import attributes, JSON modules) follow ECMA-262 within
+QuickJS 2026-06-04's feature set, apart from the five ledger entries above.
 The `std` and `os` modules, the REPL, `Worker`, `qjsc` and the C API are not
 yet supported. [Compatibility](docs/compatibility.md) details the baseline,
 how conformance is measured, the approved deviations and the full product
@@ -93,7 +108,7 @@ surface.
 - [Compatibility with QuickJS 2026-06-04](docs/compatibility.md)
 - [Architecture](docs/architecture.md) and [implementation status](docs/status.md)
 - [Test262 baseline and metrics](docs/test262.md)
-- [Execution and performance](docs/performance/README.md) and [profiling](docs/profiling.md)
+- [Execution](docs/performance/execution.md), [the heap](docs/heap.md), [performance](docs/performance/README.md) and [profiling](docs/profiling.md)
 - [Browser playground](docs/playground.md), [releases](docs/release.md) and the [changelog](CHANGELOG.md)
 
 ## Development
@@ -110,12 +125,14 @@ TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
 npm ci && npx playwright install chromium && npm run test:browser
 ```
 
-`rust-toolchain.toml` pins the toolchain. The engine lives in `src/`
-(`source/` and `engine/`), its regular-expression engine and Unicode tables in
-the `oxide-regexp` crate (`regexp/`), host adapters in `adapters/`, the CLI
-and WebAssembly apps in `apps/`, and the Test262 runner in
-`conformance/test262`; the [architecture guide](docs/architecture.md)
-describes each module's responsibilities.
+`rust-toolchain.toml` pins the toolchain. The core (bytecode, heap, loop and
+builtins) lives in the `oxide-core` crate (`core/`), the front end, the
+register lowering and the embedding API in the root crate (`src/`), the
+regular-expression engine and Unicode tables in the `oxide-regexp` crate
+(`regexp/`), host adapters in `adapters/`, the CLI and WebAssembly apps in
+`apps/`, and the Test262 runner in `conformance/test262`; the
+[architecture guide](docs/architecture.md) describes each crate's
+responsibilities.
 
 ## License
 

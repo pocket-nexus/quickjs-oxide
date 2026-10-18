@@ -1,36 +1,24 @@
 # Execution and performance
 
-The engine uses a single `ExecCode` word stream and a stack VM. The compiler publishes instructions, control-flow boundaries, numeric regions and bounded fast entries; `vm/execute.rs` holds state access, and ordinary calls, returns and Base construction continue in the same interpreter loop. Drivers handle the remaining property semantics, builtins, exceptions and suspension boundaries. Ordinary binding writes transfer ownership, and named property reads handle data, accessors and complete misses in one selection flow. Captured variables and shapes use their own typed arenas.
+The engine compiles each function to register bytecode for its core, `oxide-core`: the front end's stack code is lowered to 8-byte instructions over a 256-register window per frame, validated once when published. One loop, `run_at`, matches on the opcode with `Int32` and double fast paths inline; calls, returns and `new` on bytecode functions stay in the loop, and natives run as Rust functions that read their arguments from the register file and call back into JavaScript re-entrantly. Named property reads and writes, globals and constructions hit 16-byte inline caches guarded by shapes, validity cells and the global object's generation; iteration over unmodified arrays allocates nothing; generators and async functions copy their frame out of the register file when they suspend. Heap records live in typed arenas and a shared value heap, collected by a mark-sweep collector that runs only inside allocating calls.
 
 ## Documents
 
-- [Architecture](../architecture.md): module responsibilities, publication and execution boundaries.
-- [Current execution paths](roadmap.md): numeric operations, ordinary writes, named property reads and continuations.
-- [Execution invariants](principles.md): ownership, borrowing, positions and observable operations.
-- [Typed storage](typed-arenas.md): captured variables, shapes and collection.
-- [Measurement method](measurement.md): build identity, fixed workloads, profiles and resource costs.
-- [GC policy](../cycle-collection.md): budget and service points for automatic cycle collection.
-- [New core, phase 0](new-core-phase0.md): comparison base, language surface not carried over, collector stress mode.
-- [Baseline](baseline.md): fixed-work V8 v7, Octane, AWFY and probe table against QuickJS on the reference machine.
-- [New core, phase 1](new-core-phase1.md): value and heap plan for the new core tracked in #122, with milestones and acceptance checks.
-- [New core, phase 1 results](new-core-phase1-results.md): `Value` and property-hit assembly, atom-table size, heap micro-workloads against the current core, churn under a heap cap.
-- [New core, phase 2](new-core-phase2.md): register bytecode, lowering from the resolved stack IR, the main loop, calls and scopes, with milestones and the exit tables.
-- [New core, phase 2 results](new-core-phase2-results.md): probe slopes of both cores, the loop's size and cost per dispatch, the two-core corpus record.
-- [New core, phase 3](new-core-phase3.md): inline caches as a store beside the code store, accessor properties, `arguments`, `apply` and `call` in the loop, the builtins of the V8 v7 slice, the regular-expression crate, the go/no-go measurement, with milestones and exit tables.
-- [New core, phase 3 results](new-core-phase3-results.md): the cache slopes and hit paths milestone by milestone, the loop's size, and the exit tables.
-- [New core, phase 4](new-core-phase4.md): the native ABI, the exotic object kinds, ropes, iteration without allocation, generators and async, classes and the rest of the language surface, the builtins port in Test262 order, the Test262 runner on the new core, Octane and AWFY, with milestones and the 3.0 floor.
-- [New core, phase 4 results](new-core-phase4-results.md): Test262 on the new core with the frozen dropped-variant list, the convergence fixes, and the exit tables over the 37 suite programs with the floor read.
-- [New core, phase 5](new-core-phase5.md): taken after phase 6, item by item: the heap cap as a policy, reclaiming dynamic code, code images and heap snapshots, the 32-bit gate target and `oxide-core` without the standard library, the optional generational collector, each with its acceptance and tables.
-- [New core, phase 6](new-core-phase6.md), which runs before phase 5: the embedding API over the new core with `RuntimeOptions` and `MemoryReport`, every consumer switched, the deletion of the old core, the five deviation-ledger entries, the documentation rewrite, the line-count record and release 0.3.0, with milestones and the exit condition.
+- [Execution](execution.md): frames and register windows, the loop, calls, the inline caches and their hit paths, iteration, suspension and the native ABI.
+- [Heap](../heap.md): arenas, the value heap, shapes and validity cells, the collector, its trigger and the heap cap.
+- [Execution principles](principles.md): the rooting rule, the `&mut` discipline, the loop-size and instruction gates, and the measurement rule.
+- [Measurement method](measurement.md): build identity, fixed workloads, sampling and recorded costs.
+- [Diagnostic probes](probes/README.md): the fixed workload matrix, ordinary-write programs, the allocation ledger and the Callgrind runtime probes.
+- [Planned work](../planned.md): the heap cap as a policy, reclaiming dynamic code, code images and heap snapshots, 32-bit and `no_std` targets, a generational collector.
 
 ## Tools
 
-- [Diagnostic probes](probes/README.md): fixed workload matrix, ordinary-write programs, object allocation ledger and Callgrind runtime probes.
-- [Benchmark tools](../../scripts/benchmark/README.md): build identity, fixed workloads, scaling, compilation, Callgrind, PGO and V8 runs.
-- [Diagnostics reference](../profiling.md): report fields of the `profiling` build.
+- [Benchmark tools](../../scripts/benchmark/README.md): build identity, fixed workloads, scaling, compilation, Callgrind, PGO and V8 v7 runs.
+- [Diagnostics reference](../profiling.md): `qjs --gc-stats`, `--ic-stats`, `--memory-report` and `--disassemble`.
 
-Performance conclusions are stated per measured source, binary, workload and raw samples. A change to an execution path is checked for semantics, local operation cost, whole-program time, compile cost and memory lifetime.
+Performance conclusions are stated per measured source, binary, workload and raw samples, and are drawn from retired instructions; time is reported beside them. A change to an execution path is checked for semantics, the instructions of the fixed workloads and the V8 v7 programs, the loop's size, compile cost and memory.
 
-An optimization first states the target property, scenarios, hard constraints and acceptable trade-offs, then selects a mechanism from a profile or an established resource problem. When the existing interface supports the mechanism, only the implementation changes; when a contract blocks the target mechanism, types and responsibilities change. The mechanism, the target result and the full cost are verified separately; instruction counts and time are measured separately.
+An optimization first states the target property, scenarios, hard constraints and acceptable trade-offs, then selects a mechanism from a profile or an established resource problem. When the existing interface supports the mechanism, only the implementation changes; when a contract blocks it, types and responsibilities change. The mechanism, the target result and the full cost are verified separately.
 
 Raw samples, logs, profiles, measurement results and experiment archives are kept in `target/` or outside the repository; the repository maintains the current design, measurement method and measurement tools.
+

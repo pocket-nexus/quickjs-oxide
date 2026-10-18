@@ -1,31 +1,43 @@
 # Profiling and diagnostics
 
-The optional `profiling` feature adds compile, VM, allocation, memory and lifecycle diagnostics. The CLI writes diagnostic reports to stderr or to a new JSONL file. [Measurement guidance](performance/measurement.md) describes how profiling data accompanies ordinary release timing.
+`qjs` prints the collector's statistics, the memory report, the inline-cache report and the register code of a script. The reports go to stderr when the script ends, so program stdout is unchanged. [Measurement guidance](performance/measurement.md) describes how these diagnostics accompany ordinary release timing; [Execution](performance/execution.md) and [the heap](heap.md) describe what they count.
 
 ## Run
 
 ```sh
-cargo build --locked --release -p quickjs-oxide-cli --features profiling
-./target/release/qjs -d workload.js
-./target/release/qjs -T workload.js
-./target/release/qjs -q -d
-./target/release/qjs -dT --profile-json   --profile-output /tmp/oxide-profile.jsonl workload.js
+cargo build --locked --release -p quickjs-oxide-cli
+./target/release/qjs --gc-stats workload.js
+./target/release/qjs --memory-report workload.js
+./target/release/qjs --disassemble workload.js
+cargo build --locked --release -p quickjs-oxide-cli --features ic-stats --target-dir target/ic-stats
+./target/ic-stats/release/qjs --ic-stats workload.js
 ```
 
-`-d/--dump` collects a memory snapshot and compile/VM costs. `-T/--trace` collects arena backing-storage allocation events. `-q -d` samples Runtime and Context lifecycle phases; `--profile-iterations N` controls its sample count. `--profile-events N` controls the trace buffer. Reports preserve program stdout.
-
-JSONL output uses `oxide-memory-v1`, `oxide-allocation-trace-v1`, `oxide-compile-vm-cost-v2` and `oxide-lifecycle-v1` records according to the selected options. Each record contains its scope and accounting fields. A snapshot captures the runtime state at its labelled phase; trace serialization follows Runtime teardown.
-
-## Current data
-
-| Area | Reported values |
+| Option | Report |
 | --- | --- |
-| Heap | Shared and typed arena slots, free indices, zero queue, object properties, dense elements and buffer backing |
-| Code | Published `ExecCode` words, instruction boundaries, static property keys and entered-function instruction counts |
-| Compile and VM | Phase timing, execution diagnostics, operation visits, property selection, store completion and frame transitions |
-| Allocation trace | Arena Vec capacity changes with stable storage identity and dropped-event count |
-| Lifecycle | Runtime/Context construction and teardown samples |
+| `--gc-stats` | One line: collections, total pause, the pauses' p50, p99 and maximum, live and reserved KiB |
+| `--memory-report` | Per arena (objects, shapes, strings, symbols, BigInts, cells, functions, bytecode, internals, values): live records, capacity, used and reserved bytes; free value slots by size class; rope bytes and atoms; the heap's reserved bytes, collection threshold and cap; code units, instructions, positions, source and RegExp programs; the register file's high-water mark and capacity; inline-cache entries; the collector's totals |
+| `--ic-stats` | Per cache kind (get, set, global, construct): monomorphic and polymorphic hits, fills, unfilled lookups and hit rate; sites by state (monomorphic, polymorphic, megamorphic); array iterations on the fast path and through the protocol; the ten sites with the most misses, by function, instruction index, opcode and key. Needs a build with the `ic-stats` feature; without it `qjs` rejects the option |
+| `--disassemble` | The register code of every function `FILE` compiles to, root first, with its parameter, local, register, constant and cache-site counts; prints and exits without running the script |
 
-Execution diagnostics identify a function by runtime, bytecode and execution-word PC. They report action-specific handoffs, local completion, selected property outcomes, owner-release categories, frame materialization, repeated PC publication and frame re-entry. Numeric-region diagnostics record selected operations, attempts and guard outcomes. These are logical event counts; ordinary release builds supply timing and hardware counters.
+The collector options change what the statistics show: `--min-heap-mib N` sets the collection threshold floor (default 4), `--gc-growth F` the threshold's growth after a collection (default 2), and `--heap-cap-mib N` caps the heap. A `gc-stress` build adds `--gc-stress=N`, which collects before every N-th allocation.
 
-`Runtime::memory_snapshot()` exposes the memory view to Rust embedders. `Runtime::new_with_allocation_trace(host, max_events)` returns a runtime and an allocation-trace handle. The handle supplies its final snapshot after the Context, Value and Runtime owners have been dropped.
+Rust embedders read the same reports from `Runtime`: `gc_stats` and `gc_report`, `memory_report` (a `MemoryReport` with one field per arena and the code, register and cache counts), `ic_report(worst)` (`None` without the `ic-stats` feature) and `disassemble(source, filename)`.
+
+## Instruction counts with Callgrind
+
+Exact per-function instruction counts come from Callgrind on a plain release `qjs`; hardware sampling of `instructions:u` attributes samples unevenly to the functions near stalls, so it is used for totals (`perf stat`) only. `qjs` evaluates on its own declared-stack thread, so it runs under Valgrind unchanged.
+
+```sh
+valgrind --tool=callgrind --callgrind-out-file=workload.callgrind ./target/release/qjs workload.js
+callgrind_annotate workload.callgrind | head -40
+```
+
+The probe scripts in [`docs/performance/probes`](performance/probes/README.md) apply the method to fixed workloads. Each probe is a `work(n)` loop with a checked result, run under Callgrind at N, 2N and 4N: the slope (2N − N) / N is the per-iteration instruction count, (4N − 2N) / 2N checks linearity, and the same difference of per-function self cost splits the iteration by function. "Net" values subtract the empty loop's figure.
+
+```sh
+python3 docs/performance/probes/runtime/probes.py --qjs ./target/release/qjs \
+  --v8 "$V8_V7_DIR" --output "$OUTPUT/probes"
+```
+
+`probes.py` covers binding, property, array, call and construction probes and the object-literal, `new` and empty-loop allocation probes; `--v8` adds fixed-iteration V8 v7 benchmark bodies under cache simulation and reports their instructions, data writes and per-function self cost; `--v8-case CASE[=ITERATIONS]` selects cases. The report is `OUTPUT/probes.json`.
