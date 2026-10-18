@@ -655,3 +655,172 @@ abba --cpu 2 --linux-counters`, medians.
 | `test-quickjs-fixtures.sh --all`, `test-quickjs-c-oracles.sh`, `test-parity-slice.sh` | 13 of 13, 9 of 9, pass |
 | `check-source-layout.py`, `check-test262-host-boundary.sh`, `check-no-test262-special-casing.sh`, `check-rust-only.sh` | pass |
 | `test-test262.sh --focused`, `--full` | 6,814 of 6,844 and 81,434 of 83,354, matching the M3 receipts |
+
+## M4b: the spec alignment and the register window
+
+[The plan](new-core-phase6-m4b.md). ECMA-262 and Test262 decide; QuickJS is
+the reference only where the specification leaves a behavior open.
+
+### The three-way differential
+
+`spec-triage.py` runs every oracle case on `qjs`, the pinned QuickJS and
+Node 24, with messages, `stack`, the printer and function source normalized
+away. At M4's head it found 513 candidates (cases where QuickJS and Node
+disagree); at M4b's end, with the cases M4b added, 521 of 3,897. Every one
+is decided by its clause in
+[`new-core-phase6-m4b-triage.tsv`](new-core-phase6-m4b-triage.tsv): what
+`qjs` now follows, the decision, the registry id or clause, a note.
+
+| Decision | Cases | Meaning |
+| --- | ---: | --- |
+| fixed | 109 | QuickJS departs, `qjs` returned to the clause; attributed `QUICKJS-SPEC-001`–`044` |
+| node-departs | 50 | the clause agrees with QuickJS; Node lags or departs (`@@replace` reading `global`/`unicode`, the Uint8Array base64 methods, upsert, cycle detection in `join`) |
+| impl-defined | 85 | left open: the creation order of built-in properties, the sort comparator sequence, locale methods, a QuickJS-only extension (`Set.groupBy`) |
+| resource-limit | 43 | the argument, length, capture and recursion limits and the error kind of a stack overflow |
+| normalization | 48 | an artifact of the comparison: Node message text the normalizer leaves (quotes, commas), printers of lone surrogates |
+| dropped | 49 | the deviation ledger's dropped features (`NEWCORE-DIRECT-EVAL-001`, `NEWCORE-WITH-001`, `NEWCORE-SPECIES-001`) |
+| backlog | 137 | QuickJS departs, not fixed in M4b (below) |
+
+Four reviewers decided the 282 candidates outside the backlog areas from
+their clauses, each checked on the three engines; the small builtin
+departures among them are fixed (`QUICKJS-SPEC-032`–`044`), the rest are
+the backlog's last 17 rows.
+
+### Section 3
+
+3.1's eight departures are fixed (`QUICKJS-SPEC-001`–`007`). Section 3.2,
+row by row:
+
+| Row | Finding | Decision |
+| --- | --- | --- |
+| Atomics: kind check before detached/out-of-bounds; `RangeError` out of bounds; `wait`'s shared check | QuickJS's order and kinds | fixed (009) |
+| Atomics rechecks after `ToIndex` | the plan expected "keep"; only `load` revalidates at once, the others after converting their value | fixed (009) |
+| `groupBy`: callback before items | QuickJS's order, `this` the global object, Sets on the group arrays | fixed (008) |
+| `%TypedArray%.from`, `toSorted` order | QuickJS's | fixed (012) |
+| `Reflect.construct` | the plan expected "confirm"; QuickJS reads the list before checking the target | fixed (013) |
+| `transfer` past `maxByteLength` | `TypeError` | fixed (010) |
+| DataView after a resize | `RangeError` before the out-of-bounds `TypeError` | fixed (011) |
+| string length limit | a resource limit | kept |
+| ArrayBuffer lengths through `ToInt64`; detached `maxByteLength`; `resize`/`grow` order | QuickJS's | fixed (010) |
+| `sort` skips in-place writes | QuickJS's | fixed (019) |
+| `sort` comparator sequence | implementation-defined | kept |
+| `find` and its kin: receiver unwrapped | QuickJS's | fixed (020) |
+| change-by-copy limit | a resource limit after the `TypeError` past 2⁵³ − 1 | kept |
+| spread's two `@@iterator` reads; closing on a step's throw | QuickJS's | fixed (014, 015) |
+| spread's fast array copy | guarded on the intrinsic `@@iterator` and `next`, unobservable | confirmed |
+| `for await`: done `value` read, completed iterator closed | QuickJS's | fixed (016) |
+| for-in rewrite | an own key added during the loop hid a prototype key | fixed (023) |
+| iterator helpers, `Iterator.from`, `Iterator.concat` | QuickJS's state machines differ from the closures | fixed (018, 021, 022) |
+| async generator driver | one trailing request per driver entry | fixed (017) |
+| Proxy, trap by trap | `getOwnPropertyDescriptor`, `defineProperty` (3.1.5), `has`, `ownKeys`, `[[Call]]`/`[[Construct]]` departed; the other seven follow 10.5 | fixed (005, 024) |
+| uninitialized global lexical read falls back to the global object | QuickJS's | fixed (025) |
+| a var beside a masked global lexical | part of QuickJS's Annex B global functions | backlog (Annex B) |
+| global declaration check order | QuickJS checks each name's properties before the lexical conflicts | fixed (026) |
+| `Math.sumPrecise` | QuickJS's accumulator wraps at 129 terms | fixed (027) |
+| `BigInt.asIntN`/`asUintN` | a value spanning the width returned unchanged | fixed (028) |
+| BigInt allocation limits | resource limits | kept |
+| `BigInt.prototype.toLocaleString`; `String.prototype.length` | missing; configurable | fixed (029) |
+| the shape commit's attributes, `length`s and `name`s | the M2 → M4b descriptor diff over every intrinsic: four differences, the non-standard `fileName`/`lineNumber`/`columnNumber` and the global object's `Symbol.toStringTag` | kept |
+| `fromHex`/`setFromHex` | code units already | kept |
+| RegExp and String protocol | `match`/`search`/`matchAll` read `@@match` twice and use the constructor, `repeat`'s count limit, `CreateHTML`, the constructor's prototype read, `test`'s order | fixed (030, 031) |
+
+### The backlog
+
+QuickJS departures M4b records and leaves, by area:
+
+| Area | Cases | What |
+| --- | ---: | --- |
+| scoping | 38 | per-iteration `for` bindings, `catch` and parameter scopes, binding patterns |
+| Annex B | 33 | block functions, the global var beside a masked lexical |
+| syntax | 32 | early errors and accepted forms (`async` methods, class bodies, directives) |
+| TDZ kind | 17 | the error a function-body lexical write throws |
+| early errors | 6 | a top-level lexical beside a function of the same name (16.1.1); `delete a?.#x` |
+| templates | 4 | a template calls the patchable `String.prototype.concat`, converting after every substitution is evaluated (13.2.8.6) |
+| references | 4 | `(a?.#m)()` loses its receiver; `null[k] = v` converts `k` before `ToObject`; a strict write to a sloppy function's name binding |
+| lexer | 2 | `08.1_2`; `for (async <!-- …` |
+| `%ThrowTypeError%` | 1 | returns `undefined` for a sloppy function's `caller`/`arguments`, which keeps `f.caller` from throwing; following 10.2.4.1 needs own properties on sloppy functions or a throwing `f.caller` |
+
+Also kept: `Function.prototype.toString` prints the current `name`
+property where 20.2.3.5 asks for `[[InitialName]]` (natives do not store
+it), and `Atomics.waitAsync` is missing (both engines).
+
+### The register window
+
+A function whose operand stack passes the 256-register window lowers
+(section 4 of the plan): its first depths stay registers, the deeper
+temporaries are slots of the spill scope after the spilled locals, and
+eight scratch registers at the top carry operands and results
+(`LoadSlot`/`StoreSlot`). Iterator records, `yield`'s resumption pair,
+`IterCall`'s result pair and super references are copied into consecutive
+scratch registers and back; a spilled record is marked done in its slot
+before an operation that may throw, as the operation marks its copy. A
+call of up to seven operands runs on a scratch run, a larger one becomes
+`CallSpread`/`NewSpread` over an array built by `DefineElem`; an array
+literal likewise. `Gosub`, `ForInNext`, catch handlers and the close stubs
+reach spilled depths through stubs after the code.
+
+- A function inside the window lowers bit for bit as before: the
+  disassembly of the 37 suite programs and 20 probes is identical.
+- A call of 65,533 arguments and a template of 65,532 substitutions (the
+  front end's QuickJS stack bounds; 65,534 throws `InternalError: stack
+  overflow` at compile time, as in QuickJS) compile and run. QuickJS
+  compiles both and overflows its C stack running them.
+- `register-stress` lowers every function with two register temporaries.
+  Under it the core corpus, the fixtures and the full Test262 run (81,441)
+  match the normal build row for row; with `gc-stress` too, the probes and
+  the corpus pass except `stack.js`, whose unbounded recursion allocates a
+  spill scope per frame and collects at each (quadratic, not a fault).
+- `window_tests.rs`: calls of 254–1,000 and 65,533 arguments, templates of
+  300 and 65,532 substitutions, object, array, call and exponent nesting,
+  records, catches, `finally` and `for-in` past the window, suspensions,
+  spilled locals beside spilled temporaries; under `gc-stress` too. The
+  five tests M3 ignored for the limit run.
+
+### Test262
+
+The full receipt is re-frozen once, at the end (milestone
+`new-core-phase6-m4b`): 81,441 of 83,354 runnable variants (81,441 of the
+83,562 in QuickJS's scope, 97.462%). Against M4, row by row, seven variants
+pass that failed and none moves the other way, failure details included:
+the seven M3 lost by following QuickJS (`staging/sm`'s
+`Function/function-bind`, `class/boundFunctionSubclassing` ×2,
+`object/defineProperties-order` ×2, `regress/regress-1383630` ×2). Against
+M2 only the four direct-eval variants of `NEWCORE-DIRECT-EVAL-001` are lost.
+The register window and the triage's builtin fixes move no row: the pinned
+Test262 does not reach the departures they fix, and the full run under
+`register-stress` matches the normal one row for row. The focused vector
+is unchanged (6,814 of 6,844).
+
+### Gates
+
+The instruction gate: `qjs` built by `build.py --plain-only` at the
+deletion (`e80d99ca`) and at M4b's head (`6c3c4f15`), `fixed.py --repeat 4
+--order abba --cpu 2 --linux-counters`, medians.
+
+| Program | M4 G instr | M4b G instr | Change |
+| --- | ---: | ---: | ---: |
+| richards | 18.087 | 18.089 | +0.01% |
+| deltablue | 17.475 | 17.475 | +0.01% |
+| crypto | 15.050 | 15.050 | +0.00% |
+| raytrace | 15.233 | 15.215 | −0.12% |
+| earley-boyer | 12.659 | 12.651 | −0.07% |
+| regexp | 21.210 | 21.012 | −0.94% |
+| splay | 19.529 | 19.552 | +0.12% |
+| navier-stokes | 21.797 | 21.797 | +0.00% |
+
+`regexp` gains from the removed `exec` AutoInit check on every property
+Get. A first build checked every non-integer number's shortest digits and
+cost `splay` (which prints random doubles) 1.15%; only powers of two can
+need it. `run_at` is 15,226 bytes. `qjs` is 3,453,016 bytes (M4:
+3,454,552).
+
+| Gate | Result |
+| --- | --- |
+| clippy (`--all-targets --all-features`, `--lib --bins`, the `test262-host` set), fmt | pass |
+| `cargo test --workspace --all-targets`, `--features test262-host` | 1,089 and 1,092 pass, 4 ignored (measurement hooks) |
+| `oxide-core --features gc-stress`, the lowering under `gc-stress` | 139 and 456 pass |
+| `check-new-core-stress.py` | 20 probes and 44 corpus programs at `--gc-stress=1` |
+| oracle corpus | 206 pass, none ignored |
+| `test-quickjs-fixtures.sh --all`, `test-quickjs-c-oracles.sh`, `test-parity-slice.sh` | 13 of 13, 9 of 9, pass |
+| `check-source-layout.py`, `check-test262-host-boundary.sh`, `check-no-test262-special-casing.sh`, `check-rust-only.sh`, `check-oracle-registry.sh` | pass |
+| `test-test262.sh --focused`, `--full` | 6,814 of 6,844 and 81,441 of 83,354, the re-frozen receipts |
