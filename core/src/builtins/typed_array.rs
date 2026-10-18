@@ -310,6 +310,9 @@ fn create_from_constructor(
     constructor: Value,
     length: u64,
 ) -> Result<ObjectId, Throw> {
+    if !internal::is_constructor(cx, constructor) {
+        return Err(error::construct_error(cx, constructor));
+    }
     let result = crate::vm::construct(
         cx,
         constructor,
@@ -551,9 +554,8 @@ pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     if !mapper.is_undefined() && !ops::is_callable(cx.heap, mapper) {
         return Err(error::type_error(cx, "not a function"));
     }
-    if !internal::is_constructor(cx, constructor) {
-        return Err(error::construct_error(cx, constructor));
-    }
+    // The constructor is validated by its construction, after the source
+    // is read (`js_typed_array_create`).
     let key = WellKnown::key(cx.realm.symbols.iterator);
     let values = match internal::get_method(cx, source, key)? {
         Some(method) => {

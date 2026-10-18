@@ -5,7 +5,7 @@
 
 use std::cmp::Ordering;
 
-use super::bigint::{Big, BigError};
+use super::bigint::{Big, BigError, qjs};
 use super::error;
 use super::number;
 use super::property;
@@ -288,8 +288,11 @@ pub(crate) fn to_string(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
         Kind::Null => Ok(Value::string(names.null)),
         Kind::Symbol => Err(error::type_error(cx, "cannot convert symbol to string")),
         Kind::BigInt => {
-            let text = big(cx.heap, value).to_string_radix10();
-            alloc_text(cx, &text)
+            let value = big(cx.heap, value);
+            if qjs::to_string_check(&value, 10).is_err() {
+                return Err(error::range_error(cx, "BigInt is too large to allocate"));
+            }
+            alloc_text(cx, &value.to_string_radix10())
         }
         Kind::Object => {
             let primitive = to_primitive(cx, value, Hint::String)?;
@@ -482,18 +485,18 @@ fn numeric(cx: &mut Cx<'_>, op: Arith, x: Value, y: Value) -> Result<Value, Thro
         (true, true) => {
             let (a, b) = (big(cx.heap, a), big(cx.heap, b));
             let result = match op {
-                Arith::Add => a.add(&b),
-                Arith::Sub => a.sub(&b),
-                Arith::Mul => a.mul(&b),
-                Arith::Div => a.div_rem(&b).map(|(quotient, _)| quotient),
-                Arith::Mod => a.div_rem(&b).map(|(_, remainder)| remainder),
-                Arith::Pow => a.pow(&b),
-                Arith::Shl => a.shl(&b),
-                Arith::Sar => a.shl(&b.neg()),
+                Arith::Add => qjs::add(&a, &b, false),
+                Arith::Sub => qjs::add(&a, &b, true),
+                Arith::Mul => qjs::mul(&a, &b),
+                Arith::Div => qjs::div_rem(&a, &b, false),
+                Arith::Mod => qjs::div_rem(&a, &b, true),
+                Arith::Pow => qjs::pow(&a, &b),
+                Arith::Shl => qjs::shift(&a, &b, false),
+                Arith::Sar => qjs::shift(&a, &b, true),
                 Arith::Shr => return Err(shr_bigint(cx)),
-                Arith::BitAnd => Ok(a.bit_and(&b)),
-                Arith::BitOr => Ok(a.bit_or(&b)),
-                Arith::BitXor => Ok(a.bit_xor(&b)),
+                Arith::BitAnd => qjs::logic(&a, &b, Big::bit_and),
+                Arith::BitOr => qjs::logic(&a, &b, Big::bit_or),
+                Arith::BitXor => qjs::logic(&a, &b, Big::bit_xor),
             };
             big_value(cx, result)
         }
@@ -546,11 +549,11 @@ pub(crate) fn unary(cx: &mut Cx<'_>, op: Unary, x: Value) -> Result<Value, Throw
         let value = big(cx.heap, value);
         let one = Big::from_i64(1);
         let result = match op {
-            Unary::Neg => Ok(value.neg()),
+            Unary::Neg => qjs::neg(&value),
             Unary::ToNumeric => Ok(value),
-            Unary::Inc => value.add(&one),
-            Unary::Dec => value.sub(&one),
-            Unary::BitNot => Ok(value.bit_not()),
+            Unary::Inc => qjs::add(&value, &one, false),
+            Unary::Dec => qjs::add(&value, &one, true),
+            Unary::BitNot => qjs::not(&value),
             Unary::Plus => unreachable!(),
         };
         return big_value(cx, result);

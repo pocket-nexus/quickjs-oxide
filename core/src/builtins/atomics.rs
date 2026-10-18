@@ -101,8 +101,22 @@ fn detached(cx: &Cx<'_>, object: ObjectId) -> bool {
 }
 
 /// `ValidateAtomicAccess` against the length validation saw: the element's
-/// byte index in the buffer.
+/// byte index in the buffer. Every operation but `notify` then revalidates
+/// the array, as `js_atomics_get_buf` does, since `ToIndex` may have
+/// detached or shrunk its buffer.
 fn access(cx: &mut Cx<'_>, object: ObjectId, length: usize, index: Value) -> Result<usize, Throw> {
+    let byte_index = index_in(cx, object, length, index)?;
+    revalidate(cx, object, byte_index, "ArrayBuffer is detached or resized")?;
+    Ok(byte_index)
+}
+
+/// [`access`] without the revalidation (`notify`).
+fn index_in(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    length: usize,
+    index: Value,
+) -> Result<usize, Throw> {
     let index = to_index(cx, index)? as usize;
     if index >= length {
         return Err(error::range_error(cx, "out-of-bound access"));
@@ -248,7 +262,6 @@ pub(super) fn load(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let (object, kind, length) = validate(cx, array, false, false)?;
     let index = site.arg(cx, 1);
     let byte_index = access(cx, object, length, index)?;
-    revalidate(cx, object, byte_index, "ArrayBuffer is detached or resized")?;
     let old = modify(cx, object, byte_index, |_| None);
     decode(cx, kind, old & mask(kind))
 }
@@ -333,7 +346,7 @@ pub(super) fn notify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let array = site.arg(cx, 0);
     let (object, _, length) = validate(cx, array, true, false)?;
     let index = site.arg(cx, 1);
-    let byte_index = access(cx, object, length, index)?;
+    let byte_index = index_in(cx, object, length, index)?;
     let count = site.arg(cx, 2);
     let count = if count.is_undefined() {
         usize::MAX

@@ -2,18 +2,54 @@ case	deviation
 array/assignment / nested target Reference is prepared after the outer step and before the inner step	NEWCORE-WITH-001
 array/assignment / with resolves a missing identifier before IteratorNext adds that property	NEWCORE-WITH-001
 array/assignment / with retains an existing property Reference across IteratorNext deletion	NEWCORE-WITH-001
+array/concat / a custom result property under a source hole is not deleted	NEWCORE-SPECIES-001
+array/concat / a rejected final length Set leaves all indexed writes observable	NEWCORE-SPECIES-001
+array/concat / a rejected indexed definition preserves only the written prefix	NEWCORE-SPECIES-001
+array/concat / concat itself as species	NEWCORE-SPECIES-001
+array/concat / custom species receive zero and ordinary results get a final length	NEWCORE-SPECIES-001
+array/concat / indexed defines bypass setters while final length uses an inherited setter	NEWCORE-SPECIES-001
+array/concat / plain object species	NEWCORE-SPECIES-001
+array/concat / primitive constructor	NEWCORE-SPECIES-001
+array/concat / species allocation precedes spreadability length and indexed access	NEWCORE-SPECIES-001
+array/flatten / a rejected custom result definition preserves the completed prefix	NEWCORE-SPECIES-001
+array/flatten / custom species receives zero and CreateDataProperty skips inherited setters	NEWCORE-SPECIES-001
+array/flatten / flat converts depth then creates species before indexed reads	NEWCORE-SPECIES-001
+array/flatten / flat preserves species getter throw	NEWCORE-SPECIES-001
+array/flatten / flatMap creates species before alternating source Gets and mapper calls	NEWCORE-SPECIES-001
+array/flatten / species may alias the result to the source and later reads see writes	NEWCORE-SPECIES-001
+array/map_filter / a rejected result definition preserves callback order and stops traversal	NEWCORE-SPECIES-001
+array/map_filter / callable non-constructor species has the pinned constructor error	NEWCORE-SPECIES-001
+array/map_filter / custom species receive map length or filter zero without a final length Set	NEWCORE-SPECIES-001
+array/map_filter / null constructor is not a function	NEWCORE-SPECIES-001
+array/map_filter / plain object species is not a constructor	NEWCORE-SPECIES-001
+array/map_filter / primitive constructor is not a function	NEWCORE-SPECIES-001
+array/map_filter / primitive species is not a function	NEWCORE-SPECIES-001
+array/map_filter / species allocation precedes indexed access and callbacks	NEWCORE-SPECIES-001
+array/slice_splice / a failed removed-result length Set prevents splice source mutation	NEWCORE-SPECIES-001
+array/slice_splice / a rejected result definition leaves the completed slice prefix externally observable	NEWCORE-SPECIES-001
+array/slice_splice / constructor species lookup and constructor validation preserve abrupt order	NEWCORE-SPECIES-001
+array/slice_splice / generic slice ignores a throwing constructor while custom species sees exact empty count	NEWCORE-SPECIES-001
+array/slice_splice / slice converts bounds before constructor species and indexed reads	NEWCORE-SPECIES-001
+array/slice_splice / species construction mutation is observed by later slice reads	NEWCORE-SPECIES-001
+array/slice_splice / species may alias a slice result to its source	NEWCORE-SPECIES-001
+array/slice_splice / species may alias the splice result to its source	NEWCORE-SPECIES-001
+array/slice_splice / species result uses CreateDataProperty and leaves preseeded hole properties intact	NEWCORE-SPECIES-001
+array/slice_splice / splice finishes the removed result before moving and inserting on source	NEWCORE-SPECIES-001
+binary_data/array_buffer / slice species ordering and post-constructor revalidation	NEWCORE-SPECIES-001
 class_initialization/base / a computed key's eval runs sloppy code	NEWCORE-WITH-001
 control_flow/annex_b_statements / with containing an if would reopen Annex B once with is implemented	NEWCORE-WITH-001
 control_flow/for_of / nested var binding prepares its with reference after inner acquisition and before step	NEWCORE-WITH-001
 control_flow/for_of / var declaration prepares a with reference before iterator step	NEWCORE-WITH-001
 control_flow/for_of / var for-of binding prepares a with reference before inner step	NEWCORE-WITH-001
 control_flow/for_of / var rest keeps its prepared with reference while draining	NEWCORE-WITH-001
+control_flow/with / Get rechecks HasProperty after an unscopables getter deletes the selection	NEWCORE-WITH-001
+control_flow/with / TypedArray prototype numeric-index rejection composes with repeated with HasProperty	NEWCORE-WITH-001
 control_flow/with / a missing strict global reference stays missing across RHS creation	NEWCORE-WITH-001
-control_flow/with / an eval-created closure imports with lookup but still calls with undefined receiver	NEWCORE-WITH-001
-control_flow/with / an eval var object selected under syntactic with becomes the call receiver	NEWCORE-WITH-001
 control_flow/with / a strict child reports a missing selected property after its RHS deletes it	NEWCORE-WITH-001
 control_flow/with / a var initializer inside with assigns the object and not the function var	NEWCORE-WITH-001
 control_flow/with / a var initializer selects its with reference before evaluating the RHS	NEWCORE-WITH-001
+control_flow/with / an eval var object selected under syntactic with becomes the call receiver	NEWCORE-WITH-001
+control_flow/with / an eval-created closure imports with lookup but still calls with undefined receiver	NEWCORE-WITH-001
 control_flow/with / compound assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
 control_flow/with / delete distinguishes selected fallback and missing bindings	NEWCORE-WITH-001
 control_flow/with / direct eval assignment resolves its imported with environment after the RHS	NEWCORE-WITH-001
@@ -21,7 +57,6 @@ control_flow/with / direct eval imports with lookup without importing reference-
 control_flow/with / eval variable objects use prototype-aware HasProperty under with	NEWCORE-WITH-001
 control_flow/with / failed selected writes are silent in sloppy code and throw in strict code	NEWCORE-WITH-001
 control_flow/with / for-in and for-of assignment targets resolve through with on every iteration	NEWCORE-WITH-001
-control_flow/with / Get rechecks HasProperty after an unscopables getter deletes the selection	NEWCORE-WITH-001
 control_flow/with / logical assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
 control_flow/with / loop closures retain the with object from each closed scope	NEWCORE-WITH-001
 control_flow/with / postfix update rechecks HasProperty after coercion deletes the property	NEWCORE-WITH-001
@@ -30,7 +65,6 @@ control_flow/with / readonly fallback throws before evaluating the assignment RH
 control_flow/with / simple assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
 control_flow/with / simple compound logical prefix and postfix writes target the with object	NEWCORE-WITH-001
 control_flow/with / single-statement contextual let honors ASI after with	NEWCORE-WITH-001
-control_flow/with / TypedArray prototype numeric-index rejection composes with repeated with HasProperty	NEWCORE-WITH-001
 control_flow/with / unscopables skips the inner binding and preserves nested fallback order	NEWCORE-WITH-001
 control_flow/with / with applies ToObject and rejects nullish values	NEWCORE-WITH-001
 control_flow/with / with methods receive the object while lexical fallback receives undefined	NEWCORE-WITH-001
@@ -46,3 +80,4 @@ object/bindings / nested var prepares its leaf reference after the outer get and
 object/rest / rest target Put fault follows copy then closes the outer iterator	NEWCORE-WITH-001
 object/rest / sloppy with resolves a missing rest target before copy adds that name	NEWCORE-WITH-001
 object/rest / sloppy with retains an existing rest target reference after copy deletes it	NEWCORE-WITH-001
+typed_array/of / static from shares only the direct constructor diagnostic seam	NEWCORE-SPECIES-001

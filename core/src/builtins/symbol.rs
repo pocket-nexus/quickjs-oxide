@@ -66,7 +66,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 /// `Symbol(description)`; `new Symbol` throws.
 pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     if site.construct {
-        return Err(error::type_error(cx, "Symbol is not a constructor"));
+        return Err(error::not_a_constructor(cx, site.new_target));
     }
     let description = site.arg(cx, 0);
     let description = if description.is_undefined() {

@@ -343,145 +343,183 @@ pub(super) fn sum_precise(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
             iter::close(cx, &record, Err(error))?;
         }
     }
-    Ok(number(exact_sum(&values)))
+    let mut sum = SumPrecise::new();
+    for value in values {
+        sum.add(value);
+    }
+    Ok(number(sum.result()))
 }
 
-/// The correctly rounded sum (the proposal's specification: -0 for no
-/// values or only -0s, infinities and NaN by their rules, Shewchuk's
-/// partials otherwise with the overflow handled by a 2^1024 offset).
-fn exact_sum(values: &[f64]) -> f64 {
-    let mut positive_infinity = false;
-    let mut negative_infinity = false;
-    let mut all_negative_zero = true;
-    for &value in values {
-        if value.is_nan() {
-            return f64::NAN;
-        }
-        if value == f64::INFINITY {
-            positive_infinity = true;
-        } else if value == f64::NEG_INFINITY {
-            negative_infinity = true;
-        }
-        if !(value == 0.0 && value.is_sign_negative()) {
-            all_negative_zero = false;
-        }
-    }
-    if positive_infinity && negative_infinity {
-        return f64::NAN;
-    }
-    if positive_infinity {
-        return f64::INFINITY;
-    }
-    if negative_infinity {
-        return f64::NEG_INFINITY;
-    }
-    if all_negative_zero {
-        return -0.0;
-    }
-    // Shewchuk's algorithm, overflowing partials counted in units of
-    // 2^1024 (the proposal's reference implementation).
-    // 2^1023 and 2^971, the unit in the last place of `f64::MAX`.
-    const TWO_1023: f64 = f64::from_bits(0x7FE0_0000_0000_0000);
-    const MAX_ULP: f64 = f64::from_bits(0x7CA0_0000_0000_0000);
-    let mut partials: Vec<f64> = Vec::new();
-    let mut overflow = 0i64;
-    for &value in values {
-        let mut x = value;
-        let mut used = 0;
-        for index in 0..partials.len() {
-            let mut y = partials[index];
-            if x.abs() < y.abs() {
-                std::mem::swap(&mut x, &mut y);
-            }
-            let (mut high, mut low) = two_sum(x, y);
-            if high.is_infinite() {
-                let sign = if high > 0.0 { 1.0 } else { -1.0 };
-                overflow += sign as i64;
-                x = (x - sign * TWO_1023) - sign * TWO_1023;
-                if x.abs() < y.abs() {
-                    std::mem::swap(&mut x, &mut y);
-                }
-                (high, low) = two_sum(x, y);
-            }
-            if low != 0.0 {
-                partials[used] = low;
-                used += 1;
-            }
-            x = high;
-        }
-        partials.truncate(used);
-        if x != 0.0 {
-            partials.push(x);
+/// QuickJS's `SumPreciseState`: the sum in 56-bit limbs of a fixed-point
+/// accumulator, renormalized every 250 additions. Between renormalizations
+/// a limb may wrap as `int64_t` arithmetic does in practice (129 values just
+/// under 2^-10 wrap it), and the result keeps that wrap.
+struct SumPrecise {
+    state: SumState,
+    counter: u32,
+    limbs: usize,
+    acc: [i64; SUM_ACC_LEN],
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SumState {
+    Finite,
+    Infinity,
+    MinusInfinity,
+    NaN,
+}
+
+const SP_LIMB_BITS: u32 = 56;
+const SP_RND_BITS: u32 = SP_LIMB_BITS - 53;
+const SP_LIMB_MASK: i64 = (1 << SP_LIMB_BITS) - 1;
+const SUM_ACC_LEN: usize = 39;
+const SUM_COUNTER_INIT: u32 = 250;
+
+impl SumPrecise {
+    fn new() -> SumPrecise {
+        SumPrecise {
+            state: SumState::Finite,
+            counter: SUM_COUNTER_INIT,
+            limbs: 0,
+            acc: [0; SUM_ACC_LEN],
         }
     }
-    let mut n = partials.len() as isize - 1;
-    let mut high = 0.0;
-    let mut low = 0.0;
-    if overflow != 0 {
-        let next = if n >= 0 { partials[n as usize] } else { 0.0 };
-        n -= 1;
-        if overflow.abs() > 1 || (overflow > 0 && next > 0.0) || (overflow < 0 && next < 0.0) {
-            return if overflow > 0 {
-                f64::INFINITY
+
+    fn renorm(&mut self) {
+        let mut carry = 0i64;
+        for index in 0..self.limbs {
+            let value = self.acc[index].wrapping_add(carry);
+            self.acc[index] = value & SP_LIMB_MASK;
+            carry = value >> SP_LIMB_BITS;
+        }
+        if carry != 0 && self.limbs < SUM_ACC_LEN {
+            self.acc[self.limbs] = carry;
+            self.limbs += 1;
+        }
+    }
+
+    fn add(&mut self, value: f64) {
+        let bits = value.to_bits();
+        let negative = bits >> 63 == 1;
+        let exponent = ((bits >> 52) & 0x7ff) as u32;
+        let mut mantissa = bits & ((1 << 52) - 1);
+        let (position, shift);
+        if exponent == 2047 {
+            self.state = if mantissa != 0
+                || self.state == SumState::NaN
+                || (self.state == SumState::MinusInfinity && !negative)
+                || (self.state == SumState::Infinity && negative)
+            {
+                SumState::NaN
+            } else if negative {
+                SumState::MinusInfinity
             } else {
-                f64::NEG_INFINITY
+                SumState::Infinity
             };
-        }
-        (high, low) = two_sum(overflow as f64 * TWO_1023, next / 2.0);
-        low *= 2.0;
-        if (2.0 * high).is_infinite() {
-            if high > 0.0 {
-                if high == TWO_1023
-                    && low == -(MAX_ULP / 2.0)
-                    && n >= 0
-                    && partials[n as usize] < 0.0
-                {
-                    return f64::MAX;
+            return;
+        } else if exponent == 0 {
+            if mantissa == 0 {
+                if self.limbs == 0 && !negative {
+                    self.limbs = 1;
                 }
-                return f64::INFINITY;
+                return;
             }
-            if high == -TWO_1023 && low == MAX_ULP / 2.0 && n >= 0 && partials[n as usize] > 0.0 {
-                return -f64::MAX;
-            }
-            return f64::NEG_INFINITY;
+            position = 0;
+            shift = 0;
+        } else {
+            mantissa |= 1 << 52;
+            position = ((exponent - 1) / SP_LIMB_BITS) as usize;
+            shift = (exponent - 1) % SP_LIMB_BITS;
         }
-        if low != 0.0 {
-            let at = (n + 1) as usize;
-            if at < partials.len() {
-                partials[at] = low;
-            } else {
-                partials.push(low);
-            }
-            n += 1;
-            low = 0.0;
+        let low = ((mantissa << shift) as i64) & SP_LIMB_MASK;
+        let high = (mantissa >> (SP_LIMB_BITS - shift)) as i64;
+        if negative {
+            self.acc[position] = self.acc[position].wrapping_sub(low);
+            self.acc[position + 1] = self.acc[position + 1].wrapping_sub(high);
+        } else {
+            self.acc[position] = self.acc[position].wrapping_add(low);
+            self.acc[position + 1] = self.acc[position + 1].wrapping_add(high);
         }
-        high *= 2.0;
-    }
-    while n >= 0 {
-        let x = high;
-        let y = partials[n as usize];
-        n -= 1;
-        (high, low) = two_sum(x, y);
-        if low != 0.0 {
-            break;
+        self.limbs = self.limbs.max(position + 2);
+        self.counter -= 1;
+        if self.counter == 0 {
+            self.counter = SUM_COUNTER_INIT;
+            self.renorm();
         }
     }
-    if n >= 0
-        && ((low < 0.0 && partials[n as usize] < 0.0) || (low > 0.0 && partials[n as usize] > 0.0))
-    {
-        let y = low * 2.0;
-        let x = high + y;
-        let rounded = x - high;
-        if y == rounded {
-            high = x;
-        }
-    }
-    high
-}
 
-/// `(a + b, the rounding error)`.
-fn two_sum(a: f64, b: f64) -> (f64, f64) {
-    let high = a + b;
-    let low = b - (high - a);
-    (high, low)
+    fn result(&mut self) -> f64 {
+        match self.state {
+            SumState::Finite => {}
+            SumState::Infinity => return f64::INFINITY,
+            SumState::MinusInfinity => return f64::NEG_INFINITY,
+            SumState::NaN => return f64::NAN,
+        }
+        self.renorm();
+        let mut n = self.limbs;
+        if n == 0 {
+            return -0.0;
+        }
+        while n > 0 && self.acc[n - 1] == 0 {
+            n -= 1;
+        }
+        if n == 0 {
+            return 0.0;
+        }
+        let negative = self.acc[n - 1] < 0;
+        if negative {
+            let mut carry = 1u64;
+            for index in 0..n - 1 {
+                let value = (SP_LIMB_MASK as u64)
+                    .wrapping_sub(self.acc[index] as u64)
+                    .wrapping_add(carry);
+                carry = value >> SP_LIMB_BITS;
+                self.acc[index] = (value & SP_LIMB_MASK as u64) as i64;
+            }
+            self.acc[n - 1] = self.acc[n - 1]
+                .wrapping_neg()
+                .wrapping_add(carry as i64)
+                .wrapping_sub(1);
+            while n > 1 && self.acc[n - 1] == 0 {
+                n -= 1;
+            }
+        }
+        let sign = u64::from(negative) << 63;
+        if n == 1 && (self.acc[0] as u64) < (1 << 52) {
+            return f64::from_bits(sign | self.acc[0] as u64);
+        }
+        let mut p = n - 1;
+        let mut m = self.acc[p] as u64;
+        let shift = m.leading_zeros() as i64 - (64 - i64::from(SP_LIMB_BITS));
+        let mut e = (n as i64) * i64::from(SP_LIMB_BITS) - shift - 52;
+        if shift != 0 {
+            m = m.wrapping_shl(shift as u32);
+            if p > 0 {
+                p -= 1;
+                let shift1 = SP_LIMB_BITS as i64 - shift;
+                let below = self.acc[p] as u64;
+                let nonzero = below & ((1u64 << shift1) - 1);
+                m = m | (below >> shift1) | u64::from(nonzero != 0);
+            }
+        }
+        if m & ((1 << SP_RND_BITS) - 1) == 1 << (SP_RND_BITS - 1) {
+            while p > 0 {
+                p -= 1;
+                if self.acc[p] != 0 {
+                    m |= 1;
+                    break;
+                }
+            }
+        }
+        let addend = (1u64 << (SP_RND_BITS - 1)) - 1 + ((m >> SP_RND_BITS) & 1);
+        m = m.wrapping_add(addend) >> SP_RND_BITS;
+        if m == 1 << 53 {
+            e += 1;
+        }
+        if e >= 2047 {
+            f64::from_bits(sign | (2047 << 52))
+        } else {
+            f64::from_bits(sign | ((e as u64) << 52) | (m & ((1 << 52) - 1)))
+        }
+    }
 }

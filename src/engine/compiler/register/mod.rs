@@ -607,6 +607,26 @@ fn method_flags(kind: DefineMethodKind, enumerable: bool) -> u32 {
     kind | if enumerable { method::ENUMERABLE } else { 0 }
 }
 
+/// Whether QuickJS's `JS_NewAtom` makes `units` a tagged integer atom: the
+/// canonical decimal spelling of an integer up to `JS_ATOM_MAX_INT`.
+fn is_tagged_int_atom(units: &[u16]) -> bool {
+    let canonical = match units {
+        [unit] => (u16::from(b'0')..=u16::from(b'9')).contains(unit),
+        [first, rest @ ..] => {
+            (u16::from(b'1')..=u16::from(b'9')).contains(first)
+                && rest
+                    .iter()
+                    .all(|unit| (u16::from(b'0')..=u16::from(b'9')).contains(unit))
+        }
+        [] => false,
+    };
+    canonical
+        && units.len() <= 10
+        && String::from_utf16_lossy(units)
+            .parse::<u64>()
+            .is_ok_and(|value| value <= i32::MAX as u64)
+}
+
 fn string_units(string: &JsString) -> Vec<u16> {
     string.utf16_units().collect()
 }
@@ -1099,7 +1119,21 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             PrimitiveValue::Bool(value) => return Ok(Entry::Bool(*value)),
             PrimitiveValue::Int(value) => return Ok(Entry::Int(*value)),
             PrimitiveValue::Float(value) => CoreValue::number(*value),
-            PrimitiveValue::String(string) => self.atom_value(&string_units(string))?,
+            PrimitiveValue::String(string) => {
+                let units = string_units(string);
+                if is_tagged_int_atom(&units) {
+                    // QuickJS keeps a literal spelling an index up to 2^31 - 1
+                    // as its own constant-pool string, not an atom: two such
+                    // literals are distinct values (`Array.prototype.sort`'s
+                    // identity shortcut observes this).
+                    let heap = self.runtime.heap_mut();
+                    let value = CoreValue::string(heap.alloc_string_units(&units)?);
+                    heap.roots().push(value);
+                    value
+                } else {
+                    self.atom_value(&units)?
+                }
+            }
             PrimitiveValue::BigInt(value) => {
                 let (sign, limbs) = value.to_bigint().to_u64_digits();
                 let heap = self.runtime.heap_mut();

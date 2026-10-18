@@ -21,8 +21,11 @@ pub(crate) enum BigError {
     PowTooLarge,
 }
 
-/// Limbs a result may reach before `RangeError: BigInt is too large`.
-const MAX_LIMBS: usize = 1 << 14;
+/// QuickJS's `JS_BIGINT_MAX_SIZE`: the most limbs `js_bigint_new`
+/// allocates. QuickJS's two's complement values may grow one limb past it
+/// (`js_bigint_extend` does not check); the operations below fail where
+/// QuickJS's allocation of their result or scratch would.
+pub(crate) const MAX_LIMBS: usize = 1 << 14;
 
 impl Big {
     pub fn zero() -> Big {
@@ -126,7 +129,7 @@ impl Big {
     }
 
     pub fn mul(&self, other: &Big) -> Result<Big, BigError> {
-        if self.limbs.len() + other.limbs.len() > MAX_LIMBS + 1 {
+        if self.limbs.len() + other.limbs.len() > MAX_LIMBS + 2 {
             return Err(BigError::TooLarge);
         }
         checked(Big::new(
@@ -221,6 +224,43 @@ impl Big {
         Ok(Big::new(true, add_mag(&shifted.limbs, &[1])))
     }
 
+    /// The limbs of QuickJS's normalized two's complement representation
+    /// (`JSBigInt.len`): one sign bit above the value's bits.
+    pub fn qjs_limbs(&self) -> usize {
+        let bits = bit_length(&self.limbs);
+        // -2^k needs only k bits besides the sign.
+        let power_of_two = self.limbs.last().is_some_and(|top| top.is_power_of_two())
+            && self.limbs[..self.limbs.len() - 1]
+                .iter()
+                .all(|&limb| limb == 0);
+        let bits = if self.negative && power_of_two {
+            bits - 1
+        } else {
+            bits
+        };
+        (bits as usize + 1).div_ceil(64).max(1)
+    }
+
+    /// The value in `len` limbs of two's complement (`len` large enough).
+    pub fn to_twos(&self, len: usize) -> Vec<u64> {
+        complement(self, len)
+    }
+
+    /// The value of two's complement limbs, the top bit the sign.
+    pub fn from_twos(limbs: &[u64]) -> Big {
+        let negative = limbs.last().is_some_and(|top| top >> 63 == 1);
+        let mut out = limbs.to_vec();
+        if negative {
+            let mut carry = true;
+            for limb in out.iter_mut() {
+                let (sum, overflow) = (!*limb).overflowing_add(u64::from(carry));
+                *limb = sum;
+                carry = overflow;
+            }
+        }
+        Big::new(negative, out)
+    }
+
     pub fn bit_and(&self, other: &Big) -> Big {
         bitwise(self, other, |a, b| a & b)
     }
@@ -312,10 +352,254 @@ impl Big {
         }
         Some(Big::new(negative, limbs))
     }
+
+    /// [`Big::parse`] with `js_bigint_from_string`'s size limits.
+    /// The limits are checked once the text is known to be well formed and
+    /// before its digits are converted.
+    pub fn parse_checked(text: &str) -> Option<Result<Big, BigError>> {
+        let trimmed = text.trim_matches(|c: char| {
+            c.is_whitespace() || c == '\u{FEFF}' || c == '\u{2028}' || c == '\u{2029}'
+        });
+        let bytes = trimmed.as_bytes();
+        let (radix, digits) = if bytes.len() > 2 && bytes[0] == b'0' {
+            match bytes[1] {
+                b'x' | b'X' => (16, &trimmed[2..]),
+                b'o' | b'O' => (8, &trimmed[2..]),
+                b'b' | b'B' => (2, &trimmed[2..]),
+                _ => (10, trimmed),
+            }
+        } else {
+            (10, trimmed.strip_prefix(['-', '+']).unwrap_or(trimmed))
+        };
+        if !digits.is_empty()
+            && digits.chars().all(|c| c.is_digit(radix))
+            && let Err(error) = qjs::from_string_check(digits, radix, &Big::zero())
+        {
+            return Some(Err(error));
+        }
+        let value = Big::parse(text)?;
+        Some(qjs::from_string_check("", radix, &value).map(|()| value))
+    }
+}
+
+/// The QuickJS operations on JavaScript BigInts: the results of the
+/// arithmetic above, failing where `js_bigint_*` would fail to allocate.
+pub(crate) mod qjs {
+    use super::{Big, BigError, MAX_LIMBS};
+
+    fn too_large(limbs: usize) -> Result<(), BigError> {
+        if limbs > MAX_LIMBS {
+            Err(BigError::TooLarge)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The value of a one-limb (`JS_TAG_SHORT_BIG_INT`) BigInt.
+    fn short(value: &Big) -> i64 {
+        let magnitude = value.limbs.first().copied().unwrap_or(0);
+        if value.negative {
+            (magnitude as i64).wrapping_neg()
+        } else {
+            magnitude as i64
+        }
+    }
+
+    /// `js_bigint_add`: `a + b`, or `a - b`.
+    pub fn add(a: &Big, b: &Big, subtract: bool) -> Result<Big, BigError> {
+        too_large(a.qjs_limbs().max(b.qjs_limbs()))?;
+        if subtract { a.sub(b) } else { a.add(b) }
+    }
+
+    /// `js_bigint_neg`, an addition to zero.
+    pub fn neg(a: &Big) -> Result<Big, BigError> {
+        too_large(a.qjs_limbs())?;
+        Ok(a.neg())
+    }
+
+    /// `js_bigint_not`.
+    pub fn not(a: &Big) -> Result<Big, BigError> {
+        too_large(a.qjs_limbs())?;
+        Ok(a.bit_not())
+    }
+
+    pub fn mul(a: &Big, b: &Big) -> Result<Big, BigError> {
+        too_large(a.qjs_limbs() + b.qjs_limbs())?;
+        a.mul(b)
+    }
+
+    /// `js_bigint_divrem`: the truncated quotient or the remainder.
+    pub fn div_rem(a: &Big, b: &Big, remainder: bool) -> Result<Big, BigError> {
+        if b.is_zero() {
+            return Err(BigError::DivisionByZero);
+        }
+        too_large(a.qjs_limbs() + 2)?;
+        let (quotient, rest) = a.div_rem(b)?;
+        Ok(if remainder { rest } else { quotient })
+    }
+
+    /// `js_bigint_logic`.
+    pub fn logic(a: &Big, b: &Big, op: impl Fn(&Big, &Big) -> Big) -> Result<Big, BigError> {
+        too_large(a.qjs_limbs().max(b.qjs_limbs()))?;
+        Ok(op(a, b))
+    }
+
+    /// `<<` (`>>` with `right`): the count saturated to `±INT32_MAX`, then
+    /// `js_bigint_shl` or `js_bigint_shr`.
+    pub fn shift(a: &Big, b: &Big, right: bool) -> Result<Big, BigError> {
+        let count = if b.qjs_limbs() == 1 {
+            short(b)
+        } else if b.negative {
+            i64::MIN
+        } else {
+            i64::MAX
+        };
+        let mut count = count.clamp(-i64::from(i32::MAX), i64::from(i32::MAX));
+        if right {
+            count = -count;
+        }
+        let limbs = a.qjs_limbs();
+        if count >= 0 {
+            if a.is_zero() {
+                return Ok(Big::zero());
+            }
+            too_large(limbs + (count as usize) / 64)?;
+            return a.shl(&Big::from_i64(count));
+        }
+        let words = (count.unsigned_abs() / 64) as usize;
+        if words >= limbs {
+            return Ok(if a.negative {
+                Big::from_i64(-1)
+            } else {
+                Big::zero()
+            });
+        }
+        too_large(limbs - words)?;
+        a.shl(&Big::from_i64(count))
+    }
+
+    /// `js_bigint_pow`: powers of two directly, else left-to-right square
+    /// and multiply.
+    pub fn pow(a: &Big, b: &Big) -> Result<Big, BigError> {
+        if b.negative {
+            return Err(BigError::NegativeExponent);
+        }
+        if b.is_zero() {
+            return Ok(Big::from_i64(1));
+        }
+        let exponent = || -> Result<u32, BigError> {
+            if b.qjs_limbs() > 1 || b.limbs[0] > i32::MAX as u64 {
+                Err(BigError::PowTooLarge)
+            } else {
+                Ok(b.limbs[0] as u32)
+            }
+        };
+        if a.qjs_limbs() == 1 {
+            let value = short(a);
+            if value == 0 || value == 1 {
+                return Ok(a.clone());
+            }
+            if value == -1 {
+                return Ok(Big::from_i64(1 - 2 * (b.limbs[0] & 1) as i64));
+            }
+            let magnitude = value.unsigned_abs();
+            if magnitude.is_power_of_two() {
+                let e = u64::from(exponent()?) * u64::from(magnitude.trailing_zeros());
+                if e > (MAX_LIMBS as u64) * 64 {
+                    return Err(BigError::PowTooLarge);
+                }
+                let negative = value < 0 && b.limbs[0] & 1 == 1;
+                too_large(((e + 65 - u64::from(negative)) / 64) as usize)?;
+                let power = Big::from_i64(1).shl(&Big::from_u64(e))?;
+                return Ok(if negative { power.neg() } else { power });
+            }
+        }
+        let e = exponent()?;
+        too_large(a.qjs_limbs())?;
+        let mut result = a.clone();
+        for bit in (0..31 - e.leading_zeros()).rev() {
+            result = mul(&result, &result)?;
+            if (e >> bit) & 1 == 1 {
+                result = mul(&result, a)?;
+            }
+        }
+        Ok(result)
+    }
+
+    /// The scratch `js_bigint_to_string1` allocates: the negation of a
+    /// negative value, a copy for a radix not a power of two.
+    pub fn to_string_check(a: &Big, radix: u32) -> Result<(), BigError> {
+        let limbs = a.qjs_limbs();
+        if limbs == 1 {
+            return Ok(());
+        }
+        if a.negative || !radix.is_power_of_two() {
+            too_large(limbs)?;
+        }
+        Ok(())
+    }
+
+    /// `js_bigint_from_string`'s limits on `digits` in `radix`: the digit
+    /// count, the limbs its bit estimate needs, and a negative value's
+    /// negation.
+    pub fn from_string_check(digits: &str, radix: u32, value: &Big) -> Result<(), BigError> {
+        let count = digits.trim_start_matches('0').len();
+        if count > MAX_LIMBS * 64 {
+            return Err(BigError::TooLarge);
+        }
+        let bits = if radix == 10 {
+            (count * 27).div_ceil(8)
+        } else {
+            count * (32 - (radix - 1).leading_zeros()) as usize
+        };
+        too_large((bits / 64 + 1).max(1))?;
+        if value.negative {
+            too_large(value.neg().qjs_limbs())?;
+        }
+        Ok(())
+    }
+
+    /// `BigInt.asUintN` and `BigInt.asIntN` as `js_bigint_asUintN` computes
+    /// them: a value whose limbs hold `bits` is returned unchanged, and the
+    /// truncated limbs are read back as two's complement.
+    pub fn as_n(a: &Big, bits: u64, signed: bool) -> Result<Big, BigError> {
+        if bits == 0 {
+            return Ok(Big::zero());
+        }
+        let limbs = a.qjs_limbs();
+        if limbs == 1 {
+            if bits >= 64 {
+                return Ok(a.clone());
+            }
+            let shift = 64 - bits as u32;
+            let value = (short(a) as u64) << shift;
+            let value = if signed {
+                ((value as i64) >> shift) as u64
+            } else {
+                value >> shift
+            };
+            return Ok(Big::from_i64(value as i64));
+        }
+        if bits >= limbs as u64 * 64 {
+            return Ok(a.clone());
+        }
+        let len = bits.div_ceil(64) as usize;
+        too_large(len)?;
+        let mut out = a.to_twos(limbs);
+        out.truncate(len);
+        let shift = (bits.wrapping_neg() & 63) as u32;
+        let top = out[len - 1] << shift;
+        out[len - 1] = if signed {
+            ((top as i64) >> shift) as u64
+        } else {
+            top >> shift
+        };
+        Ok(Big::from_twos(&out))
+    }
 }
 
 fn checked(value: Big) -> Result<Big, BigError> {
-    if value.limbs.len() > MAX_LIMBS {
+    if value.limbs.len() > MAX_LIMBS + 1 {
         Err(BigError::TooLarge)
     } else {
         Ok(value)

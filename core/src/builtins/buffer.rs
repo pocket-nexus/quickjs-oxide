@@ -200,22 +200,16 @@ pub(crate) fn detach(cx: &mut Cx<'_>, value: Value) -> Result<(), Throw> {
     }
 }
 
-/// `GetArrayBufferMaxByteLengthOption(options)`.
-fn max_option(cx: &mut Cx<'_>, options: Value) -> Result<Option<usize>, Throw> {
-    let Some(options) = options.as_object() else {
-        return Ok(None);
-    };
-    let key = cx
-        .heap
-        .property_key("maxByteLength")
-        .map_err(|error| error::heap_error(cx, error))?;
-    let max = internal::get_property(cx, options, key)?;
-    if max.is_undefined() {
-        return Ok(None);
-    }
-    Ok(Some(to_index(cx, max)? as usize))
+/// QuickJS's `JS_ToInt64` of `value`.
+fn to_int64(cx: &mut Cx<'_>, value: Value) -> Result<i64, Throw> {
+    let number = ops::to_number(cx, value)?;
+    Ok(crate::vm::number::to_int64(number))
 }
 
+/// `js_array_buffer_constructor0`: the length by `ToIndex`, the
+/// `maxByteLength` option by `JS_ToInt64` (compared unsigned with the
+/// length, so a negative maximum passes to the `INT32_MAX` check), then the
+/// prototype from `new.target`, then the length limits.
 fn construct(cx: &mut Cx<'_>, site: CallSite, shared: bool) -> Result<Value, Throw> {
     if !site.construct {
         return Err(error::type_error(cx, "must be called with new"));
@@ -223,9 +217,20 @@ fn construct(cx: &mut Cx<'_>, site: CallSite, shared: bool) -> Result<Value, Thr
     let length = site.arg(cx, 0);
     let len = to_index(cx, length)?;
     let options = site.arg(cx, 1);
-    let max = max_option(cx, options)?;
-    if max.is_some_and(|max| len as usize > max) {
-        return Err(error::range_error(cx, "invalid array buffer max length"));
+    let mut max = None;
+    if let Some(options) = options.as_object() {
+        let key = cx
+            .heap
+            .property_key("maxByteLength")
+            .map_err(|error| error::heap_error(cx, error))?;
+        let value = internal::get_property(cx, options, key)?;
+        if !value.is_undefined() {
+            let maximum = to_int64(cx, value)?;
+            if len > maximum as u64 || maximum > 9_007_199_254_740_991 {
+                return Err(error::range_error(cx, "invalid array buffer max length"));
+            }
+            max = Some(maximum as u64);
+        }
     }
     let default = if shared {
         Intrinsic::SharedArrayBufferPrototype
@@ -236,7 +241,17 @@ fn construct(cx: &mut Cx<'_>, site: CallSite, shared: bool) -> Result<Value, Thr
     if len > MAX_BUFFER_LENGTH as u64 {
         return Err(error::range_error(cx, "invalid array buffer length"));
     }
-    alloc_buffer(cx, prototype, len as usize, max, shared).map(Value::object)
+    if max.is_some_and(|max| max > MAX_BUFFER_LENGTH as u64) {
+        return Err(error::range_error(cx, "invalid max array buffer length"));
+    }
+    alloc_buffer(
+        cx,
+        prototype,
+        len as usize,
+        max.map(|max| max as usize),
+        shared,
+    )
+    .map(Value::object)
 }
 
 pub(super) fn array_buffer_constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
@@ -283,11 +298,8 @@ pub(super) fn byte_length(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 pub(super) fn max_byte_length(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_buffer(cx, &site, InternalTag::ArrayBuffer)?;
     let buffer = typed::buffer(cx.heap, object);
-    let max = if buffer.detached {
-        0
-    } else {
-        buffer.max.unwrap_or(buffer.len())
-    };
+    // A detached resizable buffer keeps its maximum, as QuickJS's does.
+    let max = buffer.max.unwrap_or(buffer.len());
     Ok(Value::number(max as f64))
 }
 
@@ -303,22 +315,21 @@ pub(super) fn detached(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
 
 pub(super) fn resize(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_buffer(cx, &site, InternalTag::ArrayBuffer)?;
-    if typed::buffer(cx.heap, object).max.is_none() {
-        // QuickJS tests detachment first.
-        if typed::buffer(cx.heap, object).detached {
-            return Err(error::type_error(cx, "ArrayBuffer is detached"));
-        }
-        return Err(error::type_error(cx, "array buffer is not resizable"));
-    }
+    // `js_array_buffer_resize`: the length by `JS_ToInt64`, then the
+    // detached and resizable checks.
     let length = site.arg(cx, 0);
-    let len = to_index(cx, length)?;
+    let len = to_int64(cx, length)?;
     let buffer = typed::buffer(cx.heap, object);
     if buffer.detached {
         return Err(error::type_error(cx, "ArrayBuffer is detached"));
     }
-    if len > buffer.max.unwrap() as u64 {
+    let Some(max) = buffer.max else {
+        return Err(error::type_error(cx, "array buffer is not resizable"));
+    };
+    if len < 0 || len as u64 > max as u64 {
         return Err(error::range_error(cx, "invalid array buffer length"));
     }
+    let len = len as u64;
     let grow = (len as usize).saturating_sub(buffer.len());
     cx.heap
         .charge(grow, &[Value::object(object)])
@@ -425,11 +436,15 @@ pub(super) fn shared_max_byte_length(cx: &mut Cx<'_>, site: CallSite) -> Result<
 
 pub(super) fn grow(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_buffer(cx, &site, InternalTag::SharedArrayBuffer)?;
+    let length = site.arg(cx, 0);
+    let len = to_int64(cx, length)?;
     if typed::buffer(cx.heap, object).max.is_none() {
         return Err(error::type_error(cx, "array buffer is not resizable"));
     }
-    let length = site.arg(cx, 0);
-    let len = to_index(cx, length)?;
+    if len < 0 {
+        return Err(error::range_error(cx, "invalid array buffer length"));
+    }
+    let len = len as u64;
     let buffer = typed::buffer(cx.heap, object);
     let Store::Shared(shared) = &buffer.store else {
         unreachable!("a shared buffer");

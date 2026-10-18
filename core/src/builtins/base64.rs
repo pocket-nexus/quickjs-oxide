@@ -181,6 +181,32 @@ pub(crate) fn decode_base64(input: &[u16], url: bool, last: LastChunk, max: usiz
 
 /// `FromHex(string, maxLength)`.
 pub(crate) fn decode_hex(input: &[u16], max: usize) -> Decoded {
+    // QuickJS decodes the string's UTF-8 bytes (a lone surrogate as three),
+    // so a non-ASCII character counts toward the parity check by its UTF-8
+    // length.
+    let utf8: Vec<u16>;
+    let input = if input.iter().all(|&unit| unit < 0x80) {
+        input
+    } else {
+        let mut bytes = Vec::with_capacity(input.len() * 3);
+        for c in char::decode_utf16(input.iter().copied()) {
+            let code = c.map_or_else(|error| u32::from(error.unpaired_surrogate()), u32::from);
+            let mut buffer = [0u8; 4];
+            let encoded: &[u8] = match char::from_u32(code) {
+                Some(c) => c.encode_utf8(&mut buffer).as_bytes(),
+                None => {
+                    // A lone surrogate, encoded as UTF-8 would a scalar.
+                    buffer[0] = 0xE0 | (code >> 12) as u8;
+                    buffer[1] = 0x80 | ((code >> 6) & 0x3F) as u8;
+                    buffer[2] = 0x80 | (code & 0x3F) as u8;
+                    &buffer[..3]
+                }
+            };
+            bytes.extend(encoded.iter().map(|&byte| u16::from(byte)));
+        }
+        utf8 = bytes;
+        &utf8
+    };
     let mut bytes = Vec::new();
     if !input.len().is_multiple_of(2) {
         return Decoded {
