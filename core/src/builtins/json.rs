@@ -70,14 +70,14 @@ impl Record {
         let Record::Object { entries, .. } = self else {
             return None;
         };
-        // QuickJS hashes a record from its ninth member on, after which a
-        // duplicate key finds the newest entry rather than the first.
-        let mut matching = entries.iter().filter(|(name, _)| *name == key);
-        if entries.len() >= 9 {
-            matching.next_back().map(|(_, record)| record)
-        } else {
-            matching.next().map(|(_, record)| record)
-        }
+        // Of duplicate names the last one's record, whose value the object
+        // keeps (QuickJS finds the first one's in records of up to eight
+        // members).
+        entries
+            .iter()
+            .rev()
+            .find(|(name, _)| *name == key)
+            .map(|(_, record)| record)
     }
 }
 

@@ -54,15 +54,15 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         PropertyFlags::data(false, false, false),
         Value::object(iterator_prototype),
     )?;
-    // QuickJS uses one nameless function as both halves of the
-    // `constructor` accessor.
-    let accessor = super::native_named(cx, Native::IteratorConstructorAccessor, "", None)?;
-    cx.heap.add_accessor(
+    // 27.1.4.1: `get constructor` and `set constructor` (QuickJS uses one
+    // nameless function as both halves).
+    super::accessor(
+        cx,
         iterator_prototype,
         Names::key(names.constructor),
-        PropertyFlags::accessor(false, true),
-        Value::object(accessor),
-        Value::object(accessor),
+        "constructor",
+        Some(Native::IteratorConstructorGetter),
+        Some(Native::IteratorConstructorSetter),
     )?;
     super::accessor(
         cx,
@@ -130,10 +130,11 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 }
 
 /// `%Iterator.prototype%.constructor`'s getter and setter.
-pub(super) fn constructor_accessor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    if site.argc == 0 {
-        return Ok(Value::object(cx.realm.intrinsic(Intrinsic::Iterator)));
-    }
+pub(super) fn constructor_getter(cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, Throw> {
+    Ok(Value::object(cx.realm.intrinsic(Intrinsic::Iterator)))
+}
+
+pub(super) fn constructor_setter(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let value = site.arg(cx, 0);
     let this = site.this(cx);
     let names = cx.realm.names;

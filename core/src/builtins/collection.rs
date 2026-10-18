@@ -688,22 +688,18 @@ fn set_record(cx: &mut Cx<'_>, other: Value) -> Result<SetRecord, Throw> {
         }
         return Err(error::type_error(cx, ".size is not a number"));
     };
-    // QuickJS's `get_set_record` takes a genuine set's size without a Get.
-    let size = if cx.heap.internal_tag(set) == InternalTag::Set {
-        set_size_of(cx, set)
-    } else {
-        let names = cx.realm.names;
-        let size = internal::get_property(cx, set, Names::key(names.size))?;
-        let size = ops::to_number(cx, size)?;
-        if size.is_nan() {
-            return Err(error::type_error(cx, ".size is not a number"));
-        }
-        let size = internal::to_integer_or_infinity(cx, Value::number(size))?;
-        if size < 0.0 {
-            return Err(error::range_error(cx, ".size must be positive"));
-        }
-        size
-    };
+    // Step 2 reads `size` from a genuine set too (QuickJS's
+    // `get_set_record` takes its size without the Get).
+    let names = cx.realm.names;
+    let size = internal::get_property(cx, set, Names::key(names.size))?;
+    let size = ops::to_number(cx, size)?;
+    if size.is_nan() {
+        return Err(error::type_error(cx, ".size is not a number"));
+    }
+    let size = internal::to_integer_or_infinity(cx, Value::number(size))?;
+    if size < 0.0 {
+        return Err(error::range_error(cx, ".size must be positive"));
+    }
     let key = cx
         .heap
         .property_key("has")
@@ -750,10 +746,13 @@ impl SetRecord {
         Ok(ops::to_boolean(cx.heap, result))
     }
 
-    /// The iterator of `keys()`, with `next` read once. QuickJS reads
-    /// `next` off whatever value `keys()` returns and calls it on that value.
+    /// `GetKeysIterator`: the iterator of `keys()`, which must be an object,
+    /// with `next` read once.
     fn keys(&self, cx: &mut Cx<'_>) -> Result<iter::Iter, Throw> {
         let iterator = crate::vm::call(cx, self.keys, Value::object(self.set), &[])?;
+        if iterator.as_object().is_none() {
+            return Err(error::type_error(cx, "keys() result is not an object"));
+        }
         root(cx, iterator);
         let next = crate::vm::property::get(cx, iterator, Names::key(cx.realm.names.next))?;
         root(cx, next);
@@ -817,8 +816,9 @@ fn each_of(
         let result = visit(cx, value);
         cx.heap.roots().truncate(mark);
         if !result? {
-            // QuickJS ignores the outcome of this `JS_IteratorClose`.
-            let _ = iter::close(cx, &iterator, Ok(()));
+            // `? IteratorClose(keysIter, NormalCompletion(unused))`: a throw
+            // from `return` or a non-object result propagates.
+            iter::close(cx, &iterator, Ok(()))?;
             return Ok(false);
         }
     }

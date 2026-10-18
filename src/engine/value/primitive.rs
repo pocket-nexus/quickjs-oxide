@@ -1710,10 +1710,10 @@ impl PrimitiveValue {
     }
 }
 
+/// `Number::toString(value, 10)`, as the core prints it.
 #[must_use]
 pub fn number_to_string(value: f64) -> String {
-    crate::engine::value::number::to_string_radix(value, 10)
-        .expect("decimal is always a valid Number formatting radix")
+    oxide_core::vm::radix::to_string_radix(value, 10)
 }
 
 pub(super) const fn is_ecmascript_whitespace(unit: u16) -> bool {

@@ -377,8 +377,8 @@ opcodes! {
     /// `a` = the prototype of home object `b` (`null` allowed).
     GetSuper: AB,
     /// `a` = `base[key]` with `receiver` as `this`: receiver, base, key in
-    /// `b`, `b + 1`, `b + 2`; with `imm` set (the call form), `base` is the
-    /// receiver.
+    /// `b`, `b + 1`, `b + 2`; `imm` marks the call form, which reads the
+    /// same way.
     GetSuperValue: ABInt,
     /// `base[key] = value` with `receiver`: receiver, base, key, value in
     /// `a` .. `a + 3`.

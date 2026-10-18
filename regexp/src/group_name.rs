@@ -152,9 +152,15 @@ pub(super) fn matching_capture_indices(units: &[u16], name: &[u16]) -> Vec<u8> {
                                     .expect("capture prepass exceeded QuickJS's u8 limit"),
                             );
                         }
-                        // `re_parse_captures` leaves its pointer after `>` and
-                        // the surrounding `for` performs one more increment.
+                        capture_index += 1;
+                        if capture_index >= CAPTURE_COUNT_MAX {
+                            break;
+                        }
+                        // The scan resumes right after `>`, where a nested
+                        // group may open (QuickJS's `re_parse_captures`
+                        // steps one unit further and misses it).
                         position = after_name;
+                        continue;
                     } else {
                         // The caller has already moved its local pointer to
                         // the first unit after `<`. A failed parser does not

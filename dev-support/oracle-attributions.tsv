@@ -253,3 +253,32 @@ string/match_all / Symbol.matchAll and Symbol.match getter errors preserve exact
 string/repeat / Int64 saturation and result length failures remain distinct	QUICKJS-SPEC-030
 string/repeat / count above Int32 max has exact RangeError	QUICKJS-SPEC-030
 string/search / String search uses the intrinsic constructor and pinned fallback conversion order	QUICKJS-SPEC-030
+collections/set / protocol / GetSetRecord order and size-selected traversal match pinned QuickJS	QUICKJS-SPEC-032
+collections/set / protocol / GetSetRecord validation and iterator-close boundaries preserve abrupt order	QUICKJS-SPEC-032
+date/intrinsic / Date Symbol toPrimitive maps default string number and integer hints	QUICKJS-SPEC-033
+date/intrinsic / Date parse accepts pinned ISO legacy and explicit offset forms	QUICKJS-SPEC-033
+date/intrinsic / generic setters snapshot before conversion while setYear re-reads after conversion	QUICKJS-SPEC-033
+iterator/helpers / intrinsic graph / constructor prototype metadata and descriptor order	QUICKJS-SPEC-034
+json/parse / context-source-duplicate-hash / the ninth object parse record switches duplicate source lookup from first to latest	QUICKJS-SPEC-035
+json/parse / reviver-postorder / reviver walks integer keys first and nested children before their parents with exact receivers	QUICKJS-SPEC-035
+math/values / f16round covers normal subnormal overflow and ties-to-even	QUICKJS-SPEC-036
+object/assign / a target setter can affect the Get of a later snapshotted key	QUICKJS-SPEC-037
+object/assign / each ordinary source snapshots enumerable own keys before any Get	QUICKJS-SPEC-037
+object/assign / pinned ordinary fast path does not recheck later enumerability	QUICKJS-SPEC-037
+object/literals / data, computed, proto and spread lowering	QUICKJS-SPEC-037
+object/rest / ordinary rest copy snapshots enumerable own keys before any Get	QUICKJS-SPEC-037
+object/rest / ordinary snapshot uses a live Get after an earlier getter deletes an own key	QUICKJS-SPEC-037
+object/from_entries / next getter call result done and value failures all close the iterator	QUICKJS-SPEC-038
+object/integrity / Proxy integrity predicate trap order can return before isExtensible	QUICKJS-SPEC-039
+object/intrinsic / descriptor field throws preserve the pinned accessor overwrite quirk	QUICKJS-SPEC-040
+proxy_reflect/proxy / pinned descriptor conversion replaces an abrupt HasProperty with the following Get	QUICKJS-SPEC-040
+object/super / receiver / QuickJS super-call getter rewrite reads with the frozen base before calling with this	QUICKJS-SPEC-041
+object/super_arrow / call-receiver / an arrow super call reads its getter from the base and calls with lexical this	QUICKJS-SPEC-041
+operators/optional_chaining / receiver / QuickJS reads optional super getters with the prototype and calls with the live receiver	QUICKJS-SPEC-041
+regexp/named_groups / QuickJS scope quirk lets sequential duplicates compile after a bar	QUICKJS-SPEC-042
+regexp/named_groups / the forward-name scan skips a nested group at body byte zero	QUICKJS-SPEC-042
+regexp/named_groups / the wrapping alternative scope collides after 256 bars	QUICKJS-SPEC-042
+regexp/replace / replacement conversion can materialize exec before the same replace predicate	QUICKJS-SPEC-043
+regexp/replace / standard-regexp fast path activates only after exec AutoInit materialization	QUICKJS-SPEC-043
+regexp/replace / unchecked flag getters and unrelated own properties stay off the direct path surface	QUICKJS-SPEC-043
+typed_array/iteration / live RAB growth shrink detach and terminal state	QUICKJS-SPEC-044

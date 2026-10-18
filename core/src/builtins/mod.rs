@@ -566,7 +566,8 @@ natives! {
     FinalizationRegistryUnregister => collection::finalization_registry_unregister, "unregister", 1;
 
     IteratorConstructor => iterator_helpers::constructor, "Iterator", 0, constructor;
-    IteratorConstructorAccessor => iterator_helpers::constructor_accessor, "", 0;
+    IteratorConstructorGetter => iterator_helpers::constructor_getter, "constructor", 0;
+    IteratorConstructorSetter => iterator_helpers::constructor_setter, "constructor", 1;
     IteratorToStringTagGetter => iterator_helpers::to_string_tag_getter, "[Symbol.toStringTag]", 0;
     IteratorToStringTagSetter => iterator_helpers::to_string_tag_setter, "[Symbol.toStringTag]", 1;
     IteratorFrom => iterator_helpers::from, "from", 1;

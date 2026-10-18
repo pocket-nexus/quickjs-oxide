@@ -168,7 +168,9 @@ fn parsed_date_value(cx: &mut Cx<'_>, parsed: Option<ParsedDateString>) -> f64 {
         *target = f64::from(source);
     }
     let value = set_date_fields(&fields, parsed.is_local, tz(cx));
-    value - f64::from(parsed.fields[8]) * MS_PER_MINUTE
+    // The offset can carry a time past the range: clip after applying it
+    // (QuickJS checks the range before).
+    time_clip(value - f64::from(parsed.fields[8]) * MS_PER_MINUTE)
 }
 
 fn parse_value(cx: &mut Cx<'_>, string: Value) -> f64 {
@@ -425,12 +427,12 @@ pub(super) fn set_time(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     Ok(store(cx, object, time_clip(value)))
 }
 
-/// Annex B `setYear`: years 0 to 99 mean 1900 to 1999.
+/// Annex B `setYear` (B.2.3.2): years 0 to 99 mean 1900 to 1999. The time
+/// value is read before the year converts (QuickJS reads it after).
 pub(super) fn set_year(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let (object, _) = this_time(cx, &site)?;
+    let (object, current) = this_time(cx, &site)?;
     let argument = site.arg(cx, 0);
     let mut year = ops::to_number(cx, argument)?;
-    let current = date_value(cx, Value::object(object)).unwrap_or(f64::NAN);
     if year.is_finite() {
         year = year.trunc();
         if (0.0..100.0).contains(&year) {
@@ -457,7 +459,9 @@ pub(super) fn to_primitive(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     };
     let hint = site.arg(cx, 0);
     let hint = match hint.as_string().map(|hint| cx.heap.string_text(hint)) {
-        Some(text) if text == "number" || text == "integer" => ops::Hint::Number,
+        // Only the three hints of step 5 (QuickJS also takes its internal
+        // "integer").
+        Some(text) if text == "number" => ops::Hint::Number,
         Some(text) if text == "string" || text == "default" => ops::Hint::String,
         _ => return Err(error::type_error(cx, "invalid hint")),
     };

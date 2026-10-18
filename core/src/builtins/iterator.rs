@@ -109,6 +109,17 @@ fn this_iterator(cx: &mut Cx<'_>, site: &CallSite, tag: InternalTag) -> Result<O
 /// `%ArrayIteratorPrototype%.next`.
 pub(super) fn array_iterator_next(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let iterator = this_iterator(cx, &site, InternalTag::ArrayIterator)?;
+    let result = array_iterator_step(cx, iterator);
+    // CreateArrayIterator's closure: an abrupt completion (an out-of-bounds
+    // or detached view, a throwing length or element read) completes the
+    // generator, so later calls are done (QuickJS steps again).
+    if result.is_err() {
+        cx.heap.set_internal_slot(iterator, 0, Value::UNDEFINED);
+    }
+    result
+}
+
+fn array_iterator_step(cx: &mut Cx<'_>, iterator: ObjectId) -> Result<Value, Throw> {
     let target = cx.heap.internal_slot(iterator, 0);
     let Some(object) = target.as_object() else {
         return iter::result_object(cx, Value::UNDEFINED, true);

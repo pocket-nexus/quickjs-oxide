@@ -797,76 +797,7 @@ fn intrinsic_exec(cx: &mut Cx<'_>, object: ObjectId) -> Result<bool, Throw> {
         cx.heap.object_kind(exec) == ObjectKind::Function
             && cx.heap.function_record(exec).native == Native::RegExpExec.index()
     });
-    // Every caller goes on to `Get(R, "exec")`, which materializes
-    // QuickJS's AutoInit `exec`.
-    if intrinsic {
-        cx.realm.regexp_exec_read.set(true);
-    }
     Ok(intrinsic)
-}
-
-/// Whether `value` is a native function of `native`.
-fn is_native(cx: &Cx<'_>, value: Value, native: Native) -> bool {
-    value.as_object().is_some_and(|function| {
-        cx.heap.object_kind(function) == ObjectKind::Function
-            && cx.heap.function_record(function).native == native.index()
-    })
-}
-
-/// QuickJS's `js_is_standard_regexp`, the condition of its
-/// `Symbol.replace` fast path for a string replacement: a RegExp object
-/// with an own numeric `lastIndex`, a materialized intrinsic `exec` and the
-/// intrinsic `flags`, `global` and `unicode` getters (the other flag
-/// getters are not checked), found on the object or its prototypes up to
-/// an exotic one, and no named groups. The fast path then works from the
-/// program's own flags.
-fn standard_regexp(cx: &Cx<'_>, object: ObjectId) -> Option<RegExpFlags> {
-    let heap = &*cx.heap;
-    if heap.object_kind(object) != ObjectKind::RegExp || !cx.realm.regexp_exec_read.get() {
-        return None;
-    }
-    let names = cx.realm.names;
-    let (slot, property) = heap.lookup_own(object, Names::key(names.last_index))?;
-    if property.has(PropertyFlags::ACCESSOR) || !heap.get_slot(object, slot).is_number() {
-        return None;
-    }
-    // `find_property_regexp`: the value or the getter, and whether it is
-    // an accessor.
-    let find = |key: crate::PropertyKey| -> Option<(Value, bool)> {
-        let mut current = object;
-        loop {
-            if let Some((slot, property)) = heap.lookup_own(current, key) {
-                return Some((
-                    heap.get_slot(current, slot),
-                    property.has(PropertyFlags::ACCESSOR),
-                ));
-            }
-            current = heap.prototype_of(current)?;
-            // QuickJS's exotic objects include arrays and `arguments`.
-            let kind = heap.object_kind(current);
-            if kind.is_exotic() || matches!(kind, ObjectKind::Array | ObjectKind::Arguments) {
-                return None;
-            }
-        }
-    };
-    let cache = cx.realm.regexp_flags.get()?;
-    let checks = [
-        (Names::key(names.exec), false, Native::RegExpExec),
-        (Names::key(names.flags), true, Native::RegExpFlags),
-        (cache.keys[1], true, Native::RegExpGlobal),
-        (cache.keys[5], true, Native::RegExpUnicode),
-    ];
-    for (key, accessor, native) in checks {
-        let (value, is_accessor) = find(key)?;
-        if is_accessor != accessor || !is_native(cx, value, native) {
-            return None;
-        }
-    }
-    let program = cx.regexps.program(heap.header(object).payload);
-    if program.group_names().is_some() {
-        return None;
-    }
-    Some(program.flags())
 }
 
 /// `RegExpExec(R, S)`.
@@ -1140,13 +1071,11 @@ pub(super) fn symbol_replace(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
         let replacement = to_string_id(cx, replace_value)?;
         Some(units(cx, replacement))
     };
-    let fast = if functional {
-        // Unobservably the generic path's work.
-        pristine_exec_flags(cx, object)?
-    } else {
-        standard_regexp(cx, object)
-    };
-    if let Some(flags) = fast {
+    // Unobservably the generic path's work: every flag getter and `exec`
+    // are the intrinsics (QuickJS's string-replacement fast path checks
+    // only `flags`, `global` and `unicode`, so it skips reads of the
+    // others' own getters).
+    if let Some(flags) = pristine_exec_flags(cx, object)? {
         return replace_pristine(cx, object, string, flags, replace_value, replacement);
     }
     let flags = flags_text(cx, object)?;

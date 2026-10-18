@@ -419,9 +419,28 @@ struct Parser<'a> {
     total_capture_count: u32,
     has_named_captures: bool,
     capture_names: Vec<Option<GroupName>>,
-    parsed_group_names: Vec<(GroupName, u8, u8)>,
-    group_name_scope: u8,
+    /// Each named group so far: its name, its alternative path and its
+    /// capture.
+    parsed_group_names: Vec<(GroupName, AlternativePath, u8)>,
+    alternative_path: AlternativePath,
+    next_disjunction: u32,
     group_depth: usize,
+}
+
+/// The disjunctions a point of the pattern is inside, outermost first, each
+/// as its number and the index of the alternative holding the point.
+type AlternativePath = Vec<(u32, u32)>;
+
+/// `MightBothParticipate` (22.2.1.1): two groups might both participate
+/// unless some disjunction holds them in different alternatives. (QuickJS
+/// compares an 8-bit count of the `|` seen so far, which tells nested
+/// disjunctions from sibling alternatives no better than it survives 256
+/// bars.)
+fn might_both_participate(first: &[(u32, u32)], second: &[(u32, u32)]) -> bool {
+    match first.iter().zip(second).find(|(a, b)| a != b) {
+        Some((a, b)) => a.0 != b.0,
+        None => true,
+    }
 }
 
 struct ParsedPattern {
@@ -446,7 +465,8 @@ impl<'a> Parser<'a> {
             has_named_captures,
             capture_names: Vec::new(),
             parsed_group_names: Vec::new(),
-            group_name_scope: 0,
+            alternative_path: Vec::new(),
+            next_disjunction: 0,
             group_depth: 0,
         }
     }
@@ -479,15 +499,21 @@ impl<'a> Parser<'a> {
 
     fn parse_disjunction(&mut self, in_group: bool) -> Result<Expression, CompileError> {
         let mut alternatives = Vec::new();
+        self.alternative_path.push((self.next_disjunction, 0));
+        self.next_disjunction += 1;
         loop {
             alternatives.push(self.parse_sequence(in_group)?);
             if self.peek() == Some(u16::from(b'|')) {
                 self.position += 1;
-                self.group_name_scope = self.group_name_scope.wrapping_add(1);
+                self.alternative_path
+                    .last_mut()
+                    .expect("this disjunction")
+                    .1 += 1;
                 continue;
             }
             break;
         }
+        self.alternative_path.pop();
         Ok(Expression { alternatives })
     }
 
@@ -607,15 +633,15 @@ impl<'a> Parser<'a> {
                     else {
                         return Err(CompileError::syntax(position, "invalid group name"));
                     };
-                    if self.parsed_group_names.iter().any(|(existing, scope, _)| {
-                        *scope == self.group_name_scope && *existing == name
+                    if self.parsed_group_names.iter().any(|(existing, path, _)| {
+                        *existing == name && might_both_participate(path, &self.alternative_path)
                     }) {
                         return Err(CompileError::syntax(position, "duplicate group name"));
                     }
                     self.position = after_name;
                     let capture = self.allocate_capture(position, Some(name.clone()))?;
                     self.parsed_group_names
-                        .push((name, self.group_name_scope, capture));
+                        .push((name, self.alternative_path.clone(), capture));
                     (Some(capture), None)
                 }
                 Some(0x69 | 0x6d | 0x73 | 0x2d) => {
@@ -3392,21 +3418,29 @@ mod tests {
     }
 
     #[test]
-    fn forward_named_reference_scan_preserves_quickjs_cursor_quirk() {
-        assert_eq!(
-            compile_ascii(r"\k<y>(?<x>(?<y>a))", "u")
-                .unwrap_err()
-                .message(),
-            "group name not defined",
-        );
-        for pattern in [r"\k<y>((?<y>a))", r"\k<y>(?<x>a(?<y>b))"] {
+    fn forward_named_reference_scan_finds_nested_groups() {
+        // A group opening right after another's name is found (QuickJS's
+        // scan steps over the unit after `>`).
+        for pattern in [
+            r"\k<y>(?<x>(?<y>a))",
+            r"\k<y>((?<y>a))",
+            r"\k<y>(?<x>a(?<y>b))",
+        ] {
             assert!(compile_ascii(pattern, "u").is_ok(), "{pattern}");
         }
     }
 
     #[test]
-    fn duplicate_group_names_use_quickjs_wrapping_alternative_scope() {
-        for pattern in [r"(?<x>a)(?<x>b)", r"(?<x>a)(?<\u0078>b)"] {
+    fn duplicate_group_names_follow_might_both_participate() {
+        // Two groups of a name are an early error unless some disjunction
+        // holds them in different alternatives (22.2.1.1).
+        for pattern in [
+            r"(?<x>a)(?<x>b)",
+            r"(?<x>a)(?<\u0078>b)",
+            r"(?<x>a)(?:b|c)(?<x>d)",
+            r"((?<x>a)|b)(?<x>c)",
+            r"(?<x>a)|b(?<x>c)(?<x>d)",
+        ] {
             assert_eq!(
                 compile_ascii(pattern, "u").unwrap_err().message(),
                 "duplicate group name",
@@ -3414,7 +3448,11 @@ mod tests {
             );
         }
 
-        for pattern in [r"(?<x>a)|(?<x>b)", r"(?<x>a)(?:b|c)(?<x>d)"] {
+        for pattern in [
+            r"(?<x>a)|(?<x>b)",
+            r"(?:(?<x>a)|b)|(?<x>c)",
+            r"((?<x>a)|(?<x>b))",
+        ] {
             let compiled = compile_ascii(pattern, "u").unwrap();
             assert_eq!(
                 compiled
@@ -3430,13 +3468,10 @@ mod tests {
             );
         }
 
-        for (bars, accepted) in [(255, true), (256, false), (257, true)] {
+        // Any number of alternatives apart (QuickJS's counter wraps at 256).
+        for bars in [255, 256, 257] {
             let pattern = format!("(?<x>a){}(?<x>b)", "|".repeat(bars));
-            let result = compile_ascii(&pattern, "u");
-            assert_eq!(result.is_ok(), accepted, "{bars} alternatives");
-            if !accepted {
-                assert_eq!(result.unwrap_err().message(), "duplicate group name");
-            }
+            assert!(compile_ascii(&pattern, "u").is_ok(), "{bars} alternatives");
         }
     }
 

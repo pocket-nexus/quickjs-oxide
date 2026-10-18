@@ -53,7 +53,9 @@ fn smoke() {
 }
 
 /// The corpus's programs with the output each printed on the old core at
-/// phase 6 M3 (`NAME.out` beside `NAME.js`), where both cores printed the same.
+/// phase 6 M3 (`NAME.out` beside `NAME.js`), where both cores printed the same,
+/// with M4b's returns to the specification (`builtins_number` prints the
+/// fewest digits of a power of two, QUICKJS-SPEC-036).
 pub(crate) fn corpus() -> Vec<(String, String)> {
     corpus_with_outputs()
         .into_iter()
@@ -79,7 +81,8 @@ fn corpus_with_outputs() -> Vec<(String, String, String)> {
         .collect()
 }
 
-/// Every corpus program prints what it printed on the old core.
+/// Every corpus program prints what it printed on the old core, or the
+/// specification's result where M4b returned to it.
 #[test]
 fn corpus_matches_the_old_core() {
     let mut failures = Vec::new();

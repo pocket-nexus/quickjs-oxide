@@ -636,7 +636,7 @@ fn object_literal_grammar_is_fail_closed_at_remaining_method_frontiers() {
 }
 
 #[test]
-fn object_literal_runtime_preserves_descriptors_proto_names_and_pinned_spread() {
+fn object_literal_runtime_preserves_descriptors_proto_names_and_spread() {
     assert_eq!(
         evaluate_in_context(
             "(function(){var x=3;var o={2:'two',a:1,x,a:4};var d=Object.getOwnPropertyDescriptor(o,'a');return o[2]+'|'+o.x+'|'+o.a+'|'+d.writable+'|'+d.enumerable+'|'+d.configurable})()"
@@ -653,6 +653,8 @@ fn object_literal_runtime_preserves_descriptors_proto_names_and_pinned_spread() 
         evaluate_in_context(
             "(function(){var s=Symbol('key');var a={[s]:function(){},plain:function(){}};return a[s].name+'|'+a.plain.name+'|'+Object.hasOwn({...\"ab\"},'0')})()"
         ),
-        Value::String(JsString::from_static("[key]|plain|false"))
+        // CopyDataProperties converts a primitive source: `{..."ab"}` has
+        // `0` and `1` (QUICKJS-SPEC-037).
+        Value::String(JsString::from_static("[key]|plain|true"))
     );
 }

@@ -11,7 +11,7 @@ use crate::runtime::{Intrinsic, Names, WellKnown};
 use crate::value::{Kind, ObjectId, Value};
 use crate::vm::native::CallSite;
 use crate::vm::object::{self as internal, Descriptor};
-use crate::vm::{Cx, Throw, error, iter, ops, property};
+use crate::vm::{Cx, Throw, error, iter, ops};
 
 pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
@@ -535,35 +535,10 @@ pub(super) fn from_entries(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     }
     let object = super::new_plain(cx, 4)?;
     root(cx, Value::object(object));
-    // QuickJS closes the iterator on any failure after opening it,
-    // including reading `next` and stepping.
-    let mut entries = if iter::is_pristine_array(cx, iterable) {
-        iter::get_iterator(cx, iterable)?
-    } else {
-        let iterator = iter::open(cx, iterable)?;
-        let mut entries = iter::Iter::Protocol {
-            iterator,
-            next: Value::UNDEFINED,
-        };
-        let next = property::get(cx, iterator, Names::key(cx.realm.names.next));
-        match next {
-            Ok(next) => {
-                root(cx, next);
-                entries = iter::Iter::Protocol { iterator, next };
-            }
-            Err(throw) => iter::close(cx, &entries, Err(throw))?,
-        }
-        entries
-    };
-    loop {
-        let entry = match iter::step(cx, &mut entries) {
-            Ok(Some(entry)) => entry,
-            Ok(None) => break,
-            Err(throw) => {
-                iter::close(cx, &entries, Err(throw))?;
-                break;
-            }
-        };
+    // AddEntriesFromIterable: GetIterator and IteratorStepValue throw
+    // without closing; only an entry's reads and the adder close.
+    let mut entries = iter::get_iterator(cx, iterable)?;
+    while let Some(entry) = iter::step(cx, &mut entries)? {
         let mark = cx.heap.roots().mark();
         root(cx, entry);
         let result = (|| {

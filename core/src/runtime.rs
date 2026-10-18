@@ -290,10 +290,6 @@ pub struct Realm {
     /// The shape of a fresh `%RegExp%` instance (only `lastIndex`) and the
     /// slot of `lastIndex`.
     pub(crate) regexp_instance_shape: std::cell::Cell<Option<(crate::value::ShapeId, u32)>>,
-    /// Whether `%RegExp.prototype%.exec` has been read: QuickJS installs it
-    /// as an AutoInit property, which its `Symbol.replace` fast path does
-    /// not accept until a read materializes it.
-    pub(crate) regexp_exec_read: std::cell::Cell<bool>,
 }
 
 impl Realm {
@@ -466,7 +462,6 @@ impl Runtime {
             brand,
             regexp_flags: std::cell::Cell::new(None),
             regexp_instance_shape: std::cell::Cell::new(None),
-            regexp_exec_read: std::cell::Cell::new(false),
         };
         let mut runtime = Runtime {
             heap,

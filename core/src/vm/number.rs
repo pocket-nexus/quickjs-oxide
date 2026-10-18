@@ -33,10 +33,9 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
     modulo as u32
 }
 
-/// `Number::toString(x)` in radix 10, as QuickJS formats it: a safe
-/// integer prints its digits; anything else takes the exact shortest digits
-/// of `radix` (Rust's formatter differs from QuickJS on ties and on some
-/// powers of two).
+/// `Number::toString(x)` in radix 10: a safe integer prints its digits;
+/// anything else takes the fewest digits that round-trip, rounding an
+/// exact tie to even as QuickJS does (Rust's formatter does not).
 pub(crate) fn to_string(value: f64) -> String {
     if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
         // `-0` prints as `0`.

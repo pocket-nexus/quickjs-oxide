@@ -124,12 +124,8 @@ fn class_op_rooted(
             let Some(base) = base.as_object() else {
                 return Err(super_base_error(cx, base, key));
             };
-            // QuickJS's call form reads with `base` as the receiver.
-            let receiver = if insn.imm != 0 {
-                Value::object(base)
-            } else {
-                receiver
-            };
+            // The reference's thisValue is the receiver in the call form
+            // too (QuickJS's reads with `base`).
             let value = object::get(cx, base, key, receiver)?;
             set_reg(cx, frame, insn.a, value);
         }
@@ -321,11 +317,10 @@ fn class_op_rooted(
             let target = reg(cx, frame, insn.a)
                 .as_object()
                 .expect("a literal object");
-            // QuickJS spreads nothing from a primitive.
+            // A primitive source is converted (`{..."ab"}` copies 0 and 1;
+            // QuickJS spreads nothing from a primitive).
             let source = reg(cx, frame, insn.b);
-            if source.as_object().is_some() {
-                object::copy_data_properties(cx, target, source, &[])?;
-            }
+            object::copy_data_properties(cx, target, source, &[])?;
         }
         Opcode::CopyDataExcluded => {
             let target = reg(cx, frame, insn.a).as_object().expect("a rest object");

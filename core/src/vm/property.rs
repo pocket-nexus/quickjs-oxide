@@ -88,31 +88,6 @@ pub(crate) fn lookup(heap: &Heap, names: &Names, object: ObjectId, key: Property
     }
 }
 
-/// QuickJS installs `%RegExp.prototype%.exec` as an AutoInit property that
-/// a read materializes (see `Realm::regexp_exec_read`): records a read of
-/// `key` (`exec`) from `object` that resolves to that property.
-#[cold]
-#[inline(never)]
-pub(crate) fn note_exec_read(cx: &Cx<'_>, object: ObjectId, key: PropertyKey) {
-    let prototype = cx.realm.intrinsic(Intrinsic::RegExpPrototype);
-    let mut current = object;
-    loop {
-        if cx.heap.object_kind(current).is_exotic() {
-            return;
-        }
-        if cx.heap.lookup_own(current, key).is_some() {
-            if current == prototype {
-                cx.realm.regexp_exec_read.set(true);
-            }
-            return;
-        }
-        match cx.heap.prototype_of(current) {
-            Some(next) => current = next,
-            None => return,
-        }
-    }
-}
-
 /// `[[Get]]` of `key` on `object` for `receiver`.
 #[inline]
 fn get_from(
@@ -121,9 +96,6 @@ fn get_from(
     key: PropertyKey,
     receiver: Value,
 ) -> Result<Value, Throw> {
-    if !cx.realm.regexp_exec_read.get() && key == Names::key(cx.realm.names.exec) {
-        note_exec_read(cx, object, key);
-    }
     match lookup(cx.heap, &cx.realm.names, object, key) {
         Lookup::Hit(found) => value_of(cx, Some(found), receiver),
         Lookup::Miss => Ok(Value::UNDEFINED),
@@ -349,12 +321,6 @@ pub(crate) fn get_cached(
             None => break Err(None),
         }
     };
-    if !cx.realm.regexp_exec_read.get()
-        && holder == cx.realm.intrinsic(Intrinsic::RegExpPrototype)
-        && key == Names::key(names.exec)
-    {
-        cx.realm.regexp_exec_read.set(true);
-    }
     let slot = match walked {
         Ok(slot) => slot,
         Err(found) => {

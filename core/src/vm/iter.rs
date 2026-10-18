@@ -92,22 +92,6 @@ pub(crate) fn get_iterator(cx: &mut Cx<'_>, value: Value) -> Result<Iter, Throw>
     from_method(cx, value, method)
 }
 
-/// QuickJS's `JS_GetIterator(value, FALSE)`: the iterator object, rooted,
-/// before its `next` method is read.
-pub(crate) fn open(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw> {
-    let key = WellKnown::key(cx.realm.symbols.iterator);
-    let Some(method) = object::get_method(cx, value, key)? else {
-        return Err(error::type_error(cx, "value is not iterable"));
-    };
-    cx.heap.roots().push(method);
-    let iterator = super::call(cx, method, value, &[])?;
-    if iterator.as_object().is_none() {
-        return Err(error::type_error(cx, "not an object"));
-    }
-    cx.heap.roots().push(iterator);
-    Ok(iterator)
-}
-
 /// `GetIteratorFromMethod(value, method)`.
 pub(crate) fn from_method(cx: &mut Cx<'_>, value: Value, method: Value) -> Result<Iter, Throw> {
     let iterator = super::call(cx, method, value, &[])?;

@@ -1629,11 +1629,12 @@ pub(crate) fn to_property_descriptor(cx: &mut Cx<'_>, value: Value) -> Result<De
     };
     let names = cx.realm.names;
     let mut descriptor = Descriptor::default();
-    // QuickJS's `js_obj_to_desc` ignores an abrupt HasProperty (its -1 is
-    // true) and goes on to the Get.
+    // Each field: `? HasProperty`, then `? Get` (QuickJS's
+    // `js_obj_to_desc` ignores an abrupt HasProperty and reports a throwing
+    // `get` or `set` read as an invalid accessor).
     let field = |cx: &mut Cx<'_>, name| -> Result<Option<Value>, Throw> {
         let key = Names::key(name);
-        if !has_property(cx, object, key).unwrap_or(true) {
+        if !has_property(cx, object, key)? {
             return Ok(None);
         }
         let value = get_property(cx, object, key)?;
@@ -1650,20 +1651,19 @@ pub(crate) fn to_property_descriptor(cx: &mut Cx<'_>, value: Value) -> Result<De
     if let Some(value) = field(cx, names.writable)? {
         descriptor.writable = Some(ops::to_boolean(cx.heap, value));
     }
-    // A throwing `get` or `set` read is reported as an invalid accessor.
-    match field(cx, names.get) {
-        Ok(None) => {}
-        Ok(Some(getter)) if getter.is_undefined() || ops::is_callable(cx.heap, getter) => {
+    match field(cx, names.get)? {
+        None => {}
+        Some(getter) if getter.is_undefined() || ops::is_callable(cx.heap, getter) => {
             descriptor.get = Some(getter);
         }
-        _ => return Err(error::type_error(cx, "invalid getter")),
+        Some(_) => return Err(error::type_error(cx, "invalid getter")),
     }
-    match field(cx, names.set) {
-        Ok(None) => {}
-        Ok(Some(setter)) if setter.is_undefined() || ops::is_callable(cx.heap, setter) => {
+    match field(cx, names.set)? {
+        None => {}
+        Some(setter) if setter.is_undefined() || ops::is_callable(cx.heap, setter) => {
             descriptor.set = Some(setter);
         }
-        _ => return Err(error::type_error(cx, "invalid setter")),
+        Some(_) => return Err(error::type_error(cx, "invalid setter")),
     }
     if descriptor.is_accessor() && descriptor.is_data() {
         return Err(error::type_error(
@@ -1767,8 +1767,12 @@ pub(crate) fn test_integrity_level(
     object: ObjectId,
     frozen: bool,
 ) -> Result<bool, Throw> {
-    // QuickJS's `js_object_isSealed` reads the properties before
-    // `IsExtensible`.
+    // Steps 1-3: an extensible object is neither, and none of its
+    // properties is examined (QuickJS's `js_object_isSealed` reads them
+    // first).
+    if is_extensible(cx, object)? {
+        return Ok(false);
+    }
     let mark = cx.heap.roots().mark();
     let result = (|| {
         for key in own_property_keys(cx, object)? {
@@ -1781,7 +1785,7 @@ pub(crate) fn test_integrity_level(
                 }
             }
         }
-        Ok(!is_extensible(cx, object)?)
+        Ok(true)
     })();
     cx.heap.roots().truncate(mark);
     result
@@ -1807,45 +1811,24 @@ pub(crate) fn enumerable_own_keys(
     Ok(keys)
 }
 
-/// QuickJS's `JS_GetOwnPropertyNamesInternal` with `JS_GPN_ENUM_ONLY`: the
-/// own string and symbol keys, then each one's enumerability (a proxy's
-/// `getOwnPropertyDescriptor` traps all run before any later Get).
-pub(crate) fn own_enumerable_keys(
-    cx: &mut Cx<'_>,
-    object: ObjectId,
-) -> Result<Vec<PropertyKey>, Throw> {
-    let keys = own_property_keys(cx, object)?;
-    let mut enumerable = Vec::with_capacity(keys.len());
-    for key in keys {
-        if get_own_property(cx, object, key)?.is_some_and(|d| d.enumerable == Some(true)) {
-            enumerable.push(key);
-        }
-    }
-    Ok(enumerable)
-}
-
-/// QuickJS's `JS_CopyDataProperties` from `from`: the enumerable own keys,
-/// listed before any Get (a proxy lists them all and each one's
-/// enumerability is read just before its Get), then for each key not in
-/// `excluded` the Get of `from` and `store` into the target. A listed key
-/// is read even when an earlier Get deleted it or made it non-enumerable.
+/// The enumerable own properties of `from`, as `Object.assign` (20.1.2.1
+/// step 3.a) and `CopyDataProperties` (7.3.25) copy them: the keys listed
+/// first, then for each key not in `excluded` its own descriptor read at
+/// its turn, so a key an earlier Get deleted or made non-enumerable is
+/// skipped, then the Get of `from` and `store` into the target. (QuickJS's
+/// `JS_CopyDataProperties` snapshots an ordinary object's enumerable keys
+/// and reads each one regardless.)
 pub(crate) fn copy_own_enumerable(
     cx: &mut Cx<'_>,
     from: ObjectId,
     excluded: &[PropertyKey],
     mut store: impl FnMut(&mut Cx<'_>, PropertyKey, Value) -> Result<(), Throw>,
 ) -> Result<(), Throw> {
-    let proxy = cx.heap.object_kind(from) == ObjectKind::Proxy;
-    let keys = if proxy {
-        own_property_keys(cx, from)?
-    } else {
-        own_enumerable_keys(cx, from)?
-    };
-    for key in keys {
+    for key in own_property_keys(cx, from)? {
         if excluded.contains(&key) {
             continue;
         }
-        if proxy && !get_own_property(cx, from, key)?.is_some_and(|d| d.enumerable == Some(true)) {
+        if !get_own_property(cx, from, key)?.is_some_and(|d| d.enumerable == Some(true)) {
             continue;
         }
         let value = get(cx, from, key, Value::object(from))?;
