@@ -1351,7 +1351,10 @@ fn define_global(
     configurable: bool,
 ) -> Result<(), Throw> {
     let lexical = cx.realm.intrinsic(Intrinsic::GlobalLexical);
-    if let Some((slot, _)) = cx.heap.lookup_own(lexical, key) {
+    // Only an initialization writes a lexical binding of the name; a `var`
+    // that an Annex B or labelled function declared beside it stays the
+    // global object's (QuickJS's closure variables of each kind).
+    if overwrite && let Some((slot, _)) = cx.heap.lookup_own(lexical, key) {
         cx.heap.set_slot(lexical, slot, value);
         return Ok(());
     }
