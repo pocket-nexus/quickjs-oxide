@@ -385,14 +385,11 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
             let names = cx.realm.names;
             let done = object::get_property(cx, result, Names::key(names.done))?;
             let done = ops::to_boolean(cx.heap, done);
-            let value = if done {
-                Value::UNDEFINED
-            } else {
-                object::get_property(cx, result, Names::key(names.value))?
-            };
-            if !done {
-                cx.heap.vm.registers[record + 2] = Value::FALSE;
-            }
+            // QuickJS's `js_iterator_get_value_done` (for await): `value` is
+            // read even when done, then the record is open again, so the
+            // loop's exit closes a completed iterator too.
+            let value = object::get_property(cx, result, Names::key(names.value))?;
+            cx.heap.vm.registers[record + 2] = Value::FALSE;
             cx.heap.vm.registers[at(insn.a)] = value;
             cx.heap.vm.registers[at(insn.c)] = Value::bool(done);
         }
