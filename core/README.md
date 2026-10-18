@@ -134,7 +134,8 @@ check nothing.
 - Script-level `let` and `const` are global object properties without a TDZ
   in phase 2; the global lexical environment comes with the global IC.
 - Functions with more than 256 registers were reported unsupported by the
-  lowering in phase 2; phase 3 M3 gives them a spill scope (below).
+  lowering in phase 2; phase 3 M3 gives their locals a spill scope (below),
+  and phase 6 M4b their temporaries past the window too.
 
 ### The loop (M3, M4)
 
@@ -259,7 +260,11 @@ check nothing.
   window's locals, with the temporaries above it. Locals placed past the
   temporaries would be overwritten by every call, whose window starts at a
   temporary. RegExp's `RegExpBenchmark` (300 locals) is the one such
-  function in the suite.
+  function in the suite. A function whose operand stack does not fit
+  either (phase 6 M4b) keeps its deeper temporaries in slots of the same
+  scope, reached through eight scratch registers above the ones that fit;
+  a call that does not fit in the scratch registers becomes `CallSpread`
+  over an array of its arguments.
 - The register file's dead registers above a returned frame are cleared
   when a frame resumes over them if a collection has run since they were
   last above `top` (`VmStack::stale_from`). Phase 2 cleared only a callee's
