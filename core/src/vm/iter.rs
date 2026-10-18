@@ -206,22 +206,16 @@ pub(crate) fn close(
     }
 }
 
-/// Collects every value of an iterable, rooted. As QuickJS's
-/// `iterator_to_array`, a throw while stepping (from `next` too) closes the
-/// iterator, keeping the first throw.
+/// IteratorToList(GetIterator(value)): every value of an iterable, rooted.
+/// A throw while stepping does not close the iterator (7.4.x).
 pub(crate) fn collect(cx: &mut Cx<'_>, value: Value) -> Result<Vec<Value>, Throw> {
     let mut iter = get_iterator(cx, value)?;
     let mut values = Vec::new();
-    loop {
-        match step(cx, &mut iter) {
-            Ok(Some(value)) => {
-                cx.heap.roots().push(value);
-                values.push(value);
-            }
-            Ok(None) => return Ok(values),
-            Err(throw) => return close(cx, &iter, Err(throw)).map(|()| values),
-        }
+    while let Some(value) = step(cx, &mut iter)? {
+        cx.heap.roots().push(value);
+        values.push(value);
     }
+    Ok(values)
 }
 
 /// `CreateIterResultObject(value, done)`.
@@ -385,11 +379,16 @@ fn iter_op_rooted(cx: &mut Cx<'_>, frame: &Frame, insn: Insn) -> Result<(), Thro
             let names = cx.realm.names;
             let done = object::get_property(cx, result, Names::key(names.done))?;
             let done = ops::to_boolean(cx.heap, done);
-            // QuickJS's `js_iterator_get_value_done` (for await): `value` is
-            // read even when done, then the record is open again, so the
-            // loop's exit closes a completed iterator too.
-            let value = object::get_property(cx, result, Names::key(names.value))?;
-            cx.heap.vm.registers[record + 2] = Value::FALSE;
+            // 14.7.5.6 ForIn/OfBodyEvaluation: a done result returns without
+            // reading `value`, and the record stays done (no close).
+            let value = if done {
+                Value::UNDEFINED
+            } else {
+                object::get_property(cx, result, Names::key(names.value))?
+            };
+            if !done {
+                cx.heap.vm.registers[record + 2] = Value::FALSE;
+            }
             cx.heap.vm.registers[at(insn.a)] = value;
             cx.heap.vm.registers[at(insn.c)] = Value::bool(done);
         }

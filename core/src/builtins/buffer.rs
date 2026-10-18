@@ -200,16 +200,10 @@ pub(crate) fn detach(cx: &mut Cx<'_>, value: Value) -> Result<(), Throw> {
     }
 }
 
-/// QuickJS's `JS_ToInt64` of `value`.
-fn to_int64(cx: &mut Cx<'_>, value: Value) -> Result<i64, Throw> {
-    let number = ops::to_number(cx, value)?;
-    Ok(crate::vm::number::to_int64(number))
-}
-
-/// `js_array_buffer_constructor0`: the length by `ToIndex`, the
-/// `maxByteLength` option by `JS_ToInt64` (compared unsigned with the
-/// length, so a negative maximum passes to the `INT32_MAX` check), then the
-/// prototype from `new.target`, then the length limits.
+/// The `ArrayBuffer` and `SharedArrayBuffer` constructors (25.1.4.1,
+/// 25.2.3.1): the length and GetArrayBufferMaxByteLengthOption by
+/// `ToIndex`, the length against the maximum, then (AllocateArrayBuffer)
+/// the prototype from `new.target`, then the allocation limits.
 fn construct(cx: &mut Cx<'_>, site: CallSite, shared: bool) -> Result<Value, Throw> {
     if !site.construct {
         return Err(error::type_error(cx, "must be called with new"));
@@ -225,11 +219,11 @@ fn construct(cx: &mut Cx<'_>, site: CallSite, shared: bool) -> Result<Value, Thr
             .map_err(|error| error::heap_error(cx, error))?;
         let value = internal::get_property(cx, options, key)?;
         if !value.is_undefined() {
-            let maximum = to_int64(cx, value)?;
-            if len > maximum as u64 || maximum > 9_007_199_254_740_991 {
+            let maximum = to_index(cx, value)?;
+            if len > maximum {
                 return Err(error::range_error(cx, "invalid array buffer max length"));
             }
-            max = Some(maximum as u64);
+            max = Some(maximum);
         }
     }
     let default = if shared {
@@ -298,7 +292,10 @@ pub(super) fn byte_length(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
 pub(super) fn max_byte_length(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_buffer(cx, &site, InternalTag::ArrayBuffer)?;
     let buffer = typed::buffer(cx.heap, object);
-    // A detached resizable buffer keeps its maximum, as QuickJS's does.
+    // 25.1.6.4: 0 for a detached buffer.
+    if buffer.detached {
+        return Ok(Value::int32(0));
+    }
     let max = buffer.max.unwrap_or(buffer.len());
     Ok(Value::number(max as f64))
 }
@@ -315,21 +312,20 @@ pub(super) fn detached(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
 
 pub(super) fn resize(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_buffer(cx, &site, InternalTag::ArrayBuffer)?;
-    // `js_array_buffer_resize`: the length by `JS_ToInt64`, then the
-    // detached and resizable checks.
+    // 25.1.6.6: the [[ArrayBufferMaxByteLength]] slot (a fixed-length buffer
+    // has none), the length by `ToIndex`, then the detached check.
+    let Some(max) = typed::buffer(cx.heap, object).max else {
+        return Err(error::type_error(cx, "array buffer is not resizable"));
+    };
     let length = site.arg(cx, 0);
-    let len = to_int64(cx, length)?;
+    let len = to_index(cx, length)?;
     let buffer = typed::buffer(cx.heap, object);
     if buffer.detached {
         return Err(error::type_error(cx, "ArrayBuffer is detached"));
     }
-    let Some(max) = buffer.max else {
-        return Err(error::type_error(cx, "array buffer is not resizable"));
-    };
-    if len < 0 || len as u64 > max as u64 {
+    if len > max as u64 {
         return Err(error::range_error(cx, "invalid array buffer length"));
     }
-    let len = len as u64;
     let grow = (len as usize).saturating_sub(buffer.len());
     cx.heap
         .charge(grow, &[Value::object(object)])
@@ -388,9 +384,9 @@ fn transfer_buffer(cx: &mut Cx<'_>, site: CallSite, preserve: bool) -> Result<Va
         return Err(error::type_error(cx, "ArrayBuffer is detached"));
     }
     let max = if preserve { buffer.max } else { None };
-    // QuickJS: past the maximum is a TypeError, past the limit a RangeError.
+    // AllocateArrayBuffer: past the maximum is a RangeError.
     if max.is_some_and(|max| len > max as u64) {
-        return Err(error::type_error(cx, "invalid array buffer length"));
+        return Err(error::range_error(cx, "invalid array buffer length"));
     }
     if len > MAX_BUFFER_LENGTH as u64 {
         return Err(error::range_error(cx, "invalid array buffer length"));
@@ -436,15 +432,12 @@ pub(super) fn shared_max_byte_length(cx: &mut Cx<'_>, site: CallSite) -> Result<
 
 pub(super) fn grow(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_buffer(cx, &site, InternalTag::SharedArrayBuffer)?;
-    let length = site.arg(cx, 0);
-    let len = to_int64(cx, length)?;
+    // 25.2.5.3: the [[ArrayBufferMaxByteLength]] slot, then `ToIndex`.
     if typed::buffer(cx.heap, object).max.is_none() {
         return Err(error::type_error(cx, "array buffer is not resizable"));
     }
-    if len < 0 {
-        return Err(error::range_error(cx, "invalid array buffer length"));
-    }
-    let len = len as u64;
+    let length = site.arg(cx, 0);
+    let len = to_index(cx, length)?;
     let buffer = typed::buffer(cx.heap, object);
     let Store::Shared(shared) = &buffer.store else {
         unreachable!("a shared buffer");
@@ -561,30 +554,6 @@ fn this_view_method(cx: &mut Cx<'_>, site: &CallSite) -> Result<ObjectId, Throw>
     }
 }
 
-/// [`view_length`] for `get`/`set` of `size` bytes at `index`, with QuickJS's
-/// errors: `ArrayBuffer is detached`, then a `RangeError` past the view's
-/// recorded length (a length-tracking view out of bounds has none), else a
-/// `TypeError`.
-fn access_length(
-    cx: &mut Cx<'_>,
-    object: ObjectId,
-    index: usize,
-    size: usize,
-) -> Result<usize, Throw> {
-    let (view, store) = typed::view(cx.heap, object);
-    let buffer = typed::buffer(cx.heap, store);
-    if let Some(length) = view.current_length(buffer.len(), buffer.detached, 1) {
-        return Ok(length);
-    }
-    if buffer.detached {
-        return Err(error::type_error(cx, "ArrayBuffer is detached"));
-    }
-    if index + size > view.length.unwrap_or(0) {
-        return Err(error::range_error(cx, "out of bound"));
-    }
-    Err(error::type_error(cx, "out of bound"))
-}
-
 pub(super) fn data_view_buffer(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_view(cx, &site)?;
     Ok(cx.heap.internal_slot(object, 0))
@@ -610,7 +579,8 @@ fn get_value(cx: &mut Cx<'_>, site: CallSite, kind: ElementKind) -> Result<Value
     let little = site.arg(cx, 1);
     let little = ops::to_boolean(cx.heap, little);
     let size = kind.size();
-    let length = access_length(cx, object, index, size)?;
+    // IsViewOutOfBounds, then the index against the view's length.
+    let length = view_length(cx, object)?;
     if index + size > length {
         return Err(error::range_error(cx, "out of bound"));
     }
@@ -633,7 +603,8 @@ fn set_value(cx: &mut Cx<'_>, site: CallSite, kind: ElementKind) -> Result<Value
     let little = site.arg(cx, 2);
     let little = ops::to_boolean(cx.heap, little);
     let size = kind.size();
-    let length = access_length(cx, object, index, size)?;
+    // IsViewOutOfBounds, then the index against the view's length.
+    let length = view_length(cx, object)?;
     if index + size > length {
         return Err(error::range_error(cx, "out of bound"));
     }

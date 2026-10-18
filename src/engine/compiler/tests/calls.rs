@@ -113,31 +113,29 @@ fn runtime_executes_call_method_and_construct_spread() {
 }
 
 #[test]
-fn runtime_append_preserves_quickjs_double_probe_and_fast_array_copy() {
+fn runtime_append_reads_the_iterator_method_once() {
+    // ArgumentListEvaluation's GetIterator: one `@@iterator` read
+    // (QuickJS reads it twice, QUICKJS-SPEC-014).
     assert_eq!(
         evaluate_in_context(
             r#"
             (function () {
                 var reads = 0;
-                var captured;
                 var source = [1, 2];
                 Object.defineProperty(source, Symbol.iterator, {
                     get: function () {
                         reads++;
                         if (reads === 1) return Array.prototype.values;
-                        return function () {
-                            captured = [9].values();
-                            return captured;
-                        };
+                        return function () { return [9].values(); };
                     }
                 });
                 function list() { return Array.prototype.join.call(arguments, ","); }
                 var copied = list(...source);
-                return copied + "|" + reads + "|" + captured.next().value;
+                return copied + "|" + reads;
             })()
             "#,
         ),
-        Value::String(JsString::from_static("1,2|2|9"))
+        Value::String(JsString::from_static("1,2|1"))
     );
 }
 

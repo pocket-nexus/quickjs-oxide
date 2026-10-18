@@ -1,9 +1,11 @@
-//! Differential and lifetime coverage for pinned QuickJS `for await ... of`.
+//! Differential and lifetime coverage for `for await ... of`.
 //!
-//! The fixture deliberately authenticates QuickJS 2026-06-04's observable
-//! implementation, including its non-standard close behavior: completed async
-//! iterators are closed, ordinary abrupt exits do not await `return()`, and
-//! next/result failures occur while the iterator unwind record is disabled.
+//! The fixture's QuickJS 2026-06-04 transcript records its non-standard close
+//! (QUICKJS-SPEC-016): a completed async iterator's `value` is read and the
+//! iterator closed. quickjs-oxide follows ForIn/OfBodyEvaluation (14.7.5.6),
+//! whose transcript is `r3ak_for_await_of.spec.txt`; otherwise they agree:
+//! ordinary abrupt exits do not await `return()`, and next/result failures
+//! occur while the iterator unwind record is disabled.
 
 use crate::runtime_observation::host_runtime_context;
 use std::ffi::OsStr;
@@ -15,15 +17,16 @@ use crate::runtime_observation::{eval, text};
 
 const EXPECTED: &str =
     include_str!("../fixtures/expected/r3ak_for_await_of.quickjs-2026-06-04.txt");
+const SPECIFIED: &str = include_str!("../fixtures/expected/r3ak_for_await_of.spec.txt");
 
 #[test]
-fn for_await_of_transcript_matches_pinned_quickjs() {
+fn for_await_of_transcript_follows_the_specification_where_quickjs_departs() {
     let fixture = fixture_path();
     let oxide = run_file(env!("CARGO_BIN_EXE_qjs").as_ref(), &fixture);
     assert_success("quickjs-oxide", &oxide);
     assert_eq!(
         String::from_utf8_lossy(&oxide.stdout),
-        EXPECTED,
+        SPECIFIED,
         "quickjs-oxide for-await transcript drifted"
     );
 
@@ -35,9 +38,9 @@ fn for_await_of_transcript_matches_pinned_quickjs() {
         EXPECTED,
         "pinned QuickJS transcript differs from the frozen fixture"
     );
-    assert_eq!(
+    assert_ne!(
         oxide.stdout, quickjs.stdout,
-        "quickjs-oxide for-await transcript differs from pinned QuickJS"
+        "QUICKJS-SPEC-016 is attributed but quickjs-oxide matches pinned QuickJS"
     );
 }
 

@@ -701,12 +701,10 @@ pub(super) fn group_by(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     })
 }
 
-/// QuickJS's `js_object_groupBy`: the groups object or map from `create`,
-/// built while iterating `items`. The callback runs with the global object
-/// as `this`; a group's array is created on its first member and each member
-/// is pushed with `Array.prototype.push`'s `Set`s. Only the callback's and
-/// the key conversion's failures close the iterator. `property` keys are
-/// property keys, otherwise map keys (with -0 normalized).
+/// GroupBy (7.3.35) and the groups' object or map from `create`: the
+/// callback runs with `undefined` as `this`, each group is a List made into
+/// an array at the end (CreateArrayFromList). `property` keys are property
+/// keys, otherwise map keys (with -0 normalized).
 pub(crate) fn group(
     cx: &mut Cx<'_>,
     items: Value,
@@ -714,22 +712,31 @@ pub(crate) fn group(
     property: bool,
     create: impl FnOnce(&mut Cx<'_>) -> Result<ObjectId, Throw>,
 ) -> Result<Value, Throw> {
-    // QuickJS checks the callback first.
-    if !ops::is_callable(cx.heap, callback) {
-        return Err(error::type_error(cx, "not a function"));
-    }
     if items.is_undefined() || items.is_null() {
         return Err(error::not_iterable_nullish(cx, items));
     }
+    if !ops::is_callable(cx.heap, callback) {
+        return Err(error::type_error(cx, "not a function"));
+    }
     let mut iterator = iter::get_iterator(cx, items)?;
-    let groups = create(cx)?;
-    root(cx, Value::object(groups));
-    let global = Value::object(cx.realm.global());
-    let mut index = 0u64;
+    // The groups in order of their first member; `index` maps a key to its
+    // group, by SameValue of the canonical property key or SameValueZero.
+    let index = super::collection::new_collection(
+        cx,
+        crate::heap::object::InternalTag::Map,
+        cx.realm.intrinsic(Intrinsic::MapPrototype),
+    )?;
+    root(cx, Value::object(index));
+    let mut groups: Vec<(Value, Vec<Value>)> = Vec::new();
+    let mut k = 0u64;
     while let Some(value) = iter::step(cx, &mut iterator)? {
-        let mark = cx.heap.roots().mark();
         root(cx, value);
-        let key = crate::vm::call(cx, callback, global, &[value, Value::number(index as f64)]);
+        let key = crate::vm::call(
+            cx,
+            callback,
+            Value::UNDEFINED,
+            &[value, Value::number(k as f64)],
+        );
         let key = match key.and_then(|key| {
             if property {
                 ops::to_property_key(cx, key).map(PropertyKey::to_value)
@@ -746,29 +753,34 @@ pub(crate) fn group(
             }
         };
         root(cx, key);
-        let existing = if property {
-            let key = ops::to_property_key(cx, key)?;
-            internal::get_property(cx, groups, key)?
-        } else {
-            cx.heap.table_get(groups, key).unwrap_or(Value::UNDEFINED)
-        };
-        let array = match existing.as_object() {
-            Some(array) => array,
+        match cx
+            .heap
+            .table_get(index, key)
+            .and_then(|slot| slot.as_int32())
+        {
+            Some(slot) => groups[slot as usize].1.push(value),
             None => {
-                let array = internal::array_create(cx, 0)?;
-                root(cx, Value::object(array));
-                if property {
-                    let key = ops::to_property_key(cx, key)?;
-                    internal::create_data_property(cx, groups, key, Value::object(array))?;
-                } else {
-                    super::collection::set_entry(cx, groups, key, Value::object(array))?;
-                }
-                array
+                super::collection::set_entry(cx, index, key, Value::int32(groups.len() as i32))?;
+                groups.push((key, vec![value]));
             }
-        };
-        super::array::push_one(cx, array, value)?;
-        cx.heap.roots().truncate(mark);
-        index += 1;
+        }
+        k += 1;
     }
-    Ok(Value::object(groups))
+    let result = create(cx)?;
+    root(cx, Value::object(result));
+    for (key, elements) in groups {
+        let array = internal::array_create(cx, 0)?;
+        root(cx, Value::object(array));
+        for (position, element) in elements.into_iter().enumerate() {
+            let element_key = internal::index_key(cx, position as u32)?;
+            internal::create_data_property(cx, array, element_key, element)?;
+        }
+        if property {
+            let key = ops::to_property_key(cx, key)?;
+            internal::create_data_property(cx, result, key, Value::object(array))?;
+        } else {
+            super::collection::set_entry(cx, result, key, Value::object(array))?;
+        }
+    }
+    Ok(Value::object(result))
 }

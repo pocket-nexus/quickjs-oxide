@@ -467,24 +467,6 @@ pub(super) fn push(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(index_value(length))
 }
 
-/// QuickJS's `js_array_push(array, value)` from a native: the element's
-/// `Set` and the new length's, each throwing on failure.
-pub(crate) fn push_one(cx: &mut Cx<'_>, object: ObjectId, value: Value) -> Result<(), Throw> {
-    if plain_writable(cx, object) && cx.heap.array_length(object) < u32::MAX - 1 {
-        let length = cx.heap.array_length(object);
-        return cx
-            .heap
-            .set_element(object, length, value)
-            .map_err(|error| error::heap_error(cx, error));
-    }
-    let length = length_of(cx, object)?;
-    if length + 1 > MAX_LENGTH {
-        return Err(error::type_error(cx, "Array loo long"));
-    }
-    set_at(cx, object, length, value)?;
-    set_length(cx, object, length + 1)
-}
-
 pub(super) fn pop(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_object(cx, &site)?;
     if plain_writable(cx, object) {
@@ -1085,8 +1067,8 @@ pub(super) fn filter(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 /// included.
 fn find(cx: &mut Cx<'_>, site: CallSite, last: bool, index_result: bool) -> Result<Value, Throw> {
     let object = this_object(cx, &site)?;
-    // QuickJS passes the receiver as given, not its object.
-    let receiver = site.this(cx);
+    // 23.1.3.9 step 1: `O = ToObject(this)` is the predicate's third argument.
+    let receiver = Value::object(object);
     let length = length_of(cx, object)?;
     let predicate = callback(cx, &site)?;
     let this_arg = site.arg(cx, 1);
@@ -1591,12 +1573,10 @@ pub(super) fn sort(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let object = this_object(cx, &site)?;
     let length = length_of(cx, object)?;
     let (slots, undefined) = sort_slots(cx, object, length, comparator)?;
-    // An element already at its index is not written back.
+    // 23.1.3.30 step 7: `Set` of every sorted index.
     let count = slots.len() as u64;
     for (index, slot) in slots.iter().enumerate() {
-        if slot.position != index as u64 {
-            set_at(cx, object, index as u64, slot.value)?;
-        }
+        set_at(cx, object, index as u64, slot.value)?;
     }
     for index in count..count + undefined {
         set_at(cx, object, index, Value::UNDEFINED)?;

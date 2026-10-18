@@ -72,6 +72,10 @@ pub(super) fn apply(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 /// rejects a `target` that is not a constructor.
 pub(super) fn construct(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let function = site.arg(cx, 0);
+    // 28.1.2: the target, then newTarget, then the list.
+    if !internal::is_constructor(cx, function) {
+        return Err(error::not_a_constructor(cx, function));
+    }
     let new_target = if site.argc > 2 {
         let new_target = site.arg(cx, 2);
         if !internal::is_constructor(cx, new_target) {

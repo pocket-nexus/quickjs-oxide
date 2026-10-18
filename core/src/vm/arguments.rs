@@ -369,11 +369,11 @@ pub(crate) fn list_from_array_like(cx: &mut Cx<'_>, list: Value) -> Result<usize
 
 /// `AppendSpread`: appends the values `source` iterates to `array` from
 /// `index`; returns the next index. A pristine array is walked directly.
-/// Anything else follows QuickJS's `js_append_enumerate`: `@@iterator` is
-/// read once to see whether it is `%Array.prototype.values%`, then again
-/// by `GetIterator`; a fast array with that method and the intrinsic
-/// `next` is copied as it stands, and any throw while stepping closes the
-/// iterator (a throw from `next` included), keeping the first throw.
+/// Anything else is GetIterator (one `@@iterator` read) and
+/// IteratorStepValue until done (13.2.4.1, 13.3.8.1); a throw while
+/// stepping does not close the iterator. A fast array whose method is
+/// `%Array.prototype.values%` and whose iterator's `next` is the intrinsic
+/// one is copied as it stands, which no code can observe.
 #[inline(never)]
 pub(crate) fn append_spread(
     cx: &mut Cx<'_>,
@@ -402,12 +402,11 @@ pub(crate) fn append_spread(
             return Ok(());
         }
         let key = crate::runtime::WellKnown::key(cx.realm.symbols.iterator);
-        let first = property::get(cx, source, key)?;
-        let array_values = first == Value::object(cx.realm.intrinsic(Intrinsic::ArrayValues));
         let Some(method) = super::object::get_method(cx, source, key)? else {
             return Err(error::type_error(cx, "value is not iterable"));
         };
         cx.heap.roots().push(method);
+        let array_values = method == Value::object(cx.realm.intrinsic(Intrinsic::ArrayValues));
         let mut iter = super::iter::from_method(cx, source, method)?;
         if array_values
             && let super::iter::Iter::Protocol { next: step, .. } = iter
@@ -425,16 +424,10 @@ pub(crate) fn append_spread(
             }
             return Ok(());
         }
-        loop {
-            let value = match super::iter::step(cx, &mut iter) {
-                Ok(Some(value)) => value,
-                Ok(None) => return Ok(()),
-                Err(throw) => return super::iter::close(cx, &iter, Err(throw)),
-            };
-            if let Err(throw) = push(cx, value) {
-                return super::iter::close(cx, &iter, Err(throw));
-            }
+        while let Some(value) = super::iter::step(cx, &mut iter)? {
+            push(cx, value)?;
         }
+        Ok(())
     })();
     cx.heap.roots().truncate(mark);
     result.map(|()| Value::int32(next as i32))

@@ -23,26 +23,6 @@ pub(crate) fn to_int32(value: f64) -> i32 {
     to_uint32(value) as i32
 }
 
-/// QuickJS's `JS_ToInt64` of a number: the integer modulo 2^64, with NaN,
-/// the infinities and magnitudes from 2^117 up all 0.
-pub(crate) fn to_int64(value: f64) -> i64 {
-    let bits = value.to_bits();
-    let exponent = (bits >> 52) & 0x7ff;
-    if exponent <= 1023 + 62 {
-        value as i64
-    } else if exponent <= 1023 + 62 + 53 {
-        let mantissa = (bits & ((1 << 52) - 1)) | (1 << 52);
-        let result = (mantissa << (exponent - 1023 - 52)) as i64;
-        if bits >> 63 == 1 {
-            result.wrapping_neg()
-        } else {
-            result
-        }
-    } else {
-        0
-    }
-}
-
 /// `ToUint32` of a number.
 pub(crate) fn to_uint32(value: f64) -> u32 {
     if !value.is_finite() {

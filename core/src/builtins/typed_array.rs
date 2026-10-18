@@ -550,12 +550,13 @@ constructors! {
 pub(super) fn from(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let constructor = site.this(cx);
     let (source, mapper, this_arg) = (site.arg(cx, 0), site.arg(cx, 1), site.arg(cx, 2));
-    // QuickJS checks the mapper first.
+    // 23.2.2.1 steps 2–3: the constructor, then the mapper.
+    if !internal::is_constructor(cx, constructor) {
+        return Err(error::construct_error(cx, constructor));
+    }
     if !mapper.is_undefined() && !ops::is_callable(cx.heap, mapper) {
         return Err(error::type_error(cx, "not a function"));
     }
-    // The constructor is validated by its construction, after the source
-    // is read (`js_typed_array_create`).
     let key = WellKnown::key(cx.realm.symbols.iterator);
     let values = match internal::get_method(cx, source, key)? {
         Some(method) => {
@@ -1185,9 +1186,9 @@ pub(super) fn sort(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 }
 
 pub(super) fn to_sorted(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    // QuickJS validates the receiver first.
-    let (object, length) = this_typed(cx, &site)?;
+    // 23.2.3.33 steps 1–3: the comparator, then the receiver.
     let comparator = comparator(cx, &site)?;
+    let (object, length) = this_typed(cx, &site)?;
     let result = same_type(cx, object, length as u64)?;
     let values = sorted(cx, object, length, comparator)?;
     for (index, value) in values.into_iter().enumerate() {

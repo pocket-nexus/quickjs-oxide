@@ -7,8 +7,11 @@
 
 use crate::runtime_completion_oracle::run;
 
+/// AsyncGeneratorDrainQueue (27.6.3.10) settles every trailing request of a
+/// completed generator at once; QuickJS settles one per driver entry
+/// (QUICKJS-SPEC-017).
 #[test]
-fn completed_state_services_one_trailing_request_per_driver_entry_like_quickjs() {
+fn completed_state_drains_every_trailing_request() {
     const SOURCE: &str = r#"
 var release;
 var gate = new Promise(function (resolve) {
@@ -57,8 +60,8 @@ requests[2].then(function (result) {
 release(40);
 "#;
     const EXPECTED_STDOUT: &str = concat!(
-        "true,true,true,false|undefined:true\n",
-        "true,true,true,true,false|undefined:true\n",
+        "true,true,true,true|undefined:true\n",
+        "true,true,true,true,true|undefined:true\n",
     );
 
     let oxide = run(env!("CARGO_BIN_EXE_qjs").as_ref(), SOURCE);
@@ -71,7 +74,7 @@ release(40);
     assert_eq!(
         String::from_utf8_lossy(&oxide.stdout),
         EXPECTED_STDOUT,
-        "quickjs-oxide completed-state driver entry drifted from pinned QuickJS"
+        "quickjs-oxide completed-state drain drifted"
     );
 
     if let Some(oracle) = std::env::var_os("QJS_ORACLE") {
@@ -81,7 +84,10 @@ release(40);
             "pinned QuickJS rejected completed-state queue probe: {}",
             String::from_utf8_lossy(&quickjs.stderr)
         );
-        assert_eq!(quickjs.stdout, oxide.stdout);
+        assert_ne!(
+            quickjs.stdout, oxide.stdout,
+            "QUICKJS-SPEC-017 no longer differs"
+        );
     }
 }
 

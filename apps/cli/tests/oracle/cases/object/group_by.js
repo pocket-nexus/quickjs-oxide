@@ -173,11 +173,11 @@
         })()
 // case: an internal Array push failure does not close the iterator
 (function(){
-            var log="",iterable=Object(),iterator=Object();
+            var log="",iterable=Object(),iterator=Object(),steps=0;
             iterable[Symbol.iterator]=function(){return iterator};
             iterator.next=function(){
                 log+="next;";
-                var result=Object();result.done=false;result.value=9;return result;
+                var result=Object();result.done=steps++>0;result.value=9;return result;
             };
             iterator.return=function(){log+="return;"};
             try{

@@ -50,11 +50,10 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     )
 }
 
-/// `ValidateIntegerTypedArray(ta, waitable)`: the typed array, its kind and
-/// its length then.
-/// An array out of bounds after a resize has length 0 here, so that
-/// `ValidateAtomicAccess` throws QuickJS's `out-of-bound access`; `wait`
-/// requires a shared buffer before the detached check, as QuickJS does.
+/// `ValidateIntegerTypedArray(ta, waitable)` (25.4.3.1): the typed array,
+/// its kind and its length then. ValidateTypedArray comes first (detached
+/// or out of bounds: `TypeError`), then the element type; `wait` then
+/// requires a shared buffer (DoWait step 3).
 fn validate(
     cx: &mut Cx<'_>,
     value: Value,
@@ -66,6 +65,14 @@ fn validate(
         .filter(|&object| cx.heap.object_kind(object) == ObjectKind::TypedArray)
     else {
         return Err(error::type_error(cx, "integer TypedArray expected"));
+    };
+    let Some(length) = typed::length(cx.heap, object) else {
+        let message = if detached(cx, object) {
+            "ArrayBuffer is detached"
+        } else {
+            "TypedArray is out of bounds"
+        };
+        return Err(error::type_error(cx, message));
     };
     let kind = typed::view(cx.heap, object).0.kind;
     let valid = if waitable {
@@ -85,13 +92,6 @@ fn validate(
     if wait && location(cx, object, 0).is_none() {
         return Err(error::type_error(cx, "not a SharedArrayBuffer TypedArray"));
     }
-    let length = match typed::length(cx.heap, object) {
-        Some(length) => length,
-        None if detached(cx, object) => {
-            return Err(error::type_error(cx, "ArrayBuffer is detached"));
-        }
-        None => 0,
-    };
     Ok((object, kind, length))
 }
 
@@ -101,16 +101,8 @@ fn detached(cx: &Cx<'_>, object: ObjectId) -> bool {
 }
 
 /// `ValidateAtomicAccess` against the length validation saw: the element's
-/// byte index in the buffer. Every operation but `notify` then revalidates
-/// the array, as `js_atomics_get_buf` does, since `ToIndex` may have
-/// detached or shrunk its buffer.
-fn access(cx: &mut Cx<'_>, object: ObjectId, length: usize, index: Value) -> Result<usize, Throw> {
-    let byte_index = index_in(cx, object, length, index)?;
-    revalidate(cx, object, byte_index, "ArrayBuffer is detached or resized")?;
-    Ok(byte_index)
-}
-
-/// [`access`] without the revalidation (`notify`).
+/// byte index in the buffer. The operations that convert a value
+/// revalidate after it (RevalidateAtomicAccess); `load` right away.
 fn index_in(
     cx: &mut Cx<'_>,
     object: ObjectId,
@@ -206,7 +198,7 @@ fn read_modify_write(
     let array = site.arg(cx, 0);
     let (object, kind, length) = validate(cx, array, false, false)?;
     let index = site.arg(cx, 1);
-    let byte_index = access(cx, object, length, index)?;
+    let byte_index = index_in(cx, object, length, index)?;
     let value = site.arg(cx, 2);
     let (bits, _) = operand(cx, kind, value)?;
     revalidate(cx, object, byte_index, "ArrayBuffer is detached")?;
@@ -245,7 +237,7 @@ pub(super) fn compare_exchange(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
     let array = site.arg(cx, 0);
     let (object, kind, length) = validate(cx, array, false, false)?;
     let index = site.arg(cx, 1);
-    let byte_index = access(cx, object, length, index)?;
+    let byte_index = index_in(cx, object, length, index)?;
     let (expected, replacement) = (site.arg(cx, 2), site.arg(cx, 3));
     let (expected, _) = operand(cx, kind, expected)?;
     let (replacement, _) = operand(cx, kind, replacement)?;
@@ -261,7 +253,8 @@ pub(super) fn load(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let array = site.arg(cx, 0);
     let (object, kind, length) = validate(cx, array, false, false)?;
     let index = site.arg(cx, 1);
-    let byte_index = access(cx, object, length, index)?;
+    let byte_index = index_in(cx, object, length, index)?;
+    revalidate(cx, object, byte_index, "ArrayBuffer is detached")?;
     let old = modify(cx, object, byte_index, |_| None);
     decode(cx, kind, old & mask(kind))
 }
@@ -270,7 +263,7 @@ pub(super) fn store(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let array = site.arg(cx, 0);
     let (object, kind, length) = validate(cx, array, false, false)?;
     let index = site.arg(cx, 1);
-    let byte_index = access(cx, object, length, index)?;
+    let byte_index = index_in(cx, object, length, index)?;
     let value = site.arg(cx, 2);
     let (bits, result) = operand(cx, kind, value)?;
     revalidate(cx, object, byte_index, "ArrayBuffer is detached")?;
@@ -304,7 +297,7 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let array = site.arg(cx, 0);
     let (object, kind, length) = validate(cx, array, true, true)?;
     let index = site.arg(cx, 1);
-    let byte_index = access(cx, object, length, index)?;
+    let byte_index = index_in(cx, object, length, index)?;
     let place = location(cx, object, byte_index).expect("a shared buffer");
     let value = site.arg(cx, 2);
     let expected = if kind.is_bigint() {

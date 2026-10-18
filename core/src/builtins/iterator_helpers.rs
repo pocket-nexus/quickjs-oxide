@@ -326,25 +326,6 @@ fn close_unread(cx: &mut Cx<'_>, iterator: Value, failure: Throw) -> Throw {
     }
 }
 
-/// QuickJS's `JS_ToInt64` of a finite number: its integer part modulo 2^64.
-fn to_int64(number: f64) -> i64 {
-    let bits = number.to_bits();
-    let exponent = ((bits >> 52) & 0x7ff) as i64;
-    if exponent <= 1023 + 62 {
-        number as i64
-    } else if exponent <= 1023 + 62 + 53 {
-        let mantissa = (bits & ((1 << 52) - 1)) | (1 << 52);
-        let value = mantissa.wrapping_shl((exponent - 1023 - 52) as u32) as i64;
-        if bits >> 63 != 0 {
-            value.wrapping_neg()
-        } else {
-            value
-        }
-    } else {
-        0
-    }
-}
-
 /// QuickJS's `js_create_iterator_helper`: the limit's conversion or the
 /// callback's check, then the receiver's `next`; any failure closes the
 /// receiver.
@@ -359,12 +340,12 @@ fn create_helper(cx: &mut Cx<'_>, site: CallSite, kind: Kind) -> Result<Value, T
                 Ok(limit) => limit,
                 Err(throw) => return Err(close_unread(cx, iterator, throw)),
             };
-            count = if limit.is_nan() || limit == f64::NEG_INFINITY {
+            // ToIntegerOrInfinity (27.1.4.13, 27.1.4.4): a count past 2^53 - 1
+            // never runs out, as +Infinity does not.
+            count = if limit.is_nan() || limit.trunc() < 0.0 {
                 -1
-            } else if limit == f64::INFINITY {
-                (1 << 53) - 1
             } else {
-                to_int64(limit.trunc())
+                limit.trunc().min(((1u64 << 53) - 1) as f64) as i64
             };
             if count < 0 {
                 let throw = error::range_error(cx, "must be positive");

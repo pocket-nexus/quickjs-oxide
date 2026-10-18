@@ -208,7 +208,7 @@ fn root(cx: &mut Cx<'_>, value: Value) {
 }
 
 /// A new collection of kind `tag` inheriting from `prototype`, rooted.
-fn new_collection(
+pub(super) fn new_collection(
     cx: &mut Cx<'_>,
     tag: InternalTag,
     prototype: ObjectId,

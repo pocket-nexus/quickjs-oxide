@@ -181,3 +181,29 @@ function_semantics/bound_functions / a bound function inherits its target's prot
 function_semantics/bound_functions / a proxy target's getPrototypeOf trap runs before the bound function exists	QUICKJS-SPEC-002
 function_semantics/bound_functions / a bound function prints as a NativeFunction	QUICKJS-SPEC-003
 class_initialization/private_in / setter-only getter-only and paired accessors test the brand	QUICKJS-SPEC-007
+atomics_non_shared/matrix	QUICKJS-SPEC-009
+async_functions/generator / iterator-result then getter reentry follows the active QuickJS driver	QUICKJS-SPEC-017
+binary_data/array_buffer / constructor coercion newTarget and QuickJS Int64 quirks	QUICKJS-SPEC-010
+binary_data/array_buffer / resize transfer and fixed-length transfer state	QUICKJS-SPEC-010
+binary_data/array_buffer / detached getters brand errors and toStringTag fallback	QUICKJS-SPEC-010
+binary_data/data_view / detach preserves the DataView brand and buffer edge while invalidating access	QUICKJS-SPEC-011
+collections/map / groupBy / groupBy retains SameValueZero keys arrays callback indices and receiver independence	QUICKJS-SPEC-008
+collections/set / groupBy / Set.groupBy is a distinct static function which returns a strong Map	QUICKJS-SPEC-008
+iterator/helpers / numeric limits / huge finite helper limits use QuickJS signed low bits	QUICKJS-SPEC-018
+arguments/spread / QuickJS append / argument spread performs QuickJS's two observable iterator method Gets	QUICKJS-SPEC-014
+arguments/spread / QuickJS append / fast Array copies its source after the second iterator Get selects another iterator	QUICKJS-SPEC-014
+arguments/spread / iterator / a next throw closes the iterator while a close throw cannot replace it	QUICKJS-SPEC-014
+typed_array/from / surface descriptors nullish source and receiver validation	QUICKJS-SPEC-012
+typed_array/from / array-like length construction property map and conversion order	QUICKJS-SPEC-012
+typed_array/from / custom bound Proxy constructors and actual result element type	QUICKJS-SPEC-012
+errors/aggregate_error / iterator completion / abrupt next closes while preserving the original throw	QUICKJS-SPEC-015
+errors/aggregate_error / iterator completion / abrupt done lookup closes the iterator	QUICKJS-SPEC-015
+errors/aggregate_error / iterator completion / abrupt value lookup closes the iterator	QUICKJS-SPEC-015
+errors/aggregate_error / iterator completion / abrupt return lookup cannot replace the pending iterator throw	QUICKJS-SPEC-015
+proxy_reflect/reflect / construct pins QuickJS newTarget argsList and target validation order	QUICKJS-SPEC-013
+object/group_by / callback receives the defining global object value and monotonic index	QUICKJS-SPEC-008
+object/group_by / group append uses Array push Set semantics	QUICKJS-SPEC-008
+object/group_by / an internal Array push failure does not close the iterator	QUICKJS-SPEC-008
+array/find / String receiver callback sees UTF-16 units and the original primitive	QUICKJS-SPEC-020
+array/sort / unchanged original position skips Set while undefined does not	QUICKJS-SPEC-019
+for_await_of/completion / a completed async iterator is neither read nor closed	QUICKJS-SPEC-016
