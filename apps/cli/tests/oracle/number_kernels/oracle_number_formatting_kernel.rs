@@ -1,6 +1,3 @@
-use quickjs_oxide::engine::api::testing::{
-    to_exponential, to_fixed, to_precision, to_string_radix,
-};
 use std::process::Command;
 
 #[test]
@@ -38,27 +35,6 @@ fn number_formatting_kernel_matches_pinned_quickjs() {
         bits.push(state);
     }
 
-    let radices = (2_u32..=36).collect::<Vec<_>>();
-    let fixed_digits = [0_i32, 1, 2, 20, 100];
-    let exponential_digits = [None, Some(0), Some(2), Some(20), Some(100)];
-    let precisions = [None, Some(1), Some(2), Some(20), Some(100)];
-    let mut expected = Vec::new();
-    for raw in &bits {
-        let value = f64::from_bits(*raw);
-        for radix in &radices {
-            expected.push(to_string_radix(value, *radix).unwrap());
-        }
-        for digits in fixed_digits {
-            expected.push(to_fixed(value, digits).unwrap());
-        }
-        for digits in exponential_digits {
-            expected.push(to_exponential(value, digits).unwrap());
-        }
-        for precision in precisions {
-            expected.push(to_precision(value, precision).unwrap());
-        }
-    }
-
     let bit_literals = bits
         .iter()
         .map(|bits| format!("0x{bits:016x}n"))
@@ -86,19 +62,17 @@ for (var i = 0; i < bits.length; i++) {{
 }}
 "#
     );
-    let output = Command::new(oracle)
-        .args(["-e", &source])
-        .output()
-        .expect("run QuickJS Number formatting oracle");
-    assert!(
-        output.status.success(),
-        "QuickJS Number formatting oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let actual = String::from_utf8(output.stdout)
-        .expect("QuickJS Number formatting oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    assert_eq!(expected, actual);
+    let run = |engine: &std::ffi::OsStr| {
+        let output = Command::new(engine)
+            .args(["-e", &source])
+            .output()
+            .expect("run the Number formatting script");
+        assert!(
+            output.status.success(),
+            "Number formatting script failed on {engine:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout).expect("Number formatting output is UTF-8")
+    };
+    assert_eq!(run(env!("CARGO_BIN_EXE_qjs").as_ref()), run(&oracle));
 }

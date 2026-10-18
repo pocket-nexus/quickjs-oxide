@@ -1,8 +1,6 @@
-use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use quickjs_oxide::engine::api::core::JsString;
-use quickjs_oxide::engine::api::testing::{parse_float, parse_int};
 
 #[test]
 fn number_parse_kernel_matches_pinned_quickjs() {
@@ -80,16 +78,6 @@ fn number_parse_kernel_matches_pinned_quickjs() {
     let mut radices = vec![0_i32];
     radices.extend(2..=36);
     radices.extend([1, 37, -2]);
-    let mut expected = Vec::new();
-    for input in &inputs {
-        for radix in &radices {
-            expected.push(number_bits(parse_int(input, *radix)));
-        }
-    }
-    for input in &inputs {
-        expected.push(number_bits(parse_float(input)));
-    }
-
     let string_literals = inputs
         .iter()
         .map(js_utf16_literal)
@@ -118,49 +106,36 @@ for (var i = 0; i < inputs.length; i++) print(bits(parseFloat(inputs[i])));
 "#
     );
     // Keep the generated corpus out of argv: Linux CI has a substantially
-    // smaller ARG_MAX than macOS, while QuickJS can consume the exact same
-    // source through its standard input stream.
-    let mut child = Command::new(oracle)
-        .args(["--std", "-e", "std.evalScript(std.in.readAsString())"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("spawn QuickJS Number parser oracle");
-    child
-        .stdin
-        .take()
-        .expect("open QuickJS Number parser oracle stdin")
-        .write_all(source.as_bytes())
-        .expect("write QuickJS Number parser oracle source");
-    let output = child
-        .wait_with_output()
-        .expect("run QuickJS Number parser oracle");
+    // smaller ARG_MAX than macOS.
+    let path = std::env::temp_dir().join(format!(
+        "quickjs-oxide-number-parse-{}.js",
+        std::process::id()
+    ));
+    std::fs::write(&path, &source).expect("write the Number parser script");
+    let run = |engine: &std::ffi::OsStr| {
+        let output = Command::new(engine)
+            .arg(&path)
+            .output()
+            .expect("run the Number parser script");
+        assert!(
+            output.status.success(),
+            "Number parser script failed on {engine:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        output.stdout
+    };
+    let (oxide, quickjs) = (run(env!("CARGO_BIN_EXE_qjs").as_ref()), run(&oracle));
+    let _ = std::fs::remove_file(&path);
     assert!(
-        output.status.success(),
-        "QuickJS Number parser oracle failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+        oxide == quickjs,
+        "parseInt/parseFloat differ from pinned QuickJS"
     );
-    let actual = String::from_utf8(output.stdout)
-        .expect("QuickJS Number parser oracle emitted non-UTF-8 output")
-        .lines()
-        .map(str::to_owned)
-        .collect::<Vec<_>>();
-    assert_eq!(expected, actual);
 }
 
 const fn next_random(state: u64) -> u64 {
     state
         .wrapping_mul(6_364_136_223_846_793_005)
         .wrapping_add(1_442_695_040_888_963_407)
-}
-
-fn number_bits(value: f64) -> String {
-    if value.is_nan() {
-        "NaN".to_owned()
-    } else {
-        format!("{:016x}", value.to_bits())
-    }
 }
 
 fn js_utf16_literal(value: &JsString) -> String {

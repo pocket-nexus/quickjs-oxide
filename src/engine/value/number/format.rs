@@ -14,7 +14,6 @@ use num_traits::{One, ToPrimitive, Zero};
 
 const MIN_RADIX: u32 = 2;
 const MAX_RADIX: u32 = 36;
-const MAX_DIGITS: i32 = 100;
 
 // QuickJS `dtoa_max_digits_table`. Each entry is a conservative count which
 // guarantees that rounding a binary64 value in the corresponding radix and
@@ -24,13 +23,10 @@ const DTOA_MAX_DIGITS: [i32; 35] = [
     13, 13, 13, 12, 12, 12, 12, 12, 12, 12, 12,
 ];
 
-/// A range failure produced after the caller has performed JavaScript value
-/// conversion. Runtime integration maps these two cases to the pinned
-/// `RangeError` messages.
+/// A radix outside 2..=36.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NumberFormatError {
     InvalidRadix,
-    InvalidDigits,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -66,95 +62,6 @@ pub fn to_string_radix(value: f64, radix: u32) -> Result<String, NumberFormatErr
         return Err(NumberFormatError::InvalidRadix);
     }
     Ok(format_free(value, radix, radix == 10))
-}
-
-/// Format `value` with exactly `fraction_digits` digits after the decimal
-/// point, matching `Number.prototype.toFixed`.
-pub fn to_fixed(value: f64, fraction_digits: i32) -> Result<String, NumberFormatError> {
-    if !(0..=MAX_DIGITS).contains(&fraction_digits) {
-        return Err(NumberFormatError::InvalidDigits);
-    }
-    if let Some(special) = format_non_finite(value) {
-        return Ok(special);
-    }
-
-    // The pinned implementation switches back to FREE formatting at this
-    // threshold instead of appending the requested fractional zeroes.
-    if value.abs() >= 1e21 {
-        return Ok(format_free(value, 10, true));
-    }
-
-    let negative = value.is_sign_negative() && value != 0.0;
-    let magnitude = BinaryMagnitude::from_f64(value.abs());
-    let rounded = round_scaled(&magnitude, 10, fraction_digits, RoundingMode::NearestAway);
-    let mut digits = rounded.to_str_radix(10);
-    if fraction_digits == 0 {
-        return Ok(apply_sign(digits, negative));
-    }
-
-    let fraction_digits = usize::try_from(fraction_digits).expect("validated digit count");
-    if digits.len() <= fraction_digits {
-        let mut padded = String::with_capacity(fraction_digits + 2);
-        padded.push('0');
-        padded.push('.');
-        padded.extend(std::iter::repeat_n('0', fraction_digits - digits.len()));
-        padded.push_str(&digits);
-        digits = padded;
-    } else {
-        digits.insert(digits.len() - fraction_digits, '.');
-    }
-    Ok(apply_sign(digits, negative))
-}
-
-/// Format `value` in exponential notation. `None` is the observable omitted
-/// or `undefined` case and therefore requests the shortest mantissa. A present
-/// count is checked only for finite values: pinned QuickJS still converts the
-/// argument but returns `NaN`/`Infinity` before validating its range.
-pub fn to_exponential(
-    value: f64,
-    fraction_digits: Option<i32>,
-) -> Result<String, NumberFormatError> {
-    if let Some(special) = format_non_finite(value) {
-        return Ok(special);
-    }
-    if fraction_digits.is_some_and(|digits| !(0..=MAX_DIGITS).contains(&digits)) {
-        return Err(NumberFormatError::InvalidDigits);
-    }
-
-    let negative = value.is_sign_negative() && value != 0.0;
-    let sequence = match fraction_digits {
-        Some(digits) => fixed_significant(value.abs(), digits + 1),
-        None if value == 0.0 => DigitSequence {
-            mantissa: BigUint::zero(),
-            digits: 1,
-            exponent: 1,
-        },
-        None => shortest_sequence(value.abs(), 10),
-    };
-    Ok(apply_sign(format_exponential(&sequence, 10), negative))
-}
-
-/// Format `value` with an optional significant-digit count, matching
-/// `Number.prototype.toPrecision` and its automatic exponent threshold.
-pub fn to_precision(value: f64, precision: Option<i32>) -> Result<String, NumberFormatError> {
-    let Some(precision) = precision else {
-        return Ok(format_free(value, 10, true));
-    };
-    if let Some(special) = format_non_finite(value) {
-        return Ok(special);
-    }
-    if !(1..=MAX_DIGITS).contains(&precision) {
-        return Err(NumberFormatError::InvalidDigits);
-    }
-
-    let negative = value.is_sign_negative() && value != 0.0;
-    let sequence = fixed_significant(value.abs(), precision);
-    let body = if sequence.exponent <= -6 || sequence.exponent > precision {
-        format_exponential(&sequence, 10)
-    } else {
-        format_positional(&sequence, 10)
-    };
-    Ok(apply_sign(body, negative))
 }
 
 fn format_free(value: f64, radix: u32, auto_exponent: bool) -> String {
@@ -223,31 +130,6 @@ fn shortest_sequence(value: f64, radix: u32) -> DigitSequence {
     }
 
     best.expect("the QuickJS maximum digit table guarantees a roundtrip")
-}
-
-fn fixed_significant(value: f64, digits: i32) -> DigitSequence {
-    debug_assert!(value.is_finite() && value >= 0.0 && digits >= 1);
-    if value == 0.0 {
-        return DigitSequence {
-            mantissa: BigUint::zero(),
-            digits,
-            exponent: 1,
-        };
-    }
-
-    let magnitude = BinaryMagnitude::from_f64(value);
-    let mut exponent = radix_exponent(&magnitude, 10, value);
-    loop {
-        let mantissa = round_scaled(&magnitude, 10, digits - exponent, RoundingMode::NearestAway);
-        if mantissa < radix_power(10, digits) {
-            return DigitSequence {
-                mantissa,
-                digits,
-                exponent,
-            };
-        }
-        exponent += 1;
-    }
 }
 
 fn format_positional(sequence: &DigitSequence, radix: u32) -> String {
@@ -552,71 +434,6 @@ mod tests {
             minimum_binary[2..minimum_binary.len() - 1]
                 .bytes()
                 .all(|byte| byte == b'0')
-        );
-    }
-
-    #[test]
-    fn fixed_uses_quickjs_ties_away_and_large_value_fallback() {
-        for (value, digits, expected) in [
-            (0.0, 0, "0"),
-            (-0.0, 2, "0.00"),
-            (-0.1, 0, "-0"),
-            (1.005, 2, "1.00"),
-            (2.55, 1, "2.5"),
-            (1.25, 1, "1.3"),
-            (-1.25, 1, "-1.3"),
-            (999_999_999_999_999_900_000.0, 2, "999999999999999868928.00"),
-            (1e21, 2, "1e+21"),
-        ] {
-            assert_eq!(to_fixed(value, digits).unwrap(), expected);
-        }
-        assert_eq!(to_fixed(1.0, -1), Err(NumberFormatError::InvalidDigits));
-        assert_eq!(
-            to_fixed(f64::INFINITY, 101),
-            Err(NumberFormatError::InvalidDigits)
-        );
-    }
-
-    #[test]
-    fn exponential_preserves_non_finite_validation_order() {
-        for (value, digits, expected) in [
-            (0.0, None, "0e+0"),
-            (-0.0, None, "0e+0"),
-            (1.0, None, "1e+0"),
-            (1.25, Some(1), "1.3e+0"),
-            (1234.0, Some(2), "1.23e+3"),
-            (1e21, None, "1e+21"),
-            (1e-7, None, "1e-7"),
-        ] {
-            assert_eq!(to_exponential(value, digits).unwrap(), expected);
-        }
-        assert_eq!(
-            to_exponential(f64::INFINITY, Some(101)).unwrap(),
-            "Infinity"
-        );
-        assert_eq!(
-            to_exponential(1.0, Some(101)),
-            Err(NumberFormatError::InvalidDigits)
-        );
-    }
-
-    #[test]
-    fn precision_uses_significant_digits_and_auto_exponents() {
-        for (value, precision, expected) in [
-            (0.0, None, "0"),
-            (0.0, Some(1), "0"),
-            (-0.0, Some(3), "0.00"),
-            (1.25, Some(2), "1.3"),
-            (1234.0, Some(2), "1.2e+3"),
-            (0.0001234, Some(2), "0.00012"),
-            (1e21, Some(4), "1.000e+21"),
-        ] {
-            assert_eq!(to_precision(value, precision).unwrap(), expected);
-        }
-        assert_eq!(to_precision(f64::INFINITY, Some(101)).unwrap(), "Infinity");
-        assert_eq!(
-            to_precision(1.0, Some(0)),
-            Err(NumberFormatError::InvalidDigits)
         );
     }
 

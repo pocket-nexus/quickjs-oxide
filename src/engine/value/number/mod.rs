@@ -2,4 +2,4 @@
 
 mod format;
 
-pub use format::{to_exponential, to_fixed, to_precision, to_string_radix};
+pub use format::to_string_radix;
