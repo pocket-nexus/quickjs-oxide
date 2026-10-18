@@ -280,7 +280,7 @@ fn eval_string(context: &mut Context, source: &str) -> String {
 }
 
 #[test]
-#[ignore = "open defect (new-core phase 6 M3 results): the register lowering \
+#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
             declines a function whose operand stack passes the 256-register \
             window, so nesting past about 250 levels fails to compile"]
 fn depth_boundaries_throw_a_catchable_syntax_error() {
@@ -310,7 +310,7 @@ fn depth_boundaries_throw_a_catchable_syntax_error() {
 }
 
 #[test]
-#[ignore = "open defect (new-core phase 6 M3 results): the register lowering \
+#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
             declines a function whose operand stack passes the 256-register \
             window, so nesting past about 250 levels fails to compile"]
 fn right_recursive_forms_throw_at_their_reference_depths() {
@@ -353,7 +353,7 @@ fn right_recursive_forms_throw_at_their_reference_depths() {
 }
 
 #[test]
-#[ignore = "open defect (new-core phase 6 M3 results): the register lowering \
+#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
             declines a function whose operand stack passes the 256-register \
             window, so nesting past about 250 levels fails to compile"]
 fn direct_sources_share_the_eval_boundaries() {
@@ -425,7 +425,7 @@ fn deep_nesting_never_aborts_far_beyond_the_logical_boundary() {
 const ORACLE_TOLERANCE_PERCENT: usize = 10;
 
 #[test]
-#[ignore = "open defect (new-core phase 6 M3 results): the register lowering \
+#[ignore = "implementation limit (new-core phase 6 M3 results): the register lowering \
             declines a function whose operand stack passes the 256-register \
             window, so nesting past about 250 levels fails to compile"]
 fn pinned_oracle_agrees_outside_the_tolerance_band() {

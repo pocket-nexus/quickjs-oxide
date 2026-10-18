@@ -227,6 +227,37 @@ Each cites the reconciliation of phase 4 M9 (31 variants of `D` pass on the new 
 
 `docs/compatibility.md` states the target as "QuickJS 2026-06-04's observable behavior except the five ledger entries", keeps the oracle and the Test262 definitions, and its metrics block regenerates (3.3). The `quickjs-fixture-gates.tsv` rows attributed to a dropped feature carry the entry's identifier, and `check-oracle-registry.py` verifies every attribution names an existing entry.
 
+### 5.1 The source of truth (amended after M3)
+
+**ECMA-262 and Test262 are the source of truth; QuickJS 2026-06-04 is the
+reference only where the specification leaves the behavior to the
+implementation or the host** (error message text, `stack`, the printer,
+property creation order of the intrinsics, sort comparison order, for-in
+order within its constraints, NaN bit patterns, resource limits). This
+supersedes "QuickJS 2026-06-04's observable behavior" above and M3's
+acceptance where they differ. The oracle corpus stays a tool for finding
+defects, not the definition of correct.
+
+M3 matched QuickJS everywhere, including where QuickJS departs from the
+specification; the results page lists those behaviors (the spec alignment
+backlog). M4b returns each to the specification, after M4's deletion so the
+deletion's instruction gate measures the deletion alone:
+
+- each departure is fixed in the core and its oracle case or fixture gains
+  an attribution of a new kind, `QUICKJS-SPEC-NNN`, naming the
+  specification clause and, where one exists, the Test262 variant; such a
+  case must still differ from QuickJS;
+- the backlog's unverified items are checked against the specification
+  clause by clause: kept where the specification leaves them open, fixed
+  where it decides them;
+- the full Test262 receipt is re-frozen once, at the end of M4b.
+
+**Acceptance (M4b).** No backlog item remains open; no variant that passed
+on M2 fails for a QuickJS-matching reason; the receipts replay.
+
+**Delivery (amended after M3).** M4, M4b, M5 and M6 land in M3's pull
+request (#152) instead of one pull request each.
+
 ## 6. The documentation
 
 Every page that describes the old core is rewritten or retired in M5; the phase plans and results pages stay as the record of how the core was built.
@@ -259,6 +290,7 @@ Every page that describes the old core is rewritten or retired in M5; the phase 
 | M2 | the web playground, the adapters and the Test262 runner switched (3.2, 3.3); the ledger entries landed; `current.conf` migrated | the acceptances of 3.2 and 3.3; the ledger's new entries pass `check-oracle-registry.py` | 5–8 days |
 | M3 | `qjs` on the new API, `oxide-run` folded in, the oracle and fixture corpora attributed, the benchmark tools switched (3.1, 3.4) | the acceptances of 3.1 and 3.4 | 6–9 days |
 | M4 | the deletion (section 4); the layout gate rewritten | section 4's acceptance | 4–6 days |
+| M4b | the spec alignment (section 5.1): every behavior M3 copied from QuickJS where it departs from ECMA-262 returns to the specification; the receipts re-frozen | section 5.1's acceptance | 3–5 days |
 | M5 | the documentation (section 6) | section 6's acceptance | 5–7 days |
 | M6 | the record: Tables A, B and E replayed on `qjs`, the counts, binary size and build time; the results page; release 0.3.0 | section 8 | 3–4 days |
 

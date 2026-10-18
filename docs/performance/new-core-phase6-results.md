@@ -403,20 +403,57 @@ give and a tracing collector gives at its next collection.
 | `test-parity-slice.sh` | passes after the receipt below |
 | `cargo test --workspace --all-targets`, `oxide-core --features gc-stress`, clippy, fmt | pass |
 
-**Open defect.** The register lowering declines a function whose operand
-stack passes the 256-register window: a call or template literal with more
-than about 250 operands, or nesting past about 250 levels, fails to compile
-(`unsupported: functions with more than 256 registers`). Test262 does not
-reach it (phase 4's census lowers every function), but QuickJS accepts such
-programs. The template stack-limit oracle test and four parser-depth tests
-are ignored with this reason. Fixing it means spilling operand temporaries
-past the window in the lowering and turning a call that does not fit into an
-array and `CallSpread`.
+**Implementation limit.** The register lowering declines a function whose
+operand stack passes the 256-register window: a call or template literal
+with more than about 250 operands, or nesting past about 250 levels, fails
+to compile (`unsupported: functions with more than 256 registers`). The
+specification sets no such limit and Test262 does not reach it (phase 4's
+census lowers every function), but other engines accept tens of thousands
+of arguments and thousands of nesting levels. The template stack-limit
+oracle test and four parser-depth tests are ignored with this reason. The
+fix spills operand temporaries past the window in the lowering and turns a
+call that does not fit into an array and `CallSpread`; it does not block
+M4.
 
-**Open difference.** QuickJS keeps an ordinary object's index keys in its
-shape, in insertion order; the new core keeps them in the element range, so
 `print({b: 1, 0: 2})` shows `{ 0: 2, b: 1 }` where QuickJS shows
-`{ b: 1, 0: 2 }`. No case in the corpus meets it.
+`{ b: 1, 0: 2 }`; the printer is the host's, not the specification's, so
+this is no defect.
+
+### The spec alignment backlog
+
+M3's acceptance asked for QuickJS's behavior, so M3 copied QuickJS also
+where it departs from ECMA-262. After M3 the plan takes the specification
+and Test262 as the source of truth (section 5.1); M4b returns these to the
+specification.
+
+Departures from the specification, confirmed:
+
+| Behavior | ECMA-262 | M3 (as QuickJS) | Test262 |
+| --- | --- | --- | --- |
+| `--x` on a BigInt outside `int64` | x − 1 (BigInt::subtract) | adds 2³² − 1 (QuickJS computes the decrement unsigned) | — |
+| a bound function's `[[Prototype]]` | `target.[[GetPrototypeOf]]()` (BoundFunctionCreate) | `%Function.prototype%` | `staging/sm/class/boundFunctionSubclassing` ×2 |
+| a bound function's `toString` | a NativeFunction | `function bound name() {…}` | `staging/sm/Function/function-bind` |
+| `Object.defineProperties` | every descriptor read, then each defined (ObjectDefineProperties) | each defined as read | `staging/sm/object/defineProperties-order` ×2 |
+| a proxy's `getOwnPropertyDescriptor` | `TypeError` when a non-configurable, non-writable property reports another value | not checked | `staging/sm/regress/regress-1383630` ×2 |
+| `Promise.allSettled`'s element functions | one `alreadyCalled` per pair | one per function | — |
+| `#x in o` for a setter-only private accessor | the brand check | an own property named `"[unsupported type]"` | — |
+| the Promise combinators' values | an internal List, an array made at the end | defined into the array, silently failing when user code froze it | — |
+
+To check clause by clause (kept where the specification leaves them open):
+the check orders M3 changed (Atomics, `Object.groupBy`/`Map.groupBy`,
+`%TypedArray%.from`, `%TypedArray%.prototype.toSorted`, `Reflect.construct`);
+the four error kinds M3 changed (string length, `transfer` past
+`maxByteLength`, DataView and Atomics out of bounds after a resize);
+`ArrayBuffer` lengths through `ToInt64`; the evaluation orders of
+`Object.assign`, rest and spread, descriptor conversion and
+`Object.fromEntries`; the `INT32_MAX` limits of the change-by-copy methods;
+the Atomics rechecks after `ToIndex`; the iterator helpers' and
+`Iterator.concat`'s state machines; the RegExp and String protocol changes;
+the for-in and spread rewrites; the async generator driver.
+
+Not departures (implementation- or host-defined, kept): error messages and
+`stack`, the printer, the intrinsics' property order, sort comparison
+order, for-in order, NaN bits, the argument and nesting limits.
 
 ### Tables A and B replayed
 
@@ -517,7 +554,8 @@ limits; `sort_cmp` (+7%) runs QuickJS's `js_array_sort` comparison order. `map_g
 
 Eleven variants pass on M2 and fail on M3, and none moves the other way:
 
-- Seven follow the pinned QuickJS, which fails them too: a bound function
+- Seven follow the pinned QuickJS, which fails them too, and depart from
+  the specification (the spec alignment backlog above): a bound function
   inherits `%Function.prototype%` and prints `function bound name()`
   (`staging/sm/Function/function-bind`, `staging/sm/class/boundFunctionSubclassing`
   ×2), `Object.defineProperties` defines each property as it reads it
