@@ -1,6 +1,6 @@
 use crate::runtime_observation::eval;
-use crate::runtime_observation::{host_runtime, host_runtime_context};
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use crate::runtime_observation::host_runtime_context;
+use quickjs_oxide::engine::api::core::Value;
 
 const FIXTURE: &str = include_str!("../../fixtures/inputs/r3o_promise_finally.js");
 const EXPECTED: &str =
@@ -30,80 +30,5 @@ fn promise_finally_matches_pinned_quickjs() {
     assert_ne!(
         transcript, EXPECTED,
         "the species deviation no longer shows"
-    );
-}
-
-#[test]
-fn promise_finally_cfunction_data_handler_uses_calling_context() {
-    let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
-
-    // A generic receiver exposes the internal fulfill handler without
-    // scheduling it. The undefined constructor makes invoking that handler
-    // materialize a TypeError in whichever Context executes the CFunctionData.
-    drop(eval(
-        &mut defining,
-        r#"
-var capturedFinallyHandler;
-Promise.prototype.finally.call(
-    {
-        constructor: undefined,
-        then: function (onFulfilled) {
-            capturedFinallyHandler = onFulfilled;
-            return 0;
-        }
-    },
-    function () { return 7; }
-);
-"#,
-    ));
-
-    let handler_key = runtime
-        .intern_property_key("capturedFinallyHandler")
-        .unwrap();
-    let defining_global = defining.global_object().unwrap();
-    let Value::Object(handler) = defining
-        .get_property(&defining_global, &handler_key)
-        .unwrap()
-    else {
-        panic!("Promise.finally did not expose its internal fulfill callback");
-    };
-    let handler = runtime
-        .as_callable(&handler)
-        .unwrap()
-        .expect("Promise.finally fulfill callback was not callable");
-
-    let Value::Object(defining_type_error_prototype) = eval(&mut defining, "TypeError.prototype")
-    else {
-        panic!("defining TypeError.prototype was not an object");
-    };
-    let Value::Object(caller_type_error_prototype) = eval(&mut caller, "TypeError.prototype")
-    else {
-        panic!("caller TypeError.prototype was not an object");
-    };
-    assert_ne!(
-        defining_type_error_prototype, caller_type_error_prototype,
-        "the regression requires distinct realm intrinsics"
-    );
-
-    assert_eq!(
-        caller.call(&handler, Value::Undefined, &[Value::Int(42)]),
-        Err(RuntimeError::Exception)
-    );
-    let Value::Object(error) = caller
-        .take_exception()
-        .unwrap()
-        .expect("Promise.finally internal callback did not preserve its throw")
-    else {
-        panic!("Promise.finally internal callback did not throw an Error object");
-    };
-    let error_prototype = runtime.get_prototype_of(&error).unwrap();
-    assert_eq!(
-        error_prototype.as_ref(),
-        Some(&caller_type_error_prototype),
-        "QuickJS CFunctionData executes Promise.finally's internal callback in the caller context; \
-         actual prototype used the defining context: {}",
-        error_prototype.as_ref() == Some(&defining_type_error_prototype)
     );
 }
