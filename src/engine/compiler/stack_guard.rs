@@ -239,15 +239,34 @@ fn stack_floor(entry: usize) -> usize {
     entry.saturating_sub(PARSER_THREAD_FALLBACK)
 }
 
-/// Host stack below the caller down to this thread's floor (declared, or
-/// read from the stack mapping, else the conservative fallback).
-pub(crate) fn available_stack() -> usize {
+/// Guard pages a thread's stack mapping may include below its usable part.
+const STACK_GUARD_ALLOWANCE: usize = 64 * 1024;
+
+/// Host stack below the caller down to this thread's floor, and whether the
+/// host declared the thread's size. An undeclared thread's floor is its
+/// stack mapping's low edge above a guard allowance (a main thread's from
+/// RLIMIT_STACK), else the conservative fallback.
+pub(crate) fn available_stack() -> (usize, bool) {
     let entry = current_stack_address();
-    let floor = DECLARED_STACK_FLOOR
+    if let Some(floor) = DECLARED_STACK_FLOOR
         .with(Cell::get)
         .filter(|floor| *floor < entry)
-        .unwrap_or_else(|| stack_floor(entry));
-    entry.saturating_sub(floor)
+    {
+        return (entry - floor, true);
+    }
+    #[cfg(target_os = "linux")]
+    let floor = {
+        let metadata = linux_stack_metadata(entry);
+        match metadata.region {
+            Some(region) if !region.growable_main => {
+                region.low.saturating_add(STACK_GUARD_ALLOWANCE)
+            }
+            _ => metadata_floor(entry, metadata),
+        }
+    };
+    #[cfg(not(target_os = "linux"))]
+    let floor = stack_floor(entry);
+    (entry.saturating_sub(floor), false)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

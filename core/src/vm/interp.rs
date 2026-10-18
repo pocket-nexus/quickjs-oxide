@@ -600,6 +600,7 @@ pub(super) fn call_from_rust(
 ) -> Result<Value, Throw> {
     match callee(cx.heap, function) {
         Callee::Bytecode(object, bytecode) => {
+            cx.heap.vm.frameless_native = false;
             let store: &CodeStore = cx.code;
             let unit_id = cx.heap.bytecode_unit(bytecode);
             let unit = store.get(unit_id);
@@ -632,7 +633,10 @@ pub(super) fn call_from_rust(
                 new_target: Value::UNDEFINED,
             },
         ),
-        Callee::NotCallable => call_exotic_from_rust(cx, function, base, argc),
+        Callee::NotCallable => {
+            cx.heap.vm.frameless_native = false;
+            call_exotic_from_rust(cx, function, base, argc)
+        }
     }
 }
 
@@ -640,6 +644,9 @@ pub(super) fn call_from_rust(
 /// gives every C function call a stack frame).
 #[inline(never)]
 fn native_from_rust(cx: &mut Cx<'_>, native: Native, site: CallSite) -> Result<Value, Throw> {
+    if std::mem::take(&mut cx.heap.vm.frameless_native) {
+        return native::call(cx, native, site);
+    }
     cx.heap.vm.natives.push(super::NativeSite {
         depth: cx.heap.vm.frames.len() as u32,
         pc: super::NO_PC,

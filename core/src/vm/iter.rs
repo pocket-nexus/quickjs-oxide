@@ -152,7 +152,7 @@ pub(crate) fn step(cx: &mut Cx<'_>, iter: &mut Iter) -> Result<Option<Value>, Th
             Ok(Some(value))
         }
         Iter::Protocol { iterator, next } => {
-            let result = super::call(cx, *next, *iterator, &[])?;
+            let result = super::call_next(cx, *next, *iterator)?;
             let Some(result) = result.as_object() else {
                 return Err(error::type_error(cx, "iterator must return an object"));
             };

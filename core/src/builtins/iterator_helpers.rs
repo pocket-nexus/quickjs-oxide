@@ -859,7 +859,7 @@ fn concat_step(cx: &mut Cx<'_>, concat: ObjectId) -> Result<Option<Value>, Throw
             next = crate::vm::property::get(cx, iterator, Names::key(cx.realm.names.next))?;
             set_slot(cx, concat, CONCAT_INNER + 1, next);
         }
-        let result = crate::vm::call(cx, next, iterator, &[])?;
+        let result = crate::vm::call_next(cx, next, iterator)?;
         let Some(result) = result.as_object() else {
             return Err(error::type_error(cx, "iterator must return an object"));
         };

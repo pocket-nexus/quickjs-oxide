@@ -490,13 +490,18 @@ impl Runtime {
             // entry needs to unwind an error: QuickJS's one-MiB budget, which
             // its frames reach at the depths its nesting tests pin, takes
             // larger debug frames here.
-            let available = crate::engine::compiler::stack_guard::available_stack();
+            // An undeclared thread keeps the default as a ceiling.
+            let (available, declared) = crate::engine::compiler::stack_guard::available_stack();
             let budget = available
                 .saturating_sub(available / 8)
-                .saturating_sub(NATIVE_RESERVE);
-            inner.core.set_native_stack_budget(
-                budget.max(oxide_core::vm::NATIVE_STACK_BUDGET.min(available / 2)),
-            );
+                .saturating_sub(NATIVE_RESERVE)
+                .max(available / 2);
+            let budget = if declared {
+                budget
+            } else {
+                budget.min(oxide_core::vm::NATIVE_STACK_BUDGET)
+            };
+            inner.core.set_native_stack_budget(budget);
         }
         CURRENT.with(|current| current.borrow_mut().push(Rc::clone(&self.shared)));
         Ok(Entry {

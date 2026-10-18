@@ -139,6 +139,9 @@ pub struct VmStack {
     /// backtrace's `at name (native)` lines and the positions of the frames
     /// that called them.
     pub(crate) natives: Vec<NativeSite>,
+    /// The next native called from Rust is listed in no backtrace: an
+    /// iterator's `next` stepped by [`call_next`].
+    pub(crate) frameless_native: bool,
     /// The last error whose backtrace has frames it could not place (the
     /// innermost frame when the loop itself threw; a frame that called into
     /// Rust, which re-entered the loop): per frame, its depth and its line
@@ -167,6 +170,7 @@ impl Default for VmStack {
             native_budget: NATIVE_STACK_BUDGET,
             native_depth: u32::MAX,
             natives: Vec::new(),
+            frameless_native: false,
             unpositioned: None,
             active: Vec::new(),
             proxy_refused: false,
@@ -370,6 +374,16 @@ pub(crate) fn call(
     cx.heap.vm.top = end as u32;
     let result = interp::call_from_rust(cx, function, base, args.len());
     cx.heap.vm.top = saved_top;
+    result
+}
+
+/// [`call`] of an iterator's `next` with no arguments, as QuickJS's
+/// `JS_IteratorNext2` makes it: a native `next` runs without a stack frame
+/// of its own (QuickJS calls its `iterator_next` C functions directly).
+pub(crate) fn call_next(cx: &mut Cx<'_>, next: Value, iterator: Value) -> Result<Value, Throw> {
+    cx.heap.vm.frameless_native = true;
+    let result = call(cx, next, iterator, &[]);
+    cx.heap.vm.frameless_native = false;
     result
 }
 
