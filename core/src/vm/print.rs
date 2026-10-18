@@ -630,6 +630,12 @@ impl Printer<'_, '_> {
                 for index in 0..shown {
                     self.comma(&mut state);
                     match super::typed::get_element(self.cx, object, index as f64) {
+                        // QuickJS prints a 64-bit element as a C integer,
+                        // without the `n`.
+                        Ok(Some(value)) if value.kind() == Kind::BigInt => {
+                            let text = super::ops::big(self.cx.heap, value).to_string_radix10();
+                            self.out.push_str(&text);
+                        }
                         Ok(Some(value)) => self.value(value),
                         _ => self.out.push_str("undefined"),
                     }
@@ -840,6 +846,16 @@ impl Printer<'_, '_> {
             }
         }
         self.out.push('/');
-        self.out.push_str(&String::from_utf16_lossy(&flags));
+        // QuickJS prints `lre_get_flags` bits 0 to 7 as `gimsuydv`: bit 7 is
+        // in fact `LRE_FLAG_NAMED_GROUPS`, so a pattern with named groups
+        // shows `v` and the `v` flag (bit 8) never shows.
+        for flag in "gimsuyd".chars() {
+            if flags.contains(&(flag as u16)) {
+                self.out.push(flag);
+            }
+        }
+        if self.cx.regexps.program(index).has_named_captures() {
+            self.out.push('v');
+        }
     }
 }
