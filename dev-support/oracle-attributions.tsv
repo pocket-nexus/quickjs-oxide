@@ -228,3 +228,28 @@ program_declarations/lexicals / partial initialization preserves initialized and
 function_declarations/block_functions / Annex global var precedes a later global lexical	QUICKJS-SPEC-025
 control_flow/annex_b_statements / first Annex descriptor controls direct reads before and after lexical initialization	QUICKJS-SPEC-025
 control_flow/annex_b_statements / first Annex descriptor relays through nested reads before and after lexical initialization	QUICKJS-SPEC-025
+math/values / sumPrecise preserves the pinned 129-term wrapping quirk	QUICKJS-SPEC-027
+primitive_intrinsics/bigint	QUICKJS-SPEC-028
+string/conversion_core_probe	QUICKJS-SPEC-029
+string/exotic_probe	QUICKJS-SPEC-029
+string/utf16_prefix_probe	QUICKJS-SPEC-029
+regexp/intrinsic / RegExp constructor conversion and derived prototype observation order	QUICKJS-SPEC-031
+regexp/intrinsic / RegExp test uses custom exec and treats only null as failure	QUICKJS-SPEC-031
+regexp/intrinsic / RegExp test rejects primitive custom exec results noncallable exec and nullish receivers	QUICKJS-SPEC-031
+regexp/intrinsic / RegExp test gets custom exec before that method observes input and preserves abrupt completion	QUICKJS-SPEC-031
+string/create_html / anchor rejects a missing attribute	QUICKJS-SPEC-030
+string/create_html / link rejects an explicit undefined attribute	QUICKJS-SPEC-030
+string/create_html / fontcolor rejects a null attribute	QUICKJS-SPEC-030
+string/match / String match uses the retained intrinsic constructor and dynamic new protocol	QUICKJS-SPEC-030
+string/match / String match null and undefined hooks fall back after the receiver conversion	QUICKJS-SPEC-030
+string/match_all / String matchAll gets the hook then checks regexp identity flags and delegates raw this	QUICKJS-SPEC-030
+string/match_all / Symbol.match false bypasses the g check while true enforces it before hook call	QUICKJS-SPEC-030
+string/match_all / nullish this is rejected before pattern hooks and noncallable hooks after the g check	QUICKJS-SPEC-030
+string/match_all / missing null and throwing flags fail before delegation or receiver conversion	QUICKJS-SPEC-030
+string/match_all / String matchAll fallback converts this then uses retained RegExp and dynamic protocol	QUICKJS-SPEC-030
+string/match_all / null RegExp hook falls back through a fresh global clone starting at zero	QUICKJS-SPEC-030
+string/match_all / non-global RegExp rejection precedes hook call and receiver conversion	QUICKJS-SPEC-030
+string/match_all / Symbol.matchAll and Symbol.match getter errors preserve exact short-circuit order	QUICKJS-SPEC-030
+string/repeat / Int64 saturation and result length failures remain distinct	QUICKJS-SPEC-030
+string/repeat / count above Int32 max has exact RangeError	QUICKJS-SPEC-030
+string/search / String search uses the intrinsic constructor and pinned fallback conversion order	QUICKJS-SPEC-030

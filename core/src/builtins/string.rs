@@ -40,10 +40,11 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
         ],
     )?;
     let names = cx.realm.names;
+    // A String exotic object's `length` (10.4.3.4 StringCreate).
     cx.heap.add_property(
         prototype,
         Names::key(names.length),
-        PropertyFlags::data(false, false, true),
+        PropertyFlags::data(false, false, false),
         Value::int32(0),
     )?;
     methods(
@@ -507,8 +508,9 @@ pub(super) fn repeat(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let string = this_string(cx, &site)?;
     let count = site.arg(cx, 0);
     let count = integer(cx, count)?;
-    // QuickJS's `JS_ToInt64Sat`, then an Int32 count.
-    if !(0.0..=2_147_483_647.0).contains(&count) {
+    // 22.1.3.18: a negative or infinite count; a long result is the string
+    // length limit.
+    if count < 0.0 || count == f64::INFINITY {
         return Err(error::range_error(cx, "invalid repeat count"));
     }
     let text = units(cx, string);
@@ -1036,7 +1038,7 @@ pub(super) fn value_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
 
 // ---- Annex B HTML methods ----
 
-/// `CreateHTML(string, tag, attribute, value)`.
+/// `CreateHTML(string, tag, attribute, value)` (B.2.2.2.1).
 fn html(
     cx: &mut Cx<'_>,
     site: CallSite,
@@ -1046,11 +1048,8 @@ fn html(
     let string = this_string(cx, &site)?;
     let mut out: Vec<u16> = format!("<{tag}").encode_utf16().collect();
     if let Some(attribute) = attribute {
-        // QuickJS's `JS_ToStringCheckObject`.
+        // B.2.2.2.1 step 4: `ToString(value)` (undefined and null too).
         let value = site.arg(cx, 0);
-        if value.is_undefined() || value.is_null() {
-            return Err(error::type_error(cx, "null or undefined are forbidden"));
-        }
         let value = to_string_id(cx, value)?;
         out.extend(format!(" {attribute}=\"").encode_utf16());
         for unit in cx.heap.string(value).repr().units() {

@@ -335,6 +335,7 @@ natives! {
     BigIntConstructor => bigint::constructor, "BigInt", 1, constructor;
     BigIntAsIntN => bigint::as_int_n, "asIntN", 2;
     BigIntAsUintN => bigint::as_uint_n, "asUintN", 2;
+    BigIntToLocaleString => bigint::to_locale_string, "toLocaleString", 0;
     BigIntToString => bigint::to_string, "toString", 0;
     BigIntValueOf => bigint::value_of, "valueOf", 0;
 

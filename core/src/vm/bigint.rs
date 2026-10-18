@@ -562,15 +562,14 @@ pub(crate) mod qjs {
     /// `BigInt.asUintN` and `BigInt.asIntN` as `js_bigint_asUintN` computes
     /// them: a value whose limbs hold `bits` is returned unchanged, and the
     /// truncated limbs are read back as two's complement.
+    /// `BigInt.asIntN` / `asUintN` (21.2.2.1–2): `a` modulo 2^bits, as a
+    /// signed or an unsigned value.
     pub fn as_n(a: &Big, bits: u64, signed: bool) -> Result<Big, BigError> {
         if bits == 0 {
             return Ok(Big::zero());
         }
         let limbs = a.qjs_limbs();
-        if limbs == 1 {
-            if bits >= 64 {
-                return Ok(a.clone());
-            }
+        if limbs == 1 && bits < 64 {
             let shift = 64 - bits as u32;
             let value = (short(a) as u64) << shift;
             let value = if signed {
@@ -578,15 +577,23 @@ pub(crate) mod qjs {
             } else {
                 value >> shift
             };
-            return Ok(Big::from_i64(value as i64));
+            return Ok(if signed {
+                Big::from_i64(value as i64)
+            } else {
+                Big::from_u64(value)
+            });
         }
-        if bits >= limbs as u64 * 64 {
+        // A value that already fits: any of at most `bits` bits in two's
+        // complement for a signed result, any non-negative one below 2^bits
+        // for an unsigned one.
+        if (signed && bits >= limbs as u64 * 64)
+            || (!signed && !a.negative && bits >= super::bit_length(&a.limbs))
+        {
             return Ok(a.clone());
         }
         let len = bits.div_ceil(64) as usize;
-        too_large(len)?;
-        let mut out = a.to_twos(limbs);
-        out.truncate(len);
+        too_large(len + 1)?;
+        let mut out = a.to_twos(len);
         let shift = (bits.wrapping_neg() & 63) as u32;
         let top = out[len - 1] << shift;
         out[len - 1] = if signed {
@@ -594,6 +601,9 @@ pub(crate) mod qjs {
         } else {
             top >> shift
         };
+        if !signed {
+            out.push(0);
+        }
         Ok(Big::from_twos(&out))
     }
 }

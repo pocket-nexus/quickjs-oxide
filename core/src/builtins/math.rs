@@ -332,16 +332,16 @@ pub(super) fn sum_precise(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     let mut record = iter::get_iterator(cx, items)?;
     let mut values = Vec::new();
     while let Some(value) = iter::step(cx, &mut record)? {
+        if values.len() as u64 + 1 >= (1u64 << 53) {
+            let error = error::range_error(cx, "too many values");
+            iter::close(cx, &record, Err(error))?;
+        }
         let Some(value) = value.as_f64() else {
             let error = error::type_error(cx, "not a number");
             iter::close(cx, &record, Err(error))?;
             unreachable!("close rethrows");
         };
         values.push(value);
-        if values.len() as u64 > (1u64 << 53) {
-            let error = error::range_error(cx, "too many values");
-            iter::close(cx, &record, Err(error))?;
-        }
     }
     let mut sum = SumPrecise::new();
     for value in values {
@@ -350,10 +350,11 @@ pub(super) fn sum_precise(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     Ok(number(sum.result()))
 }
 
-/// QuickJS's `SumPreciseState`: the sum in 56-bit limbs of a fixed-point
-/// accumulator, renormalized every 250 additions. Between renormalizations
-/// a limb may wrap as `int64_t` arithmetic does in practice (129 values just
-/// under 2^-10 wrap it), and the result keeps that wrap.
+/// The exact sum of `Math.sumPrecise` (ES2026): a fixed-point accumulator
+/// in 56-bit limbs (as QuickJS's `SumPreciseState`), renormalized before a
+/// limb can leave the `i64` range. Each addition adds less than 2^56 to a
+/// limb, so 127 additions after a renormalization stay below 2^63 (QuickJS
+/// waits 250, and its limbs wrap).
 struct SumPrecise {
     state: SumState,
     counter: u32,
@@ -373,7 +374,7 @@ const SP_LIMB_BITS: u32 = 56;
 const SP_RND_BITS: u32 = SP_LIMB_BITS - 53;
 const SP_LIMB_MASK: i64 = (1 << SP_LIMB_BITS) - 1;
 const SUM_ACC_LEN: usize = 39;
-const SUM_COUNTER_INIT: u32 = 250;
+const SUM_COUNTER_INIT: u32 = 127;
 
 impl SumPrecise {
     fn new() -> SumPrecise {

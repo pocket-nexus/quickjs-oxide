@@ -22,7 +22,11 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     methods(
         cx,
         prototype,
-        &[Native::BigIntToString, Native::BigIntValueOf],
+        &[
+            Native::BigIntToString,
+            Native::BigIntToLocaleString,
+            Native::BigIntValueOf,
+        ],
     )?;
     to_string_tag(cx, prototype, "BigInt")?;
     link_constructor(cx, bigint, prototype)
@@ -122,6 +126,13 @@ fn this_bigint(cx: &mut Cx<'_>, site: &CallSite) -> Result<Value, Throw> {
 
 pub(super) fn value_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     this_bigint(cx, &site)
+}
+
+/// `BigInt.prototype.toLocaleString` (21.2.3.2): without ECMA-402, the
+/// value's `toString`.
+pub(super) fn to_locale_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    let value = this_bigint(cx, &site)?;
+    ops::to_string(cx, value)
 }
 
 pub(super) fn to_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {

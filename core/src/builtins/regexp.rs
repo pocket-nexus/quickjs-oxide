@@ -169,17 +169,17 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     } else {
         (pattern, flags)
     };
-    // QuickJS converts the pattern before reading the prototype and the
-    // flags after it.
+    // RegExpAlloc (the prototype), then RegExpInitialize (the pattern,
+    // then the flags).
+    let prototype =
+        internal::prototype_from_constructor(cx, new_target, Intrinsic::RegExpPrototype)?;
+    root(cx, Value::object(prototype));
     let source = if source.is_undefined() {
         cx.realm.names.empty
     } else {
         atom(cx, source)?
     };
     root(cx, Value::string(source));
-    let prototype =
-        internal::prototype_from_constructor(cx, new_target, Intrinsic::RegExpPrototype)?;
-    root(cx, Value::object(prototype));
     let flags = if flags.is_undefined() {
         cx.realm.names.empty
     } else {
@@ -902,20 +902,24 @@ pub(super) fn exec(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 }
 
 pub(super) fn test(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    // QuickJS's `JS_RegExpExec(this, input)`: `exec` is read from any
-    // receiver and a custom one receives the unconverted input.
+    // 22.2.6.16: an object receiver, the input by ToString, then
+    // RegExpExec (its `exec`, or the built-in matcher).
     let this = site.this(cx);
+    if this.as_object().is_none() {
+        return Err(error::type_error(cx, "not an object"));
+    }
     let input = site.arg(cx, 0);
+    let string = to_string_id(cx, input)?;
+    root(cx, Value::string(string));
     if let Some(object) = regexp_object(cx, this)
         && intrinsic_exec(cx, object)?
     {
-        let string = to_string_id(cx, input)?;
         return Ok(Value::bool(builtin_match(cx, object, string)?.is_some()));
     }
     let exec = property::get(cx, this, Names::key(cx.realm.names.exec))?;
     if ops::is_callable(cx.heap, exec) {
         root(cx, exec);
-        let result = crate::vm::call(cx, exec, this, &[input])?;
+        let result = crate::vm::call(cx, exec, this, &[Value::string(string)])?;
         if result.as_object().is_none() && !result.is_null() {
             return Err(error::type_error(
                 cx,
@@ -927,7 +931,6 @@ pub(super) fn test(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let Some(object) = regexp_object(cx, this) else {
         return Err(error::object_expected(cx, "RegExp"));
     };
-    let string = to_string_id(cx, input)?;
     Ok(Value::bool(builtin_match(cx, object, string)?.is_some()))
 }
 
@@ -1643,12 +1646,12 @@ pub(crate) fn delegate(
     crate::vm::call(cx, method, argument, &call_args).map(Some)
 }
 
-/// `String.prototype.match`, `matchAll` (`global`) and `search`: QuickJS's
-/// `js_string_match`. An object argument's `Symbol` method is read (and
-/// for `matchAll` the `g` flag of a regular expression checked) and called
-/// unless nullish; otherwise the receiver is converted and a new `%RegExp%`
-/// constructed over the argument (with `"g"` for `matchAll`) has its
-/// method invoked.
+/// `String.prototype.match`, `matchAll` (`global`) and `search` (22.1.3.13,
+/// 22.1.3.14, 22.1.3.22): an object argument's `Symbol` method is read (for
+/// `matchAll` after the `g` flag of a regular expression is checked) and
+/// called unless undefined; otherwise the receiver is converted and
+/// RegExpCreate over the argument (with `"g"` for `matchAll`) has its method
+/// invoked.
 pub(crate) fn string_match(
     cx: &mut Cx<'_>,
     site: &CallSite,
@@ -1662,17 +1665,23 @@ pub(crate) fn string_match(
     let argument = site.arg(cx, 0);
     let key = WellKnown::key(symbol);
     if let Some(object) = argument.as_object() {
-        let method = internal::get_property(cx, object, key)?;
-        root(cx, method);
         if global {
             check_global_flag(cx, object)?;
         }
-        if !method.is_undefined() && !method.is_null() {
+        if let Some(method) = internal::get_method(cx, argument, key)? {
+            root(cx, method);
             return crate::vm::call(cx, method, argument, &[this]);
         }
     }
     let string = to_string_id(cx, this)?;
     root(cx, Value::string(string));
+    // RegExpCreate(argument, flags): the pattern by ToString, no IsRegExp.
+    let pattern = if argument.is_undefined() {
+        Value::string(cx.realm.names.empty)
+    } else {
+        Value::string(to_string_id(cx, argument)?)
+    };
+    root(cx, pattern);
     let constructor = Value::object(cx.realm.intrinsic(Intrinsic::RegExp));
     let regexp = if global {
         let flags = Value::string(
@@ -1680,16 +1689,16 @@ pub(crate) fn string_match(
                 .intern("g")
                 .map_err(|error| error::heap_error(cx, error))?,
         );
-        crate::vm::construct(cx, constructor, &[argument, flags], constructor)?
+        crate::vm::construct(cx, constructor, &[pattern, flags], constructor)?
     } else {
-        crate::vm::construct(cx, constructor, &[argument], constructor)?
+        crate::vm::construct(cx, constructor, &[pattern], constructor)?
     };
     root(cx, regexp);
     internal::invoke(cx, regexp, key, &[Value::string(string)])
 }
 
-/// QuickJS's `check_regexp_g_flag`: a regular expression (`IsRegExp`)
-/// must have a `flags` with `g`.
+/// A regular expression (`IsRegExp`) must have a `flags` with `g`
+/// (`replaceAll` and `matchAll`, step 2.b).
 pub(crate) fn check_global_flag(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
     if !is_regexp(cx, Value::object(object))? {
         return Ok(());
