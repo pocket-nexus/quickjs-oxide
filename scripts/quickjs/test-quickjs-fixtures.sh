@@ -108,7 +108,7 @@ tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/quickjs-oxide-fixture-gates.XXXXXX")
 trap 'rm -rf -- "$tmp_dir"' EXIT HUP INT TERM
 rows=$tmp_dir/rows.tsv
 
-expected_header=$'case_id\tfixture\texpected\tfixture_sha256\texpected_sha256\tmode\ttranscript\tcompletion\tprepared_sha256\tlabel'
+expected_header=$'case_id\tfixture\texpected\tfixture_sha256\texpected_sha256\tmode\ttranscript\tcompletion\tprepared_sha256\tlabel\tdeviation'
 header=$(sed -n '1p' "$registry")
 [[ "$header" == "$expected_header" ]] || die "unsupported fixture registry schema"
 [[ "$(tail -c 1 "$registry" | wc -l | tr -d '[:space:]')" == 1 ]] \
@@ -119,8 +119,8 @@ tail -n +2 "$registry" | while IFS= read -r line; do
     [[ "$line" != *$'\r'* && "$line" != *$'\t' ]] \
         || die "fixture registry contains non-canonical whitespace"
     field_count=$(awk -F '\t' '{ print NF }' <<<"$line")
-    [[ "$field_count" == 10 ]] || die "fixture registry row must have 10 columns"
-    IFS=$'\t' read -r id fixture expected fixture_sha expected_sha mode transcript completion prepared_sha label <<<"$line"
+    [[ "$field_count" == 11 ]] || die "fixture registry row must have 11 columns"
+    IFS=$'\t' read -r id fixture expected fixture_sha expected_sha mode transcript completion prepared_sha label deviation <<<"$line"
     [[ "$id" =~ ^r3[a-z0-9]+$ ]] || die "invalid fixture case id: $id"
     [[ "$fixture" =~ ^apps/cli/tests/fixtures/inputs/[a-z0-9_]+\.js$ ]] \
         || die "invalid fixture path for $id: $fixture"
@@ -136,6 +136,8 @@ tail -n +2 "$registry" | while IFS= read -r line; do
     [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || die "invalid expected hash for $id"
     [[ "$prepared_sha" =~ ^[0-9a-f]{64}$ ]] || die "invalid prepared hash for $id"
     [[ "$label" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "invalid label for $id"
+    [[ "$deviation" == - || "$deviation" =~ ^NEWCORE-[A-Z-]+-[0-9]{3}$ ]] \
+        || die "invalid deviation for $id: $deviation"
     case $mode in
         value)
             [[ "$transcript" == "${id}Transcript" && "$completion" == - ]] \
@@ -162,9 +164,9 @@ tail -n +2 "$registry" | while IFS= read -r line; do
         [[ "$last_line" == "$completion;" ]] \
             || die "promise fixture does not end with $completion;: $id"
     fi
-    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$id" "$fixture" "$expected" "$fixture_sha" "$expected_sha" \
-        "$mode" "$transcript" "$completion" "$prepared_sha" "$label"
+        "$mode" "$transcript" "$completion" "$prepared_sha" "$label" "$deviation"
 done >"$rows"
 
 [[ -s "$rows" ]] || die "fixture registry has no cases"
@@ -189,7 +191,7 @@ prepare_case() {
     local fixture_sha expected_sha
     IFS=$'\t' read -r fixture_case_id fixture_relative expected_relative \
         fixture_sha expected_sha fixture_mode fixture_transcript \
-        fixture_completion fixture_prepared_sha fixture_label <<<"$row"
+        fixture_completion fixture_prepared_sha fixture_label fixture_deviation <<<"$row"
     fixture_path=$root/$fixture_relative
     expected_path=$root/$expected_relative
     engine_fixture=$fixture_path
@@ -278,7 +280,18 @@ run_case() {
         "$quickjs_out" "$quickjs_err" "${quickjs_args[@]}"
     compare_transcript "pinned QuickJS 2026-06-04 ($fixture_case_id)" "$expected_path" "$quickjs_out"
 
-    if [[ -n "$oxide" ]]; then
+    if [[ -n "$oxide" && "$fixture_deviation" != - ]]; then
+        # Attributed to a dropped feature of the deviation ledger (new-core
+        # phase 6): quickjs-oxide must still differ.
+        oxide_out=$tmp_dir/$fixture_case_id.oxide.out
+        oxide_err=$tmp_dir/$fixture_case_id.oxide.err
+        if "$oxide" "${oxide_args[@]}" >"$oxide_out" 2>"$oxide_err" \
+            && [[ ! -s "$oxide_err" ]] && cmp -s -- "$quickjs_out" "$oxide_out"; then
+            echo "error: $fixture_case_id is attributed to $fixture_deviation but matches pinned QuickJS" >&2
+            exit 1
+        fi
+        echo "$fixture_case_id $fixture_label differs by $fixture_deviation"
+    elif [[ -n "$oxide" ]]; then
         oxide_out=$tmp_dir/$fixture_case_id.oxide.out
         oxide_err=$tmp_dir/$fixture_case_id.oxide.err
         run_engine "quickjs-oxide ($fixture_case_id)" "$oxide" \
@@ -305,7 +318,7 @@ while IFS= read -r row; do
 done <"$rows"
 
 if [[ -n "$oxide" ]]; then
-    echo "QuickJS fixture differential passed: $ran/$selected_count selected cases match."
+    echo "QuickJS fixture differential passed: $ran/$selected_count selected cases match or differ only by their attributed deviation."
 else
     echo "QuickJS fixture oracle passed: $ran/$selected_count selected cases are stable."
 fi

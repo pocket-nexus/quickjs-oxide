@@ -248,35 +248,34 @@ pub(super) fn escape(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     };
     let text = units(cx, string);
     let mut out = Vec::with_capacity(text.len() * 2);
-    let hex = |out: &mut Vec<u16>, unit: u16| {
-        let text = if unit <= 0xFF {
-            format!("\\x{unit:02x}")
-        } else {
-            format!("\\u{unit:04x}")
-        };
-        out.extend(text.encode_utf16());
-    };
-    for (index, &unit) in text.iter().enumerate() {
-        let alphanumeric = (unit as u8 as u16 == unit) && (unit as u8).is_ascii_alphanumeric();
-        if index == 0 && alphanumeric {
-            hex(&mut out, unit);
-            continue;
-        }
-        match unit {
-            0x5E | 0x24 | 0x5C | 0x2E | 0x2A | 0x2B | 0x3F | 0x28 | 0x29 | 0x5B | 0x5D | 0x7B
-            | 0x7D | 0x7C | 0x2F => {
+    let push_text = |out: &mut Vec<u16>, text: String| out.extend(text.encode_utf16());
+    // QuickJS's `js_regexp_escape`, by code point.
+    for (index, point) in char::decode_utf16(text.iter().copied()).enumerate() {
+        let point = point.map_or_else(|error| u32::from(error.unpaired_surrogate()), u32::from);
+        let first = index == 0;
+        match point {
+            9..=13 => {
                 out.push(u16::from(b'\\'));
-                out.push(unit);
+                out.push(u16::from(b"tnvfr"[point as usize - 9]));
             }
-            0x09 => out.extend("\\t".encode_utf16()),
-            0x0A => out.extend("\\n".encode_utf16()),
-            0x0B => out.extend("\\v".encode_utf16()),
-            0x0C => out.extend("\\f".encode_utf16()),
-            0x0D => out.extend("\\r".encode_utf16()),
-            0x2C | 0x2D | 0x3D | 0x3C | 0x3E | 0x23 | 0x26 | 0x21 | 0x25 | 0x3A | 0x3B | 0x40
-            | 0x7E | 0x27 | 0x60 | 0x22 => hex(&mut out, unit),
-            0x20
-            | 0xA0
+            0..=32 => push_text(&mut out, format!("\\x{point:02x}")),
+            33..=127 => {
+                let byte = point as u8;
+                if byte.is_ascii_alphanumeric() {
+                    if first {
+                        push_text(&mut out, format!("\\x{point:02x}"));
+                        continue;
+                    }
+                } else if b",-=<>#&!%:;@~'`\"".contains(&byte) {
+                    push_text(&mut out, format!("\\x{point:02x}"));
+                    continue;
+                } else if byte != b'_' {
+                    out.push(u16::from(b'\\'));
+                }
+                out.push(point as u16);
+            }
+            128..=255 => push_text(&mut out, format!("\\x{point:02x}")),
+            0xD800..=0xDFFF
             | 0x1680
             | 0x2000..=0x200A
             | 0x2028
@@ -284,21 +283,12 @@ pub(super) fn escape(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             | 0x202F
             | 0x205F
             | 0x3000
-            | 0xFEFF => hex(&mut out, unit),
-            0xD800..=0xDFFF => {
-                let paired = if unit < 0xDC00 {
-                    text.get(index + 1)
-                        .is_some_and(|&next| (0xDC00..0xE000).contains(&next))
-                } else {
-                    index > 0 && (0xD800..0xDC00).contains(&text[index - 1])
-                };
-                if paired {
-                    out.push(unit);
-                } else {
-                    hex(&mut out, unit);
-                }
+            | 0xFEFF => push_text(&mut out, format!("\\u{point:04x}")),
+            _ => {
+                let mut buffer = [0; 2];
+                let point = char::from_u32(point).expect("a scalar value");
+                out.extend_from_slice(point.encode_utf16(&mut buffer));
             }
-            _ => out.push(unit),
         }
     }
     string_units(cx, &out)

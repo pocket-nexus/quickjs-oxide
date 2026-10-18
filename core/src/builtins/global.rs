@@ -9,23 +9,23 @@ use crate::vm::{Cx, Output, Throw, ops, radix};
 
 /// qjs's `print`: the arguments' strings joined by a space, then a newline.
 pub(super) fn print(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
-    let mut line = String::new();
+    let mut line = Vec::new();
     for index in 0..site.argc {
         if index > 0 {
-            line.push(' ');
+            line.push(b' ');
         }
         let argument = site.arg(cx, index);
-        // QuickJS's `js_print`: a string as is, anything else through
-        // `JS_PrintValue`.
+        // QuickJS's `js_print`: a string as is (WTF-8), anything else
+        // through `JS_PrintValue`.
         match argument.as_string() {
-            Some(id) => line.push_str(&cx.heap.string_text(id)),
-            None => line.push_str(&crate::vm::print::print_value(cx, argument)),
+            Some(id) => crate::vm::print::wtf8(cx.heap.string(id).repr().units(), &mut line),
+            None => line.extend_from_slice(&crate::vm::print::print_value(cx, argument)),
         }
     }
-    line.push('\n');
+    line.push(b'\n');
     match &mut cx.host.output {
         Output::Stdout => cx.host.hooks.write(crate::host::Stream::Stdout, &line),
-        Output::Capture(text) => text.push_str(&line),
+        Output::Capture(text) => text.push_str(&String::from_utf8_lossy(&line)),
     }
     Ok(Value::UNDEFINED)
 }

@@ -184,6 +184,19 @@ pub(crate) fn mapped_cell(cx_heap: &crate::Heap, object: ObjectId, index: u32) -
     cell.as_object().map(|cell| ScopeId(cell.index()))
 }
 
+/// How many leading indices of an `arguments` object were mapped at its
+/// creation (0 for an unmapped one).
+pub(crate) fn mapped_count(cx_heap: &crate::Heap, object: ObjectId) -> u32 {
+    let header = cx_heap.header(object);
+    if header.kind != ObjectKind::Arguments || header.payload == NONE {
+        return 0;
+    }
+    cx_heap
+        .scope_get(ScopeId(header.payload), 0, 0)
+        .as_int32()
+        .map_or(0, |count| count as u32)
+}
+
 /// Ends the aliasing of a mapped index (`delete arguments[i]`): the cell
 /// stays with the parameter, the `arguments` object forgets it.
 pub(crate) fn unmap(cx_heap: &mut crate::Heap, object: ObjectId, index: u32) {

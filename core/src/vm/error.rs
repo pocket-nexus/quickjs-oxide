@@ -116,6 +116,19 @@ pub(crate) fn new_error_at(
     result
 }
 
+/// An error object of `kind` with neither message nor `stack`: QuickJS's
+/// internal `AggregateError` of `Promise.any`, made by
+/// `JS_NewObjectProtoClass` without a backtrace.
+pub(crate) fn new_bare_error(cx: &mut Cx<'_>, kind: ErrorKind) -> Result<Value, HeapError> {
+    let prototype = cx.realm.intrinsic(kind.prototype());
+    let object = cx
+        .heap
+        .alloc_object(crate::ObjectKind::Ordinary, Some(prototype), 1)?;
+    cx.heap
+        .set_object_flag(object, crate::heap::object::flags::ERROR);
+    Ok(Value::object(object))
+}
+
 /// Most frames a backtrace lists.
 const BACKTRACE_FRAMES: usize = 64;
 

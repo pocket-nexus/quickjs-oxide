@@ -523,9 +523,9 @@ fn report_unhandled_rejections(runtime: &Runtime) -> bool {
     let mut stderr = stderr.lock();
     for (_, reason) in &rejections {
         let _ = stderr.write_all(b"Possibly unhandled promise rejection: ");
-        match runtime.print_value(reason) {
+        match runtime.qjs_print_value_bytes(reason) {
             Ok(text) => {
-                let _ = stderr.write_all(text.as_bytes());
+                let _ = stderr.write_all(&text);
             }
             Err(_) => {
                 let _ = stderr.write_all(b"[unknown]");
@@ -615,9 +615,9 @@ fn report_pending_exception(runtime: &Runtime, context: &mut Context) {
 fn report_exception(runtime: &Runtime, exception: &Value) {
     let stderr = std::io::stderr();
     let mut stderr = stderr.lock();
-    match format_exception(runtime, exception) {
+    match runtime.qjs_print_value_bytes(exception).ok() {
         Some(text) => {
-            let _ = stderr.write_all(text.as_bytes());
+            let _ = stderr.write_all(&text);
             let _ = stderr.write_all(b"\n");
         }
         None => {
@@ -626,6 +626,7 @@ fn report_exception(runtime: &Runtime, exception: &Value) {
     }
 }
 
+#[cfg(test)]
 fn format_exception(runtime: &Runtime, exception: &Value) -> Option<String> {
     runtime.print_value(exception).ok()
 }

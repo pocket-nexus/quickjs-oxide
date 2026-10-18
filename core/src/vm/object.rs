@@ -922,11 +922,13 @@ pub(crate) fn ordinary_delete(
                     heap.delete_property(object, key)
                         .map_err(|error| heap_error(cx, error))?;
                 }
+                slow_arguments(cx, object)?;
                 return Ok(true);
             }
             if !heap.get_element(object, index).is_empty() {
                 heap.set_element(object, index, Value::EMPTY)
                     .map_err(|error| heap_error(cx, error))?;
+                slow_arguments(cx, object)?;
                 return Ok(true);
             }
         }
@@ -946,6 +948,20 @@ pub(crate) fn ordinary_delete(
             Ok(true)
         }
     }
+}
+
+/// An `arguments` object an index deletion leaves: QuickJS's
+/// `delete_property` converts its fast array to ordinary properties, which
+/// its printer then lists (the `SPARSE` flag records the conversion).
+fn slow_arguments(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
+    if cx.heap.object_kind(object) == ObjectKind::Arguments
+        && !cx.heap.header(object).has(flags::SPARSE)
+    {
+        cx.heap
+            .make_sparse(object)
+            .map_err(|error| heap_error(cx, error))?;
+    }
+    Ok(())
 }
 
 // ---- [[OwnPropertyKeys]] ----

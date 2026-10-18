@@ -123,7 +123,15 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     let prototype =
         internal::prototype_from_constructor(cx, site.new_target, Intrinsic::IteratorPrototype)?;
     cx.heap
-        .alloc_object(ObjectKind::Ordinary, Some(prototype), 0)
+        .alloc_internal(
+            ObjectKind::Builtin,
+            InternalTag::Iterator,
+            Some(prototype),
+            0,
+            &[],
+            Default::default(),
+            0,
+        )
         .map(Value::object)
         .map_err(|error| error::heap_error(cx, error))
 }

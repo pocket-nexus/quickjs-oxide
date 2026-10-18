@@ -338,8 +338,10 @@ struct Recorder {
 }
 
 impl Host for Recorder {
-    fn write(&mut self, _: Stream, text: &str) {
-        self.output.borrow_mut().push_str(text);
+    fn write(&mut self, _: Stream, text: &[u8]) {
+        self.output
+            .borrow_mut()
+            .push_str(&String::from_utf8_lossy(text));
     }
 
     fn now_ms(&mut self) -> f64 {

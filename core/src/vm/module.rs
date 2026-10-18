@@ -614,10 +614,12 @@ pub(crate) fn namespace(cx: &mut Cx<'_>, module: ObjectId) -> Result<ObjectId, T
         )
         .map_err(|e| error::heap_error(cx, e))?;
     cx.heap.clear_object_flag(namespace, flags::EXTENSIBLE);
-    let tag = cx
-        .heap
-        .intern("Module")
-        .map_err(|e| error::heap_error(cx, e))?;
+    // Interning may collect: the namespace is not reachable yet.
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(Value::object(namespace));
+    let tag = cx.heap.intern("Module");
+    cx.heap.roots().truncate(mark);
+    let tag = tag.map_err(|e| error::heap_error(cx, e))?;
     let key = crate::runtime::WellKnown::key(cx.realm.symbols.to_string_tag);
     cx.heap
         .add_property(

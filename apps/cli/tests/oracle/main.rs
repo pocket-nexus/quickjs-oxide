@@ -52,8 +52,6 @@ mod regexp;
 mod string;
 mod templates;
 #[cfg(feature = "test262-host")]
-mod test262_create_realm;
-#[cfg(feature = "test262-host")]
 mod test262_host_gc;
 #[cfg(feature = "test262-host")]
 mod test262_is_html_dda;

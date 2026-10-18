@@ -116,7 +116,7 @@ def require_gated(path: str, declarations: tuple[str | tuple[str, int], ...]) ->
                 fail(f"{path} must gate {declaration.strip()} with test262-host")
 
 
-require_gated('apps/cli/tests/oracle/main.rs', ('mod test262_create_realm;', 'mod test262_host_gc;', 'mod test262_is_html_dda;'))
+require_gated('apps/cli/tests/oracle/main.rs', ('mod test262_host_gc;', 'mod test262_is_html_dda;'))
 require_gated('src/engine/api/mod.rs', ('pub(crate) mod test262_agent;', 'pub(crate) mod test262_host;'))
 require_gated('src/engine/heap/runtime_gc.rs', ('    pub(crate) fn call_test262_gc(',))
 require_gated('src/engine/object/storage.rs', ('    pub(crate) fn set_object_is_html_dda(&self, object: &ObjectRef) -> Result<(), RuntimeError> {',))

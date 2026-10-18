@@ -1,4 +1,3 @@
-use crate::object_graph_observation::data_property;
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::string_text as text;
 use quickjs_oxide::engine::api::core::{Context, Runtime, RuntimeError, Value};
@@ -26,37 +25,11 @@ fn eval(context: &mut Context, source: &str) -> Value {
     })
 }
 
+/// `$262.gc` through the Test262 host (the rest of `$262` is unused).
 fn install_test262_gc(context: &mut Context) {
-    let runtime = context.runtime().clone();
-    let object_262 = context.new_object().expect("allocate $262 object");
-    let gc = context
-        .new_test262_gc_function()
-        .expect("allocate $262.gc host function");
-    let gc_key = runtime.intern_property_key("gc").expect("intern gc key");
-    assert!(
-        context
-            .define_own_property(
-                &object_262,
-                &gc_key,
-                &data_property(Value::Object(
-                    gc.as_object().try_clone().expect("duplicate root")
-                )),
-            )
-            .expect("define $262.gc")
-    );
-    let object_262_key = runtime
-        .intern_property_key("$262")
-        .expect("intern $262 key");
-    let global = context.global_object().expect("get global object");
-    assert!(
-        context
-            .define_own_property(
-                &global,
-                &object_262_key,
-                &data_property(Value::Object(object_262)),
-            )
-            .expect("define global $262")
-    );
+    context
+        .install_test262_host()
+        .expect("install the Test262 host");
 }
 
 fn drain_jobs(runtime: &Runtime, context: &mut Context) {
@@ -66,7 +39,7 @@ fn drain_jobs(runtime: &Runtime, context: &mut Context) {
         assert!(jobs <= 64, "host GC fixture did not settle within 64 jobs");
         if let Err(error) = runtime.execute_pending_job() {
             assert!(
-                error.error() != &RuntimeError::Exception,
+                error != RuntimeError::Exception,
                 "host GC fixture job threw: {:?}",
                 context.take_exception()
             );

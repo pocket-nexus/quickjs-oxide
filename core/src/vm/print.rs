@@ -37,8 +37,9 @@ enum Body {
     },
     TypedArray,
     Function,
-    Map(Vec<(Value, Value)>, usize),
-    Set(Vec<Value>, usize),
+    /// The entries in order, `None` for a zombie (`Table::is_zombie`).
+    Map(Vec<Option<(Value, Value)>>, usize),
+    Set(Vec<Option<Value>>, usize),
     RegExp,
     Date(f64),
     Error,
@@ -51,27 +52,76 @@ enum Slot {
 
 struct Printer<'a, 'c> {
     cx: &'a mut Cx<'c>,
-    out: String,
+    out: Out,
     stack: Vec<ObjectId>,
+}
+
+/// The printer's output: UTF-8 text, with the C strings QuickJS writes raw
+/// (names, messages, stacks) as WTF-8.
+struct Out(Vec<u8>);
+
+impl Out {
+    fn push_str(&mut self, text: &str) {
+        self.0.extend_from_slice(text.as_bytes());
+    }
+
+    fn push(&mut self, character: char) {
+        let mut buffer = [0; 4];
+        self.push_str(character.encode_utf8(&mut buffer));
+    }
+
+    fn extend(&mut self, characters: impl Iterator<Item = char>) {
+        for character in characters {
+            self.push(character);
+        }
+    }
+}
+
+/// UTF-16 code units as QuickJS's `JS_ToCStringLen` encodes them: UTF-8,
+/// a lone surrogate as its own three bytes (WTF-8).
+pub(crate) fn wtf8(units: impl Iterator<Item = u16>, out: &mut Vec<u8>) {
+    for point in char::decode_utf16(units) {
+        match point {
+            Ok(point) => {
+                let mut buffer = [0; 4];
+                out.extend_from_slice(point.encode_utf8(&mut buffer).as_bytes());
+            }
+            Err(error) => {
+                let unit = error.unpaired_surrogate();
+                out.extend_from_slice(&[
+                    0xE0 | (unit >> 12) as u8,
+                    0x80 | ((unit >> 6) & 0x3F) as u8,
+                    0x80 | (unit & 0x3F) as u8,
+                ]);
+            }
+        }
+    }
 }
 
 impl Runtime {
     /// The value as QuickJS's `JS_PrintValue` prints it; a string is quoted
-    /// and escaped (`print` writes a top-level string raw instead).
+    /// and escaped (`print` writes a top-level string raw instead). A lone
+    /// surrogate in a raw C string shows as U+FFFD; [`Self::print_value_bytes`]
+    /// keeps it.
     pub fn print_value(&mut self, value: Value) -> String {
+        String::from_utf8_lossy(&print_value(&mut self.cx(), value)).into_owned()
+    }
+
+    /// [`Self::print_value`] as the bytes QuickJS writes (WTF-8).
+    pub fn print_value_bytes(&mut self, value: Value) -> Vec<u8> {
         print_value(&mut self.cx(), value)
     }
 }
 
-/// [`Runtime::print_value`] from inside the engine (`print`).
-pub(crate) fn print_value(cx: &mut Cx<'_>, value: Value) -> String {
+/// [`Runtime::print_value_bytes`] from inside the engine (`print`).
+pub(crate) fn print_value(cx: &mut Cx<'_>, value: Value) -> Vec<u8> {
     let mut printer = Printer {
         cx,
-        out: String::new(),
+        out: Out(Vec::new()),
         stack: Vec::with_capacity(MAX_DEPTH),
     };
     printer.value(value);
-    printer.out
+    printer.out.0
 }
 
 impl Printer<'_, '_> {
@@ -265,6 +315,7 @@ impl Printer<'_, '_> {
                 InternalTag::SetIterator => "Set Iterator",
                 InternalTag::RegExpStringIterator => "RegExp String Iterator",
                 InternalTag::IteratorHelper => "Iterator Helper",
+                InternalTag::Iterator => "Iterator",
                 InternalTag::IteratorConcat => "Iterator Concat",
                 InternalTag::WrapForValidIterator => "Iterator Wrap",
                 InternalTag::AsyncFromSyncIterator => "",
@@ -294,7 +345,15 @@ impl Printer<'_, '_> {
             return "Function";
         }
         let Some(bytecode) = heap.function_bytecode(object) else {
-            return "Function";
+            // QuickJS's resolving functions have their own classes.
+            let native = heap.function_record(object).native;
+            return if native == crate::builtins::Native::PromiseResolveFunction.index() {
+                "PromiseResolveFunction"
+            } else if native == crate::builtins::Native::PromiseRejectFunction.index() {
+                "PromiseRejectFunction"
+            } else {
+                "Function"
+            };
         };
         let unit = self.cx.code.get(heap.bytecode_unit(bytecode));
         use crate::bytecode::flags as unit_flags;
@@ -382,19 +441,33 @@ impl Printer<'_, '_> {
                     let width = table.width();
                     let size = table.len();
                     let mut entries = Vec::new();
-                    for entry in internal.slots.chunks(width) {
-                        if entry[0].is_empty() {
-                            continue;
-                        }
-                        if entries.len() >= MAX_ITEM_COUNT {
+                    let mut live = 0;
+                    for (index, entry) in internal.slots.chunks(width).enumerate() {
+                        if live >= MAX_ITEM_COUNT {
                             break;
                         }
-                        entries.push((entry[0], if map { entry[1] } else { Value::UNDEFINED }));
+                        if entry[0].is_empty() {
+                            if table.is_zombie(index) {
+                                entries.push(None);
+                            }
+                            continue;
+                        }
+                        live += 1;
+                        entries.push(Some((
+                            entry[0],
+                            if map { entry[1] } else { Value::UNDEFINED },
+                        )));
                     }
                     if map {
                         Body::Map(entries, size)
                     } else {
-                        Body::Set(entries.into_iter().map(|(key, _)| key).collect(), size)
+                        Body::Set(
+                            entries
+                                .into_iter()
+                                .map(|entry| entry.map(|(key, _)| key))
+                                .collect(),
+                            size,
+                        )
                     }
                 }
                 _ => Body::Ordinary,
@@ -458,7 +531,43 @@ impl Printer<'_, '_> {
             };
             properties.push((key, value));
         }
+        if heap.object_kind(object) == ObjectKind::Arguments
+            && heap.header(object).has(crate::heap::object::flags::SPARSE)
+        {
+            self.slow_arguments(object, &mut properties, &mut count);
+        }
         (properties, count)
+    }
+
+    /// A converted `arguments` object's index properties, QuickJS's
+    /// ordinary properties once its fast array is gone: the still mapped
+    /// indices join the named ones, indices first.
+    fn slow_arguments(
+        &self,
+        object: ObjectId,
+        properties: &mut Vec<(PropertyKey, Slot)>,
+        count: &mut usize,
+    ) {
+        let heap = &self.cx.heap;
+        for index in 0..crate::vm::arguments::mapped_count(heap, object) {
+            let (Some(cell), Some(key)) = (
+                crate::vm::arguments::mapped_cell(heap, object, index),
+                PropertyKey::index(index),
+            ) else {
+                continue;
+            };
+            if heap.lookup_own(object, key).is_none() {
+                *count += 1;
+                if properties.len() < MAX_ITEM_COUNT {
+                    properties.push((key, Slot::Data(heap.scope_get(cell, 0, 0))));
+                }
+            }
+        }
+        let rank = |key: &PropertyKey| match key.kind() {
+            KeyKind::Index(index) => u64::from(index),
+            _ => u64::MAX,
+        };
+        properties.sort_by_key(|(key, _)| rank(key));
     }
 
     fn comma(&mut self, state: &mut Comma) {
@@ -540,24 +649,32 @@ impl Printer<'_, '_> {
             }
             Body::Map(entries, size) => {
                 self.out.push_str(&format!("Map({size}) {{ "));
-                for &(key, value) in &entries {
+                let mut live = 0;
+                for &entry in &entries {
                     self.comma(&mut state);
-                    self.value(key);
-                    self.out.push_str(" => ");
-                    self.value(value);
+                    if let Some((key, value)) = entry {
+                        self.value(key);
+                        self.out.push_str(" => ");
+                        self.value(value);
+                        live += 1;
+                    }
                 }
-                if entries.len() < size {
-                    self.more_items(&mut state, size - entries.len());
+                if live < size {
+                    self.more_items(&mut state, size - live);
                 }
             }
             Body::Set(entries, size) => {
                 self.out.push_str(&format!("Set({size}) {{ "));
-                for &key in &entries {
+                let mut live = 0;
+                for &entry in &entries {
                     self.comma(&mut state);
-                    self.value(key);
+                    if let Some(key) = entry {
+                        self.value(key);
+                        live += 1;
+                    }
                 }
-                if entries.len() < size {
-                    self.more_items(&mut state, size - entries.len());
+                if live < size {
+                    self.more_items(&mut state, size - live);
                 }
             }
             Body::RegExp => {
@@ -620,9 +737,12 @@ impl Printer<'_, '_> {
             if flags.has(PropertyFlags::ACCESSOR) {
                 return Some(None);
             }
+            // QuickJS's `get_prop_string` takes only `JS_TAG_STRING`: a rope
+            // (`JS_TAG_STRING_ROPE`) reads as absent.
             Some(
                 heap.get_slot(object, slot)
                     .as_string()
+                    .filter(|id| heap.strings.get(id.0).flat().is_some())
                     .map(|id| heap.string(id).repr().units().collect()),
             )
         };
@@ -633,14 +753,13 @@ impl Printer<'_, '_> {
     }
 
     /// A string as QuickJS's C-string conversion prints it: UTF-8 with lone
-    /// surrogates encoded as is (WTF-8, shown as U+FFFD here), cut at the
-    /// first NUL.
+    /// surrogates encoded as is (WTF-8), cut at the first NUL.
     fn c_string(&mut self, units: &[u16]) {
         let end = units
             .iter()
             .position(|&unit| unit == 0)
             .unwrap_or(units.len());
-        self.out.push_str(&String::from_utf16_lossy(&units[..end]));
+        wtf8(units[..end].iter().copied(), &mut self.out.0);
     }
 
     fn error(&mut self, object: ObjectId) {
@@ -665,7 +784,7 @@ impl Printer<'_, '_> {
                 units.pop();
             }
             self.out.push('\n');
-            self.out.push_str(&String::from_utf16_lossy(&units));
+            wtf8(units.into_iter(), &mut self.out.0);
         }
     }
 

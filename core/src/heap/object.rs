@@ -326,6 +326,9 @@ pub enum InternalTag {
     RawJson,
     /// A module record (section 5.6).
     Module,
+    /// An object the `Iterator` constructor made for a subclass: QuickJS's
+    /// `JS_CLASS_ITERATOR`, which its printer names.
+    Iterator,
 }
 
 /// Non-value state of an internal record.

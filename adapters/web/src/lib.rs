@@ -14,7 +14,7 @@ pub struct WebHostServices;
 pub struct WebHost;
 
 impl quickjs_oxide::engine::api::core::Host for WebHost {
-    fn write(&mut self, _: quickjs_oxide::engine::api::core::Stream, _: &str) {}
+    fn write(&mut self, _: quickjs_oxide::engine::api::core::Stream, _: &[u8]) {}
 
     fn now_ms(&mut self) -> f64 {
         Date::now()

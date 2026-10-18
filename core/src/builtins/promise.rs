@@ -333,9 +333,7 @@ fn perform(
         root(cx, value);
         let step = (|| {
             if kind != Combinator::Race {
-                cx.heap
-                    .set_element(values, index, Value::UNDEFINED)
-                    .map_err(|error| error::heap_error(cx, error))?;
+                define_element(cx, values, index, Value::UNDEFINED)?;
             }
             let next_promise = crate::vm::call(cx, resolve, constructor, &[value])?;
             root(cx, next_promise);
@@ -353,16 +351,12 @@ fn perform(
                         index,
                     )?;
                     root(cx, fulfilled);
-                    // Both halves share one already-called flag: the second
-                    // closure reuses the first's element record.
-                    let data = cx
-                        .heap
-                        .function_scope(fulfilled.as_object().unwrap())
-                        .expect("element data")
-                        .object();
+                    // Each half has its own already-called flag, as QuickJS
+                    // copies the element data into each function: a
+                    // thenable calling both stores the second.
                     let rejected =
-                        native_closure(cx, Native::PromiseAllSettledRejectElement, data)?;
-                    (fulfilled, Value::object(rejected))
+                        element_closure(cx, Native::PromiseAllSettledRejectElement, shared, index)?;
+                    (fulfilled, rejected)
                 }
                 Combinator::Any => (
                     capability[1],
@@ -410,9 +404,22 @@ fn perform(
     Ok(capability[0])
 }
 
+/// QuickJS's `JS_DefinePropertyValueUint32` on the values array: user code
+/// that froze it makes the definition fail silently.
+fn define_element(
+    cx: &mut Cx<'_>,
+    values: ObjectId,
+    index: u32,
+    value: Value,
+) -> Result<(), Throw> {
+    let key = internal::index_key(cx, index)?;
+    internal::create_data_property(cx, values, key, value)?;
+    Ok(())
+}
+
 /// An `AggregateError` whose `errors` are the array's elements.
 fn aggregate_error(cx: &mut Cx<'_>, errors: ObjectId) -> Result<Value, Throw> {
-    let error = crate::vm::error::new_error(cx, crate::ErrorKind::Aggregate, Value::UNDEFINED)
+    let error = crate::vm::error::new_bare_error(cx, crate::ErrorKind::Aggregate)
         .map_err(|error| error::heap_error(cx, error))?;
     root(cx, error);
     let key = Names::key(cx.realm.names.errors);
@@ -460,9 +467,7 @@ fn element(cx: &mut Cx<'_>, site: CallSite, element: Value, any: bool) -> Result
         .internal_slot(shared, 0)
         .as_object()
         .expect("values");
-    cx.heap
-        .set_element(values, index, element)
-        .map_err(|error| error::heap_error(cx, error))?;
+    define_element(cx, values, index, element)?;
     let remaining = cx.heap.internal_slot(shared, 1).as_int32().unwrap_or(0) - 1;
     cx.heap
         .set_internal_slot(shared, 1, Value::int32(remaining));

@@ -1,5 +1,6 @@
 use quickjs_oxide::engine::api::core::{
-    JsString, ModuleLoader, ModuleLoaderError, PromiseState, Runtime, Value,
+    JsString, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind, PromiseState,
+    Runtime, Scope, Value,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -17,23 +18,23 @@ struct RecordingModuleLoader {
 
 impl ModuleLoader for RecordingModuleLoader {
     fn load(
-        &self,
-        _context: &mut quickjs_oxide::engine::api::core::Context,
-        normalized_name: &JsString,
-        _attributes: &quickjs_oxide::engine::api::core::ModuleImportAttributes,
-    ) -> Result<quickjs_oxide::engine::api::core::ModuleLoadResult, ModuleLoaderError> {
-        let normalized_name = normalized_name.to_utf8_lossy();
-        self.loads.borrow_mut().push(normalized_name.clone());
-        if normalized_name == "dependency" {
-            Ok(
-                quickjs_oxide::engine::api::core::ModuleLoadResult::SourceText(
-                    "globalThis.__dynamicImportBodyRuns += 1; export const answer = 42;".to_owned(),
-                ),
-            )
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: &str,
+        _attributes: &ModuleImportAttributes,
+    ) -> Result<ModuleSource, Value> {
+        self.loads.borrow_mut().push(name.to_owned());
+        if name == "dependency" {
+            Ok(ModuleSource::source(
+                "globalThis.__dynamicImportBodyRuns += 1; export const answer = 42;",
+            ))
         } else {
-            Err(ModuleLoaderError::new(format!(
-                "unexpected test module: {normalized_name}"
-            )))
+            Err(scope
+                .new_native_error(
+                    NativeErrorKind::Internal,
+                    &format!("unexpected test module: {name}"),
+                )
+                .unwrap_or(Value::Undefined))
         }
     }
 }
@@ -41,9 +42,11 @@ impl ModuleLoader for RecordingModuleLoader {
 fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
     let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
     let loads = Rc::new(RefCell::new(Vec::new()));
-    let _registration = runtime.set_module_loader(RecordingModuleLoader {
-        loads: loads.clone(),
-    });
+    runtime
+        .set_module_loader(RecordingModuleLoader {
+            loads: loads.clone(),
+        })
+        .unwrap();
     let mut context = runtime.new_context().expect("create context");
     if install_test262_host {
         #[cfg(feature = "test262-host")]

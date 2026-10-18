@@ -42,9 +42,11 @@ pub(crate) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             Default::default(),
             crate::heap::object::flags::CALLABLE,
         )?;
+        cx.heap.roots().push(Value::object(dda));
         cx.heap.html_dda = true;
         // QuickJS's `IsHTMLDDA` is a function named so, of length 0.
         let name = cx.heap.intern("IsHTMLDDA")?;
+        cx.heap.roots().push(Value::string(name));
         let key = cx.heap.property_key("name")?;
         cx.heap.add_property(
             dda,

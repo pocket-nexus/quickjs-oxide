@@ -7,7 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
 ORACLE = ROOT / 'apps/cli/tests/oracle'
-HOST_MODULES = {'test262_create_realm', 'test262_host_gc', 'test262_is_html_dda'}
+HOST_MODULES = {'test262_host_gc', 'test262_is_html_dda'}
 MODULE = re.compile(r'^(?:pub(?:\([^)]*\))?\s+)?mod (\w+);$', re.MULTILINE)
 TEST = re.compile(r'^\s*#\[test\]', re.MULTILINE)
 

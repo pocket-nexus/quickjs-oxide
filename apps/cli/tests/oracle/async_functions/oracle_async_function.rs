@@ -121,7 +121,7 @@ promise.then(function (value) {
         )),
         "function|2|add|false|[object AsyncFunction]|AsyncFunction|true|body,after|pending"
     );
-    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(integer(eval(&mut context, "answer")), 42);
     assert_eq!(
         text(eval(&mut context, "events.join(',')")),
@@ -189,11 +189,11 @@ order.join('|');
     );
 
     for expected in ["f0|sync|f1:7", "f0|sync|f1:7|f2:8"] {
-        assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+        assert!(runtime.execute_pending_job().unwrap().executed());
         assert_eq!(text(eval(&mut context, "order.join('|')")), expected);
         assert_eq!(text(eval(&mut context, "answer")), "pending");
     }
-    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(integer(eval(&mut context, "answer")), 15);
     assert_eq!(
         text(eval(&mut context, "order.join('|')")),
@@ -233,13 +233,13 @@ events.join('|');
         )),
         "try|sync"
     );
-    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(
         text(eval(&mut context, "events.join('|')")),
         "try|sync|catch:x|finally"
     );
     assert_eq!(text(eval(&mut context, "answer")), "pending");
-    assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+    assert!(runtime.execute_pending_job().unwrap().executed());
     assert_eq!(integer(eval(&mut context, "answer")), 42);
     assert_eq!(
         text(eval(&mut context, "events.join('|')")),
@@ -296,7 +296,7 @@ events.join('|');
         "get|sync|call|resume:42|done",
     ];
     for expected in checkpoints {
-        assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+        assert!(runtime.execute_pending_job().unwrap().executed());
         runtime.run_gc().unwrap();
         assert_eq!(text(eval(&mut context, "events.join('|')")), expected);
     }
@@ -584,7 +584,7 @@ stackPromises.every(function (promise) {
     );
     let mut jobs = 0;
     while runtime.is_job_pending().expect("runtime state") {
-        assert_eq!(runtime.execute_pending_job().unwrap().executed(), true);
+        assert!(runtime.execute_pending_job().unwrap().executed());
         jobs += 1;
     }
     assert!(jobs > 1);

@@ -56,6 +56,17 @@ impl Table {
         self.width
     }
 
+    /// Whether deleted entry `entry` is a QuickJS zombie: the record a live
+    /// iterator last returned, which QuickJS keeps linked (and its printer
+    /// shows as an empty item) until the iterator moves on.
+    pub fn is_zombie(&self, entry: usize) -> bool {
+        self.cursors.iter().any(|cursor| {
+            cursor
+                .upgrade()
+                .is_some_and(|cursor| cursor.get() as usize == entry + 1)
+        })
+    }
+
     /// Entries, live or deleted: the bound of an iteration cursor.
     pub fn entries(&self) -> usize {
         self.hashes.len()

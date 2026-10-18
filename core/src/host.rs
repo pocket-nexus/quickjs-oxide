@@ -24,19 +24,21 @@ pub enum RejectionEvent {
 /// The embedder's services. Every method has a default suitable for a
 /// standalone runtime: the process's streams, the system clock and UTC.
 pub trait Host {
-    /// Writes host output (`print`). The default writes to the process's
+    /// Writes host output (`print`): UTF-8, with a lone surrogate of the
+    /// JavaScript string encoded as is (WTF-8), as QuickJS's
+    /// `JS_ToCStringLen` writes it. The default writes to the process's
     /// streams.
-    fn write(&mut self, stream: Stream, text: &str) {
+    fn write(&mut self, stream: Stream, text: &[u8]) {
         use std::io::Write;
         match stream {
             Stream::Stdout => {
                 let mut out = std::io::stdout().lock();
-                let _ = out.write_all(text.as_bytes());
+                let _ = out.write_all(text);
                 let _ = out.flush();
             }
             Stream::Stderr => {
                 let mut out = std::io::stderr().lock();
-                let _ = out.write_all(text.as_bytes());
+                let _ = out.write_all(text);
                 let _ = out.flush();
             }
         }

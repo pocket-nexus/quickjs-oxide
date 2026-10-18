@@ -67,9 +67,24 @@ fn class_op_rooted(
             let constructor = function(reg(cx, frame, insn.a));
             let home = reg(cx, frame, insn.b);
             let initializer = function(reg(cx, frame, insn.c));
+            let home = home.as_object().expect("a home object");
             cx.heap.function_record_mut(constructor).fields = initializer.index();
-            cx.heap.function_record_mut(initializer).home_object =
-                home.as_object().expect("a home object").index();
+            cx.heap.function_record_mut(initializer).home_object = home.index();
+            // The class body has ended: QuickJS's `OP_add_brand` gives the
+            // prototype its brand only now, so a computed key evaluated
+            // before sees none.
+            let record = cx.heap.function_record(initializer);
+            if record.bytecode != NONE
+                && cx
+                    .code
+                    .get(
+                        cx.heap
+                            .bytecode_unit(crate::value::BytecodeId(record.bytecode)),
+                    )
+                    .has(flags::BRAND)
+            {
+                ensure_brand(cx, home)?;
+            }
         }
         Opcode::InitFields => {
             let receiver = reg(cx, frame, insn.a);
@@ -208,7 +223,6 @@ fn class_op_rooted(
             let method = function(reg(cx, frame, insn.a));
             let home = reg(cx, frame, insn.b).as_object().expect("a home object");
             cx.heap.function_record_mut(method).home_object = home.index();
-            ensure_brand(cx, home)?;
         }
         Opcode::NamePrivateMethod => {
             let method = function(reg(cx, frame, insn.a));
@@ -299,7 +313,11 @@ fn class_op_rooted(
             let Some(target) = target.as_object() else {
                 return Err(error::type_error(cx, "invalid 'in' operand"));
             };
-            let has = has_brand(cx, target, method);
+            let has = if method.as_object().is_some() {
+                brand_check(cx, Value::object(target), method)?
+            } else {
+                unbranded_in(cx, target, method)?
+            };
             set_reg(cx, frame, insn.a, Value::bool(has));
         }
         Opcode::CopyData => {
@@ -580,25 +598,49 @@ fn add_brand(cx: &mut Cx<'_>, home: ObjectId, target: ObjectId) -> Result<(), Th
         .map_err(|error| error::heap_error(cx, error))
 }
 
-fn has_brand(cx: &Cx<'_>, target: ObjectId, method: Value) -> bool {
-    let Some(method) = method.as_object() else {
-        return false;
+/// `#x in target` for an accessor without a getter: QuickJS's
+/// `js_operator_private_in` finds no method function in the getter's
+/// uninitialized variable and looks for an own property named by its
+/// `JS_ValueToAtom`, `"[unsupported type]"`.
+#[cold]
+#[inline(never)]
+fn unbranded_in(cx: &mut Cx<'_>, target: ObjectId, method: Value) -> Result<bool, Throw> {
+    let name = if method.is_empty() {
+        "[unsupported type]"
+    } else {
+        "undefined"
     };
-    let home = cx.heap.function_record(method).home_object;
-    if home == NONE {
-        return false;
-    }
+    let key = cx
+        .heap
+        .intern(name)
+        .map_err(|error| error::heap_error(cx, error))?;
+    Ok(cx.heap.lookup_own(target, PropertyKey::atom(key)).is_some())
+}
+
+/// QuickJS's `JS_CheckBrand`: whether `target` carries the brand of the
+/// class whose method is `method`, after its checks in their order.
+#[cold]
+#[inline(never)]
+fn brand_check(cx: &mut Cx<'_>, target: Value, method: Value) -> Result<bool, Throw> {
+    let home = method
+        .as_object()
+        .filter(|&method| cx.heap.object_kind(method) == crate::ObjectKind::Function)
+        .map(|method| cx.heap.function_record(method).home_object)
+        .filter(|&home| home != NONE);
+    let Some(home) = home else {
+        return Err(error::type_error(cx, "not an object"));
+    };
     let key = PropertyKey::symbol(cx.realm.brand);
     let Some((slot, _)) = cx.heap.lookup_own(ObjectId(home), key) else {
-        return false;
+        return Err(error::type_error(cx, "expecting <brand> private field"));
     };
     let brand = cx.heap.get_slot(ObjectId(home), slot);
-    cx.heap.lookup_own(target, private_key(brand)).is_some()
+    let target = private_target(cx, target)?;
+    Ok(cx.heap.lookup_own(target, private_key(brand)).is_some())
 }
 
 fn check_brand(cx: &mut Cx<'_>, target: Value, method: Value) -> Result<(), Throw> {
-    let target = private_target(cx, target)?;
-    if !has_brand(cx, target, method) {
+    if !brand_check(cx, target, method)? {
         return Err(error::type_error(cx, "invalid brand on object"));
     }
     Ok(())

@@ -953,9 +953,13 @@ impl Runtime {
         Ok(entry.inner.core.print_value(value))
     }
 
-    /// [`Runtime::print_value`] as bytes (the current API's form).
+    /// [`Runtime::print_value`] as the bytes QuickJS writes: a lone
+    /// surrogate of a raw name, message or stack as its own three bytes
+    /// (WTF-8) instead of U+FFFD.
     pub fn qjs_print_value_bytes(&self, value: &Value) -> Result<Vec<u8>, RuntimeError> {
-        self.print_value(value).map(String::into_bytes)
+        let mut entry = self.enter()?;
+        let value = entry.lower(value)?;
+        Ok(entry.inner.core.print_value_bytes(value))
     }
 }
 

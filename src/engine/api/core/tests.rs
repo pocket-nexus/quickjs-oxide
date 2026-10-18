@@ -11,8 +11,8 @@ use crate::engine::compiler::register::run_tests::{corpus, run_new_core};
 struct Capture(Rc<RefCell<String>>);
 
 impl oxide_core::host::Host for Capture {
-    fn write(&mut self, _: oxide_core::host::Stream, text: &str) {
-        self.0.borrow_mut().push_str(text);
+    fn write(&mut self, _: oxide_core::host::Stream, text: &[u8]) {
+        self.0.borrow_mut().push_str(&String::from_utf8_lossy(text));
     }
 }
 

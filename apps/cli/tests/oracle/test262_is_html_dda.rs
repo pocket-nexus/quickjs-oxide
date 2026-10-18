@@ -12,8 +12,11 @@ fn is_html_dda_semantics_match_pinned_quickjs_transcript() {
         .install_test262_host()
         .expect("install Test262 host surface");
 
-    let html_dda = eval(&mut context, "$262.IsHTMLDDA");
-    assert!(!html_dda.to_boolean().unwrap());
+    // `Value::to_boolean` sees only an object handle: ask the engine.
+    assert_eq!(
+        eval(&mut context, "!$262.IsHTMLDDA"),
+        quickjs_oxide::engine::api::core::Value::Bool(true)
+    );
 
     drop(eval(&mut context, FIXTURE));
     let transcript = text(eval(&mut context, "isHtmlDdaTranscript.join('\\n')"));

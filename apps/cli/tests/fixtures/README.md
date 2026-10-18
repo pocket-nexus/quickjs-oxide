@@ -6,7 +6,8 @@ name (or its parent suite). Rust integration tests and reference-engine scripts
 share these files.
 
 - `dev-support/quickjs-fixture-gates.tsv` records JS probe inputs, expected outputs,
-  checksums, and driver modes. Run `scripts/quickjs/test-quickjs-fixtures.sh --validate`
+  checksums, driver modes, and the deviation-ledger entry (or `-`) a fixture differs by
+  on quickjs-oxide. Run `scripts/quickjs/test-quickjs-fixtures.sh --validate`
   to authenticate the registry, or `--all` to execute it with the pinned engine.
 - `dev-support/quickjs-c-oracles.tsv` records C probes and expected transcripts.
   Run `scripts/quickjs/test-quickjs-c-oracles.sh --validate` to authenticate them, or
