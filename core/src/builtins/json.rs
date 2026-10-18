@@ -876,8 +876,32 @@ struct Serializer {
     keys: Option<Vec<PropertyKey>>,
     gap: Vec<u16>,
     indent: Vec<u16>,
-    stack: Vec<ObjectId>,
+    /// The containers being serialized, for the cycle check.
+    stack: crate::heap::hash::FxHashSet<ObjectId>,
     out: Vec<u16>,
+}
+
+/// What `SerializeJSONProperty` found before serializing a value.
+enum Prepared {
+    /// Written out (`true`), or not serializable (`false`).
+    Done(bool),
+    /// An object or array, still to write; the root stack keeps it from
+    /// the mark.
+    Container(ObjectId, bool),
+}
+
+/// A container being written: its members are serialized one at a time
+/// on this explicit stack, so deep nesting uses no host stack.
+struct Level {
+    object: ObjectId,
+    /// The keys of an object; `None` for an array.
+    keys: Option<Vec<PropertyKey>>,
+    /// An array's length.
+    length: u64,
+    next: u64,
+    any: bool,
+    stepback: usize,
+    mark: crate::RootMark,
 }
 
 /// `JSON.stringify(value, replacer, space)`.
@@ -889,7 +913,7 @@ pub(super) fn stringify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
         keys: None,
         gap: Vec::new(),
         indent: Vec::new(),
-        stack: Vec::new(),
+        stack: Default::default(),
         out: Vec::new(),
     };
     if ops::is_callable(cx.heap, replacer) {
@@ -975,7 +999,8 @@ impl Serializer {
     }
 
     /// `SerializeJSONProperty(key, holder)`; false when the value is not
-    /// serializable (undefined, a symbol, a function).
+    /// serializable (undefined, a symbol, a function). Nested containers are
+    /// walked on an explicit stack of [`Level`]s.
     fn property(
         &mut self,
         cx: &mut Cx<'_>,
@@ -983,17 +1008,94 @@ impl Serializer {
         key: PropertyKey,
     ) -> Result<bool, Throw> {
         let mark = cx.heap.roots().mark();
-        let result = self.property_rooted(cx, holder, key);
+        let result = self.serialize(cx, holder, key, mark);
         cx.heap.roots().truncate(mark);
+        self.stack.clear();
         result
     }
 
-    fn property_rooted(
+    fn serialize(
         &mut self,
         cx: &mut Cx<'_>,
         holder: ObjectId,
         key: PropertyKey,
+        mark: crate::RootMark,
     ) -> Result<bool, Throw> {
+        let mut levels: Vec<Level> = Vec::new();
+        match self.prepare(cx, holder, key)? {
+            Prepared::Done(serialized) => return Ok(serialized),
+            Prepared::Container(object, is_array) => {
+                levels.push(self.open(cx, object, is_array, mark)?);
+            }
+        }
+        while let Some(level) = levels.last_mut() {
+            let object = level.object;
+            let member = match &level.keys {
+                Some(keys) => keys.get(level.next as usize).copied(),
+                None if level.next < level.length => {
+                    Some(internal::number_key(cx, level.next as f64)?)
+                }
+                None => None,
+            };
+            let Some(member) = member else {
+                let level = levels.pop().expect("a level");
+                self.close(cx, &level);
+                continue;
+            };
+            let level = levels.last_mut().expect("a level");
+            let is_object = level.keys.is_some();
+            let rollback = self.out.len();
+            if is_object {
+                if level.any {
+                    self.out.push(0x2c);
+                }
+            } else if level.next > 0 {
+                self.out.push(0x2c);
+            }
+            level.next += 1;
+            self.separator();
+            if is_object {
+                let name = super::object::key_string(cx, member)?;
+                let units = ops::units(cx.heap, name.as_string().unwrap());
+                quote(&mut self.out, &units);
+                self.out.push(0x3a);
+                if !self.gap.is_empty() {
+                    self.out.push(0x20);
+                }
+            }
+            let child_mark = cx.heap.roots().mark();
+            match self.prepare(cx, object, member)? {
+                Prepared::Done(serialized) => {
+                    cx.heap.roots().truncate(child_mark);
+                    let level = levels.last_mut().expect("a level");
+                    if is_object {
+                        if serialized {
+                            level.any = true;
+                        } else {
+                            self.out.truncate(rollback);
+                        }
+                    } else if !serialized {
+                        self.text("null");
+                    }
+                }
+                Prepared::Container(child, is_array) => {
+                    levels.last_mut().expect("a level").any = true;
+                    let level = self.open(cx, child, is_array, child_mark)?;
+                    levels.push(level);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// The part of `SerializeJSONProperty` before a container's members:
+    /// `toJSON`, the replacer, unwrapping and primitives.
+    fn prepare(
+        &mut self,
+        cx: &mut Cx<'_>,
+        holder: ObjectId,
+        key: PropertyKey,
+    ) -> Result<Prepared, Throw> {
         let mut value = internal::get(cx, holder, key, Value::object(holder))?;
         cx.heap.roots().push(value);
         if matches!(value.kind(), Kind::Object | Kind::BigInt) {
@@ -1028,7 +1130,7 @@ impl Serializer {
                     let raw = ops::to_string(cx, raw)?;
                     let units = ops::units(cx.heap, raw.as_string().unwrap());
                     self.out.extend(units);
-                    return Ok(true);
+                    return Ok(Prepared::Done(true));
                 }
                 _ => {}
             }
@@ -1065,22 +1167,56 @@ impl Serializer {
                 if self.stack.contains(&object) {
                     return Err(error::type_error(cx, "circular reference"));
                 }
-                if !cx.heap.vm.enter_native() {
-                    return Err(error::stack_overflow(cx));
-                }
-                self.stack.push(object);
-                let result = if internal::is_array(cx, value)? {
-                    self.array(cx, object)
-                } else {
-                    self.object(cx, object)
-                };
-                self.stack.pop();
-                cx.heap.vm.leave_native();
-                result?;
+                let is_array = internal::is_array(cx, value)?;
+                return Ok(Prepared::Container(object, is_array));
             }
-            _ => return Ok(false),
+            _ => return Ok(Prepared::Done(false)),
         }
-        Ok(true)
+        Ok(Prepared::Done(true))
+    }
+
+    /// Starts writing a container: its opening bracket, keys or length.
+    fn open(
+        &mut self,
+        cx: &mut Cx<'_>,
+        object: ObjectId,
+        is_array: bool,
+        mark: crate::RootMark,
+    ) -> Result<Level, Throw> {
+        self.stack.insert(object);
+        let stepback = self.indent.len();
+        self.indent.extend_from_slice(&self.gap.clone());
+        let (keys, length) = if is_array {
+            (None, internal::length_of_array_like(cx, object)?)
+        } else {
+            let keys = match &self.keys {
+                Some(keys) => keys.clone(),
+                None => internal::enumerable_own_keys(cx, object)?,
+            };
+            (Some(keys), 0)
+        };
+        self.out.push(if is_array { 0x5b } else { 0x7b });
+        Ok(Level {
+            object,
+            keys,
+            length,
+            next: 0,
+            any: false,
+            stepback,
+            mark,
+        })
+    }
+
+    /// Ends a container: the closing bracket after its last member.
+    fn close(&mut self, cx: &mut Cx<'_>, level: &Level) {
+        self.indent.truncate(level.stepback);
+        let is_array = level.keys.is_none();
+        if (is_array && level.length > 0) || (!is_array && level.any) {
+            self.separator();
+        }
+        self.out.push(if is_array { 0x5d } else { 0x7d });
+        self.stack.remove(&level.object);
+        cx.heap.roots().truncate(level.mark);
     }
 
     /// The line break and indentation before a member, with a gap.
@@ -1089,67 +1225,6 @@ impl Serializer {
             self.out.push(0x0a);
             self.out.extend_from_slice(&self.indent);
         }
-    }
-
-    fn object(&mut self, cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
-        let stepback = self.indent.len();
-        self.indent.extend_from_slice(&self.gap.clone());
-        let keys = match &self.keys {
-            Some(keys) => keys.clone(),
-            None => internal::enumerable_own_keys(cx, object)?,
-        };
-        self.out.push(0x7b);
-        let mut any = false;
-        for key in keys {
-            let rollback = self.out.len();
-            if any {
-                self.out.push(0x2c);
-            }
-            self.separator();
-            let name = super::object::key_string(cx, key)?;
-            let units = ops::units(cx.heap, name.as_string().unwrap());
-            quote(&mut self.out, &units);
-            self.out.push(0x3a);
-            if !self.gap.is_empty() {
-                self.out.push(0x20);
-            }
-            if self.property(cx, object, key)? {
-                any = true;
-            } else {
-                self.out.truncate(rollback);
-            }
-        }
-        self.indent.truncate(stepback);
-        if any {
-            self.separator();
-        }
-        self.out.push(0x7d);
-        Ok(())
-    }
-
-    fn array(&mut self, cx: &mut Cx<'_>, array: ObjectId) -> Result<(), Throw> {
-        let stepback = self.indent.len();
-        self.indent.extend_from_slice(&self.gap.clone());
-        let length = internal::length_of_array_like(cx, array)?;
-        self.out.push(0x5b);
-        let mut index = 0u64;
-        while index < length {
-            if index > 0 {
-                self.out.push(0x2c);
-            }
-            self.separator();
-            let key = internal::number_key(cx, index as f64)?;
-            if !self.property(cx, array, key)? {
-                self.text("null");
-            }
-            index += 1;
-        }
-        self.indent.truncate(stepback);
-        if length > 0 {
-            self.separator();
-        }
-        self.out.push(0x5d);
-        Ok(())
     }
 }
 
