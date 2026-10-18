@@ -1,6 +1,6 @@
 //! Proxy exotic objects (phase 4, section 3.1): every internal method
-//! through the handler's trap, with QuickJS's invariant checks against the
-//! target (`js_proxy_*`, including the checks it leaves out). A proxy's
+//! through the handler's trap, with the invariant checks of 10.5.1–10.5.13
+//! against the target. A proxy's
 //! internal slot 0 is the target, slot 1 the handler and slot 2 whether it
 //! is revoked: as in QuickJS, a revoked proxy keeps both, so an internal
 //! method that was running when its trap revoked the proxy still has them.
@@ -33,12 +33,6 @@ pub(crate) fn target(heap: &Heap, proxy: ObjectId) -> ObjectId {
 /// Marks `proxy` revoked.
 pub(crate) fn revoke(heap: &mut Heap, proxy: ObjectId) {
     heap.set_internal_slot(proxy, REVOKED, Value::bool(true));
-}
-
-/// QuickJS's `p->extensible` on a target: the object's own flag, which for a
-/// proxy target is set (QuickJS reads it without calling `isExtensible`).
-fn raw_extensible(heap: &Heap, object: ObjectId) -> bool {
-    heap.object_kind(object) == ObjectKind::Proxy || heap.header(object).has(flags::EXTENSIBLE)
 }
 
 fn key_value(key: PropertyKey) -> Value {
@@ -87,21 +81,10 @@ enum Dispatch {
     Forward(ObjectId),
     /// The trap of the proxy whose target and handler these are.
     Trap {
-        proxy: ObjectId,
         target: ObjectId,
         handler: ObjectId,
         trap: Value,
     },
-}
-
-/// A check QuickJS makes on each proxy right after reading its trap.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Check {
-    None,
-    /// `js_proxy_call`: the proxy must have been made from a function.
-    Callable,
-    /// `js_proxy_call_constructor`: the target must be a constructor.
-    Constructor,
 }
 
 /// QuickJS's `get_proxy_method` on `proxy`, then on its target for as long
@@ -114,7 +97,6 @@ fn dispatch(
     mut proxy: ObjectId,
     name: &str,
     frame: Option<usize>,
-    check: Check,
 ) -> Result<Dispatch, Throw> {
     let key = cx
         .heap
@@ -142,23 +124,9 @@ fn dispatch(
         if trap.is_null() {
             trap = Value::UNDEFINED;
         }
-        match check {
-            Check::None => {}
-            Check::Callable => {
-                if !cx.heap.header(proxy).has(flags::CALLABLE) {
-                    return Err(error::type_error(cx, "not a function"));
-                }
-            }
-            Check::Constructor => {
-                if !cx.heap.header(target).has(flags::CONSTRUCTOR) {
-                    return Err(error::not_a_constructor(cx, Value::object(target)));
-                }
-            }
-        }
         if !trap.is_undefined() {
             root(cx, trap);
             return Ok(Dispatch::Trap {
-                proxy,
                 target,
                 handler,
                 trap,
@@ -173,16 +141,15 @@ fn dispatch(
 
 pub(crate) fn get_prototype_of(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Value, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "getPrototypeOf", Some(128), Check::None)? {
-                Dispatch::Forward(target) => return object::get_prototype_of(cx, target),
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "getPrototypeOf", Some(128))? {
+            Dispatch::Forward(target) => return object::get_prototype_of(cx, target),
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let result = super::call(cx, trap, Value::object(handler), &[Value::object(target)])?;
         if result.as_object().is_none() && !result.is_null() {
             return Err(invariant(cx, "prototype"));
@@ -205,18 +172,17 @@ pub(crate) fn set_prototype_of(
     prototype: Value,
 ) -> Result<bool, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "setPrototypeOf", Some(64), Check::None)? {
-                Dispatch::Forward(target) => {
-                    return object::set_prototype_of(cx, target, prototype);
-                }
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "setPrototypeOf", Some(64))? {
+            Dispatch::Forward(target) => {
+                return object::set_prototype_of(cx, target, prototype);
+            }
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let result = super::call(
             cx,
             trap,
@@ -239,8 +205,7 @@ pub(crate) fn set_prototype_of(
 
 pub(crate) fn is_extensible(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<bool, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) = match dispatch(cx, proxy, "isExtensible", None, Check::None)?
-        {
+        let (target, handler, trap) = match dispatch(cx, proxy, "isExtensible", None)? {
             Dispatch::Forward(target) => return object::is_extensible(cx, target),
             Dispatch::Trap {
                 target,
@@ -260,16 +225,15 @@ pub(crate) fn is_extensible(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<bool, Th
 
 pub(crate) fn prevent_extensions(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<bool, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "preventExtensions", None, Check::None)? {
-                Dispatch::Forward(target) => return object::prevent_extensions(cx, target),
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "preventExtensions", None)? {
+            Dispatch::Forward(target) => return object::prevent_extensions(cx, target),
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let result = super::call(cx, trap, Value::object(handler), &[Value::object(target)])?;
         let result = ops::to_boolean(cx.heap, result);
         if result && object::is_extensible(cx, target)? {
@@ -285,24 +249,23 @@ pub(crate) fn get_own_property(
     key: PropertyKey,
 ) -> Result<Option<Descriptor>, Throw> {
     let result = scoped(cx, |cx| {
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "getOwnPropertyDescriptor", None, Check::None)? {
-                Dispatch::Forward(target) => {
-                    let descriptor = object::get_own_property(cx, target, key)?;
-                    let values = descriptor
-                        .iter()
-                        .flat_map(|d| [d.value, d.get, d.set])
-                        .flatten()
-                        .collect();
-                    return Ok(descriptor.map(|descriptor| (descriptor, values)));
-                }
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "getOwnPropertyDescriptor", None)? {
+            Dispatch::Forward(target) => {
+                let descriptor = object::get_own_property(cx, target, key)?;
+                let values = descriptor
+                    .iter()
+                    .flat_map(|d| [d.value, d.get, d.set])
+                    .flatten()
+                    .collect();
+                return Ok(descriptor.map(|descriptor| (descriptor, values)));
+            }
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let name = key_argument(cx, key)?;
         let result = super::call(
             cx,
@@ -385,18 +348,17 @@ pub(crate) fn define_own_property(
 ) -> Result<bool, Throw> {
     cx.heap.vm.proxy_refused = false;
     scoped(cx, |cx| {
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "defineProperty", None, Check::None)? {
-                Dispatch::Forward(target) => {
-                    return object::define_own_property(cx, target, key, descriptor);
-                }
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "defineProperty", None)? {
+            Dispatch::Forward(target) => {
+                return object::define_own_property(cx, target, key, descriptor);
+            }
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let name = key_argument(cx, key)?;
         let object = object::from_property_descriptor(cx, descriptor)?;
         root(cx, object);
@@ -442,7 +404,7 @@ pub(crate) fn define_own_property(
 
 pub(crate) fn has(cx: &mut Cx<'_>, proxy: ObjectId, key: PropertyKey) -> Result<bool, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) = match dispatch(cx, proxy, "has", Some(128), Check::None)? {
+        let (target, handler, trap) = match dispatch(cx, proxy, "has", Some(128))? {
             Dispatch::Forward(target) => return object::has_property(cx, target, key),
             Dispatch::Trap {
                 target,
@@ -459,9 +421,10 @@ pub(crate) fn has(cx: &mut Cx<'_>, proxy: ObjectId, key: PropertyKey) -> Result<
             &[Value::object(target), name],
         )?;
         let result = ops::to_boolean(cx.heap, result);
+        // 10.5.7 step 9.
         if !result
             && let Some(current) = object::get_own_property(cx, target, key)?
-            && (current.configurable != Some(true) || !raw_extensible(cx.heap, target))
+            && (current.configurable != Some(true) || !object::is_extensible(cx, target)?)
         {
             return Err(invariant(cx, "has"));
         }
@@ -476,7 +439,7 @@ pub(crate) fn get(
     receiver: Value,
 ) -> Result<Value, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) = match dispatch(cx, proxy, "get", Some(512), Check::None)? {
+        let (target, handler, trap) = match dispatch(cx, proxy, "get", Some(512))? {
             Dispatch::Forward(target) => return object::get(cx, target, key, receiver),
             Dispatch::Trap {
                 target,
@@ -522,7 +485,7 @@ pub(crate) fn set(
 ) -> Result<bool, Throw> {
     cx.heap.vm.proxy_refused = false;
     scoped(cx, |cx| {
-        let (target, handler, trap) = match dispatch(cx, proxy, "set", Some(256), Check::None)? {
+        let (target, handler, trap) = match dispatch(cx, proxy, "set", Some(256))? {
             Dispatch::Forward(target) => return object::set(cx, target, key, value, receiver),
             Dispatch::Trap {
                 target,
@@ -561,16 +524,15 @@ pub(crate) fn set(
 
 pub(crate) fn delete(cx: &mut Cx<'_>, proxy: ObjectId, key: PropertyKey) -> Result<bool, Throw> {
     scoped(cx, |cx| {
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "deleteProperty", Some(256), Check::None)? {
-                Dispatch::Forward(target) => return object::delete(cx, target, key),
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "deleteProperty", Some(256))? {
+            Dispatch::Forward(target) => return object::delete(cx, target, key),
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let name = key_argument(cx, key)?;
         let result = super::call(
             cx,
@@ -596,26 +558,28 @@ pub(crate) fn delete(cx: &mut Cx<'_>, proxy: ObjectId, key: PropertyKey) -> Resu
 pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyKey>, Throw> {
     let mark = cx.heap.roots().mark();
     let keys = scoped(cx, |cx| {
-        let (proxy, target, handler, trap) =
-            match dispatch(cx, proxy, "ownKeys", Some(256), Check::None)? {
-                Dispatch::Forward(target) => return object::own_property_keys(cx, target),
-                Dispatch::Trap {
-                    proxy,
-                    target,
-                    handler,
-                    trap,
-                } => (proxy, target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "ownKeys", Some(256))? {
+            Dispatch::Forward(target) => return object::own_property_keys(cx, target),
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let result = super::call(cx, trap, Value::object(handler), &[Value::object(target)])?;
         root(cx, result);
-        // QuickJS reads `length` and the elements of any value the trap
-        // returns, and converts every element before checking duplicates.
-        let length_key = crate::runtime::Names::key(cx.realm.names.length);
-        let length = super::property::get(cx, result, length_key)?;
-        let length = super::number::to_uint32(ops::to_number(cx, length)?);
+        // 10.5.11: CreateListFromArrayLike(result, property-key).
+        let Some(array) = result.as_object() else {
+            return Err(error::type_error(
+                cx,
+                "proxy: ownKeys must return an object",
+            ));
+        };
+        let length = object::length_of_array_like(cx, array)?;
         let mut keys: Vec<PropertyKey> = Vec::new();
         for index in 0..length {
-            let element_key = object::index_key(cx, index)?;
+            let element_key = object::number_key(cx, index as f64)?;
             let element = super::property::get(cx, result, element_key)?;
             if element.as_string().is_none() && element.as_symbol().is_none() {
                 return Err(error::type_error(
@@ -631,32 +595,51 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
                 return Err(error::type_error(cx, "proxy: duplicate property"));
             }
         }
+        // Steps 9–19: every target key's descriptor first, then the checks.
         let extensible = object::is_extensible(cx, target)?;
-        if is_revoked(cx.heap, proxy) {
-            return Err(error::type_error(cx, "revoked proxy"));
-        }
         let target_keys = object::own_property_keys(cx, target)?;
-        let mut found = vec![false; keys.len()];
+        let mut nonconfigurable = Vec::new();
+        let mut configurable = Vec::new();
         for key in target_keys {
-            if is_revoked(cx.heap, proxy) {
-                return Err(error::type_error(cx, "revoked proxy"));
-            }
-            let Some(descriptor) = object::get_own_property(cx, target, key)? else {
-                continue;
-            };
-            if descriptor.configurable != Some(true) || !extensible {
-                let Some(position) = keys.iter().position(|&k| k == key) else {
-                    return Err(error::type_error(
-                        cx,
-                        "proxy: target property must be present in proxy ownKeys",
-                    ));
-                };
-                if !extensible {
-                    found[position] = true;
+            match object::get_own_property(cx, target, key)? {
+                Some(descriptor) if descriptor.configurable == Some(false) => {
+                    nonconfigurable.push(key);
                 }
+                _ => configurable.push(key),
             }
         }
-        if !extensible && found.contains(&false) {
+        if extensible && nonconfigurable.is_empty() {
+            return Ok(keys);
+        }
+        let mut unchecked = keys.clone();
+        let mut take = |cx: &mut Cx<'_>, key: PropertyKey, message: &str| match unchecked
+            .iter()
+            .position(|&k| k == key)
+        {
+            Some(position) => {
+                unchecked.remove(position);
+                Ok(())
+            }
+            None => Err(error::type_error(cx, message)),
+        };
+        for key in nonconfigurable {
+            take(
+                cx,
+                key,
+                "proxy: target property must be present in proxy ownKeys",
+            )?;
+        }
+        if extensible {
+            return Ok(keys);
+        }
+        for key in configurable {
+            take(
+                cx,
+                key,
+                "proxy: target property must be present in proxy ownKeys",
+            )?;
+        }
+        if !unchecked.is_empty() {
             return Err(error::type_error(
                 cx,
                 "proxy: property not present in target were returned by non extensible proxy",
@@ -676,31 +659,33 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
 }
 
 /// `[[Call]]` of a proxy: the `apply` trap with the arguments as an array.
-/// QuickJS enters a proxy made from a non-callable target too, reading its
-/// `apply` trap before reporting `not a function`.
+/// A proxy made from a non-callable target has no `[[Call]]` (10.5.12):
+/// calling it throws before any trap is read.
 pub(crate) fn call(
     cx: &mut Cx<'_>,
     proxy: ObjectId,
     this: Value,
     args: &[Value],
 ) -> Result<Value, Throw> {
+    if !cx.heap.header(proxy).has(flags::CALLABLE) {
+        return Err(error::type_error(cx, "not a function"));
+    }
     scoped(cx, |cx| {
         for &arg in args {
             root(cx, arg);
         }
         root(cx, this);
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "apply", Some(1024), Check::Callable)? {
-                Dispatch::Forward(target) => {
-                    return super::call(cx, Value::object(target), this, args);
-                }
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "apply", Some(1024))? {
+            Dispatch::Forward(target) => {
+                return super::call(cx, Value::object(target), this, args);
+            }
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let array = object::array_from_list(cx, args)?;
         root(cx, Value::object(array));
         super::call(
@@ -713,30 +698,40 @@ pub(crate) fn call(
 }
 
 /// `[[Construct]]` of a proxy: the `construct` trap, whose result must be
-/// an object.
+/// an object. A proxy whose target is no constructor has no
+/// `[[Construct]]` (10.5.13): `new` throws before any trap is read.
 pub(crate) fn construct(
     cx: &mut Cx<'_>,
     proxy: ObjectId,
     args: &[Value],
     new_target: Value,
 ) -> Result<Value, Throw> {
+    if !cx
+        .heap
+        .header(target(cx.heap, proxy))
+        .has(flags::CONSTRUCTOR)
+    {
+        return Err(error::not_a_constructor(
+            cx,
+            Value::object(target(cx.heap, proxy)),
+        ));
+    }
     scoped(cx, |cx| {
         for &arg in args {
             root(cx, arg);
         }
         root(cx, new_target);
-        let (target, handler, trap) =
-            match dispatch(cx, proxy, "construct", Some(256), Check::Constructor)? {
-                Dispatch::Forward(target) => {
-                    return super::construct(cx, Value::object(target), args, new_target);
-                }
-                Dispatch::Trap {
-                    target,
-                    handler,
-                    trap,
-                    ..
-                } => (target, handler, trap),
-            };
+        let (target, handler, trap) = match dispatch(cx, proxy, "construct", Some(256))? {
+            Dispatch::Forward(target) => {
+                return super::construct(cx, Value::object(target), args, new_target);
+            }
+            Dispatch::Trap {
+                target,
+                handler,
+                trap,
+                ..
+            } => (target, handler, trap),
+        };
         let array = object::array_from_list(cx, args)?;
         root(cx, Value::object(array));
         let result = super::call(

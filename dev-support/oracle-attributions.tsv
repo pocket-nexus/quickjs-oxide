@@ -217,3 +217,7 @@ iterator/helpers / String fallback / a primitive String remains the wrapped iter
 control_flow/for_in / fast Array additions shadow prototype keys without joining the iteration	QUICKJS-SPEC-023
 control_flow/for_in / fast Array non-enumerable additions still shadow prototype keys	QUICKJS-SPEC-023
 arguments/arguments / new own properties shadow prototypes but miss a fast snapshot	QUICKJS-SPEC-023
+proxy_reflect/proxy / pinned ownKeys rechecks revocation after the trap returns	QUICKJS-SPEC-024
+proxy_reflect/proxy / pinned noncallable Proxy reads apply before reporting not a function	QUICKJS-SPEC-024
+proxy_reflect/proxy / pinned trap dispatch enters a noncallable Proxy before rejecting it	QUICKJS-SPEC-024
+proxy_reflect/proxy / nested ownKeys fallback rechecks the Proxy which supplied the trap	QUICKJS-SPEC-024
