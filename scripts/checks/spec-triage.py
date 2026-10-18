@@ -226,9 +226,9 @@ def main():
 
     with open(args.output, "w") as output:
         output.write("case\tmode\tverdict\tattribution\tqjs\tquickjs\tnode\n")
-        for name, mode, verdict, attribution, observed in rows:
+        for name, mode, decided, attribution, observed in rows:
             cells = [json.dumps(observed[engine]) for engine in ("qjs", "quickjs", "node")]
-            output.write("\t".join([name, mode, verdict, attribution, *cells]) + "\n")
+            output.write("\t".join([name, mode, decided, attribution, *cells]) + "\n")
     counts = {}
     for row in rows:
         counts[row[2]] = counts.get(row[2], 0) + 1
