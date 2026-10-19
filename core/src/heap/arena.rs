@@ -4,6 +4,9 @@
 //! The live bitmap is what sweep uses to tell free slots from dead records, so
 //! it exists in every build. Only debug and `gc-stress` builds assert liveness
 //! on access; release builds check nothing.
+//!
+//! The record vector grows by [`step_bytes`] and gives back a trailing free
+//! run of more than a quarter of its capacity after a sweep.
 
 use std::mem;
 
@@ -22,6 +25,33 @@ pub trait Record {
 }
 
 const CHECK_LIVE: bool = cfg!(any(debug_assertions, feature = "gc-stress"));
+
+/// Below this many bytes a vector doubles. The allocator keeps such blocks
+/// in its heaps, where growing one copies it and leaves the old block
+/// resident; a doubling makes that happen once per doubling. Larger blocks
+/// are each their own mapping and grow in place (`mremap`), so they grow by
+/// [`STEP`] and their slack stays below one step.
+pub const DOUBLING_LIMIT: usize = 32 << 20;
+pub const STEP: usize = 2 << 20;
+
+/// The bytes a vector of `capacity` bytes grows by.
+#[inline]
+pub fn step_bytes(capacity: usize, unit: usize) -> usize {
+    if capacity < DOUBLING_LIMIT {
+        capacity.max(4 * unit)
+    } else {
+        STEP
+    }
+}
+
+/// The capacity, in elements of `unit` bytes, after growing from `capacity`
+/// until it holds `needed`.
+pub fn grown_capacity(mut capacity: usize, needed: usize, unit: usize) -> usize {
+    while capacity < needed {
+        capacity += step_bytes(capacity * unit, unit).div_ceil(unit);
+    }
+    capacity
+}
 
 pub struct Arena<T> {
     records: Vec<T>,
@@ -84,7 +114,13 @@ impl<T: Record> Arena<T> {
         let index = u32::try_from(self.records.len()).expect("arena index overflow");
         if self.records.len() == self.records.capacity() {
             let before = self.bytes();
-            self.records.reserve_exact(self.records.capacity().max(4));
+            let unit = mem::size_of::<T>().max(1);
+            let old = self.records.capacity();
+            self.records
+                .reserve_exact(grown_capacity(old, old + 1, unit) - old);
+            let words = self.records.capacity().div_ceil(64);
+            self.live.reserve_exact(words - self.live.len());
+            self.marks.reserve_exact(words - self.marks.len());
             room.take(self.bytes() - before);
         }
         self.records.push(value);
@@ -103,12 +139,9 @@ impl<T: Record> Arena<T> {
         let fresh = count.saturating_sub(self.free.len());
         // Quarantined indices do not count: they are not reusable yet.
         let needed = self.records.len() + fresh;
-        let mut capacity = self.records.capacity();
-        let old = capacity;
-        while capacity < needed {
-            capacity += capacity.max(4);
-        }
-        (capacity - old) * mem::size_of::<T>()
+        let old = self.records.capacity();
+        let unit = mem::size_of::<T>().max(1);
+        (grown_capacity(old, needed, unit) - old) * unit
     }
 
     #[inline]
@@ -207,7 +240,8 @@ impl<T: Record> Arena<T> {
     }
 
     /// Frees every live, unmarked record, highest index first, passing each to
-    /// `dead`. Returns the number freed.
+    /// `dead`, then gives back a long trailing free run. Returns the number
+    /// freed.
     pub fn sweep(&mut self, mut dead: impl FnMut(u32, T)) -> usize {
         #[cfg(feature = "gc-stress")]
         let held = {
@@ -236,7 +270,38 @@ impl<T: Record> Arena<T> {
         self.live_count -= freed;
         #[cfg(feature = "gc-stress")]
         self.quarantine.extend(self.free.drain(held..));
+        self.shrink();
         freed
+    }
+
+    /// Truncates a trailing free run of more than a quarter of the capacity
+    /// and returns the memory past one growth step above the rest.
+    fn shrink(&mut self) {
+        let capacity = self.records.capacity();
+        #[allow(unused_mut)]
+        let mut end = match self.live.iter().rposition(|&bits| bits != 0) {
+            Some(word) => word * 64 + 64 - self.live[word].leading_zeros() as usize,
+            None => 0,
+        };
+        // Quarantined slots stay, so a stale index is not reused at once.
+        #[cfg(feature = "gc-stress")]
+        if let Some(&last) = self.quarantine.iter().max() {
+            end = end.max(last as usize + 1);
+        }
+        if (capacity - end) * 4 <= capacity {
+            return;
+        }
+        self.free.retain(|&index| (index as usize) < end);
+        self.records.truncate(end);
+        let unit = mem::size_of::<T>().max(1);
+        self.records
+            .shrink_to(end + step_bytes(end * unit, unit).div_ceil(unit));
+        let words = self.records.capacity().div_ceil(64);
+        self.live.truncate(words);
+        self.marks.truncate(words);
+        self.live.shrink_to(words);
+        self.marks.shrink_to(words);
+        self.free.shrink_to(self.free.len() * 2);
     }
 
     /// Live indices in ascending order.
@@ -341,15 +406,58 @@ mod tests {
     }
 
     #[test]
-    fn a_step_past_the_budget_zeroes_the_threshold() {
-        let mut room = Room::new(8 * size_of::<Item>(), usize::MAX);
+    fn growth_steps_are_bounded() {
+        assert_eq!(step_bytes(0, 24), 96);
+        assert_eq!(step_bytes(4 << 20, 24), 4 << 20);
+        assert_eq!(step_bytes(64 << 20, 24), STEP);
+        let mut room = Room::unbounded();
         let mut arena = Arena::new();
-        for value in 0..8 {
+        for value in 0..10_000_000 {
             arena.alloc(Item(value), &mut room);
         }
-        assert_ne!(room.threshold(), 0);
-        arena.alloc(Item(8), &mut room);
-        assert_eq!(room.threshold(), 0);
+        let capacity = arena.records.capacity() * size_of::<Item>();
+        let used = arena.records.len() * size_of::<Item>();
+        assert!(capacity - used < STEP, "{capacity} for {used}");
+    }
+
+    #[test]
+    fn a_trailing_free_run_is_given_back() {
+        let mut room = Room::unbounded();
+        let mut arena = Arena::new();
+        for value in 0..100_000 {
+            arena.alloc(Item(value), &mut room);
+        }
+        let before = arena.bytes();
+        for keep in 0..1000 {
+            arena.mark(keep);
+        }
+        arena.sweep(|_, _| {});
+        #[cfg(feature = "gc-stress")]
+        {
+            // The quarantined slots stay until the next sweep releases them.
+            assert_eq!(arena.slot_count(), 100_000);
+            arena.clear_marks();
+            for keep in 0..1000 {
+                arena.mark(keep);
+            }
+            arena.sweep(|_, _| {});
+        }
+        assert_eq!(arena.slot_count(), 1000);
+        assert!(arena.bytes() < before / 4);
+        assert_eq!(arena.alloc(Item(5), &mut room), 1000);
+    }
+
+    #[test]
+    fn a_step_past_the_budget_zeroes_the_threshold() {
+        let mut room = Room::new(1 << 10, usize::MAX);
+        let mut arena = Arena::new();
+        let mut value = 0;
+        while room.threshold() != 0 {
+            assert!(arena.bytes() <= 1 << 10);
+            arena.alloc(Item(value), &mut room);
+            value += 1;
+        }
+        assert!(arena.bytes() > 1 << 10);
     }
 
     #[test]

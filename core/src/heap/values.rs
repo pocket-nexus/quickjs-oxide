@@ -7,6 +7,7 @@
 //! exponent. The value heap does not compact; [`ValueHeap::fragmentation`]
 //! reports what churn leaves behind.
 
+use super::arena::grown_capacity;
 use super::gc::Room;
 use crate::value::Value;
 
@@ -95,7 +96,7 @@ impl ValueHeap {
         assert!(end <= u32::MAX as usize, "value heap overflow");
         if end > self.values.capacity() {
             let before = self.values.capacity();
-            let target = end.max(self.values.capacity() * 2);
+            let target = grown_capacity(before, end, 8);
             self.values.reserve_exact(target - self.values.len());
             room.take((self.values.capacity() - before) * 8);
         }
@@ -110,11 +111,8 @@ impl ValueHeap {
             return 0;
         }
         let end = self.values.len() + len as usize;
-        if end <= self.values.capacity() {
-            0
-        } else {
-            (end.max(self.values.capacity() * 2) - self.values.capacity()) * 8
-        }
+        let capacity = self.values.capacity();
+        (grown_capacity(capacity, end, 8) - capacity) * 8
     }
 
     /// Returns a range of at least `new_len` holding `range`'s values: the same
