@@ -368,6 +368,7 @@ struct LowerScratch {
     origins: Vec<usize>,
     stack: Vec<Entry>,
     name_keys: Vec<Option<PropertyKey>>,
+    local_keys: Vec<Option<PropertyKey>>,
 }
 
 /// Where a function's locals and temporaries live. The window of 256
@@ -741,8 +742,10 @@ struct Lowerer<'a, 'c> {
     max_scratch: u32,
     pool: Vec<CoreValue>,
     pool_index: HashMap<u32, u32>,
-    /// The key of each string constant used as a name.
+    /// The key of each string constant used as a name, and of each
+    /// local's name.
     name_keys: Vec<Option<PropertyKey>>,
+    local_keys: Vec<Option<PropertyKey>>,
     child_ordinal: HashMap<u32, u32>,
     this_keys: HashSet<u32>,
     /// Register PCs of the calls written as a direct `eval` (for the
@@ -797,6 +800,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         labels.resize(code.len(), None);
         let mut name_keys = std::mem::take(&mut scratch.name_keys);
         name_keys.resize(function.constants().len(), None);
+        let mut local_keys = std::mem::take(&mut scratch.local_keys);
+        local_keys.resize(function.local_definitions().len(), None);
         let fixups = std::mem::take(&mut scratch.fixups);
         let origins = std::mem::take(&mut scratch.origins);
         let stack = std::mem::take(&mut scratch.stack);
@@ -835,6 +840,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             pool: Vec::new(),
             pool_index: HashMap::new(),
             name_keys,
+            local_keys,
             child_ordinal,
             this_keys: HashSet::new(),
             analysis,
@@ -1398,15 +1404,22 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     }
 
     fn local_key(&mut self, local: u16) -> Result<PropertyKey, LowerError> {
+        if let Some(&Some(key)) = self.local_keys.get(local as usize) {
+            return Ok(key);
+        }
         let function = self.function;
-        match function
+        let key = match function
             .local_definitions()
             .get(local as usize)
             .and_then(|definition| definition.name.as_ref())
         {
-            Some(name) => self.key(name),
-            None => self.static_key(""),
+            Some(name) => self.key(name)?,
+            None => self.static_key("")?,
+        };
+        if let Some(slot) = self.local_keys.get_mut(local as usize) {
+            *slot = Some(key);
         }
+        Ok(key)
     }
 
     /// An atom value for a string of the tree, once per string (atoms are
@@ -3345,6 +3358,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         scratch.labels = self.labels;
         self.name_keys.clear();
         scratch.name_keys = self.name_keys;
+        self.local_keys.clear();
+        scratch.local_keys = self.local_keys;
         self.fixups.clear();
         scratch.fixups = self.fixups;
         self.origins.clear();
