@@ -19,8 +19,8 @@ crate depends on it; it does not depend on the root crate.
 | Module | Content |
 | --- | --- |
 | `value` | `Value(u64)` (NaN-boxed, doubles favored), `Kind`, identifier newtypes |
-| `heap::arena` | `Arena<T>`: `Vec<T>`, free list, side mark and live bitmaps |
-| `heap::values` | the value heap: power-of-two ranges over one `Vec<Value>` |
+| `heap::arena` | `Arena<T>`: `Vec<T>`, side live and mark bitmaps, allocation from the live bitmap |
+| `heap::values` | the value heap: ranges of size classes over one `Vec<Value>`, coalesced at every collection |
 | `heap::object` | `ObjectHeader`, `ObjectKind`, payload arenas |
 | `heap::string`, `atom`, `symbol`, `bigint` | leaf records, interning, `PropertyKey` |
 | `heap::gc` | root stack, handles, mark-sweep, trigger, stress mode, heap cap |
@@ -71,8 +71,8 @@ records, freed indices are quarantined for one collection so they are not
 immediately recycled, and every access asserts liveness: a missed root panics
 with `stale … index` at the access that used it. After each collection the
 verifier re-marks from the roots and checks that live and reachable records
-agree, that no free-list entry is live or marked, and that every value-heap
-range has exactly one owner. Debug builds assert liveness too; release builds
+agree, that no free slot is marked, and that every value-heap slot has
+exactly one owner, a live range or the free space. Debug builds assert liveness too; release builds
 check nothing.
 
 ## Values and the heap
@@ -83,8 +83,10 @@ check nothing.
   the dynamic units and the regular-expression programs are in the heap.
 - The special values use payload bits 0–1 for the kind (Bool, Undefined, Null,
   Empty) and bit 2 for the boolean, so `kind()` is a branchless table lookup.
-- Every value-heap range is a power of two, including large ones, so a header
-  stores each range as a start and a `u8` exponent.
+- Every value-heap range is a power of two or three times one, including
+  large ones, so a header stores each range as a start and a `u8` code (an
+  exponent and a mantissa bit); named-property slots are always powers of
+  two.
 - `delete_property`, `set_prototype` and `set_property_flags` return
   `Result`: entering dictionary mode or replaying a shape allocates.
 - Array indices from 2^31 to 2^32 − 2 are atoms whose record caches the index.

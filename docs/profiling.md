@@ -16,11 +16,11 @@ cargo build --locked --release -p quickjs-oxide-cli --features ic-stats --target
 | Option | Report |
 | --- | --- |
 | `--gc-stats` | One line: collections, total pause, the pauses' p50, p99 and maximum, live and reserved KiB |
-| `--memory-report` | Per arena (objects, shapes, strings, symbols, BigInts, cells, functions, bytecode, internals, values): live records, capacity, used and reserved bytes; free value slots by size class; rope bytes and atoms; the heap's reserved bytes, collection threshold and cap; code units, instructions, positions, source and RegExp programs; the register file's high-water mark and capacity; inline-cache entries; the collector's totals |
+| `--memory-report` | Per arena (objects, shapes, strings, symbols, BigInts, cells, functions, bytecode, internals, values): live records, capacity, used and reserved bytes; free value ranges by size class and free runs; rope bytes, atoms and the tables beside the arenas; the heap's reserved bytes, collection threshold, budget and cap; code units, instructions, positions, source and RegExp programs; the register file's high-water mark and capacity; inline-cache entries; the collector's totals |
 | `--ic-stats` | Per cache kind (get, set, global, construct): monomorphic and polymorphic hits, fills, unfilled lookups and hit rate; sites by state (monomorphic, polymorphic, megamorphic); array iterations on the fast path and through the protocol; the ten sites with the most misses, by function, instruction index, opcode and key. Needs a build with the `ic-stats` feature; without it `qjs` rejects the option |
 | `--disassemble` | The register code of every function `FILE` compiles to, root first, with its parameter, local, register, constant and cache-site counts; prints and exits without running the script |
 
-The collector options change what the statistics show: `--min-heap-mib N` sets the collection threshold floor (default 4), `--gc-growth F` the threshold's growth after a collection (default 2), and `--heap-cap-mib N` caps the heap. A `gc-stress` build adds `--gc-stress=N`, which collects before every N-th allocation.
+The collector options change what the statistics show: `--min-heap-mib N` sets the floor of the reserved-bytes budget (default 1), `--gc-growth F` the bytes allocated between collections per live byte (default 2), and `--heap-cap-mib N` caps the heap. A `gc-stress` build adds `--gc-stress=N`, which collects before every N-th allocation.
 
 Rust embedders read the same reports from `Runtime`: `gc_stats` and `gc_report`, `memory_report` (a `MemoryReport` with one field per arena and the code, register and cache counts), `ic_report(worst)` (`None` without the `ic-stats` feature) and `disassemble(source, filename)`.
 

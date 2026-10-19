@@ -885,8 +885,9 @@ impl Heap {
     }
 
     /// Post-collection verification: every live record is reachable and every
-    /// reachable record is live; no free-list entry is live or marked; every
-    /// value-heap range has exactly one owner.
+    /// reachable record is live; no free slot is marked and every arena's free
+    /// count agrees with its bitmap; every value-heap slot has exactly one
+    /// owner, a live range or the free space.
     pub fn verify(&mut self) {
         self.mark_from_roots();
         fn check<T: super::arena::Record>(name: &str, arena: &super::arena::Arena<T>) {

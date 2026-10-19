@@ -23,9 +23,8 @@ The work is a list of items taken by need, in the priority order of section 8; n
 | Havlak | 33 / 41 MiB | 49.6 MiB | 8.3 MiB | 11.1% |
 | zlib | 134 / 20 MiB | 1.4 MiB | 356 KiB | 0.0% |
 
-Two mechanisms account for the largest gaps, and each has a section below:
+One mechanism accounts for the largest remaining gap, and section 6 describes it:
 
-- **Reserved memory never comes back.** Arenas and the value heap are `Vec`s that grow by doubling and never shrink; Splay reserves 294 MiB for 75 MiB live, Havlak 50 for 8. Under a cap this is the difference between fitting and `OutOfMemory` (section 3).
 - **Every collection marks the whole live set.** Splay spends a third of its time in nine collections of 86–115 ms each over a 75 MiB live set (section 6).
 
 An empty script costs about 3.1 million user-space instructions on the release `qjs`, and 16 MiB of RSS, which is the process floor. The realm's initialization is what a heap snapshot stands in for (section 4).
@@ -67,19 +66,12 @@ The items add to it what they need to report:
 
 ### 3.1 The trigger under a cap
 
-The safepoint compares the bytes allocated since the last collection against `threshold = max(min_heap, live × growth)` and, when a cap is set, also checks whether the growth the allocation needs would cross the cap, collecting or failing ([Heap](heap.md#the-trigger)). Growth 2 over a 75 MiB live set puts the next collection at 150 MiB whatever the cap is, so under a 128 MiB cap every Splay allocation past 128 MiB is a collection (the cap check fires on each one once the heap sits at the cap). The planned rule:
-
-```text
-threshold = clamp(live × growth, min_heap, cap − headroom)      when a cap is set
-headroom  = the largest single growth step any arena or the value heap would take next
-```
-
-so that under a cap the collection happens before the heap reaches it, and the heap sits below the cap by one growth step rather than at it. `growth` stays 2 and `min_heap` 4 MiB; only the clamp is new, and it is inactive without a cap, so uncapped runs are unchanged by construction (the instruction gate confirms it).
+The trigger bounds reserved memory by a budget, and under a cap the budget is at most one growth step below the cap ([Heap](heap.md#the-trigger)), so the collection happens before the heap reaches the cap and the heap sits one step below it. This item measures whether the budget's lateness of one allocation needs a second check at the safepoint under a cap (the capped-run table of 3.5).
 
 ### 3.2 Growth that stops at the cap, and shrinking
 
 - **Growth.** An arena or value-heap growth step that would cross the cap grows to the cap instead of doubling. `Arena::growth_bytes` and `ValueHeap::growth_bytes` compute the step; it is clamped where it is taken.
-- **Shrinking after a collection.** After a sweep, every arena whose trailing free run is more than a quarter of its capacity and whose free share is above half gives the trailing run back (`Vec::truncate` plus `shrink_to`; the free list drops the indices above the new length). The value heap does the same with free ranges that end at its high-water mark; a non-moving heap can give back only what is free at the top, and the item records what that recovers on Splay, Havlak, PdfJS and TypeScript. Shrinking runs only when `bytes > 2 × live` after the collection, so the steady state of a program that fills and refills the same heap (the churn ring of `docs/performance/probes/slopes/heap_workloads.py`) pays nothing.
+- **Shrinking after a collection** is the heap's ([Heap](heap.md#arenas)): an arena or the value heap whose trailing free run is more than a quarter of its capacity gives it back. This item records what that recovers on Splay, Havlak, PdfJS and TypeScript under a cap.
 - **The register file** grows by doubling up to `RuntimeOptions.stack_limit`; it shrinks back to its initial reservation at the runtime boundary when the frame table is empty and it is above four times its initial size.
 
 ### 3.3 Runtime options and the out-of-memory error
@@ -115,7 +107,7 @@ Every cross-record reference in the core is an index (`ObjectId`, `StringId`, `S
 
 - little-endian; every count and index is a `u32`; every `Value` is its `u64`; `f64` as its bits; every width fixed, so the bytes are identical from a 32-bit and a 64-bit build of the same source (the 32-bit item's test);
 - a header with a magic, a format version (a constant bumped by hand) and a **build fingerprint**: a hash of the `Opcode` and `Native` name tables and of the record sizes, computed once at startup, so a file from another build is rejected with `SnapshotError::Fingerprint` before any of it is read;
-- per arena: the live bitmap, then the live records in index order; the loader fills dead indices into the free list from the bitmap. Record fields that own Rust allocations (string units, BigInt limbs, buffers, the shape's transitions and lazy table, the collection tables) are written as their contents and rebuilt as allocations by the loader;
+- per arena: the live bitmap, then the live records in index order; the loader's allocation reuses dead indices from the bitmap. Record fields that own Rust allocations (string units, BigInt limbs, buffers, the shape's transitions and lazy table, the collection tables) are written as their contents and rebuilt as allocations by the loader;
 - hash tables are rebuilt at load from what they index: the atom table from the records flagged `is_atom` (their stored `hash` is written, so rebuilding is insertion without rehashing), `shape_roots` from the shapes without a parent, each shape's `transitions` from its children's parent links, `prototypes` (cells and dependents) from the shapes' prototype fields and the cell arena, the regular-expression index from the records. A shape's lazy property table stays unbuilt until the first lookup that wants it;
 - the inline caches start empty: the loader reserves each unit's `ic_count` entries in publication order, so `ic_base` is unchanged;
 - the static units and the heap's live dynamic units are written alike (a `Function`-made function live in the heap keeps its unit), each as its `Insn`s, handlers, captures, children, flags, counts, name atom, length, the position table and, unless the snapshot is stripped, the source text; `DebugInfo.filename` goes through one string table;
