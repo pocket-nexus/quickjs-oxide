@@ -22,9 +22,10 @@ use crate::engine::compiler::lexer::Lexer;
 use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Token;
+use crate::engine::compiler::parser::context::ForHeadDelimiter;
 use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a
@@ -59,6 +60,39 @@ pub(in crate::engine::compiler) struct LookaheadCache<'source> {
         Option<(usize, LexContext, Option<ParenthesizedParameterScan>)>,
     pub(in crate::engine::compiler) iteration_hint:
         Option<(usize, LexContext, Option<ForIterationKind>)>,
+    /// Empty delimiter stacks for the next probes; see [`DelimiterStack`].
+    delimiter_stacks: Vec<Vec<ForHeadDelimiter>>,
+}
+
+/// A probe's delimiter stack, taken from the cache's spare stacks and
+/// returned to them when dropped.
+pub(in crate::engine::compiler) struct DelimiterStack<'parser, 'source> {
+    cache: &'parser RefCell<LookaheadCache<'source>>,
+    stack: Vec<ForHeadDelimiter>,
+}
+
+impl std::ops::Deref for DelimiterStack<'_, '_> {
+    type Target = Vec<ForHeadDelimiter>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.stack
+    }
+}
+
+impl std::ops::DerefMut for DelimiterStack<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.stack
+    }
+}
+
+impl Drop for DelimiterStack<'_, '_> {
+    fn drop(&mut self) {
+        let mut stack = std::mem::take(&mut self.stack);
+        stack.clear();
+        if let Ok(mut cache) = self.cache.try_borrow_mut() {
+            cache.delimiter_stacks.push(stack);
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -192,6 +226,20 @@ impl<'source> LookaheadCache<'source> {
 }
 
 impl<'source> Parser<'source> {
+    /// An empty delimiter stack for a probe.
+    pub(in crate::engine::compiler) fn delimiter_stack(&self) -> DelimiterStack<'_, 'source> {
+        let stack = self
+            .lookahead
+            .try_borrow_mut()
+            .ok()
+            .and_then(|mut cache| cache.delimiter_stacks.pop())
+            .unwrap_or_default();
+        DelimiterStack {
+            cache: &self.lookahead,
+            stack,
+        }
+    }
+
     pub(in crate::engine::compiler) fn cached_parenthesized_arrow(
         &self,
         start: usize,

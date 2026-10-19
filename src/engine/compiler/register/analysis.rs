@@ -32,6 +32,7 @@ pub(super) struct CatchRegion {
 /// No active region.
 pub(super) const NO_REGION: u32 = u32::MAX;
 
+#[derive(Default)]
 pub(super) struct Analysis {
     /// Operand-stack depth before each instruction; `None` if unreachable.
     pub(super) depth: Vec<Option<u32>>,
@@ -47,18 +48,42 @@ pub(super) struct Analysis {
     pub(super) max_depth: u32,
 }
 
+/// The working buffers of [`analyze_into`], kept between functions.
+#[derive(Default)]
+pub(super) struct Scratch {
+    catch_ids: Vec<u32>,
+    worklist: VecDeque<(usize, u32, u32)>,
+}
+
+#[cfg(test)]
 pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
+    let mut analysis = Analysis::default();
+    analyze_into(code, &mut analysis, &mut Scratch::default())?;
+    Ok(analysis)
+}
+
+/// Analyzes `code` into `analysis`, reusing its buffers and `scratch`'s.
+pub(super) fn analyze_into(
+    code: &[Instruction],
+    analysis: &mut Analysis,
+    scratch: &mut Scratch,
+) -> Result<(), LowerError> {
     let len = code.len();
-    let mut analysis = Analysis {
-        depth: vec![None; len],
-        regions: vec![NO_REGION; len],
-        label: vec![false; len],
-        catches: Vec::new(),
-        max_depth: 0,
-    };
-    let mut catch_ids = vec![u32::MAX; len];
+    analysis.depth.clear();
+    analysis.depth.resize(len, None);
+    analysis.regions.clear();
+    analysis.regions.resize(len, NO_REGION);
+    analysis.label.clear();
+    analysis.label.resize(len, false);
+    analysis.catches.clear();
+    analysis.max_depth = 0;
+    let catch_ids = &mut scratch.catch_ids;
+    catch_ids.clear();
+    catch_ids.resize(len, u32::MAX);
     let internal = |message: &str| LowerError::Internal(message.to_owned());
-    let mut worklist = VecDeque::from([(0_usize, 0_u32, NO_REGION)]);
+    let worklist = &mut scratch.worklist;
+    worklist.clear();
+    worklist.push_back((0_usize, 0_u32, NO_REGION));
     let target = |t: u32| -> Result<usize, LowerError> {
         let t = t as usize;
         if t < len {
@@ -177,7 +202,7 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
             _ => worklist.push_back((pc + 1, next, region)),
         }
     }
-    Ok(analysis)
+    Ok(())
 }
 
 /// A region opened inside `parent`.

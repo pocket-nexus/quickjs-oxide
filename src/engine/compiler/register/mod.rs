@@ -42,7 +42,7 @@ use oxide_core::bytecode::{
 use oxide_core::vm::compile::Compiler;
 use oxide_core::{HeapError, ObjectId, PropertyKey, Runtime, StringId, Value as CoreValue};
 
-use self::analysis::{Analysis, analyze};
+use self::analysis::{Analysis, analyze_into};
 use crate::engine::code::bytecode::{
     ApplyKind, ArgumentsKind, DefineMethodKind, Instruction, IteratorCallKind, PrivateNameSource,
 };
@@ -309,7 +309,8 @@ fn lower_tree(
     parent: Option<Layout>,
     constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
 ) -> Result<CodeUnitId, LowerError> {
-    let analysis = analyze(function.code())?;
+    let mut analysis = tree.analyses.pop().unwrap_or_default();
+    analyze_into(function.code(), &mut analysis, &mut tree.analysis_scratch)?;
     let layout = Layout::of(function, &analysis)?;
     let mut children = Vec::new();
     for constant in function.constants() {
@@ -351,6 +352,22 @@ struct TreeCache {
     atoms: HashMap<usize, (JsString, StringId)>,
     /// The tree's file name, converted once.
     filename: Option<(JsString, std::rc::Rc<str>)>,
+    /// Buffers kept for the next function: analyses not in use (a parent's
+    /// stays in use while its children lower) and the lowering's own; one
+    /// function lowers at a time.
+    analyses: Vec<Analysis>,
+    analysis_scratch: analysis::Scratch,
+    lowering: LowerScratch,
+}
+
+/// A [`Lowerer`]'s buffers between functions, empty.
+#[derive(Default)]
+struct LowerScratch {
+    labels: Vec<Option<u32>>,
+    fixups: Vec<(u32, usize)>,
+    origins: Vec<usize>,
+    stack: Vec<Entry>,
+    name_keys: Vec<Option<PropertyKey>>,
 }
 
 /// Where a function's locals and temporaries live. The window of 256
@@ -775,6 +792,15 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             }
         }
         let code = function.code();
+        let scratch = &mut tree.lowering;
+        let mut labels = std::mem::take(&mut scratch.labels);
+        labels.resize(code.len(), None);
+        let mut name_keys = std::mem::take(&mut scratch.name_keys);
+        name_keys.resize(function.constants().len(), None);
+        let fixups = std::mem::take(&mut scratch.fixups);
+        let origins = std::mem::take(&mut scratch.origins);
+        let stack = std::mem::take(&mut scratch.stack);
+        debug_assert!(fixups.is_empty() && origins.is_empty() && stack.is_empty());
         // A mapped `arguments` object aliases the parameters
         // through cells, so every parameter of such a function is one.
         if code
@@ -790,14 +816,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             code,
             is_script,
             builder: CodeBuilder::new(),
-            stack: Vec::new(),
+            stack,
             temp_base: layout.temp_base,
             layout,
             captured_arguments,
             captured_locals,
-            labels: vec![None; code.len()],
-            fixups: Vec::new(),
-            origins: Vec::new(),
+            labels,
+            fixups,
+            origins,
             direct_eval_sites: Vec::new(),
             next_scratch: 0,
             result_scratch: 0,
@@ -808,7 +834,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             max_scratch: 0,
             pool: Vec::new(),
             pool_index: HashMap::new(),
-            name_keys: vec![None; function.constants().len()],
+            name_keys,
             child_ordinal,
             this_keys: HashSet::new(),
             analysis,
@@ -3312,6 +3338,19 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             .and_then(|debug| debug.pc2line.as_ref())
             .and_then(|table| table.definition.one_based());
         unit.direct_eval_sites = self.direct_eval_sites.into();
+        let tree = &mut *self.tree;
+        tree.analyses.push(self.analysis);
+        let scratch = &mut tree.lowering;
+        self.labels.clear();
+        scratch.labels = self.labels;
+        self.name_keys.clear();
+        scratch.name_keys = self.name_keys;
+        self.fixups.clear();
+        scratch.fixups = self.fixups;
+        self.origins.clear();
+        scratch.origins = self.origins;
+        self.stack.clear();
+        scratch.stack = self.stack;
         Ok((unit, self.pool))
     }
 

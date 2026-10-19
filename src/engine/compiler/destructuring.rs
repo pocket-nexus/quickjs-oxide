@@ -662,7 +662,8 @@ impl<'source> Parser<'source> {
             return None;
         }
 
-        let mut delimiters = vec![ForHeadDelimiter::Parenthesis];
+        let mut delimiters = self.delimiter_stack();
+        delimiters.push(ForHeadDelimiter::Parenthesis);
         let mut goal = LexicalGoal::Div;
         let mut regexp_allowed = true;
         let mut finished = false;
@@ -819,7 +820,7 @@ impl<'source> Parser<'source> {
 
         let mut lexer = self.lexer.clone();
         lexer.seek(self.current().span.start);
-        let mut delimiters = Vec::new();
+        let mut delimiters = self.delimiter_stack();
         let mut goal = LexicalGoal::Div;
         let mut regexp_allowed = true;
         let mut has_object_rest = false;

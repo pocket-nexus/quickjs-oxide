@@ -345,7 +345,8 @@ impl<'source> Parser<'source> {
             return false;
         }
 
-        let mut delimiters = vec![ForHeadDelimiter::Parenthesis];
+        let mut delimiters = self.delimiter_stack();
+        delimiters.push(ForHeadDelimiter::Parenthesis);
         let mut parentheses = vec![opening.start.byte_offset];
         let mut closed_parenthesis = None;
         let mut goal = LexicalGoal::Div;
