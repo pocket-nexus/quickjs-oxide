@@ -708,6 +708,9 @@ fn string_units(string: &JsString) -> Vec<u16> {
     string.utf16_units().collect()
 }
 
+/// The most operands one `ConcatN` joins.
+const CONCAT_OPERANDS: usize = 16;
+
 /// Marks a capture index in the set of bindings a check has proven
 /// initialized since the last join point (a binding leaves the TDZ only
 /// forward, and only `SetLocalUninitialized` re-enters it).
@@ -1665,6 +1668,12 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             let at = self.emit(|b| b.ab(op, dst, value));
             self.push_result(at)?;
             return Ok(1);
+        }
+        if matches!(instruction, I::Add) {
+            let extra = self.concat_chain(pc);
+            if extra > 0 {
+                return self.concat(pc, extra);
+            }
         }
         if let Some((op, immediate)) = binary(instruction) {
             self.binary(op, immediate)?;
@@ -2628,6 +2637,76 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             self.emit_jump(|b| b.ab_jump(op, left, right, 0), target);
         }
         Ok(2)
+    }
+
+    /// How many more operands the `Add` at `pc` starts a chain of string
+    /// concatenations over: pushes of a constant or of a register no callee
+    /// can write, each followed by an `Add`. A `ConcatN` reads them before
+    /// it converts the earlier operands, which these reads cannot observe.
+    /// Zero unless one of the first two operands is a string constant, so
+    /// that every `+` of the chain concatenates.
+    fn concat_chain(&self, pc: usize) -> usize {
+        let top = self.stack.len();
+        // The operands sit in their own temporaries, which the deepest
+        // stack of the function already has; past the window the chain is
+        // left as `Add`s.
+        if self.layout.temp_registers != u32::MAX {
+            return 0;
+        }
+        let room = (self.analysis.max_depth as usize).saturating_sub(top);
+        let string = |entry: Entry| match entry {
+            Entry::Const(slot) => self.pool[slot as usize].as_string().is_some(),
+            _ => false,
+        };
+        if top < 2 || !(string(self.stack[top - 2]) || string(self.stack[top - 1])) {
+            return 0;
+        }
+        let plain = |instruction: &Instruction| match *instruction {
+            Instruction::PushI32(_) => true,
+            Instruction::PushConst(index) => self
+                .function
+                .constants()
+                .get(index as usize)
+                .is_some_and(|constant| constant.as_primitive().is_some()),
+            Instruction::GetArg(argument) => !self.captured_arguments[argument as usize],
+            Instruction::GetLocal(local) => {
+                !self.captured_locals[local as usize] && !Self::is_wide(self.local_register(local))
+            }
+            _ => false,
+        };
+        let mut extra = 0;
+        let mut at = pc + 1;
+        while extra < room.min(CONCAT_OPERANDS - 2)
+            && self.fusible(at)
+            && self.fusible(at + 1)
+            && plain(&self.code[at])
+            && matches!(self.code[at + 1], Instruction::Add)
+        {
+            extra += 1;
+            at += 2;
+        }
+        extra
+    }
+
+    /// Lowers the `Add` at `pc` and the `extra` pushes and `Add`s after it
+    /// as one `ConcatN`.
+    fn concat(&mut self, pc: usize, extra: usize) -> Result<usize, LowerError> {
+        for index in 0..extra {
+            self.pc = pc + 1 + 2 * index;
+            self.instruction(self.pc)?;
+        }
+        self.pc = pc;
+        let count = extra + 2;
+        let base = self.stack.len() - count;
+        for depth in base..self.stack.len() {
+            self.materialize(depth)?;
+        }
+        let first = Self::r8(self.temp(base))?;
+        self.stack.truncate(base);
+        let dst = self.result_register()?;
+        let at = self.emit(|b| b.ab_range(Opcode::ConcatN, dst, first, count as u32));
+        self.push_result(at)?;
+        Ok(1 + 2 * extra)
     }
 
     fn binary(&mut self, op: Opcode, immediate: Option<Opcode>) -> Result<(), LowerError> {

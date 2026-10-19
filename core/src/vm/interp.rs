@@ -286,6 +286,17 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
                 super::module::import(cx, frame.function, specifier, options)?,
             )
         }
+        Opcode::ConcatN => {
+            let operands = base + insn.b as usize..base + (insn.b as u32 + insn.imm) as usize;
+            let value = match ops::join_short_strings(cx.heap, operands.clone()) {
+                Some(result) => result.map_err(|error| error::heap_error(cx, error))?,
+                None => {
+                    let operands = cx.heap.vm.registers[operands].to_vec();
+                    ops::concat_n(cx, &operands)?
+                }
+            };
+            (insn.a, value)
+        }
         Opcode::LoadHomeObject => {
             let home = cx.heap.function_record(frame.function).home_object;
             let home = if home == NONE {
@@ -2302,7 +2313,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::SetFunctionName
                 | Opcode::ThrowType
                 | Opcode::ThrowReference
-                | Opcode::ImportCall => rare_op(cx, &frame, unit, insn),
+                | Opcode::ImportCall
+                | Opcode::ConcatN => rare_op(cx, &frame, unit, insn),
                 Opcode::IterStart
                 | Opcode::IterNext
                 | Opcode::IterClose

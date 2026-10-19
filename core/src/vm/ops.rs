@@ -181,6 +181,141 @@ pub(crate) fn concat(cx: &mut Cx<'_>, a: StringId, b: StringId) -> Result<Value,
     alloc_units(cx, &joined)
 }
 
+/// One operand of a [`concat_n`] join: a string, or a number's digits,
+/// which need no string record of their own.
+enum Piece {
+    String(StringId),
+    Digits(String),
+}
+
+/// `x0 + x1 + … + xn`, the operands of `ConcatN`: a chain of `+` from the
+/// left, each step converting its right operand as [`add`] does. Once the
+/// sum is a string every later step is a string concatenation, so the
+/// strings are joined once instead of through an intermediate per `+`.
+#[inline(never)]
+pub(crate) fn concat_n(cx: &mut Cx<'_>, operands: &[Value]) -> Result<Value, Throw> {
+    scoped(cx, |cx| {
+        let (mut sum, mut rest) = (operands[0], &operands[1..]);
+        while sum.as_string().is_none() {
+            let Some((&next, tail)) = rest.split_first() else {
+                return Ok(sum);
+            };
+            sum = add(cx, sum, next)?;
+            root(cx, sum);
+            rest = tail;
+        }
+        let first = sum.as_string().unwrap();
+        let mut pieces = Vec::with_capacity(rest.len());
+        let mut len = cx.heap.string_len(first);
+        for &operand in rest {
+            let primitive = to_primitive(cx, operand, Hint::Default)?;
+            root(cx, primitive);
+            let piece = match primitive.kind() {
+                Kind::Int32 => Piece::Digits(primitive.as_int32().unwrap().to_string()),
+                Kind::Number => Piece::Digits(number::to_string(primitive.as_f64().unwrap())),
+                _ => {
+                    let string = to_string(cx, primitive)?;
+                    root(cx, string);
+                    Piece::String(string.as_string().unwrap())
+                }
+            };
+            len += match &piece {
+                Piece::String(id) => cx.heap.string_len(*id),
+                Piece::Digits(digits) => digits.len(),
+            };
+            if len > MAX_STRING_LEN {
+                return Err(error::string_too_long(cx));
+            }
+            pieces.push(piece);
+        }
+        let first_len = cx.heap.string_len(first);
+        if len < ROPE_MIN {
+            return join(cx, Some(first), &pieces);
+        }
+        if len - first_len < ROPE_MIN {
+            // A long sum ending in short pieces: the pieces join flat and
+            // the result is one rope over the first operand.
+            let tail = join(cx, None, &pieces)?;
+            return concat(cx, first, tail.as_string().unwrap());
+        }
+        let mut sum = first;
+        for piece in &pieces {
+            let next = match piece {
+                Piece::String(id) => *id,
+                Piece::Digits(digits) => alloc_text(cx, digits)?.as_string().unwrap(),
+            };
+            root(cx, Value::string(next));
+            sum = concat(cx, sum, next)?.as_string().unwrap();
+            root(cx, Value::string(sum));
+        }
+        Ok(Value::string(sum))
+    })
+}
+
+/// [`concat_n`] when every operand is a one-byte string and the result is
+/// shorter than [`ROPE_MIN`]: the units are copied once, with no conversion
+/// to run. `None` otherwise.
+pub(crate) fn join_short_strings(
+    heap: &mut Heap,
+    registers: std::ops::Range<usize>,
+) -> Option<Result<Value, crate::HeapError>> {
+    let mut len = 0;
+    for register in registers.clone() {
+        let id = heap.vm.registers[register].as_string()?;
+        if !heap.string_is_one_byte(id) {
+            return None;
+        }
+        len += heap.string_len(id);
+        if len >= ROPE_MIN {
+            return None;
+        }
+    }
+    let mut bytes = Vec::with_capacity(len);
+    for register in registers {
+        let id = heap.vm.registers[register].as_string()?;
+        let Some(StringRepr::OneByte(part)) = heap.string(id).flat() else {
+            return None;
+        };
+        bytes.extend_from_slice(part);
+    }
+    Some(
+        heap.alloc_string_repr(StringRepr::OneByte(bytes.into()))
+            .map(Value::string),
+    )
+}
+
+/// The flat string of `first` and `pieces`, one allocation.
+fn join(cx: &mut Cx<'_>, first: Option<StringId>, pieces: &[Piece]) -> Result<Value, Throw> {
+    let heap = &*cx.heap;
+    let strings = first
+        .into_iter()
+        .chain(pieces.iter().filter_map(|piece| match piece {
+            Piece::String(id) => Some(*id),
+            Piece::Digits(_) => None,
+        }));
+    let one_byte = strings.clone().all(|id| heap.string_is_one_byte(id));
+    let (mut bytes, mut units): (Vec<u8>, Vec<u16>) = (Vec::new(), Vec::new());
+    let first = first.map(Piece::String);
+    for piece in first.iter().chain(pieces) {
+        match piece {
+            Piece::String(id) => match heap.string(*id).repr() {
+                StringRepr::OneByte(part) if one_byte => bytes.extend_from_slice(part),
+                repr => units.extend(repr.units()),
+            },
+            Piece::Digits(digits) if one_byte => bytes.extend_from_slice(digits.as_bytes()),
+            Piece::Digits(digits) => units.extend(digits.bytes().map(u16::from)),
+        }
+    }
+    if one_byte {
+        cx.heap
+            .alloc_string_repr(StringRepr::OneByte(bytes.into()))
+            .map(Value::string)
+            .map_err(|error| heap_error(cx, error))
+    } else {
+        alloc_units(cx, &units)
+    }
+}
+
 // ---- conversions ----
 
 /// `ToPrimitive`: `valueOf` then `toString` (or the reverse for a string

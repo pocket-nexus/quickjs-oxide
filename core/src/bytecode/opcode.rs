@@ -494,6 +494,9 @@ opcodes! {
     /// Puts the cell in `a` back in the TDZ (a lexical scope entered again):
     /// closures already holding it see the new binding state.
     ClearCell: A,
+    /// `a = b + (b + 1) + … + (b + imm - 1)`, a chain of `+` from the left
+    /// whose string concatenations join once.
+    ConcatN: ABRange,
 }
 
 /// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in
