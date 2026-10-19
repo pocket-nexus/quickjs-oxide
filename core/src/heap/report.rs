@@ -42,6 +42,9 @@ pub struct ValueHeapReport {
     /// Free slots by size class: `free_by_class[k]` counts free ranges of
     /// `2^k` slots.
     pub free_by_class: Vec<usize>,
+    /// Free runs the class lists do not hold, and their slots.
+    pub free_runs: usize,
+    pub free_run_slots: usize,
     /// Slots allocated, used or free.
     pub capacity_slots: usize,
     pub reserved_bytes: usize,
@@ -166,6 +169,12 @@ impl Heap {
             values: ValueHeapReport {
                 used_slots: self.values.used_slots(),
                 free_by_class,
+                free_runs: self.values.free_runs().count(),
+                free_run_slots: self
+                    .values
+                    .free_runs()
+                    .map(|(start, end)| (end - start) as usize)
+                    .sum(),
                 capacity_slots: self.values.used_slots() + self.values.free_slots(),
                 reserved_bytes: self.values.bytes(),
             },
@@ -227,8 +236,8 @@ impl fmt::Display for MemoryReport {
         )?;
         writeln!(
             f,
-            "  free value slots: {free} in {:?} by class",
-            self.values.free_by_class
+            "  free value slots: {free} in {:?} by class and {} runs of {} slots",
+            self.values.free_by_class, self.values.free_runs, self.values.free_run_slots
         )?;
         writeln!(
             f,

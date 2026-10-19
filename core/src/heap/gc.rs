@@ -855,14 +855,16 @@ impl Heap {
 
     fn sweep(&mut self) -> usize {
         let values = &mut self.values;
+        values.begin_sweep();
         let mut freed = self.objects.sweep(|_, header| {
-            values.free(header.slots());
-            values.free(header.elements());
+            values.release(header.slots());
+            values.release(header.elements());
         });
         freed += self.payloads.bytecode.sweep(|_, bytecode| {
-            values.free(bytecode.constants);
-            values.free(bytecode.children);
+            values.release(bytecode.constants);
+            values.release(bytecode.children);
         });
+        values.finish_sweep();
         freed += self.payloads.functions.sweep(|_, _| {});
         freed += self.payloads.internals.sweep(|_, _| {});
         freed += self.shapes.sweep(|_, _| {});
@@ -951,6 +953,19 @@ impl Heap {
         }
         for block in self.values.free_blocks() {
             claim(block, "free block");
+        }
+        for (start, end) in self.values.free_runs() {
+            claim(
+                super::values::Range {
+                    start,
+                    len: end - start,
+                },
+                "free run",
+            );
+        }
+        // After a collection's rebuild every slot is owned or free.
+        if let Some(slot) = owner.iter().position(|&owned| !owned) {
+            panic!("gc verify: value slot {slot} is neither owned nor free");
         }
 
         // Every filled cache entry names live records.
