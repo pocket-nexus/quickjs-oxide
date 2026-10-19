@@ -394,7 +394,20 @@ fn census(script: &crate::engine::code::function::UnlinkedFunction) -> Census {
             .filter(|constant| constant.as_child().is_some())
             .map(|_| placeholder)
             .collect();
-        match lower_function(&mut runtime.compiler(), function, *parent, children) {
+        let lowered = super::check_surface(function)
+            .and_then(|()| super::analysis::analyze(function.code()))
+            .and_then(|analysis| {
+                let layout = super::Layout::of(function, &analysis)?;
+                lower_function(
+                    &mut runtime.compiler(),
+                    function,
+                    analysis,
+                    layout,
+                    *parent,
+                    children,
+                )
+            });
+        match lowered {
             Ok(_) => census.lowered += 1,
             Err(LowerError::Unsupported(construct) | LowerError::Syntax(construct)) => {
                 *census.reasons.entry(construct).or_insert(0) += 1;

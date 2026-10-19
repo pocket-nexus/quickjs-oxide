@@ -162,6 +162,31 @@ impl<'source> QuickJsSourceIndex<'source> {
         }
     }
 
+    /// Locate every offset in `offsets` in one forward pass: each source
+    /// byte is scanned at most once, however the offsets are ordered.
+    pub(crate) fn locate_all(
+        &self,
+        mut offsets: Vec<SourceOffset>,
+    ) -> QuickJsLocatedOffsets<'_, 'source> {
+        offsets.sort_unstable();
+        offsets.dedup();
+        let mut cursor = self.cursor();
+        let mut positions = Vec::with_capacity(offsets.len());
+        let mut errors = Vec::new();
+        for (at, &offset) in offsets.iter().enumerate() {
+            positions.push(cursor.locate(offset).unwrap_or_else(|error| {
+                errors.push((at, error));
+                LineColumn::default()
+            }));
+        }
+        QuickJsLocatedOffsets {
+            index: self,
+            offsets,
+            positions,
+            errors,
+        }
+    }
+
     fn validate_byte_offset(&self, byte_offset: usize) -> Result<(), DebugMetadataError> {
         if byte_offset > self.locator.source.len() {
             return Err(DebugMetadataError::OffsetOutOfBounds);
@@ -188,7 +213,7 @@ impl<'source> QuickJsSourceIndex<'source> {
     }
 }
 
-/// A function-local cursor over the source-owned index. Only successful
+/// A cursor over the source-owned index. Only successful
 /// coordinates are cached, and every lookup retains the index's validation.
 /// Forward lookups within one checkpoint reuse the same byte-level kernel on
 /// a shorter suffix; all other lookups retain the bounded checkpoint scan.
@@ -222,6 +247,29 @@ impl QuickJsSourceCursor<'_, '_> {
         };
         self.previous = Some((byte_offset, position));
         Ok(position)
+    }
+}
+
+/// The coordinates of a set of offsets, from [`QuickJsSourceIndex::locate_all`].
+/// An offset outside the set is located through the index.
+pub(crate) struct QuickJsLocatedOffsets<'index, 'source> {
+    index: &'index QuickJsSourceIndex<'source>,
+    /// Sorted and distinct.
+    offsets: Vec<SourceOffset>,
+    positions: Vec<LineColumn>,
+    /// The offsets that did not locate, by their position in `offsets`.
+    errors: Vec<(usize, DebugMetadataError)>,
+}
+
+impl QuickJsLocatedOffsets<'_, '_> {
+    pub(crate) fn locate(&self, offset: SourceOffset) -> Result<LineColumn, DebugMetadataError> {
+        let Ok(at) = self.offsets.binary_search(&offset) else {
+            return self.index.locate(offset);
+        };
+        match self.errors.binary_search_by_key(&at, |&(at, _)| at) {
+            Ok(error) => Err(self.errors[error].1),
+            Err(_) => Ok(self.positions[at]),
+        }
     }
 }
 

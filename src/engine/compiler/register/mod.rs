@@ -307,30 +307,33 @@ fn lower_tree(
     parent: Option<Layout>,
     constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
 ) -> Result<CodeUnitId, LowerError> {
-    let layout = Layout::of(function, &analyze(function.code())?)?;
+    let analysis = analyze(function.code())?;
+    let layout = Layout::of(function, &analysis)?;
     let mut children = Vec::new();
     for constant in function.constants() {
         if let Some(child) = constant.as_child() {
             children.push(lower_tree(runtime, child, Some(layout), constants)?);
         }
     }
-    let (unit, pool) = lower_function(runtime, function, parent, children)?;
+    let (unit, pool) = lower_function(runtime, function, analysis, layout, parent, children)?;
     let id = runtime.publish(unit)?;
     constants.insert(id, pool);
     Ok(id)
 }
 
-/// Lowers one function whose children are already published.
+/// Lowers one function whose children are already published, given its
+/// analysis and the layout that analysis gives it.
 fn lower_function(
     runtime: &mut Compiler<'_>,
     function: &UnlinkedFunction,
+    analysis: Analysis,
+    layout: Layout,
     parent: Option<Layout>,
     children: Vec<CodeUnitId>,
 ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
     check_surface(function)?;
-    let analysis = analyze(function.code())?;
     let is_script = parent.is_none() && !function.metadata().is_module;
-    let mut lowerer = Lowerer::new(runtime, function, analysis, is_script)?;
+    let mut lowerer = Lowerer::new(runtime, function, analysis, layout, is_script)?;
     lowerer.prologue()?;
     lowerer.body()?;
     lowerer.finish(parent, children)
@@ -725,12 +728,12 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         runtime: &'a mut Compiler<'c>,
         function: &'a UnlinkedFunction,
         analysis: Analysis,
+        layout: Layout,
         is_script: bool,
     ) -> Result<Self, LowerError> {
         let metadata = function.metadata();
         let arguments = u32::from(metadata.argument_count);
         let locals = u32::from(metadata.local_count);
-        let layout = Layout::of(function, &analysis)?;
         let mut captured_arguments = vec![false; arguments as usize];
         let mut captured_locals = vec![false; locals as usize];
         let mut child_ordinal = HashMap::new();
@@ -3254,11 +3257,21 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             return Box::new([]);
         };
         let mut positions: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
+        // The entries are sorted by pc and the origins rise but for the
+        // stubs at the end: walk forward, and search again on a step back.
+        let entries = &table.entries;
+        let mut after = 0;
+        let mut previous = 0;
         for (pc, &origin) in self.origins.iter().take(len).enumerate() {
-            // `Pc2LineTable::lookup` scans; the entries are sorted by pc.
-            let after = table
-                .entries
-                .partition_point(|entry| entry.pc <= origin as u32);
+            let origin = origin as u32;
+            if origin < previous {
+                after = entries.partition_point(|entry| entry.pc <= origin);
+            } else {
+                while entries.get(after).is_some_and(|entry| entry.pc <= origin) {
+                    after += 1;
+                }
+            }
+            previous = origin;
             let position = after
                 .checked_sub(1)
                 .map_or(table.definition, |at| table.entries[at].position);

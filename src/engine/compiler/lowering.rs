@@ -8,7 +8,7 @@ use crate::engine::compiler::model::ir::{
 };
 use crate::engine::compiler::model::scope::ScopeKind;
 
-use crate::source::coordinates::QuickJsSourceIndex;
+use crate::source::coordinates::QuickJsLocatedOffsets;
 
 #[cfg(test)]
 use super::DetachedBytecode;
@@ -278,6 +278,21 @@ pub(super) fn lower_unlinked_tree(
                 .map_err(|error| Error::internal(error.to_string()))?,
         )
     };
+    // Every function's definition and source sites, located together.
+    let located = source_index.as_ref().map(|index| {
+        let sites = tree_functions
+            .iter()
+            .flat_map(|function| {
+                std::iter::once(function.source.definition).chain(
+                    function
+                        .ops
+                        .iter()
+                        .filter_map(|operation| operation.pc_site),
+                )
+            })
+            .collect();
+        index.locate_all(sites)
+    });
     let function_count = tree_functions.len();
     let captured_locals = captured_locals_by_function(&tree_functions)?;
     // A descendant eval descriptor names bindings owned by each ancestor and
@@ -613,7 +628,7 @@ pub(super) fn lower_unlinked_tree(
         let debug = match debug_info {
             DebugInfoMode::Full | DebugInfoMode::StripSource => Some(build_unlinked_debug(
                 &source,
-                source_index
+                located
                     .as_ref()
                     .ok_or_else(|| Error::internal("debug lowering has no source index"))?,
                 filename.clone(),
@@ -1442,16 +1457,15 @@ fn lower_ops(
 
 fn build_unlinked_debug(
     source: &SourceText,
-    locator: &QuickJsSourceIndex<'_>,
+    located: &QuickJsLocatedOffsets<'_, '_>,
     filename: JsString,
     definition: SourceOffset,
     source_range: Option<Range<SourceOffset>>,
     pc_sites: &[Option<SourceOffset>],
 ) -> Result<UnlinkedFunctionDebug, Error> {
     let carrier = source.carrier();
-    let mut cursor = locator.cursor();
     let mut previous_site = definition;
-    let definition = cursor
+    let definition = located
         .locate(definition)
         .map_err(|error| Error::internal(error.to_string()))?;
     let mut entries = Vec::new();
@@ -1465,7 +1479,7 @@ fn build_unlinked_debug(
         if site == previous_site {
             continue;
         }
-        let position = cursor
+        let position = located
             .locate(site)
             .map_err(|error| Error::internal(error.to_string()))?;
         previous_site = site;
@@ -1565,17 +1579,35 @@ mod tests {
 
     #[test]
     fn debug_source_cache_preserves_gaps_equal_coordinates_and_error_order() {
+        use crate::source::coordinates::QuickJsSourceIndex;
         use crate::source::{LineColumn, QuickJsSourceLocator};
         let offset = |value| SourceOffset::try_from_usize(value).unwrap();
+        // The tree locates every function's definition and sites together.
+        let build = |source: &SourceText,
+                     index: &QuickJsSourceIndex<'_>,
+                     definition: SourceOffset,
+                     range: Option<Range<SourceOffset>>,
+                     sites: &[Option<SourceOffset>]| {
+            let offsets = std::iter::once(definition)
+                .chain(sites.iter().flatten().copied())
+                .collect();
+            build_unlinked_debug(
+                source,
+                &index.locate_all(offsets),
+                JsString::from_static("cache.js"),
+                definition,
+                range,
+                sites,
+            )
+        };
         // Raw continuation bytes do not advance columns, so distinct offsets
         // 1 and 2 intentionally share a coordinate and must remain valid.
         let raw = [b'a', 0x80, b'b'];
         let source = SourceText::try_from_raw_bytes(&raw).unwrap();
         let locator = QuickJsSourceLocator::from_bytes(&raw).index().unwrap();
-        let debug = build_unlinked_debug(
+        let debug = build(
             &source,
             &locator,
-            JsString::from_static("cache.js"),
             offset(0),
             None,
             &[
@@ -1608,10 +1640,9 @@ mod tests {
         let locator = QuickJsSourceLocator::new(source.carrier()).index().unwrap();
         // Repeated valid offsets cannot hide a following invalid new offset;
         // the first invalid site still wins over later sites and source ranges.
-        let error = build_unlinked_debug(
+        let error = build(
             &source,
             &locator,
-            JsString::from_static("cache.js"),
             offset(0),
             Some(offset(9)..offset(10)),
             &[
@@ -1624,16 +1655,15 @@ mod tests {
         )
         .unwrap_err();
         assert_eq!(error.message(), "source offset is not a UTF-8 boundary");
-        let error = build_unlinked_debug(
-            &source,
-            &locator,
-            JsString::from_static("cache.js"),
-            offset(9),
-            None,
-            &[Some(offset(1))],
-        )
-        .unwrap_err();
+        let error = build(&source, &locator, offset(9), None, &[Some(offset(1))]).unwrap_err();
         assert_eq!(error.message(), "source offset is out of bounds");
+        // An offset the table does not hold is located through the index.
+        let located = locator.locate_all(Vec::new());
+        assert_eq!(located.locate(offset(3)), Ok(LineColumn::new(0, 2)));
+        assert_eq!(
+            located.locate(offset(1)),
+            Err(crate::source::DebugMetadataError::OffsetNotUtf8Boundary)
+        );
     }
 
     #[test]
