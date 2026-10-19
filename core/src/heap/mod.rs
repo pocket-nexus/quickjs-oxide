@@ -103,7 +103,7 @@ impl Need {
             + self.functions * size_of::<FunctionRecord>()
             + self.bytecodes * size_of::<FunctionBytecode>()
             + self.internals * size_of::<Internal>()
-            + (self.values[0].next_power_of_two() + values::class_len(self.values[1])) as usize * 8
+            + (values::class_len(self.values[0]) + values::class_len(self.values[1])) as usize * 8
             + self.extra
     }
 }

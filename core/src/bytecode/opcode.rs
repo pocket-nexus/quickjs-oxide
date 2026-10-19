@@ -495,7 +495,8 @@ opcodes! {
     /// closures already holding it see the new binding state.
     ClearCell: A,
     /// `a = b + (b + 1) + … + (b + imm - 1)`, a chain of `+` from the left
-    /// whose string concatenations join once.
+    /// whose string concatenations join once; past the first two, the
+    /// operands are primitive constants.
     ConcatN: ABRange,
 }
 

@@ -13,15 +13,15 @@ use std::path::Path;
 fn main() {
     let order = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("qjs.order");
     println!("cargo:rerun-if-changed={}", order.display());
-    const LINKER: &str = "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER";
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
-    println!("cargo:rerun-if-env-changed={LINKER}");
     // The toolchain links this target with its bundled lld; a linker chosen
-    // in the flags or the environment may not take the option.
+    // in Cargo's configuration (`RUSTC_LINKER`) or in the flags may not take
+    // the option.
     let flags = env::var("CARGO_ENCODED_RUSTFLAGS").unwrap_or_default();
     if env::var("TARGET").unwrap() != "x86_64-unknown-linux-gnu"
+        || env::var_os("RUSTC_LINKER").is_some()
         || flags.contains("linker")
-        || env::var_os(LINKER).is_some()
+        || flags.contains("fuse-ld")
     {
         return;
     }

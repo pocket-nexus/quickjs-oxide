@@ -176,12 +176,6 @@ impl<T: Record> Arena<T> {
         (grown_capacity(old, needed, unit) - old) * unit
     }
 
-    /// Bytes the arena can hand out without growing: free slots and the
-    /// capacity past the last one, at the record size.
-    pub fn free_bytes(&self) -> usize {
-        (self.free_count + self.records.capacity() - self.records.len()) * mem::size_of::<T>()
-    }
-
     #[inline]
     pub fn is_live(&self, index: u32) -> bool {
         let (word, mask) = bit(index);

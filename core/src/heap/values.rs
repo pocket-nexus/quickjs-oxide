@@ -221,15 +221,20 @@ impl ValueHeap {
                 self.free_slots -= len as usize;
                 return Range { start, len };
             }
+            // No run left is long enough: the runs stay for later requests.
+            if !self
+                .runs
+                .last()
+                .is_some_and(|&(_, _, longest)| longest >= len)
+            {
+                break;
+            }
             // The rest of the run is too short: it goes on the class lists,
             // and the next run is taken.
             self.push_run(start as usize, end as usize);
             match self.runs.pop() {
                 Some((start, end, _)) => self.current = (start, end),
-                None => {
-                    self.current = (0, 0);
-                    break;
-                }
+                None => unreachable!("a run long enough was left"),
             }
         }
         let mut larger = self.listed & !((2u64 << class) - 1);
@@ -284,7 +289,10 @@ impl ValueHeap {
 
     /// Bytes the backing vector grows by if a range of `len` is allocated now.
     pub fn growth_bytes(&self, len: u32) -> usize {
-        let len = class_len(len);
+        // A power of two covers both a slot request (`alloc_slots`) and the
+        // class of an element request, so a free range listed at its class
+        // or above serves either.
+        let len = len.next_power_of_two() * u32::from(len != 0);
         let (start, end) = self.current;
         if len == 0
             || end - start >= len
@@ -421,7 +429,8 @@ impl ValueHeap {
     }
 
     /// Coalesces the free lists outside a collection.
-    pub fn coalesce(&mut self) {
+    #[cfg(test)]
+    fn coalesce(&mut self) {
         self.begin_sweep();
         self.finish_sweep();
     }
@@ -643,9 +652,10 @@ mod tests {
         assert_eq!(heap.alloc(4, room).start, 1);
         assert_eq!(heap.alloc(2, room).start, 5);
         assert_eq!(heap.alloc(512, room).start, 7);
-        // 506 slots are left: too few, so they go on the class lists.
+        // 506 slots are left: too few for 512, which no run fits, so the run
+        // stays for the requests it does fit.
         assert_eq!(heap.alloc(512, room).start, tail.start + 1);
-        assert_eq!(heap.free_runs().count(), 0);
+        assert_eq!(heap.free_runs().collect::<Vec<_>>(), [(519, 1025)]);
         assert_eq!(heap.free_slots(), 506);
         assert_eq!(heap.alloc(256, room).start, 519);
     }

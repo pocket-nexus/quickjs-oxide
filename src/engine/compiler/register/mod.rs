@@ -2640,11 +2640,12 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     }
 
     /// How many more operands the `Add` at `pc` starts a chain of string
-    /// concatenations over: pushes of a constant or of a register no callee
-    /// can write, each followed by an `Add`. A `ConcatN` reads them before
-    /// it converts the earlier operands, which these reads cannot observe.
-    /// Zero unless one of the first two operands is a string constant, so
-    /// that every `+` of the chain concatenates.
+    /// concatenations over: pushes of a primitive constant, each followed by
+    /// an `Add`. A constant converts without side effects and cannot throw,
+    /// so every conversion that can run code or throw is the first `Add`'s
+    /// and is reported at its position, as it is without the chain. Zero
+    /// unless one of the first two operands is a string constant, so that
+    /// every `+` of the chain concatenates.
     fn concat_chain(&self, pc: usize) -> usize {
         let top = self.stack.len();
         // The operands sit in their own temporaries, which the deepest
@@ -2668,10 +2669,6 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 .constants()
                 .get(index as usize)
                 .is_some_and(|constant| constant.as_primitive().is_some()),
-            Instruction::GetArg(argument) => !self.captured_arguments[argument as usize],
-            Instruction::GetLocal(local) => {
-                !self.captured_locals[local as usize] && !Self::is_wide(self.local_register(local))
-            }
             _ => false,
         };
         let mut extra = 0;

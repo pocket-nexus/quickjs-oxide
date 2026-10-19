@@ -372,7 +372,9 @@ impl Runtime {
     pub fn new(options: impl Into<RuntimeOptions>) -> Result<Runtime, HeapError> {
         let options = options.into();
         let mut heap = Heap::new(options.heap);
-        heap.gc.configure(options.min_heap, options.growth);
+        let reserved = heap.bytes();
+        heap.gc
+            .configure(options.min_heap, options.growth, reserved);
         heap.vm.limit = options.stack_limit;
         heap.vm.native_budget = options.native_stack_budget;
         heap.vm.native_depth = options.native_depth_limit;

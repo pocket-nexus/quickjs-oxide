@@ -219,3 +219,34 @@ fn stress_mode_catches_a_missed_root() {
     let _other = heap.alloc_object(ObjectKind::Ordinary, None, 4).unwrap();
     let _ = heap.lookup_own(unrooted, x);
 }
+
+/// A live set within one growth step of the cap leaves the threshold open:
+/// garbage is collected when it is due, not at every allocation.
+#[test]
+#[cfg(not(feature = "gc-stress"))]
+fn a_live_set_near_the_cap_does_not_collect_at_every_allocation() {
+    let limit = 16 << 20;
+    let mut heap = Heap::new(HeapLimits { max_bytes: limit });
+    let array = heap.alloc_array(None, 0).unwrap();
+    heap.handles().create(Value::object(array));
+    // About 14.5 MiB live, in strings: within a step of the cap once the
+    // budget is clamped, with the arenas' vectors small.
+    let text = "x".repeat(1 << 20);
+    for index in 0..14 {
+        let string = heap.alloc_string(&text).unwrap();
+        heap.set_element(array, index, Value::string(string))
+            .unwrap();
+    }
+    let half = heap.alloc_string(&text[..text.len() / 2]).unwrap();
+    heap.set_element(array, 14, Value::string(half)).unwrap();
+    heap.collect();
+    let before = heap.gc().stats.collections;
+    for _ in 0..1000 {
+        heap.alloc_object(ObjectKind::Ordinary, None, 1).unwrap();
+    }
+    assert!(
+        heap.gc().stats.collections - before < 10,
+        "{} collections for 1000 small allocations",
+        heap.gc().stats.collections - before
+    );
+}

@@ -272,13 +272,14 @@ impl GcState {
         }
     }
 
-    /// The trigger of a heap that has not collected yet: `min_heap` bytes of
-    /// budget, `growth_factor` for the budgets after collections.
-    pub fn configure(&mut self, min_heap: usize, growth_factor: f64) {
+    /// The trigger of a heap that has not collected yet and reserves
+    /// `reserved` bytes: `min_heap` bytes of budget, `growth_factor` for the
+    /// budgets after collections.
+    pub fn configure(&mut self, min_heap: usize, growth_factor: f64, reserved: usize) {
         self.min_heap = min_heap;
         self.growth_factor = growth_factor;
         self.budget = min_heap;
-        self.room = Room::new(min_heap, min_heap);
+        self.room = Room::new(min_heap.saturating_sub(reserved), min_heap);
     }
 
     /// Nominal bytes that may be allocated before the next collection.
@@ -430,10 +431,13 @@ impl Heap {
         let mut budget = gc
             .min_heap
             .max((live as f64 * (1.0 + gc.growth_factor)) as usize);
+        // The cap clamps the room for growth steps, not the threshold: a live
+        // set within a step of the cap would otherwise collect at every
+        // safepoint, where the cap check already collects when it must.
+        let threshold = budget - live.min(budget);
         if gc.limits.max_bytes != usize::MAX {
             budget = budget.min(gc.limits.max_bytes.saturating_sub(step));
         }
-        let threshold = budget.saturating_sub(live);
         // Free space of the wrong shape, or a live set that grew: the heap
         // takes one more step before the next collection.
         gc.budget = budget.max(reserved + step);
