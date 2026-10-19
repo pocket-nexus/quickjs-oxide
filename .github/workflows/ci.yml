@@ -115,6 +115,11 @@ jobs:
           cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
           python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 
+      - name: Check the link order of qjs
+        run: |
+          cargo build --locked --release -p quickjs-oxide-cli --bin qjs
+          python3 scripts/checks/check-symbol-order.py --qjs target/release/qjs
+
       - name: Lint targets
         run: |
           cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
