@@ -3113,17 +3113,27 @@ pub(super) fn push_closure_variable(
     }
     let index = u16::try_from(function.closure_variables.len())
         .map_err(|_| Error::new(ErrorKind::JsInternal, "too many closure variables"))?;
-    function
-        .closure_index
-        .entry(ClosureKey::of(&descriptor))
-        .or_insert(index);
     function.closure_variables.push(descriptor);
+    match &mut function.closure_index {
+        Some(closure_index) => {
+            closure_index
+                .entry(ClosureKey::of(&descriptor))
+                .or_insert(index);
+        }
+        None => rebuild_closure_index(function),
+    }
     Ok(index)
 }
 
 /// The first closure slot of the storage `key` names.
 fn find_closure_variable(function: &FunctionIr, key: ClosureKey) -> Option<usize> {
-    let index = usize::from(*function.closure_index.get(&key)?);
+    let Some(closure_index) = &function.closure_index else {
+        return function
+            .closure_variables
+            .iter()
+            .position(|candidate| ClosureKey::of(candidate) == key);
+    };
+    let index = usize::from(*closure_index.get(&key)?);
     function
         .closure_variables
         .get(index)
@@ -3131,11 +3141,17 @@ fn find_closure_variable(function: &FunctionIr, key: ClosureKey) -> Option<usize
         .then_some(index)
 }
 
+/// Indexes the closure slots of a function with more than 8 of them; a
+/// smaller list is searched.
 fn rebuild_closure_index(function: &mut FunctionIr) {
-    function.closure_index.clear();
+    if function.closure_variables.len() <= 8 {
+        function.closure_index = None;
+        return;
+    }
+    let closure_index = function.closure_index.get_or_insert_with(Box::default);
+    closure_index.clear();
     for (index, variable) in function.closure_variables.iter().enumerate() {
-        function
-            .closure_index
+        closure_index
             .entry(ClosureKey::of(variable))
             .or_insert(index as u16);
     }

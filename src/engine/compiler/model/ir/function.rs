@@ -242,9 +242,10 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// First primitive string occurrence; constant ordinals remain append-only.
     pub(in crate::engine::compiler) string_constants: HashMap<JsString, u32>,
     pub(in crate::engine::compiler) closure_variables: Vec<ClosureVariable>,
-    /// The first slot of each storage in `closure_variables`, kept by
-    /// `push_closure_variable`.
-    pub(in crate::engine::compiler) closure_index: HashMap<ClosureKey, u16>,
+    /// The first slot of each storage in `closure_variables` once there are
+    /// more than 8, kept by `push_closure_variable`.
+    #[expect(clippy::box_collection)]
+    pub(in crate::engine::compiler) closure_index: Option<Box<HashMap<ClosureKey, u16>>>,
     /// Exact flattened caller bindings imported by a synthetic direct-eval
     /// root. Entries retain their original R1w descriptor indices even though
     /// bindings are inserted into the synthetic root in outer-to-inner order
@@ -332,12 +333,16 @@ impl ClosureKey {
 }
 
 /// The positions in `global_declarations` of a name's first declaration,
-/// and of its first `var` and first lexical one.
+/// and of its first `var` and first lexical one ([`Self::NONE`] if none).
 #[derive(Clone, Copy, Debug)]
 struct FirstGlobalDeclarations {
-    any: usize,
-    normal: Option<usize>,
-    lexical: Option<usize>,
+    any: u32,
+    normal: u32,
+    lexical: u32,
+}
+
+impl FirstGlobalDeclarations {
+    const NONE: u32 = u32::MAX;
 }
 
 impl FunctionIr {
@@ -486,7 +491,7 @@ impl FunctionIr {
             constants: Vec::new(),
             string_constants: HashMap::new(),
             closure_variables: Vec::new(),
-            closure_index: HashMap::new(),
+            closure_index: None,
             external_bindings: Vec::new(),
             eval_caller_profile: EvalCallerProfile {
                 scope_kinds: Box::new([]),
@@ -675,21 +680,23 @@ impl FunctionIr {
         &mut self,
         declaration: IrGlobalDeclaration,
     ) {
-        let index = self.global_declarations.len();
+        let index = self.global_declarations.len() as u32;
         let first = self
             .global_declaration_index
             .entry(declaration.name)
             .or_insert(FirstGlobalDeclarations {
                 any: index,
-                normal: None,
-                lexical: None,
+                normal: FirstGlobalDeclarations::NONE,
+                lexical: FirstGlobalDeclarations::NONE,
             });
         let kind = if declaration.is_lexical {
             &mut first.lexical
         } else {
             &mut first.normal
         };
-        kind.get_or_insert(index);
+        if *kind == FirstGlobalDeclarations::NONE {
+            *kind = index;
+        }
         self.global_declarations.push(declaration);
     }
 
@@ -699,7 +706,7 @@ impl FunctionIr {
         name: NameId,
     ) -> Option<&IrGlobalDeclaration> {
         let first = self.global_declaration_index.get(&name)?;
-        self.global_declarations.get(first.any)
+        self.global_declarations.get(first.any as usize)
     }
 
     /// The first global declaration of `name` that is lexical, or not.
@@ -714,7 +721,7 @@ impl FunctionIr {
         } else {
             first.normal
         };
-        self.global_declarations.get(index?)
+        self.global_declarations.get(index as usize)
     }
 
     pub(in crate::engine::compiler) fn binding_from_scope(

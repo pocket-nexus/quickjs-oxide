@@ -29,7 +29,8 @@ semantics.
 The lowering reads only what the front end leaves in the unlinked tree:
 the stack instructions, whose operand-stack depth is static at every
 instruction (`compute_stack_size` in `code/bytecode.rs`; `register/analysis.rs`
-keeps the depth and the active catch regions per instruction), the constants,
+keeps the depth and the innermost catch region per instruction, each region
+linked to the one around it), the constants,
 each function's metadata, its arguments, locals and closure variables with
 their sources, and its debug record (file name, pc-to-source table, source
 text). The stack depth becomes the register allocation (register 0 is `this`,
