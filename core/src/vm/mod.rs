@@ -281,6 +281,8 @@ pub struct Services {
     pub(crate) compile: Option<compile::CompileFn>,
     /// The embedder's module loader.
     pub(crate) module_host: Option<module::ModuleHost>,
+    /// The embedder's function entry.
+    pub(crate) host_call: Option<crate::builtins::host::HostCallFn>,
     /// The module records by normalized name.
     pub(crate) modules: crate::heap::hash::FxHashMap<String, ObjectId>,
     /// The embedder's script runner, for `$262.agent.start`.
@@ -315,6 +317,7 @@ impl Default for Services {
             can_block: true,
             compile: None,
             module_host: None,
+            host_call: None,
             modules: Default::default(),
             script_runner: None,
             agent_hub: None,

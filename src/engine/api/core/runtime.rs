@@ -45,6 +45,8 @@ pub(crate) struct Shared {
     released: RefCell<Vec<Handle>>,
     pub(crate) loader: RefCell<Option<Box<dyn ModuleLoader>>>,
     pub(crate) modules: RefCell<HashMap<String, Preloaded>>,
+    /// The embedder's functions, by the index their function objects hold.
+    pub(crate) functions: RefCell<Vec<Rc<super::function::HostFunction>>>,
     pub(crate) debug_info: Cell<DebugInfoMode>,
     /// Execution turns in progress (`with_execution_turn`).
     turns: Cell<u32>,
@@ -458,6 +460,7 @@ impl Runtime {
             .expect("the initial realm fits any heap cap the options allow");
         core.set_host(Box::new(host));
         core.set_compiler(super::compile::compile_for_core);
+        core.set_host_call(super::function::host_call_shim);
         core.set_module_host(oxide_core::vm::module::ModuleHost {
             normalize: super::module::normalize_shim,
             load: super::module::load_shim,
@@ -472,6 +475,7 @@ impl Runtime {
                 released: RefCell::new(Vec::new()),
                 loader: RefCell::new(None),
                 modules: RefCell::new(HashMap::new()),
+                functions: RefCell::new(Vec::new()),
                 debug_info: Cell::new(DebugInfoMode::Full),
                 turns: Cell::new(0),
             }),

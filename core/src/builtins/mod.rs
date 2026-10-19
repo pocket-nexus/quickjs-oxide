@@ -22,6 +22,7 @@ mod error;
 mod function;
 mod generator;
 mod global;
+pub mod host;
 mod iterator;
 mod iterator_helpers;
 mod json;
@@ -723,6 +724,10 @@ natives! {
     Read => crate::vm::compile::read, "read", 1;
     LoadScript => crate::vm::compile::load_script, "__loadScript", 1;
     PerformanceNow => global::performance_now, "now", 0;
+    /// A function of the embedder (`host::new_host_function`).
+    HostFunction => host::call, "", 0;
+    /// A constructor of the embedder.
+    HostConstructor => host::call, "", 0, constructor;
 }
 
 impl Native {

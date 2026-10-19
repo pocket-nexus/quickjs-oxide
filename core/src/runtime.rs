@@ -709,6 +709,23 @@ impl Runtime {
         self.host.compile = Some(compile);
     }
 
+    /// Installs the entry the embedder's functions call.
+    pub fn set_host_call(&mut self, hook: crate::builtins::host::HostCallFn) {
+        self.host.host_call = Some(hook);
+    }
+
+    /// A function of the embedder calling the host hook with `id`;
+    /// unrooted.
+    pub fn new_host_function(
+        &mut self,
+        id: u32,
+        name: &str,
+        length: u32,
+        constructor: bool,
+    ) -> Result<ObjectId, Throw> {
+        crate::builtins::host::new_host_function(&mut self.cx(), id, name, length, constructor)
+    }
+
     /// The inline-cache report, when the counters exist (the `ic-stats` feature
     /// or a debug build): hits and misses per cache kind, the site states, and
     /// the `worst` sites with the most misses (unit name, instruction index,

@@ -5,6 +5,7 @@
 pub(crate) mod compile;
 mod context;
 mod error;
+mod function;
 mod module;
 mod property;
 mod runtime;
@@ -14,6 +15,7 @@ mod value;
 
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
 pub use error::RuntimeError;
+pub use function::{CallScope, HostFunction};
 pub use module::{CompiledModule, ModuleLoader, ModuleSource, Scope};
 pub use property::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor,
