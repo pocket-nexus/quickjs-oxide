@@ -494,6 +494,18 @@ impl IcStore {
         self.entries.len()
     }
 
+    /// Bytes the entries, their kinds, the free lists and the polymorphic
+    /// and megamorphic tables reserve.
+    pub fn bytes(&self) -> usize {
+        self.entries.capacity() * size_of::<IcEntry>()
+            + self.kinds.capacity() * size_of::<IcKind>()
+            + self.free.capacity() * size_of::<(u32, u32)>()
+            + self.poly.capacity() * size_of::<[IcEntry; POLY]>()
+            + self.poly_kinds.capacity() * size_of::<IcKind>()
+            + self.poly_free.capacity() * size_of::<u32>()
+            + self.mega.capacity() * size_of::<(u32, u32, IcEntry)>()
+    }
+
     pub fn is_empty(&self) -> bool {
         self.entries.is_empty()
     }

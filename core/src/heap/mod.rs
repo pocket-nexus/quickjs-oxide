@@ -247,7 +247,9 @@ impl Heap {
             arguments_shapes: [None; 2],
             jobs: std::collections::VecDeque::new(),
         };
-        let cell = heap.cells.alloc(ValidityCell { valid: true });
+        let cell = heap
+            .cells
+            .alloc(ValidityCell { valid: true }, &mut heap.gc.room);
         debug_assert_eq!(cell, STATIC_CELL.0);
         heap
     }
@@ -290,7 +292,9 @@ impl Heap {
         &mut self.gc
     }
 
-    /// Bytes reserved by every arena and the value heap: what the cap limits.
+    /// Bytes reserved by every arena, the value heap and the tables beside
+    /// them (the ropes' halves, the atom table, the inline caches): what the
+    /// cap limits and the budget bounds.
     pub fn bytes(&self) -> usize {
         self.objects.bytes()
             + self.shapes.bytes()
@@ -305,6 +309,15 @@ impl Heap {
             + self.values.bytes()
             + self.code.live_bytes()
             + self.regexps.bytes()
+            + self.table_bytes()
+    }
+
+    /// Bytes of the tables beside the arenas: the ropes' halves, the atom
+    /// table and the inline caches.
+    pub fn table_bytes(&self) -> usize {
+        self.ropes.capacity() * (size_of::<(u32, (StringId, StringId))>() + 1)
+            + self.atoms.bytes()
+            + self.ics.bytes()
     }
 
     /// Bytes held by live records and live value ranges.
@@ -449,12 +462,15 @@ impl Heap {
         };
         self.safepoint(&need, &keep)?;
         let shape = self.root_shape(prototype, kind);
-        let range = self.values.alloc(slot_capacity);
-        let payload = self.payloads.internals.alloc(Internal {
-            tag,
-            slots: slots.to_vec(),
-            data,
-        });
+        let range = self.values.alloc(slot_capacity, &mut self.gc.room);
+        let payload = self.payloads.internals.alloc(
+            Internal {
+                tag,
+                slots: slots.to_vec(),
+                data,
+            },
+            &mut self.gc.room,
+        );
         let header = ObjectHeader::new(
             kind,
             shape,
@@ -463,7 +479,7 @@ impl Heap {
             payload,
             flags::EXTENSIBLE | extra_flags,
         );
-        Ok(ObjectId(self.objects.alloc(header)))
+        Ok(ObjectId(self.objects.alloc(header, &mut self.gc.room)))
     }
 
     /// The internal record of an object of a kind with internal slots.
@@ -537,10 +553,10 @@ impl Heap {
         };
         self.safepoint(&need, &[prototype.map_or(Value::UNDEFINED, Value::object)])?;
         let shape = self.root_shape(prototype, kind);
-        let slots = self.values.alloc(slot_capacity);
-        let elements = self.values.alloc(element_capacity);
+        let slots = self.values.alloc(slot_capacity, &mut self.gc.room);
+        let elements = self.values.alloc(element_capacity, &mut self.gc.room);
         let header = ObjectHeader::new(kind, shape, slots, elements, 0, flags::EXTENSIBLE);
-        Ok(ObjectId(self.objects.alloc(header)))
+        Ok(ObjectId(self.objects.alloc(header, &mut self.gc.room)))
     }
 
     #[inline]
@@ -574,13 +590,13 @@ impl Heap {
         } else {
             self.root_shape(prototype, kind)
         };
-        let slots = self.values.alloc(slot_capacity);
-        let elements = self.values.alloc(element_capacity);
+        let slots = self.values.alloc(slot_capacity, &mut self.gc.room);
+        let elements = self.values.alloc(element_capacity, &mut self.gc.room);
         if kind == ObjectKind::Function {
             object_flags |= flags::CALLABLE;
         }
         let header = ObjectHeader::new(kind, shape, slots, elements, payload, object_flags);
-        Ok(ObjectId(self.objects.alloc(header)))
+        Ok(ObjectId(self.objects.alloc(header, &mut self.gc.room)))
     }
 
     pub fn object_kind(&self, object: ObjectId) -> ObjectKind {
@@ -689,7 +705,7 @@ impl Heap {
                 },
                 &[Value::object(object), value],
             )?;
-            elements = self.values.grow(elements, new_len);
+            elements = self.values.grow(elements, new_len, &mut self.gc.room);
             self.objects.get_mut(object.0).set_elements(elements);
         }
         // An array that gets a hole stays a "slow" array for the value
@@ -863,7 +879,7 @@ impl Heap {
             home_object: NONE,
             fields: NONE,
         };
-        let payload = self.payloads.functions.alloc(record);
+        let payload = self.payloads.functions.alloc(record, &mut self.gc.room);
         self.objects.get_mut(object.0).payload = payload;
         Ok(object)
     }
@@ -945,7 +961,7 @@ impl Heap {
         let mut ids = Vec::with_capacity(tree.len());
         for template in tree {
             let constant_count = template.constants.len() as u32;
-            let constants = self.values.alloc(constant_count);
+            let constants = self.values.alloc(constant_count, &mut self.gc.room);
             self.values.slice_mut(constants)[..template.constants.len()]
                 .copy_from_slice(template.constants);
             let record = FunctionBytecode {
@@ -955,11 +971,11 @@ impl Heap {
                 children: Range::EMPTY,
                 child_count: 0,
             };
-            ids.push(self.payloads.bytecode.alloc(record));
+            ids.push(self.payloads.bytecode.alloc(record, &mut self.gc.room));
         }
         for (template, &id) in tree.iter().zip(&ids) {
             let child_count = template.children.len() as u32;
-            let children = self.values.alloc(child_count);
+            let children = self.values.alloc(child_count, &mut self.gc.room);
             for (slot, &child) in template.children.iter().enumerate() {
                 let child = Value::int32(ids[child as usize] as i32);
                 self.values.set(children, slot as u32, child);
@@ -1086,7 +1102,7 @@ impl Heap {
             ..Need::default()
         };
         self.safepoint(&need, &[])?;
-        Ok(StringId(self.strings.alloc(record)))
+        Ok(StringId(self.strings.alloc(record, &mut self.gc.room)))
     }
 
     /// A string with a representation the caller made canonical.
@@ -1188,7 +1204,7 @@ impl Heap {
         };
         self.safepoint(&need, &[Value::string(left), Value::string(right)])?;
         let record = StringRecord::rope(len as u32, one_byte);
-        let id = self.strings.alloc(record);
+        let id = self.strings.alloc(record, &mut self.gc.room);
         self.ropes.insert(id, (left, right));
         Ok(StringId(id))
     }
@@ -1370,7 +1386,7 @@ impl Heap {
             description: description.map_or(NONE, |id| id.0),
             private,
         };
-        let id = self.symbols.alloc(record);
+        let id = self.symbols.alloc(record, &mut self.gc.room);
         if id >= KEY_INDEX_LIMIT {
             self.symbols.free(id);
             return Err(HeapError::OutOfMemory);
@@ -1400,7 +1416,7 @@ impl Heap {
             negative: negative && !limbs.is_empty(),
             limbs,
         };
-        Ok(BigIntId(self.bigints.alloc(record)))
+        Ok(BigIntId(self.bigints.alloc(record, &mut self.gc.room)))
     }
 
     pub fn bigint(&self, id: BigIntId) -> &BigIntRecord {

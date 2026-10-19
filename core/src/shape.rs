@@ -397,7 +397,10 @@ impl Heap {
         if let Some(prototype) = prototype {
             self.ensure_prototype(prototype);
         }
-        let shape = ShapeId(self.shapes.alloc(Shape::root(prototype, kind)));
+        let shape = ShapeId(
+            self.shapes
+                .alloc(Shape::root(prototype, kind), &mut self.gc.room),
+        );
         self.shape_roots.insert(key, shape);
         self.last_root = Some((key, shape));
         shape
@@ -414,7 +417,7 @@ impl Heap {
         }
         let mut shape = Shape::root(prototype, kind);
         shape.dictionary = Some(Box::new(dictionary));
-        ShapeId(self.shapes.alloc(shape))
+        ShapeId(self.shapes.alloc(shape, &mut self.gc.room))
     }
 
     fn transition(&mut self, shape: ShapeId, key: PropertyKey, flags: PropertyFlags) -> ShapeId {
@@ -429,7 +432,7 @@ impl Heap {
         child.slot = parent.width;
         child.count = parent.count + 1;
         child.width = parent.width + flags.width();
-        let child = ShapeId(self.shapes.alloc(child));
+        let child = ShapeId(self.shapes.alloc(child, &mut self.gc.room));
         self.shapes
             .get_mut(shape.0)
             .transitions
@@ -673,7 +676,7 @@ impl Heap {
         };
         let mut slots = slots;
         if grow {
-            slots = self.values.grow(slots, new_len);
+            slots = self.values.grow(slots, new_len, &mut self.gc.room);
         }
         let header = self.objects.get_mut(object.0);
         header.shape = next;
@@ -717,7 +720,7 @@ impl Heap {
             };
             let keep = [Value::object(object), key.to_value(), values[0], values[1]];
             self.safepoint(&need, &keep)?;
-            slots = self.values.grow(slots, new_len);
+            slots = self.values.grow(slots, new_len, &mut self.gc.room);
             self.objects.get_mut(object.0).set_slots(slots);
         }
         let dictionary = self
@@ -906,7 +909,7 @@ impl Heap {
                         },
                         &[Value::object(object)],
                     )?;
-                    let slots = self.values.grow(slots, new_len);
+                    let slots = self.values.grow(slots, new_len, &mut self.gc.room);
                     self.objects.get_mut(object.0).set_slots(slots);
                 }
                 self.dictionary_changed(object);
@@ -1149,7 +1152,10 @@ impl Heap {
             },
             &[Value::object(prototype), keep],
         )?;
-        let cell = ValidityCellId(self.cells.alloc(ValidityCell { valid: true }));
+        let cell = ValidityCellId(
+            self.cells
+                .alloc(ValidityCell { valid: true }, &mut self.gc.room),
+        );
         self.prototypes.entry(prototype).or_default().cell = Some(cell);
         Ok(cell)
     }

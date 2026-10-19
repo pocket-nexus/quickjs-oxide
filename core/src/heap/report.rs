@@ -104,6 +104,11 @@ pub struct MemoryReport {
     /// which the next one runs.
     pub allocated_since_gc: usize,
     pub threshold: usize,
+    /// The reserved-bytes budget the last collection set.
+    pub budget: usize,
+    /// Bytes of the tables beside the arenas: the ropes' halves, the atom
+    /// table and the inline caches.
+    pub table_bytes: usize,
     /// The heap cap in bytes; `usize::MAX` for none.
     pub cap: usize,
 }
@@ -134,6 +139,7 @@ impl MemoryReport {
             + self.rope_bytes
             + self.code.dynamic_bytes
             + self.code.regexp_bytes
+            + self.table_bytes
     }
 }
 
@@ -179,7 +185,9 @@ impl Heap {
             ic_free: self.ics.free_len(),
             gc: self.gc.stats,
             allocated_since_gc: self.gc.allocated,
-            threshold: self.gc.threshold,
+            threshold: self.gc.threshold(),
+            budget: self.gc.budget(),
+            table_bytes: self.table_bytes(),
             cap: self.gc.limits.max_bytes,
         }
     }
@@ -224,16 +232,18 @@ impl fmt::Display for MemoryReport {
         )?;
         writeln!(
             f,
-            "ropes: {}; atoms: {} ({} pinned)",
+            "ropes: {}; atoms: {} ({} pinned); tables {}",
             kib(self.rope_bytes),
             self.atoms,
-            self.pinned_atoms
+            self.pinned_atoms,
+            kib(self.table_bytes)
         )?;
         writeln!(
             f,
-            "heap reserved: {}; threshold {}; cap {}",
+            "heap reserved: {}; threshold {}; budget {}; cap {}",
             kib(self.reserved_bytes()),
             kib(self.threshold),
+            kib(self.budget),
             if self.cap == usize::MAX {
                 "none".to_owned()
             } else {

@@ -7,6 +7,8 @@
 
 use std::mem;
 
+use super::gc::Room;
+
 /// A record stored in an [`Arena`].
 pub trait Record {
     /// The poison value written over a freed slot. It must own no heap memory.
@@ -62,9 +64,10 @@ impl<T: Record> Arena<T> {
         }
     }
 
-    /// Stores `value`, reusing the free list first. Returns its index.
+    /// Stores `value`, reusing the free list first. Returns its index. A
+    /// growth step is charged to `room`.
     #[inline(always)]
-    pub fn alloc(&mut self, value: T) -> u32 {
+    pub fn alloc(&mut self, value: T, room: &mut Room) -> u32 {
         self.extra += value.extra_bytes();
         self.live_count += 1;
         if let Some(index) = self.free.pop() {
@@ -73,14 +76,16 @@ impl<T: Record> Arena<T> {
             self.live[word] |= mask;
             return index;
         }
-        self.push(value)
+        self.push(value, room)
     }
 
     #[inline(never)]
-    fn push(&mut self, value: T) -> u32 {
+    fn push(&mut self, value: T, room: &mut Room) -> u32 {
         let index = u32::try_from(self.records.len()).expect("arena index overflow");
         if self.records.len() == self.records.capacity() {
+            let before = self.bytes();
             self.records.reserve_exact(self.records.capacity().max(4));
+            room.take(self.bytes() - before);
         }
         self.records.push(value);
         let (word, mask) = bit(index);
@@ -292,9 +297,10 @@ mod tests {
 
     #[test]
     fn free_list_reuse_is_lowest_first_after_sweep() {
+        let mut room = Room::unbounded();
         let mut arena = Arena::new();
         for value in 0..10 {
-            assert_eq!(arena.alloc(Item(value)), value);
+            assert_eq!(arena.alloc(Item(value), &mut room), value);
         }
         for keep in [0, 3, 9] {
             arena.mark(keep);
@@ -314,17 +320,19 @@ mod tests {
             assert_eq!(arena.sweep(|_, _| {}), 0);
         }
         let reused = (0..7)
-            .map(|value| arena.alloc(Item(100 + value)))
+            .map(|value| arena.alloc(Item(100 + value), &mut room))
             .collect::<Vec<_>>();
         assert_eq!(reused, [1, 2, 4, 5, 6, 7, 8]);
-        assert_eq!(arena.alloc(Item(200)), 10);
+        assert_eq!(arena.alloc(Item(200), &mut room), 10);
     }
 
     #[test]
     fn free_poisons_and_growth_is_reported() {
+        let mut room = Room::new(1 << 20, 1 << 20);
         let mut arena = Arena::new();
         assert_eq!(arena.growth_bytes(1), 4 * size_of::<Item>());
-        let index = arena.alloc(Item(7));
+        let index = arena.alloc(Item(7), &mut room);
+        assert_eq!(room.threshold(), 1 << 20);
         assert_eq!(arena.growth_bytes(3), 0);
         assert_eq!(arena.free(index), Item(7));
         assert!(!arena.is_live(index));
@@ -333,11 +341,23 @@ mod tests {
     }
 
     #[test]
+    fn a_step_past_the_budget_zeroes_the_threshold() {
+        let mut room = Room::new(8 * size_of::<Item>(), usize::MAX);
+        let mut arena = Arena::new();
+        for value in 0..8 {
+            arena.alloc(Item(value), &mut room);
+        }
+        assert_ne!(room.threshold(), 0);
+        arena.alloc(Item(8), &mut room);
+        assert_eq!(room.threshold(), 0);
+    }
+
+    #[test]
     #[cfg(any(debug_assertions, feature = "gc-stress"))]
     #[should_panic(expected = "stale")]
     fn stale_access_panics() {
         let mut arena = Arena::new();
-        let index = arena.alloc(Item(1));
+        let index = arena.alloc(Item(1), &mut Room::unbounded());
         arena.free(index);
         let _ = arena.get(index);
     }

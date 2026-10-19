@@ -693,8 +693,7 @@ impl Runtime {
         self.enter()?
             .core
             .heap_mut()
-            .gc_mut()
-            .set_manual(policy == GcPolicy::Manual);
+            .set_gc_manual(policy == GcPolicy::Manual);
         Ok(())
     }
 

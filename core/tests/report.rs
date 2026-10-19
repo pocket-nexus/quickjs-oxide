@@ -62,14 +62,18 @@ fn the_reserved_total_counts_regexp_programs() {
 #[test]
 fn options_reach_the_heap_and_the_stack() {
     let options = RuntimeOptions {
-        min_heap: 1 << 20,
+        min_heap: 8 << 20,
         growth: 3.0,
         stack_limit: 4096,
         ..RuntimeOptions::default()
     };
     let runtime = Runtime::new(options).unwrap();
-    assert_eq!(runtime.heap().gc().min_heap, 1 << 20);
+    assert_eq!(runtime.heap().gc().min_heap, 8 << 20);
     assert_eq!(runtime.heap().gc().growth_factor, 3.0);
-    assert_eq!(runtime.memory_report().threshold, 1 << 20);
+    // The budget is the minimum; the threshold leaves room for what is live
+    // (all of the budget before the first collection).
+    let report = runtime.memory_report();
+    assert_eq!(report.budget, 8 << 20);
+    assert_eq!(report.threshold, (8 << 20) - report.gc.live_bytes);
     assert_eq!(RuntimeOptions::default().stack_limit, 1 << 20);
 }

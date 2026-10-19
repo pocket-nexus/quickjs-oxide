@@ -322,9 +322,10 @@ pub struct Runtime {
 pub struct RuntimeOptions {
     /// The heap cap; `usize::MAX` bytes for none.
     pub heap: HeapLimits,
-    /// The collection threshold's floor, in bytes.
+    /// The reserved-bytes budget's floor, in bytes.
     pub min_heap: usize,
-    /// The threshold after a collection is the live bytes times this.
+    /// A collection that leaves `live` bytes allows `growth × live` more to
+    /// be allocated before the next: the budget is `(1 + growth) × live`.
     pub growth: f64,
     /// Registers the register file may hold before a call fails with
     /// `InternalError: stack overflow`.
@@ -371,9 +372,7 @@ impl Runtime {
     pub fn new(options: impl Into<RuntimeOptions>) -> Result<Runtime, HeapError> {
         let options = options.into();
         let mut heap = Heap::new(options.heap);
-        heap.gc.min_heap = options.min_heap;
-        heap.gc.threshold = options.min_heap;
-        heap.gc.growth_factor = options.growth;
+        heap.gc.configure(options.min_heap, options.growth);
         heap.vm.limit = options.stack_limit;
         heap.vm.native_budget = options.native_stack_budget;
         heap.vm.native_depth = options.native_depth_limit;

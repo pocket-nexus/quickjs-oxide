@@ -7,6 +7,7 @@
 //! exponent. The value heap does not compact; [`ValueHeap::fragmentation`]
 //! reports what churn leaves behind.
 
+use super::gc::Room;
 use crate::value::Value;
 
 const CLASSES: usize = 32;
@@ -72,9 +73,10 @@ impl ValueHeap {
     }
 
     /// Allocates a range of at least `len` slots, filled with `Value::EMPTY`.
-    /// The returned length is rounded up to the class size.
+    /// The returned length is rounded up to the class size. A growth step is
+    /// charged to `room`.
     #[inline]
-    pub fn alloc(&mut self, len: u32) -> Range {
+    pub fn alloc(&mut self, len: u32, room: &mut Room) -> Range {
         if len == 0 {
             return Range::EMPTY;
         }
@@ -83,17 +85,19 @@ impl ValueHeap {
             self.free_slots -= len as usize;
             return Range { start, len };
         }
-        self.alloc_fresh(len)
+        self.alloc_fresh(len, room)
     }
 
     #[inline(never)]
-    fn alloc_fresh(&mut self, len: u32) -> Range {
+    fn alloc_fresh(&mut self, len: u32, room: &mut Room) -> Range {
         let start = u32::try_from(self.values.len()).expect("value heap overflow");
         let end = self.values.len() + len as usize;
         assert!(end <= u32::MAX as usize, "value heap overflow");
         if end > self.values.capacity() {
+            let before = self.values.capacity();
             let target = end.max(self.values.capacity() * 2);
             self.values.reserve_exact(target - self.values.len());
+            room.take((self.values.capacity() - before) * 8);
         }
         self.values.resize(end, Value::EMPTY);
         Range { start, len }
@@ -116,11 +120,11 @@ impl ValueHeap {
     /// Returns a range of at least `new_len` holding `range`'s values: the same
     /// range when it is already large enough, otherwise a new one (alloc, copy,
     /// free).
-    pub fn grow(&mut self, range: Range, new_len: u32) -> Range {
+    pub fn grow(&mut self, range: Range, new_len: u32, room: &mut Room) -> Range {
         if new_len <= range.len {
             return range;
         }
-        let new = self.alloc(new_len);
+        let new = self.alloc(new_len, room);
         let (from, to) = (range.start as usize, new.start as usize);
         self.values.copy_within(from..from + range.len as usize, to);
         self.free(range);
@@ -244,38 +248,40 @@ mod tests {
 
     #[test]
     fn classes_round_up_and_reuse() {
+        let room = &mut Room::unbounded();
         let mut heap = ValueHeap::new();
-        let a = heap.alloc(3);
+        let a = heap.alloc(3, room);
         assert_eq!(a, Range { start: 0, len: 4 });
         assert!(heap.slice(a).iter().all(|v| v.is_empty()));
         heap.set(a, 2, Value::int32(5));
-        let b = heap.alloc(1);
+        let b = heap.alloc(1, room);
         assert_eq!(b, Range { start: 4, len: 1 });
         heap.free(a);
         assert_eq!(heap.free_slots(), 4);
-        let c = heap.alloc(4);
+        let c = heap.alloc(4, room);
         assert_eq!(c.start, 0);
         assert!(heap.get(c, 2).is_empty(), "freed slots are poisoned");
-        assert_eq!(heap.alloc(0), Range::EMPTY);
+        assert_eq!(heap.alloc(0, room), Range::EMPTY);
     }
 
     #[test]
     fn grow_copies_and_frees() {
+        let room = &mut Room::unbounded();
         let mut heap = ValueHeap::new();
-        let a = heap.alloc(2);
+        let a = heap.alloc(2, room);
         heap.set(a, 0, Value::int32(1));
         heap.set(a, 1, Value::int32(2));
-        assert_eq!(heap.grow(a, 2), a);
-        let b = heap.grow(a, 3);
+        assert_eq!(heap.grow(a, 2, room), a);
+        let b = heap.grow(a, 3, room);
         assert_eq!(b.len, 4);
         assert_eq!(heap.get(b, 0), Value::int32(1));
         assert_eq!(heap.get(b, 1), Value::int32(2));
         assert!(heap.get(b, 2).is_empty());
         assert_eq!(heap.free_blocks().collect::<Vec<_>>(), [a]);
-        let large = heap.alloc(1000);
+        let large = heap.alloc(1000, room);
         assert_eq!(large.len, 1024);
         heap.free(large);
-        assert_eq!(heap.alloc(513).start, large.start);
+        assert_eq!(heap.alloc(513, room).start, large.start);
     }
 
     #[test]

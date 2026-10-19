@@ -48,8 +48,8 @@ usage: qjs [options] [file [args]]
   -v, --version         show version and compatibility target
 memory and measurement:
       --heap-cap-mib N  cap the heap at N MiB
-      --min-heap-mib N  collection threshold floor (default 4)
-      --gc-growth F     threshold growth after a collection (default 2)
+      --min-heap-mib N  reserved heap budget floor (default 1)
+      --gc-growth F     bytes allocated between collections per live byte (default 2)
       --stack-limit N   registers the register file may hold
       --gc-stats        print the collector's statistics at exit
       --memory-report   print the memory report at exit

@@ -155,10 +155,67 @@ pub struct GcStats {
     pub live_bytes: usize,
 }
 
+/// The trigger's threshold and what growth steps may still add to reserved
+/// memory before the budget is reached. Every arena and the value heap charge
+/// their growth steps here; a step past the budget zeroes the threshold, so
+/// the next safepoint collects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Room {
+    /// Bytes of growth steps left below the budget.
+    left: isize,
+    /// Nominal bytes that may be allocated before the next collection.
+    threshold: usize,
+}
+
+impl Room {
+    /// No budget and no trigger (`GcPolicy::Manual`, the arenas' tests).
+    pub const fn unbounded() -> Room {
+        Room {
+            left: isize::MAX,
+            threshold: usize::MAX,
+        }
+    }
+
+    /// `left` bytes of growth below the budget and `threshold` nominal bytes
+    /// before the next collection.
+    pub fn new(left: usize, threshold: usize) -> Room {
+        Room {
+            left: left.min(isize::MAX as usize) as isize,
+            threshold,
+        }
+    }
+
+    /// Charges a growth step of `bytes`.
+    #[inline]
+    pub fn take(&mut self, bytes: usize) {
+        self.left = self
+            .left
+            .saturating_sub(bytes.min(isize::MAX as usize) as isize);
+        if self.left < 0 {
+            self.threshold = 0;
+        }
+    }
+
+    #[inline]
+    pub fn threshold(&self) -> usize {
+        self.threshold
+    }
+}
+
+/// The growth step the budget keeps room for above reserved memory: a
+/// quarter of the heap, at least 64 KiB and at most 2 MiB.
+pub fn budget_step(reserved: usize) -> usize {
+    (reserved / 4).clamp(64 << 10, 2 << 20)
+}
+
 pub struct GcState {
     /// Nominal bytes allocated since the last collection.
     pub(crate) allocated: usize,
-    pub(crate) threshold: usize,
+    pub(crate) room: Room,
+    /// Reserved bytes the heap is kept at or below between collections:
+    /// `max(min_heap, (1 + growth_factor) × live)` after the last one, raised
+    /// to one growth step above reserved memory when that is more.
+    pub(crate) budget: usize,
     pub min_heap: usize,
     pub growth_factor: f64,
     pub limits: HeapLimits,
@@ -186,13 +243,14 @@ pub struct GcState {
     stress_counter: u32,
 }
 
-pub const DEFAULT_MIN_HEAP: usize = 4 << 20;
+pub const DEFAULT_MIN_HEAP: usize = 1 << 20;
 
 impl GcState {
     pub fn new(limits: HeapLimits) -> Self {
         GcState {
             allocated: 0,
-            threshold: DEFAULT_MIN_HEAP,
+            room: Room::new(DEFAULT_MIN_HEAP, DEFAULT_MIN_HEAP),
+            budget: DEFAULT_MIN_HEAP,
             min_heap: DEFAULT_MIN_HEAP,
             growth_factor: 2.0,
             limits,
@@ -214,15 +272,23 @@ impl GcState {
         }
     }
 
-    /// Turns the growth trigger off (`manual`) or back on.
-    pub fn set_manual(&mut self, manual: bool) {
-        self.manual = manual;
-        self.threshold = if manual {
-            usize::MAX
-        } else {
-            self.min_heap
-                .max((self.stats.live_bytes as f64 * self.growth_factor) as usize)
-        };
+    /// The trigger of a heap that has not collected yet: `min_heap` bytes of
+    /// budget, `growth_factor` for the budgets after collections.
+    pub fn configure(&mut self, min_heap: usize, growth_factor: f64) {
+        self.min_heap = min_heap;
+        self.growth_factor = growth_factor;
+        self.budget = min_heap;
+        self.room = Room::new(min_heap, min_heap);
+    }
+
+    /// Nominal bytes that may be allocated before the next collection.
+    pub fn threshold(&self) -> usize {
+        self.room.threshold
+    }
+
+    /// The reserved-bytes budget set by the last collection.
+    pub fn budget(&self) -> usize {
+        self.budget
     }
 
     pub fn is_manual(&self) -> bool {
@@ -263,7 +329,7 @@ impl Heap {
     #[inline]
     pub(crate) fn safepoint(&mut self, need: &Need, keep: &[Value]) -> Result<(), HeapError> {
         let nominal = need.nominal_bytes();
-        if self.gc.allocated + nominal < self.gc.threshold && !self.gc.always_slow() {
+        if self.gc.allocated + nominal < self.gc.room.threshold && !self.gc.always_slow() {
             self.gc.allocated += nominal;
             return Ok(());
         }
@@ -275,7 +341,7 @@ impl Heap {
     fn safepoint_slow(&mut self, need: &Need, keep: &[Value]) -> Result<(), HeapError> {
         let nominal = need.nominal_bytes();
         #[allow(unused_mut)]
-        let mut collect = self.gc.allocated + nominal >= self.gc.threshold;
+        let mut collect = self.gc.allocated + nominal >= self.gc.room.threshold;
         #[cfg(feature = "gc-stress")]
         {
             collect |= self.gc.stress_tick();
@@ -325,13 +391,8 @@ impl Heap {
         self.prune_caches();
         let freed = self.sweep();
         let live = self.used_bytes();
+        self.set_budget(live);
         let gc = &mut self.gc;
-        gc.allocated = 0;
-        gc.threshold = if gc.manual {
-            usize::MAX
-        } else {
-            gc.min_heap.max((live as f64 * gc.growth_factor) as usize)
-        };
         let pause = start.elapsed();
         let stats = &mut gc.stats;
         stats.collections += 1;
@@ -345,6 +406,42 @@ impl Heap {
         }
         #[cfg(feature = "gc-stress")]
         self.verify();
+    }
+
+    /// Turns the growth trigger off (`manual`) or back on, with the budget
+    /// of the live bytes the last collection left.
+    pub fn set_gc_manual(&mut self, manual: bool) {
+        self.gc.manual = manual;
+        let allocated = self.gc.allocated;
+        self.set_budget(self.gc.stats.live_bytes);
+        self.gc.allocated = allocated;
+    }
+
+    /// The budget and the trigger after a collection that left `live` bytes.
+    /// The threshold is what can be allocated before the bytes in use reach
+    /// the budget; while the free space matches the requests, that is also
+    /// when reserved memory reaches it. A growth step past the budget
+    /// collects early.
+    fn set_budget(&mut self, live: usize) {
+        let reserved = self.bytes();
+        let gc = &mut self.gc;
+        gc.allocated = 0;
+        let step = budget_step(reserved);
+        let mut budget = gc
+            .min_heap
+            .max((live as f64 * (1.0 + gc.growth_factor)) as usize);
+        if gc.limits.max_bytes != usize::MAX {
+            budget = budget.min(gc.limits.max_bytes.saturating_sub(step));
+        }
+        let threshold = budget.saturating_sub(live);
+        // Free space of the wrong shape, or a live set that grew: the heap
+        // takes one more step before the next collection.
+        gc.budget = budget.max(reserved + step);
+        gc.room = if gc.manual {
+            Room::unbounded()
+        } else {
+            Room::new(gc.budget - reserved, threshold)
+        };
     }
 
     fn clear_marks(&mut self) {
