@@ -310,7 +310,7 @@ fn string_receivers_cache_their_prototype_chain() {
     let string_prototype = reader.runtime.intrinsic(Intrinsic::StringPrototype);
     let object_prototype = reader.runtime.intrinsic(Intrinsic::ObjectPrototype);
     reader.add(string_prototype, "method", 1);
-    let text = reader.runtime.heap_mut().intern("abc").unwrap();
+    let text = reader.runtime.heap_mut().intern_pinned("abc").unwrap();
     let string = Value::string(text);
     assert_eq!(reader.read(string), Value::int32(1));
     let entry = reader.entry();
@@ -327,17 +327,17 @@ fn string_receivers_cache_their_prototype_chain() {
     let mut reader = Reader::new("shared");
     let string_prototype = reader.runtime.intrinsic(Intrinsic::StringPrototype);
     reader.add(object_prototype_of(&reader), "shared", 3);
-    let text = reader.runtime.heap_mut().intern("abc").unwrap();
+    let text = reader.runtime.heap_mut().intern_pinned("abc").unwrap();
     assert_eq!(reader.read(Value::string(text)), Value::int32(3));
     assert_eq!(reader.entry().w1, object_prototype.index());
     reader.add(string_prototype, "shared", 4);
     assert_eq!(reader.read(Value::string(text)), Value::int32(4));
     // `length` on a string caches as the length entry.
     let mut reader = Reader::new("length");
-    let text = reader.runtime.heap_mut().intern("abcd").unwrap();
+    let text = reader.runtime.heap_mut().intern_pinned("abcd").unwrap();
     assert_eq!(reader.read(Value::string(text)), Value::int32(4));
     assert_eq!(reader.entry().w0, LENGTH_TAG);
-    let other = reader.runtime.heap_mut().intern("xy").unwrap();
+    let other = reader.runtime.heap_mut().intern_pinned("xy").unwrap();
     assert_eq!(reader.read(Value::string(other)), Value::int32(2));
 }
 

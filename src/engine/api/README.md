@@ -36,6 +36,34 @@ always succeeds.
 A runtime has one realm. `Runtime::context`, `Runtime::new_context` and
 `Context::new` all return its `Context` (deviation `TARGET-REALMS-001`).
 
+## Code lifetime
+
+A script compiled through `Context::eval*` or `Context::compile*` lives as
+long as the runtime by default: its code units go in the core's static code
+store, which is never collected, and the loop runs them at full speed.
+Dropping the `FunctionBytecodeRef` or the completion value frees the
+script's objects but not its code.
+
+Code the application compiles and then lets go of (a REPL's lines,
+generated snippets evaluated once) takes the `transient` option:
+`EvalOptions::default().transient()` for `eval_with_options` and
+`eval_bytes_with_options`, `CompileOptions::default().transient()` for
+`compile_with_options` and `compile_bytes_with_options`. Its units go in the
+heap, as `eval`'s and `new Function`'s do, and the collection that finds no
+function, frame or job naming them frees them, with their inline caches and
+the atoms only they hold. A `FunctionBytecodeRef` from a transient compile
+keeps its code until it is dropped. A call into transient code and the
+return from it switch units through a reference count, so a program run
+entirely as transient code retires more instructions: about 5% across the
+V8 v7 suite and 15% on the call-heavy DeltaBlue. The program and its
+modules therefore take the default. An application that compiles input
+repeatedly without the option keeps all of that code until the runtime is
+dropped.
+
+`Context::compile_module*` and modules a `ModuleLoader` returns live as
+long as the runtime. [The heap](../../../docs/heap.md#code-compiled-at-run-time)
+describes how dynamic units are reached and freed.
+
 ## Host
 
 `Host` is `oxide_core::host::Host`: `write`, `now_ms`,

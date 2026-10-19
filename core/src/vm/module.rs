@@ -297,11 +297,11 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
         ));
     };
     let source = (host.load)(
-        &mut Compiler::new(cx.heap, cx.code, cx.realm),
+        &mut Compiler::new(cx.heap, cx.static_code, cx.realm),
         name,
         attributes,
-    )
-    .map_err(|failure| compile_error(cx, failure))?;
+    );
+    let source = source.map_err(|failure| compile_error(cx, failure))?;
     let mark = cx.heap.roots().mark();
     let result = match source {
         ModuleSource::Compiled {
@@ -322,12 +322,12 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
     let mut requested = Vec::with_capacity(requests.len());
     for request in &requests {
         let normalized = (host.normalize)(
-            &mut Compiler::new(cx.heap, cx.code, cx.realm),
+            &mut Compiler::new(cx.heap, cx.static_code, cx.realm),
             name,
             &request.specifier,
             &request.attributes,
-        )
-        .map_err(|failure| compile_error(cx, failure))?;
+        );
+        let normalized = normalized.map_err(|failure| compile_error(cx, failure))?;
         requested.push(load(cx, &normalized, &request.attributes)?);
     }
     data_mut(cx, module).requested = requested;
@@ -595,29 +595,37 @@ pub(crate) fn namespace(cx: &mut Cx<'_>, module: ObjectId) -> Result<ObjectId, T
     exports.sort_by(|a, b| a.0.cmp(&b.0));
     let mut keys = Vec::with_capacity(exports.len());
     let mut slots = vec![Value::object(module)];
-    for (name, resolution) in &exports {
-        let key = cx
-            .heap
-            .property_key_units(name)
-            .map_err(|e| error::heap_error(cx, e))?;
-        keys.push(key);
-        slots.push(match *resolution {
-            Resolution::Binding(owner, binding) => cell(cx, owner, binding),
-            Resolution::Namespace(owner) => Value::object(owner),
-        });
-    }
-    let namespace = cx
-        .heap
-        .alloc_internal(
-            ObjectKind::ModuleNamespace,
-            InternalTag::None,
-            None,
-            1,
-            &slots,
-            InternalData::Exports(keys.into_boxed_slice()),
-            0,
-        )
-        .map_err(|e| error::heap_error(cx, e))?;
+    // The keys are rooted until the namespace holds them.
+    let mark = cx.heap.roots().mark();
+    let namespace = (|| {
+        for (name, resolution) in &exports {
+            let key = cx
+                .heap
+                .property_key_units(name)
+                .map_err(|e| error::heap_error(cx, e))?;
+            if let Some(value) = key.heap_value() {
+                cx.heap.roots().push(value);
+            }
+            keys.push(key);
+            slots.push(match *resolution {
+                Resolution::Binding(owner, binding) => cell(cx, owner, binding),
+                Resolution::Namespace(owner) => Value::object(owner),
+            });
+        }
+        cx.heap
+            .alloc_internal(
+                ObjectKind::ModuleNamespace,
+                InternalTag::None,
+                None,
+                1,
+                &slots,
+                InternalData::Exports(std::mem::take(&mut keys).into_boxed_slice()),
+                0,
+            )
+            .map_err(|e| error::heap_error(cx, e))
+    })();
+    cx.heap.roots().truncate(mark);
+    let namespace = namespace?;
     cx.heap.clear_object_flag(namespace, flags::EXTENSIBLE);
     // Interning may collect: the namespace is not reachable yet.
     let mark = cx.heap.roots().mark();
@@ -1083,7 +1091,7 @@ fn referrer(cx: &Cx<'_>, function: ObjectId) -> String {
     let unit_of = |function: ObjectId| {
         cx.heap
             .function_bytecode(function)
-            .map(|bytecode| cx.code.get(cx.heap.bytecode_unit(bytecode)))
+            .map(|bytecode| cx.unit(cx.heap.bytecode_unit(bytecode)))
     };
     let name = |unit: &crate::bytecode::CodeUnit| {
         unit.debug
@@ -1096,7 +1104,7 @@ fn referrer(cx: &Cx<'_>, function: ObjectId) -> String {
         return String::new();
     };
     if !unit.has(crate::bytecode::flags::EVAL) {
-        return name(unit);
+        return name(&unit);
     }
     let frames = &cx.heap.vm.frames;
     let below = frames
@@ -1106,9 +1114,9 @@ fn referrer(cx: &Cx<'_>, function: ObjectId) -> String {
     below
         .iter()
         .rev()
-        .map(|frame| cx.code.get(frame.unit))
+        .map(|frame| cx.unit(frame.unit))
         .find(|unit| !unit.has(crate::bytecode::flags::EVAL))
-        .map(name)
+        .map(|unit| name(&unit))
         .unwrap_or_default()
 }
 
@@ -1178,12 +1186,12 @@ pub(crate) fn module_import_job(cx: &mut Cx<'_>, site: CallSite) -> Result<Value
             ));
         };
         let name = (host.normalize)(
-            &mut Compiler::new(cx.heap, cx.code, cx.realm),
+            &mut Compiler::new(cx.heap, cx.static_code, cx.realm),
             &referrer,
             &specifier,
             &attributes,
-        )
-        .map_err(|failure| compile_error(cx, failure))?;
+        );
+        let name = name.map_err(|failure| compile_error(cx, failure))?;
         let module = load(cx, &name, &attributes)?;
         link(cx, module)?;
         let evaluation = evaluate(cx, module)?;

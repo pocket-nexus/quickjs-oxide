@@ -76,8 +76,7 @@ fn class_op_rooted(
             let record = cx.heap.function_record(initializer);
             if record.bytecode != NONE
                 && cx
-                    .code
-                    .get(
+                    .unit(
                         cx.heap
                             .bytecode_unit(crate::value::BytecodeId(record.bytecode)),
                     )
@@ -139,10 +138,17 @@ fn class_op_rooted(
                 return Err(error::type_error(cx, "not an object"));
             };
             let key = ops::to_property_key(cx, key)?;
-            let done = object::set(cx, base, key, value, receiver)?;
-            if !done && unit.has(flags::STRICT) {
-                return Err(property::set_failed(cx, base, key));
-            }
+            // The error reads the key after a setter or trap ran.
+            let mark = cx.heap.roots().mark();
+            object::root_keys(cx, &[key]);
+            let result = object::set(cx, base, key, value, receiver).and_then(|done| {
+                if !done && unit.has(flags::STRICT) {
+                    return Err(property::set_failed(cx, base, key));
+                }
+                Ok(())
+            });
+            cx.heap.roots().truncate(mark);
+            result?;
         }
         Opcode::InitDerived => {
             let new_target = reg(cx, frame, insn.b);
@@ -539,7 +545,7 @@ fn make_class(
 fn run_initializer(cx: &mut Cx<'_>, initializer: ObjectId, receiver: Value) -> Result<(), Throw> {
     let record = cx.heap.function_record(initializer);
     if record.bytecode != NONE {
-        let unit = cx.code.get(
+        let unit = cx.unit(
             cx.heap
                 .bytecode_unit(crate::value::BytecodeId(record.bytecode)),
         );

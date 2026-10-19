@@ -1264,7 +1264,7 @@ pub(super) fn to_locale_string(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
     let mut joined: Vec<u16> = Vec::new();
     let key = cx
         .heap
-        .property_key("toLocaleString")
+        .property_key_pinned("toLocaleString")
         .map_err(|error| error::heap_error(cx, error))?;
     for index in 0..length {
         if index > 0 {

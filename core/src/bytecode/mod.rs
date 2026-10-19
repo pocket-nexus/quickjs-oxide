@@ -2,9 +2,12 @@
 //! owns them.
 //!
 //! A code unit is built once by the lowering, checked once by
-//! [`validate`](validate::validate) when it is published to the
-//! [`CodeStore`], and then run without any decoding: the main loop matches on
-//! the typed [`Opcode`] and indexes registers with plain `[]`.
+//! [`validate`](validate::validate) when it is published, and then run
+//! without any decoding: the main loop matches on the typed [`Opcode`] and
+//! indexes registers with plain `[]`. Units published before the program
+//! runs live in the [`CodeStore`] for the runtime's lifetime; units compiled
+//! at run time live in the heap, which frees each once no function, frame
+//! or job reaches it.
 
 pub mod builder;
 pub mod disasm;
@@ -243,8 +246,7 @@ pub struct CodeUnit {
     pub spill_register: u16,
     /// The slots of the spill scope.
     pub spill_slots: u16,
-    /// The unit's first entry in the cache store, set by
-    /// [`CodeStore::publish`].
+    /// The unit's first entry in the cache store, set when it is published.
     pub ic_base: u32,
     /// Cache sites, numbered by [`CodeBuilder::finish`](builder::CodeBuilder::finish).
     pub ic_count: u32,
@@ -254,7 +256,7 @@ pub struct CodeUnit {
     /// creates it; `LoadCaptured` indexes them.
     pub captures: Box<[Capture]>,
     pub debug: DebugInfo,
-    /// The function's `name` (an atom, so a strong root), or `None` for `""`.
+    /// The function's `name` (an atom), or `None` for `""`.
     pub name_atom: Option<crate::value::StringId>,
     /// The function's `length`.
     pub length: u16,
@@ -266,6 +268,10 @@ pub struct CodeUnit {
     /// indirect eval: a backtrace lists no native frame for them, as QuickJS's
     /// direct eval has none.
     pub direct_eval_sites: Box<[u32]>,
+    /// The atoms a dynamic unit keeps alive ([`CodeUnit::key_atoms`]), set
+    /// when it is published; empty for a static unit, whose atoms are
+    /// pinned.
+    pub atoms: Box<[crate::value::StringId]>,
 }
 
 impl CodeUnit {
@@ -286,170 +292,188 @@ impl CodeUnit {
     }
 }
 
-/// Marks a [`CodeUnitId`] in the dynamic store.
-const DYNAMIC: u32 = 1 << 31;
-/// Units in the first dynamic chunk; each next chunk holds twice as many.
-const FIRST_CHUNK: u32 = 64;
-const CHUNKS: usize = 25;
+/// Marks a [`CodeUnitId`] of a unit compiled at run time, which the heap
+/// owns.
+pub(crate) const DYNAMIC: u32 = 1 << 31;
 
-/// One chunk of the dynamic store: write-once cells, allocated whole.
-type DynamicChunk = Box<[std::cell::OnceCell<CodeUnit>]>;
-
-/// Every published code unit. It lives in the runtime beside the heap, not in
-/// it, so the main loop can hold `&[Insn]` across heap calls. Append-only:
-/// code units are never collected.
-///
-/// Units published before the program runs go in `units` through `&mut`;
-/// units compiled at run time (`eval`, the `Function` constructors) are
-/// published through `&self` while the loop holds the store, into chunks of
-/// write-once cells that never move, so every `&CodeUnit` stays valid.
-pub struct CodeStore {
-    units: Vec<CodeUnit>,
-    dynamic: Box<[std::cell::OnceCell<DynamicChunk>]>,
-    dynamic_len: std::cell::Cell<u32>,
-    /// Cache entries reserved by the units so far.
-    ic_len: std::cell::Cell<u32>,
+impl CodeUnitId {
+    /// Whether the unit was compiled at run time: the heap owns it and
+    /// frees it once no bytecode record names it.
+    #[inline]
+    pub const fn is_dynamic(self) -> bool {
+        self.0 & DYNAMIC != 0
+    }
 }
 
-impl Default for CodeStore {
-    fn default() -> Self {
-        CodeStore {
-            units: Vec::new(),
-            dynamic: (0..CHUNKS).map(|_| std::cell::OnceCell::new()).collect(),
-            dynamic_len: std::cell::Cell::new(0),
-            ic_len: std::cell::Cell::new(0),
+/// A borrowed code unit: a unit of the [`CodeStore`] for the store's
+/// lifetime, or a counted reference to a unit the heap owns, which keeps it
+/// alive while the loop runs it across a collection.
+pub enum UnitRef<'a> {
+    Static(&'a CodeUnit),
+    Dynamic(std::rc::Rc<CodeUnit>),
+}
+
+impl std::ops::Deref for UnitRef<'_> {
+    type Target = CodeUnit;
+
+    #[inline(always)]
+    fn deref(&self) -> &CodeUnit {
+        match self {
+            UnitRef::Static(unit) => unit,
+            UnitRef::Dynamic(unit) => unit,
         }
     }
 }
 
-/// The chunk and position of dynamic unit `index`.
-#[inline]
-fn locate(index: u32) -> (usize, usize) {
-    let chunk = (index / FIRST_CHUNK + 1).ilog2();
-    let start = FIRST_CHUNK * ((1 << chunk) - 1);
-    (chunk as usize, (index - start) as usize)
+/// The units published before the program runs. It lives in the runtime
+/// beside the heap, not in it, so the main loop can hold `&[Insn]` across
+/// heap calls; units compiled at run time live in the heap
+/// ([`DynamicUnits`](crate::heap::code::DynamicUnits)).
+#[derive(Default)]
+pub struct CodeStore {
+    units: Vec<CodeUnit>,
 }
 
 impl CodeStore {
-    fn reserve_caches(&self, unit: &mut CodeUnit) {
-        unit.ic_base = self.ic_len.get();
-        self.ic_len.set(
-            self.ic_len
-                .get()
-                .checked_add(unit.ic_count)
-                .expect("cache store overflow"),
-        );
+    /// Validates `unit` and appends it. Its cache entries are the caller's:
+    /// [`Runtime::publish`](crate::Runtime::publish) reserves them.
+    pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
+        validate::validate(&unit, &|id| self.lookup(id))?;
+        Ok(self.push(unit))
     }
 
-    /// Validates `unit`, gives it the next `ic_count` cache entries and
-    /// appends it.
-    pub fn publish(&mut self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        validate::validate(&unit, &|id| self.lookup(id))?;
+    /// Appends a validated unit.
+    pub(crate) fn push(&mut self, unit: CodeUnit) -> CodeUnitId {
         let id = u32::try_from(self.units.len())
             .ok()
             .filter(|&id| id < DYNAMIC)
             .expect("code store overflow");
-        self.reserve_caches(&mut unit);
         self.units.push(unit);
-        Ok(CodeUnitId(id))
+        CodeUnitId(id)
     }
 
-    /// [`CodeStore::publish`] while the store is shared (code compiled at
-    /// run time).
-    pub fn publish_shared(&self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        validate::validate(&unit, &|id| self.lookup(id))?;
-        let index = self.dynamic_len.get();
-        let (chunk, offset) = locate(index);
-        let cells = self.dynamic[chunk].get_or_init(|| {
-            (0..(FIRST_CHUNK << chunk))
-                .map(|_| std::cell::OnceCell::new())
-                .collect()
-        });
-        self.reserve_caches(&mut unit);
-        if cells[offset].set(unit).is_err() {
-            unreachable!("a fresh dynamic slot");
-        }
-        self.dynamic_len.set(index + 1);
-        Ok(CodeUnitId(index | DYNAMIC))
-    }
-
-    fn lookup(&self, id: CodeUnitId) -> Option<&CodeUnit> {
-        if id.0 & DYNAMIC == 0 {
-            return self.units.get(id.0 as usize);
-        }
-        let index = id.0 & !DYNAMIC;
-        if index >= self.dynamic_len.get() {
+    /// The unit `id`, if it is a unit of this store.
+    pub fn lookup(&self, id: CodeUnitId) -> Option<&CodeUnit> {
+        if id.is_dynamic() {
             return None;
         }
-        let (chunk, offset) = locate(index);
-        self.dynamic[chunk].get()?[offset].get()
+        self.units.get(id.0 as usize)
     }
 
-    /// Cache entries the published units hold.
-    pub fn ic_len(&self) -> u32 {
-        self.ic_len.get()
-    }
-
+    /// The static unit `id`.
     #[inline]
     pub fn get(&self, id: CodeUnitId) -> &CodeUnit {
-        if id.0 & DYNAMIC == 0 {
-            return &self.units[id.0 as usize];
-        }
-        self.get_dynamic(id)
-    }
-
-    #[cold]
-    #[inline(never)]
-    fn get_dynamic(&self, id: CodeUnitId) -> &CodeUnit {
-        self.lookup(id).expect("a published unit")
+        debug_assert!(!id.is_dynamic(), "a unit of the code store");
+        &self.units[id.0 as usize]
     }
 
     pub fn len(&self) -> usize {
-        self.units.len() + self.dynamic_len.get() as usize
+        self.units.len()
     }
 
-    /// Every unit with its id, in publication order (the dynamic ones last).
+    /// Every unit with its id, in publication order.
     pub fn units(&self) -> impl Iterator<Item = (CodeUnitId, &CodeUnit)> {
-        let dynamic = (0..self.dynamic_len.get()).map(|index| {
-            (
-                CodeUnitId(index | DYNAMIC),
-                self.get(CodeUnitId(index | DYNAMIC)),
-            )
-        });
         self.units
             .iter()
             .enumerate()
             .map(|(index, unit)| (CodeUnitId(index as u32), unit))
-            .chain(dynamic)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.units.is_empty()
+    }
+
+    /// `id` and its descendants in pre-order ([`Units::tree`]).
+    pub fn tree(&self, id: CodeUnitId) -> Vec<CodeUnitId> {
+        tree(id, |id| &self.get(id).children[..])
+    }
+}
+
+/// `id` and its descendants in pre-order, as `children` gives them.
+fn tree<'a>(id: CodeUnitId, children: impl Fn(CodeUnitId) -> &'a [CodeUnitId]) -> Vec<CodeUnitId> {
+    let mut order = Vec::new();
+    let mut pending = vec![id];
+    while let Some(id) = pending.pop() {
+        order.push(id);
+        pending.extend(children(id).iter().rev());
+    }
+    order
+}
+
+/// Every unit the runtime holds, static and dynamic, for reading.
+#[derive(Clone, Copy)]
+pub struct Units<'a> {
+    pub(crate) code: &'a CodeStore,
+    pub(crate) dynamic: &'a crate::heap::code::DynamicUnits,
+}
+
+impl<'a> Units<'a> {
+    /// The unit `id`.
+    #[inline]
+    pub fn get(self, id: CodeUnitId) -> UnitRef<'a> {
+        if id.is_dynamic() {
+            return UnitRef::Dynamic(self.dynamic.get(id));
+        }
+        UnitRef::Static(self.code.get(id))
+    }
+
+    /// The unit `id`, if it is published.
+    pub fn lookup(self, id: CodeUnitId) -> Option<&'a CodeUnit> {
+        if id.is_dynamic() {
+            return self.dynamic.lookup(id);
+        }
+        self.code.lookup(id)
     }
 
     /// `id` and its descendants in pre-order: the order in which
     /// [`Runtime::instantiate`](crate::Runtime::instantiate) takes their
     /// constant tables.
-    pub fn tree(&self, id: CodeUnitId) -> Vec<CodeUnitId> {
-        let mut order = Vec::new();
-        let mut pending = vec![id];
-        while let Some(id) = pending.pop() {
-            order.push(id);
-            pending.extend(self.get(id).children.iter().rev());
-        }
-        order
+    pub fn tree(self, id: CodeUnitId) -> Vec<CodeUnitId> {
+        tree(id, |id| {
+            &self.lookup(id).expect("a published unit").children[..]
+        })
     }
 
-    /// Bytes held by the instructions and handler tables.
-    pub fn bytes(&self) -> usize {
-        self.units()
-            .map(|(_, unit)| {
-                size_of::<CodeUnit>()
-                    + unit.code.len() * size_of::<Insn>()
-                    + unit.handlers.len() * size_of::<Handler>()
-                    + unit.children.len() * 4
-                    + unit.captures.len() * size_of::<Capture>()
+    /// Every unit with its id: the static ones in publication order, then
+    /// the live dynamic ones by slot.
+    pub fn all(self) -> impl Iterator<Item = (CodeUnitId, &'a CodeUnit)> {
+        self.code.units().chain(self.dynamic.units())
+    }
+}
+
+impl CodeUnit {
+    /// The distinct atoms the instructions name as property keys, with the
+    /// function's name: what a live dynamic unit keeps alive.
+    pub(crate) fn key_atoms(&self) -> Box<[crate::value::StringId]> {
+        use crate::heap::atom::KeyKind;
+        let mut atoms: Vec<crate::value::StringId> = self
+            .code
+            .iter()
+            .filter(|insn| matches!(insn.op.format(), Format::Key | Format::AKey | Format::ABKey))
+            .filter_map(|insn| match insn.key().kind() {
+                KeyKind::String(id) => Some(id),
+                _ => None,
             })
-            .sum()
+            .chain(self.name_atom)
+            .collect();
+        atoms.sort_unstable();
+        atoms.dedup();
+        atoms.into()
+    }
+
+    /// Bytes the unit holds: its instructions, tables, positions, source
+    /// text and cache entries. A dynamic unit charges them to the heap.
+    pub fn bytes(&self) -> usize {
+        size_of::<CodeUnit>()
+            + std::mem::size_of_val(&*self.code)
+            + std::mem::size_of_val(&*self.handlers)
+            + std::mem::size_of_val(&*self.children)
+            + std::mem::size_of_val(&*self.captures)
+            + std::mem::size_of_val(&*self.debug.positions)
+            + self.debug.name.len()
+            + self.source.as_ref().map_or(0, |source| source.len())
+            + std::mem::size_of_val(&*self.direct_eval_sites)
+            + std::mem::size_of_val(&*self.atoms)
+            + self.ic_count as usize * crate::vm::ic::ENTRY_BYTES
     }
 }

@@ -701,11 +701,19 @@ fn generic_set(
     value: Value,
     strict: bool,
 ) -> Result<(), Throw> {
-    let done = super::object::set(cx, object, key, value, Value::object(object))?;
-    if !done && strict {
-        return Err(set_failed(cx, object, key));
-    }
-    Ok(())
+    // A computed key's atom may have no other holder, and the error below
+    // reads it after a trap or setter ran.
+    let mark = cx.heap.roots().mark();
+    super::object::root_keys(cx, &[key]);
+    let result =
+        super::object::set(cx, object, key, value, Value::object(object)).and_then(|done| {
+            if !done && strict {
+                return Err(set_failed(cx, object, key));
+            }
+            Ok(())
+        });
+    cx.heap.roots().truncate(mark);
+    result
 }
 
 /// A strict `[[Set]]` on `object` that returned false: QuickJS's
@@ -930,8 +938,13 @@ pub(crate) fn delete(
         _ => return Ok(true),
     };
     if cx.heap.object_kind(object).is_exotic() {
-        let done = super::object::delete(cx, object, key)?;
-        return non_configurable(cx, key, !done, strict).map(|_| done);
+        // As in `generic_set`: the error reads the key after a trap.
+        let mark = cx.heap.roots().mark();
+        super::object::root_keys(cx, &[key]);
+        let result = super::object::delete(cx, object, key)
+            .and_then(|done| non_configurable(cx, key, !done, strict).map(|_| done));
+        cx.heap.roots().truncate(mark);
+        return result;
     }
     let heap = &mut *cx.heap;
     match key.kind() {
@@ -1106,7 +1119,9 @@ pub(crate) fn for_in_start(cx: &mut Cx<'_>, value: Value) -> Result<Value, Throw
             .heap
             .alloc_object_with_elements(ObjectKind::ForInIterator, None, 4, 2 * keys.len() as u32)
             .map_err(|error| error::heap_error(cx, error))?;
-        // Keys are Int32 or atoms, and the object is rooted: nothing to root.
+        // The keys are Int32 or atoms: an exotic object's are rooted (see
+        // `level_keys`), the others are its shape's, and the object is
+        // rooted.
         let heap = &mut *cx.heap;
         let elements = heap.header(iterator).elements();
         for (index, &(key, enumerable)) in keys.iter().enumerate() {
@@ -1172,7 +1187,8 @@ fn fast_array_count(cx: &Cx<'_>, object: ObjectId) -> Option<u32> {
 /// QuickJS's `JS_GetOwnPropertyNamesInternal` with `JS_GPN_SET_ENUM`: the
 /// own string keys of `object` (index keys ascending, then the others in
 /// order) and whether each is enumerable. An exotic object answers through
-/// its internal methods, which may run JavaScript.
+/// its internal methods, which may run JavaScript; its keys are then rooted
+/// on the root stack (the caller cuts it back).
 fn level_keys(cx: &mut Cx<'_>, object: ObjectId) -> Result<Vec<(PropertyKey, bool)>, Throw> {
     let mut keys = Vec::new();
     if cx.heap.object_kind(object).is_exotic() {
@@ -1394,19 +1410,25 @@ fn for_in_next_level(
         return Ok(false);
     };
     cx.heap.set_raw_slot(iterator, 0, Value::object(prototype));
-    let keys = level_keys(cx, prototype)?;
-    for (index, &(key, enumerable)) in keys.iter().enumerate() {
-        let index = 2 * index as u32;
+    // An exotic level's keys are rooted until the iterator holds them.
+    let mark = cx.heap.roots().mark();
+    let result = (|| {
+        let keys = level_keys(cx, prototype)?;
+        for (index, &(key, enumerable)) in keys.iter().enumerate() {
+            let index = 2 * index as u32;
+            cx.heap
+                .set_element(iterator, index, key.to_value())
+                .and_then(|()| {
+                    cx.heap
+                        .set_element(iterator, index + 1, Value::bool(enumerable))
+                })
+                .map_err(|error| error::heap_error(cx, error))?;
+        }
         cx.heap
-            .set_element(iterator, index, key.to_value())
-            .and_then(|()| {
-                cx.heap
-                    .set_element(iterator, index + 1, Value::bool(enumerable))
-            })
-            .map_err(|error| error::heap_error(cx, error))?;
-    }
-    cx.heap
-        .set_raw_slot(iterator, 1, Value::int32(keys.len() as i32));
-    cx.heap.set_payload(iterator, 0);
-    Ok(true)
+            .set_raw_slot(iterator, 1, Value::int32(keys.len() as i32));
+        cx.heap.set_payload(iterator, 0);
+        Ok(true)
+    })();
+    cx.heap.roots().truncate(mark);
+    result
 }

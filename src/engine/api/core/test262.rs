@@ -156,7 +156,7 @@ impl Worker {
             .hold(oxide_core::Value::object(lowered.function));
         Ok(Script {
             function,
-            contains_dynamic_import: tree_has_import_call(self.runtime.code(), lowered.root),
+            contains_dynamic_import: tree_has_import_call(self.runtime.units(), lowered.root),
         })
     }
 
@@ -382,7 +382,7 @@ fn load_module(
     };
     match compile_module(compiler, name, source.as_bytes(), DebugInfoMode::Full) {
         Ok((module, root)) => {
-            if tree_has_import_call(compiler.code(), root) {
+            if tree_has_import_call(compiler.units(), root) {
                 state.dynamic_import.set(true);
             }
             Ok(module)

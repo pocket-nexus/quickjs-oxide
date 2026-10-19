@@ -34,6 +34,14 @@ pub(crate) fn revoke(heap: &mut Heap, proxy: ObjectId) {
     heap.set_internal_slot(proxy, REVOKED, Value::bool(true));
 }
 
+/// Roots `key` for the trap: a fresh atom (a computed key's) has no other
+/// holder, and the trap runs JavaScript before the checks read the key.
+fn root_key(cx: &mut Cx<'_>, key: PropertyKey) {
+    if let Some(value) = key.heap_value() {
+        root(cx, value);
+    }
+}
+
 fn key_value(key: PropertyKey) -> Value {
     match key.kind() {
         KeyKind::Index(index) => Value::int32(index as i32),
@@ -248,6 +256,7 @@ pub(crate) fn get_own_property(
     key: PropertyKey,
 ) -> Result<Option<Descriptor>, Throw> {
     let result = scoped(cx, |cx| {
+        root_key(cx, key);
         let (target, handler, trap) = match dispatch(cx, proxy, "getOwnPropertyDescriptor", None)? {
             Dispatch::Forward(target) => {
                 let descriptor = object::get_own_property(cx, target, key)?;
@@ -347,6 +356,7 @@ pub(crate) fn define_own_property(
 ) -> Result<bool, Throw> {
     cx.heap.vm.proxy_refused = false;
     scoped(cx, |cx| {
+        root_key(cx, key);
         let (target, handler, trap) = match dispatch(cx, proxy, "defineProperty", None)? {
             Dispatch::Forward(target) => {
                 return object::define_own_property(cx, target, key, descriptor);
@@ -403,6 +413,7 @@ pub(crate) fn define_own_property(
 
 pub(crate) fn has(cx: &mut Cx<'_>, proxy: ObjectId, key: PropertyKey) -> Result<bool, Throw> {
     scoped(cx, |cx| {
+        root_key(cx, key);
         let (target, handler, trap) = match dispatch(cx, proxy, "has", Some(128))? {
             Dispatch::Forward(target) => return object::has_property(cx, target, key),
             Dispatch::Trap {
@@ -438,6 +449,7 @@ pub(crate) fn get(
     receiver: Value,
 ) -> Result<Value, Throw> {
     scoped(cx, |cx| {
+        root_key(cx, key);
         let (target, handler, trap) = match dispatch(cx, proxy, "get", Some(512))? {
             Dispatch::Forward(target) => return object::get(cx, target, key, receiver),
             Dispatch::Trap {
@@ -484,6 +496,7 @@ pub(crate) fn set(
 ) -> Result<bool, Throw> {
     cx.heap.vm.proxy_refused = false;
     scoped(cx, |cx| {
+        root_key(cx, key);
         let (target, handler, trap) = match dispatch(cx, proxy, "set", Some(256))? {
             Dispatch::Forward(target) => return object::set(cx, target, key, value, receiver),
             Dispatch::Trap {
@@ -523,6 +536,7 @@ pub(crate) fn set(
 
 pub(crate) fn delete(cx: &mut Cx<'_>, proxy: ObjectId, key: PropertyKey) -> Result<bool, Throw> {
     scoped(cx, |cx| {
+        root_key(cx, key);
         let (target, handler, trap) = match dispatch(cx, proxy, "deleteProperty", Some(256))? {
             Dispatch::Forward(target) => return object::delete(cx, target, key),
             Dispatch::Trap {
@@ -587,7 +601,9 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
                 ));
             }
             root(cx, element);
-            keys.push(ops::to_property_key(cx, element)?);
+            let key = ops::to_property_key(cx, element)?;
+            object::root_keys(cx, &[key]);
+            keys.push(key);
         }
         for (index, key) in keys.iter().enumerate().skip(1) {
             if keys[..index].contains(key) {
@@ -646,14 +662,10 @@ pub(crate) fn own_keys(cx: &mut Cx<'_>, proxy: ObjectId) -> Result<Vec<PropertyK
         }
         Ok(keys)
     });
-    // The scope cut the keys' roots; root the symbols again for the caller.
+    // The scope cut the keys' roots; root them again for the caller.
     cx.heap.roots().truncate(mark);
     let keys = keys?;
-    for key in &keys {
-        if let KeyKind::Symbol(symbol) = key.kind() {
-            cx.heap.roots().push(Value::symbol(symbol));
-        }
-    }
+    object::root_keys(cx, &keys);
     Ok(keys)
 }
 

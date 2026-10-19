@@ -76,7 +76,7 @@ fn debug_unit(cx: &Cx<'_>, site: &CallSite) -> Option<crate::bytecode::CodeUnitI
     }
     let bytecode = cx.heap.function_bytecode(object)?;
     let unit = cx.heap.bytecode_unit(bytecode);
-    cx.code.get(unit).debug.filename.is_some().then_some(unit)
+    cx.unit(unit).debug.filename.is_some().then_some(unit)
 }
 
 /// `get Function.prototype.fileName`.
@@ -84,21 +84,21 @@ pub(super) fn file_name(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
     let Some(unit) = debug_unit(cx, &site) else {
         return Ok(Value::UNDEFINED);
     };
-    let file = cx.code.get(unit).debug.filename.clone().unwrap_or_default();
+    let file = cx.unit(unit).debug.filename.clone().unwrap_or_default();
     string_text(cx, &file)
 }
 
 /// `get Function.prototype.lineNumber`.
 pub(super) fn line_number(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(debug_unit(cx, &site)
-        .and_then(|unit| cx.code.get(unit).debug.definition)
+        .and_then(|unit| cx.unit(unit).debug.definition)
         .map_or(Value::UNDEFINED, |(line, _)| Value::int32(line as i32)))
 }
 
 /// `get Function.prototype.columnNumber`.
 pub(super) fn column_number(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(debug_unit(cx, &site)
-        .and_then(|unit| cx.code.get(unit).debug.definition)
+        .and_then(|unit| cx.unit(unit).debug.definition)
         .map_or(Value::UNDEFINED, |(_, column)| Value::int32(column as i32)))
 }
 
@@ -116,7 +116,7 @@ pub(super) fn throw_type_error(cx: &mut Cx<'_>, site: CallSite) -> Result<Value,
         cx.heap.object_kind(object) == crate::ObjectKind::Function
             && cx.heap.function_bytecode(object).is_some_and(|bytecode| {
                 let unit_id = cx.heap.bytecode_unit(bytecode);
-                let code = cx.code.get(unit_id);
+                let code = cx.unit(unit_id);
                 !code.has(unit::STRICT)
                     && code.has(unit::PROTOTYPE)
                     && !code.has(unit::GENERATOR)

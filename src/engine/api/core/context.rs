@@ -19,13 +19,24 @@ use crate::engine::compiler::CompileOptions;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct EvalOptions {
     pub filename: String,
+    /// The code is freed once nothing names it (a REPL's line), instead of
+    /// living as long as the runtime.
+    pub transient: bool,
 }
 
 impl EvalOptions {
     pub fn new(filename: impl Into<String>) -> Self {
         EvalOptions {
             filename: filename.into(),
+            transient: false,
         }
+    }
+
+    /// These options with [`EvalOptions::transient`] set.
+    #[must_use]
+    pub fn transient(mut self) -> Self {
+        self.transient = true;
+        self
     }
 }
 
@@ -149,7 +160,7 @@ impl Context {
         source: &str,
         options: &EvalOptions,
     ) -> Result<Value, RuntimeError> {
-        self.eval_bytes_with_filename(source.as_bytes(), &options.filename)
+        self.eval_bytes_with_options(source.as_bytes(), options)
     }
 
     pub fn eval_bytes_with_options(
@@ -157,7 +168,8 @@ impl Context {
         source: &[u8],
         options: &EvalOptions,
     ) -> Result<Value, RuntimeError> {
-        self.eval_bytes_with_filename(source, &options.filename)
+        let script = self.compile_script_bytes(source, &options.filename, options.transient)?;
+        self.execute(&script)
     }
 
     /// Compiles and runs `source` as a script named `filename`; the
@@ -193,7 +205,7 @@ impl Context {
         source: &str,
         options: &CompileOptions,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        self.compile_bytes_with_filename(source.as_bytes(), &options.filename)
+        self.compile_bytes_with_options(source.as_bytes(), options)
     }
 
     pub fn compile_bytes_with_options(
@@ -201,7 +213,7 @@ impl Context {
         source: &[u8],
         options: &CompileOptions,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
-        self.compile_bytes_with_filename(source, &options.filename)
+        self.compile_script_bytes(source, &options.filename, options.transient)
     }
 
     /// Compiles `source` as a script named `filename`. A syntax error is
@@ -211,10 +223,26 @@ impl Context {
         source: &[u8],
         filename: &str,
     ) -> Result<FunctionBytecodeRef, RuntimeError> {
+        self.compile_script_bytes(source, filename, false)
+    }
+
+    /// [`Context::compile_bytes_with_filename`]; `transient` code goes in the
+    /// heap, which frees it once no function names it.
+    fn compile_script_bytes(
+        &mut self,
+        source: &[u8],
+        filename: &str,
+        transient: bool,
+    ) -> Result<FunctionBytecodeRef, RuntimeError> {
         let debug_info = self.runtime.shared.debug_info.get();
         let mut entry = self.enter()?;
         let lowered = {
-            let mut compiler = entry.inner.core.compiler();
+            let core = &mut entry.inner.core;
+            let mut compiler = if transient {
+                core.transient_compiler()
+            } else {
+                core.compiler()
+            };
             compile_script(&mut compiler, source, filename, debug_info)
         };
         match lowered {

@@ -109,7 +109,10 @@ fn units(cx: &Cx<'_>, string: StringId) -> Vec<u16> {
 }
 
 fn flags_of(cx: &Cx<'_>, object: ObjectId) -> RegExpFlags {
-    cx.regexps.program(cx.heap.header(object).payload).flags()
+    cx.heap
+        .regexps
+        .program(cx.heap.header(object).payload)
+        .flags()
 }
 
 /// `IsRegExp(value)`.
@@ -147,13 +150,18 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     };
     // `P` and `F`, converted by `RegExpInitialize` after the allocation.
     let (source, flags) = if let Some(object) = regexp_object(cx, pattern) {
-        let record = cx.regexps.get(cx.heap.header(object).payload);
+        let record = cx.heap.regexps.get(cx.heap.header(object).payload);
         let flags = if flags.is_undefined() {
             Value::string(record.flags)
         } else {
             flags
         };
-        (Value::string(record.source), flags)
+        let source = Value::string(record.source);
+        // The record's atoms die with it: `re.compile()` from a `new.target`
+        // proxy's trap below may replace it.
+        root(cx, source);
+        root(cx, flags);
+        (source, flags)
     } else if pattern_is_regexp {
         let object = pattern.as_object().unwrap();
         let names = cx.realm.names;
@@ -200,7 +208,7 @@ pub(super) fn compile(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         if !flags.is_undefined() {
             return Err(error::type_error(cx, "flags must be undefined"));
         }
-        let record = cx.regexps.get(cx.heap.header(other).payload);
+        let record = cx.heap.regexps.get(cx.heap.header(other).payload);
         (record.source, record.flags)
     } else {
         let source = if pattern.is_undefined() {
@@ -208,6 +216,8 @@ pub(super) fn compile(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         } else {
             atom(cx, pattern)?
         };
+        // Converting the flags may run JavaScript.
+        root(cx, Value::string(source));
         let flags = if flags.is_undefined() {
             cx.realm.names.empty
         } else {
@@ -215,8 +225,7 @@ pub(super) fn compile(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         };
         (source, flags)
     };
-    let program = crate::vm::regexp::program(cx, source, flags)?;
-    cx.heap.set_payload(object, program);
+    crate::vm::regexp::set_program(cx, object, source, flags)?;
     set_last_index(cx, object, Value::int32(0))?;
     Ok(this)
 }
@@ -297,7 +306,7 @@ fn this_record(cx: &mut Cx<'_>, site: &CallSite) -> Result<Option<u32>, Throw> {
 /// `EscapeRegExpPattern`: `/` outside a class and line terminators escaped,
 /// `(?:)` for the empty pattern.
 fn escaped_source(cx: &Cx<'_>, record: Option<u32>) -> Vec<u16> {
-    let Some(record) = record.map(|index| cx.regexps.get(index)) else {
+    let Some(record) = record.map(|index| cx.heap.regexps.get(index)) else {
         return "(?:)".encode_utf16().collect();
     };
     let source: Vec<u16> = cx.heap.string(record.source).repr().units().collect();
@@ -440,7 +449,7 @@ fn pristine_flags(cx: &Cx<'_>, object: ObjectId, cache: &RegExpFlagCache) -> Opt
             return None;
         }
     }
-    Some(cx.regexps.program(heap.header(object).payload).flags())
+    Some(cx.heap.regexps.program(heap.header(object).payload).flags())
 }
 
 /// `get RegExp.prototype.flags`: each flag accessor read in order.
@@ -481,7 +490,7 @@ pub(super) fn flags(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 fn has_flag(cx: &mut Cx<'_>, site: CallSite, flag: RegExpFlags) -> Result<Value, Throw> {
     match this_record(cx, &site)? {
         Some(record) => Ok(Value::bool(
-            cx.regexps.program(record).flags().contains(flag),
+            cx.heap.regexps.program(record).flags().contains(flag),
         )),
         None => Ok(Value::UNDEFINED),
     }
@@ -578,7 +587,7 @@ fn run(
     string: StringId,
     start: usize,
 ) -> Result<Option<RegExpMatch>, Throw> {
-    let compiled = cx.regexps.program(program);
+    let compiled = cx.heap.regexps.program(program);
     let result = match &cx.heap.string(string).repr() {
         StringRepr::OneByte(bytes) => {
             oxide_regexp::execute_latin1_with_interrupt(compiled, bytes, start, || false)
@@ -672,7 +681,7 @@ fn match_array(
     }
     let program = cx.heap.header(object).payload;
     let group_names: Option<Vec<Option<Vec<u16>>>> =
-        cx.regexps.program(program).group_names().map(|names| {
+        cx.heap.regexps.program(program).group_names().map(|names| {
             names
                 .iter()
                 .map(|name| name.as_ref().map(|name| name.to_vec()))
@@ -1193,7 +1202,7 @@ fn pristine_exec_flags(cx: &mut Cx<'_>, object: ObjectId) -> Result<Option<RegEx
         return Ok(None);
     };
     let program = cx.heap.header(object).payload;
-    if cx.regexps.program(program).group_names().is_some() || !intrinsic_exec(cx, object)? {
+    if cx.heap.regexps.program(program).group_names().is_some() || !intrinsic_exec(cx, object)? {
         return Ok(None);
     }
     Ok(Some(flags))

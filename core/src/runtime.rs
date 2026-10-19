@@ -133,8 +133,8 @@ intrinsics! {
 macro_rules! names {
     ($($field:ident: $text:expr,)*) => {
         /// Atoms the loop and the natives name: property names they read
-        /// themselves and the `typeof` results. Atoms are strong roots, so
-        /// they stay valid.
+        /// themselves and the `typeof` results. They are interned while the
+        /// runtime is created, so they are pinned and stay valid.
         #[derive(Clone, Copy, Debug)]
         pub(crate) struct Names {
             $(pub $field: StringId,)*
@@ -309,14 +309,11 @@ impl Realm {
 
 pub struct Runtime {
     pub(crate) heap: Heap,
-    /// Beside the heap, not in it: the main loop borrows the running unit's
-    /// code across heap calls.
+    /// The units published before the program runs. Beside the heap, not in
+    /// it: the main loop borrows the running unit's code across heap calls.
     pub(crate) code: CodeStore,
     pub(crate) realm: Realm,
     pub(crate) host: Services,
-    /// The regular-expression programs: append-only, beside the heap like the
-    /// code store.
-    pub(crate) regexps: RegExpStore,
 }
 
 /// How a runtime is configured. `Default` is the behavior every runtime had
@@ -466,11 +463,22 @@ impl Runtime {
             code: CodeStore::default(),
             realm,
             host: Services::default(),
-            regexps: RegExpStore::default(),
         };
         let out_of_memory = crate::builtins::install(&mut runtime.cx())?;
         runtime.set_intrinsic(Intrinsic::OutOfMemoryError, out_of_memory);
+        // The heap pinned every atom so far: the realm's names and the
+        // builtins' properties. From here atoms live as long as their holders.
+        runtime.heap.set_atom_mode(crate::heap::AtomMode::Weak);
         Ok(runtime)
+    }
+
+    /// Runs `install` with the atoms it interns pinned, as the builtins'
+    /// are.
+    fn installing<T>(&mut self, install: impl FnOnce(&mut Cx<'_>) -> T) -> T {
+        let mode = self.heap.set_atom_mode(crate::heap::AtomMode::Pin);
+        let result = install(&mut self.cx());
+        self.heap.set_atom_mode(mode);
+        result
     }
 
     /// The loop's view of the runtime.
@@ -478,10 +486,9 @@ impl Runtime {
     pub(crate) fn cx(&mut self) -> Cx<'_> {
         Cx {
             heap: &mut self.heap,
-            code: &self.code,
+            static_code: &self.code,
             realm: &self.realm,
             host: &mut self.host,
-            regexps: &mut self.regexps,
         }
     }
 
@@ -491,7 +498,7 @@ impl Runtime {
     }
 
     pub fn regexps(&self) -> &RegExpStore {
-        &self.regexps
+        &self.heap.regexps
     }
 
     pub fn realm(&self) -> &Realm {
@@ -550,29 +557,29 @@ impl Runtime {
 
     /// Defines the Test262 host object `$262` on the global object.
     pub fn install_test262_host(&mut self) -> Result<(), HeapError> {
-        crate::builtins::test262::install(&mut self.cx())
+        self.installing(crate::builtins::test262::install)
     }
 
     /// Defines qjs's `print` and `console.log` on the global object.
     pub fn install_print(&mut self) -> Result<(), HeapError> {
-        crate::builtins::install_print(&mut self.cx())
+        self.installing(crate::builtins::install_print)
     }
 
     /// Defines qjs's `--std` globals, `load` and `read`, over the host's
     /// [`read_file`](crate::host::Host::read_file).
     pub fn install_std(&mut self) -> Result<(), HeapError> {
-        crate::builtins::install_std(&mut self.cx())
+        self.installing(crate::builtins::install_std)
     }
 
     /// Defines `qjs`'s helpers as QuickJS's `js_std_add_helpers` does:
     /// `console`, `scriptArgs` when given, `print`.
     pub fn install_qjs_helpers(&mut self, script_args: Option<&[String]>) -> Result<(), HeapError> {
-        crate::builtins::install_qjs_helpers(&mut self.cx(), script_args)
+        self.installing(|cx| crate::builtins::install_qjs_helpers(cx, script_args))
     }
 
     /// Defines qjs's `scriptArgs`.
     pub fn install_script_args(&mut self, args: &[String]) -> Result<(), HeapError> {
-        crate::builtins::install_script_args(&mut self.cx(), args)
+        self.installing(|cx| crate::builtins::install_script_args(cx, args))
     }
 
     /// Runs a script function (from [`Runtime::instantiate`]) with the
@@ -647,6 +654,15 @@ impl Runtime {
         &self.code
     }
 
+    /// Every published unit: the code store's and the heap's.
+    #[inline]
+    pub fn units(&self) -> crate::bytecode::Units<'_> {
+        crate::bytecode::Units {
+            code: &self.code,
+            dynamic: &self.heap.code,
+        }
+    }
+
     /// The heap and the code store borrowed together, so code can be read
     /// while the heap is mutated.
     #[inline]
@@ -657,14 +673,12 @@ impl Runtime {
     /// Validates `unit` and appends it to the code store. Its children must
     /// be published first.
     pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        let id = self.code.publish(unit)?;
-        self.heap.ics.reserve(self.code.get(id));
-        Ok(id)
+        self.compiler().publish(unit)
     }
 
     /// A function object for the published unit `root`, with a bytecode
     /// record for it and every unit below it. `constants` holds one table per
-    /// unit, in the pre-order of [`CodeStore::tree`]; each must have the
+    /// unit, in the pre-order of [`Units::tree`](crate::Units::tree); each must have the
     /// unit's `constant_count` entries. The constants need no rooting.
     pub fn instantiate(
         &mut self,
@@ -674,10 +688,18 @@ impl Runtime {
         self.compiler().instantiate(root, constants)
     }
 
-    /// The heap, the code store and the realm, for a compilation before the
-    /// program runs.
+    /// The heap, the code store and the realm, for a compilation whose units
+    /// live as long as the runtime (in the code store, where the loop runs
+    /// them as a plain borrow): the program and its modules.
     pub fn compiler(&mut self) -> crate::vm::compile::Compiler<'_> {
         crate::vm::compile::Compiler::owned(&mut self.heap, &mut self.code, &self.realm)
+    }
+
+    /// [`Runtime::compiler`] for code the embedder compiles and lets go of (a
+    /// REPL's lines): its units go in the heap, as `eval`'s do, and are freed
+    /// once no function names them.
+    pub fn transient_compiler(&mut self) -> crate::vm::compile::Compiler<'_> {
+        crate::vm::compile::Compiler::new(&mut self.heap, &self.code, &self.realm)
     }
 
     /// Installs the embedder's compiler, for `eval`, the `Function`
@@ -735,7 +757,7 @@ impl Runtime {
             stats.iter_pristine, stats.iter_generic
         );
         let mut sites = Vec::new();
-        for (id, unit) in self.code.units() {
+        for (id, unit) in self.units().all() {
             for (pc, insn) in unit.code.iter().enumerate() {
                 if let Some(site) = insn.site() {
                     let entry = (unit.ic_base + site) as usize;
@@ -748,7 +770,7 @@ impl Runtime {
         }
         sites.sort_by_key(|&(misses, id, pc, _)| (std::cmp::Reverse(misses), id, pc));
         for &(misses, id, pc, insn) in sites.iter().take(worst) {
-            let unit = self.code.get(id);
+            let unit = self.units().get(id);
             let name = if unit.debug.name.is_empty() {
                 "<anonymous>"
             } else {
@@ -770,7 +792,7 @@ impl Runtime {
     /// The disassembly of `unit`, with atom keys spelled out.
     pub fn disassemble(&self, unit: CodeUnitId) -> String {
         let heap = &self.heap;
-        bytecode::disassemble(self.code.get(unit), &mut |key| match key.kind() {
+        bytecode::disassemble(&self.units().get(unit), &mut |key| match key.kind() {
             KeyKind::String(id) => format!(".{}", heap.string_text(id)),
             _ => bytecode::disasm::key_placeholder(key),
         })
@@ -785,8 +807,7 @@ impl Runtime {
     }
 
     /// A tagged template's site object: a frozen array of the cooked strings
-    /// with a frozen `raw` array of the raw ones. The values need no rooting
-    /// (atoms and `undefined`).
+    /// with a frozen `raw` array of the raw ones (strings and `undefined`).
     pub fn template_object(
         &mut self,
         cooked: &[Value],
@@ -880,14 +901,14 @@ impl Runtime {
     pub fn memory_report(&self) -> crate::heap::report::MemoryReport {
         let mut report = self.heap.report();
         let code = &mut report.code;
-        for (_, unit) in self.code.units() {
+        code.static_units = self.code.len();
+        for (_, unit) in self.units().all() {
             code.units += 1;
             code.instructions += unit.code.len();
             code.instruction_bytes += std::mem::size_of_val(&*unit.code);
             code.position_bytes += std::mem::size_of_val(&*unit.debug.positions);
             code.source_bytes += unit.source.as_ref().map_or(0, |source| source.len());
         }
-        code.regexp_programs = self.regexps.len();
         report
     }
 

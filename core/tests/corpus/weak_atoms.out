@@ -1,0 +1,6 @@
+ownKeys x1,y2 true
+for-in a1,b2
+get 5 s1 true
+define 7 true false
+regexp ab+c gi z9 m
+refused TypeError,TypeError

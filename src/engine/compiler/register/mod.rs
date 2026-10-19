@@ -120,14 +120,15 @@ pub(crate) fn lower_script_into(
     runtime: &mut Compiler<'_>,
     script: &UnlinkedFunction,
 ) -> Result<LoweredScript, LowerError> {
-    // BigInt constants are heap records but not atoms: they stay on the root
-    // stack until `instantiate` attaches the constant tables.
+    // BigInt constants are heap records but not atoms, which the compilation
+    // keeps: they stay on the root stack until `instantiate` attaches the
+    // constant tables.
     let mark = runtime.heap_mut().roots().mark();
     let result = (|| {
         let mut constants = HashMap::new();
         let mut tree = TreeCache::default();
         let root = lower_tree(runtime, &mut tree, script, None, &mut constants)?;
-        let order = runtime.code().tree(root);
+        let order = runtime.units().tree(root);
         let tables: Vec<&[CoreValue]> = order.iter().map(|id| constants[id].as_slice()).collect();
         let function = runtime.instantiate(root, &tables)?;
         Ok(LoweredScript { root, function })
@@ -253,12 +254,10 @@ pub(crate) fn lower_module_tree_into(
 
 /// Whether a unit of the tree under `root` has an `import()` call.
 #[cfg(feature = "test262-host")]
-pub(crate) fn tree_has_import_call(
-    code: &oxide_core::bytecode::CodeStore,
-    root: CodeUnitId,
-) -> bool {
-    code.tree(root).into_iter().any(|unit| {
-        code.get(unit)
+pub(crate) fn tree_has_import_call(units: oxide_core::Units<'_>, root: CodeUnitId) -> bool {
+    units.tree(root).into_iter().any(|unit| {
+        units
+            .get(unit)
             .code
             .iter()
             .any(|insn| insn.op == oxide_core::bytecode::Opcode::ImportCall)
@@ -1422,8 +1421,9 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         Ok(key)
     }
 
-    /// An atom value for a string of the tree, once per string (atoms are
-    /// strong roots, so the pool needs no rooting until it is attached).
+    /// An atom value for a string of the tree, once per string (the
+    /// compilation pins or holds the atoms it interns, so the pool needs no
+    /// rooting until it is attached).
     fn atom_value(&mut self, string: &JsString) -> Result<CoreValue, LowerError> {
         if let Some(&(_, atom)) = self.tree.atoms.get(&string.address()) {
             return Ok(CoreValue::string(atom));

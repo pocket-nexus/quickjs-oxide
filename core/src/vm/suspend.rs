@@ -141,7 +141,7 @@ pub(crate) fn resume(
     cx.heap.vm.top = end as u32;
     set_state(cx, record, EXECUTING);
     let unit_id = crate::bytecode::CodeUnitId(saved.unit);
-    let unit = cx.code.get(unit_id);
+    let unit = cx.unit(unit_id);
     let frame = Frame {
         unit: unit_id,
         function,

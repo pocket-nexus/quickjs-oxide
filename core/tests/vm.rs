@@ -34,7 +34,7 @@ fn layout(registers: u16) -> UnitLayout {
 
 /// Runs a unit tree with no constants as a script.
 fn run(runtime: &mut Runtime, root: CodeUnitId) -> Result<Value, oxide_core::Throw> {
-    let tables: Vec<&[Value]> = runtime.code().tree(root).iter().map(|_| &[][..]).collect();
+    let tables: Vec<&[Value]> = runtime.units().tree(root).iter().map(|_| &[][..]).collect();
     let function = runtime.instantiate(root, &tables).unwrap();
     let handle = runtime.hold(Value::object(function));
     let result = runtime.run_script(function);

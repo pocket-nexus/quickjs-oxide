@@ -6,7 +6,7 @@ The work is a list of items taken by need, in the priority order of section 8; n
 
 ## 0. Scope
 
-**In scope.** The heap cap as a policy rather than a check (the trigger under a cap, growth that stops at the cap, giving memory back, the out-of-memory error); reclaiming the code of dead dynamically compiled functions; runtime options for small targets (heap, register file, native stack); code images (lowered units serialized without heap state, loaded into any runtime of the same build) and heap snapshots (the whole runtime at a quiescent point, loaded in place of initialization); 32-bit correctness and memory on a tier-2 32-bit target; `oxide-core` without the standard library, for the console ports; the measurements of section 9. The generational collector of section 6 is an optional, measurement-gated item.
+**In scope.** The heap cap as a policy rather than a check (the trigger under a cap, growth that stops at the cap, giving memory back, the out-of-memory error); runtime options for small targets (heap, register file, native stack); code images (lowered units serialized without heap state, loaded into any runtime of the same build) and heap snapshots (the whole runtime at a quiescent point, loaded in place of initialization); 32-bit correctness and memory on a tier-2 32-bit target; `oxide-core` without the standard library, for the console ports; the measurements of section 9. The generational collector of section 6 is an optional, measurement-gated item.
 
 **Outside this plan.** The shape of the embedding API beyond the entry points named in 4.4 and the `Host::math` method of 5.4; a JIT; linking for the PSP itself, whose Rust target is tier 3 and needs a nightly toolchain with `-Zbuild-std` (section 5.3 says what this plan delivers instead and how a port consumes it); any change to the loop-size gate or the instruction gate of [Execution principles](performance/principles.md).
 
@@ -17,17 +17,15 @@ The work is a list of items taken by need, in the priority order of section 8; n
 | Program | Peak RSS QuickJS / `oxide-core` | Heap reserved | Live at exit | Collector share |
 | --- | --- | ---: | ---: | ---: |
 | Splay (both) | 144 / 265 MiB | 293.6 MiB | 75.0 MiB | 33–34% |
-| Code-Load | 19 / 121 MiB | 5.9 MiB | 1.4 MiB | 0.7% |
 | Mandreel | 57 / 100 MiB | 1.4 MiB | 1.0 MiB | 0.0% |
 | PdfJS | 22 / 68 MiB | 43.2 MiB | 5.6 MiB | 6.8% |
 | TypeScript | 98 / 90 MiB | 95.7 MiB | 20.3 MiB | 0.9% |
 | Havlak | 33 / 41 MiB | 49.6 MiB | 8.3 MiB | 11.1% |
 | zlib | 134 / 20 MiB | 1.4 MiB | 356 KiB | 0.0% |
 
-Three mechanisms explain the table, and each has a section below:
+Two mechanisms account for the largest gaps, and each has a section below:
 
 - **Reserved memory never comes back.** Arenas and the value heap are `Vec`s that grow by doubling and never shrink; Splay reserves 294 MiB for 75 MiB live, Havlak 50 for 8. Under a cap this is the difference between fitting and `OutOfMemory` (section 3).
-- **Code lives as long as the runtime.** Code-Load's heap is 6 MiB and its process 121 MiB: the units `eval` and `Function` publish, their source text and their position tables are kept until the runtime is dropped. Mandreel's 100 MiB is the units of its multi-megabyte source plus the buffers the program keeps; its heap is 1.4 MiB (section 3.3).
 - **Every collection marks the whole live set.** Splay spends a third of its time in nine collections of 86–115 ms each over a 75 MiB live set (section 6).
 
 An empty script costs about 3.1 million user-space instructions on the release `qjs`, and 16 MiB of RSS, which is the process floor. The realm's initialization is what a heap snapshot stands in for (section 4).
@@ -38,9 +36,9 @@ An empty script costs about 3.1 million user-space instructions on the release `
 | --- | --- | --- |
 | `heap::gc` | `oxide-core` | the cap-aware trigger, growth that stops at the cap, shrinking after a collection (3.1, 3.2); the generational option (6) |
 | `heap::report` | `oxide-core` | `MemoryReport`, with the fields section 2 adds |
-| `bytecode` | `oxide-core` | reclaiming dynamic units (3.3); the code image's unit encoding (4.2) |
+| `bytecode` | `oxide-core` | the code image's unit encoding (4.2) |
 | `snapshot` (new) | `oxide-core` | the snapshot writer and loader over every arena and store (4.3) |
-| `runtime` | `oxide-core` | the behavior behind `RuntimeOptions` (3.4); `Runtime::snapshot`, `Runtime::from_snapshot`, `Runtime::load_image` (4.4) |
+| `runtime` | `oxide-core` | the behavior behind `RuntimeOptions` (3.3); `Runtime::snapshot`, `Runtime::from_snapshot`, `Runtime::load_image` (4.4) |
 | `host` | `oxide-core` | the `std` feature split: streams, clock and file access as `std`-only defaults; the math provider (5.4) |
 | `heap::hash`, `shape`, `heap::atom`, … | `oxide-core` | the core's own hash table in place of `std::collections::HashMap` (5.4) |
 | `api` | root crate | the image encoding of `CompiledUnits` |
@@ -48,7 +46,7 @@ An empty script costs about 3.1 million user-space instructions on the release `
 | `scripts/benchmark`, `docs/performance/probes` | tools | the runners of the section 9 tables |
 | `.github/workflows/ci.yml` | CI | the `i686` and `no_std` checks in `fast`; a `suite-32bit` tier (section 7) |
 
-Delivery: one pull request per item, in the order of section 8, each with its acceptance check in the description and the gates of the [pull request template](../.github/pull_request_template.md): `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `cargo test --locked --workspace --all-targets`, `cargo test -p oxide-core --features gc-stress`, `core/tests/corpus` under `gc-stress`, `scripts/checks/check-gc-stress.py`, the loop-size check (`vm::interp::run_at` under 16,384 bytes; it is 15,226), and the instruction gate (`instructions:u` of the eight V8 v7 programs against the base branch's `qjs`, a rise above 2% explained by a profile or fixed before merge). The Test262 focused vector replays in `fast`, and an item that changes an observable behavior (3.4's error, 5.4's math) re-freezes the full receipt.
+Delivery: one pull request per item, in the order of section 8, each with its acceptance check in the description and the gates of the [pull request template](../.github/pull_request_template.md): `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `cargo test --locked --workspace --all-targets`, `cargo test -p oxide-core --features gc-stress`, `core/tests/corpus` under `gc-stress`, `scripts/checks/check-gc-stress.py`, the loop-size check (`vm::interp::run_at` under 16,384 bytes; it is 14,977), and the instruction gate (`instructions:u` of the eight V8 v7 programs against the base branch's `qjs`, a rise above 2% explained by a profile or fixed before merge). The Test262 focused vector replays in `fast`, and an item that changes an observable behavior (3.3's error, 5.4's math) re-freezes the full receipt.
 
 ## 2. Memory accounting
 
@@ -58,7 +56,6 @@ The items add to it what they need to report:
 
 | Field | Content | For |
 | --- | --- | --- |
-| code store | static and dynamic units counted separately, handler and capture bytes | 3.3 |
 | atoms | the table's capacity beside the count | 3.2 |
 | per arena | bytes the records own out of line (string units, BigInt limbs, buffers, tables, suspended frames), beside bytes reserved | 3.2 |
 
@@ -85,17 +82,7 @@ so that under a cap the collection happens before the heap reaches it, and the h
 - **Shrinking after a collection.** After a sweep, every arena whose trailing free run is more than a quarter of its capacity and whose free share is above half gives the trailing run back (`Vec::truncate` plus `shrink_to`; the free list drops the indices above the new length). The value heap does the same with free ranges that end at its high-water mark; a non-moving heap can give back only what is free at the top, and the item records what that recovers on Splay, Havlak, PdfJS and TypeScript. Shrinking runs only when `bytes > 2 × live` after the collection, so the steady state of a program that fills and refills the same heap (the churn ring of `docs/performance/probes/slopes/heap_workloads.py`) pays nothing.
 - **The register file** grows by doubling up to `RuntimeOptions.stack_limit`; it shrinks back to its initial reservation at the runtime boundary when the frame table is empty and it is above four times its initial size.
 
-### 3.3 Reclaiming dynamic units
-
-A unit published at run time (`eval`, the `Function` constructors, dynamic `import()` of a new module) lives in `CodeStore.dynamic`: write-once chunks of `OnceCell`s, published through `&self` because the loop holds the running unit's `&CodeUnit` across heap calls, and kept for the runtime's lifetime. A `FunctionBytecode` record (a heap record, traced) names its unit, so after marking the heap knows which dynamic units no live function and no running frame reaches.
-
-Decision: **dynamic units are reclaimed at the collection that finds them dead, with one cell per unit.** `CodeStore.dynamic`'s slots become per-slot cells (`RefCell<Option<Box<CodeUnit>>>`): the loop borrows the running unit's slot for the frame's duration (one borrow-flag increment at frame entry and one decrement at return, on dynamic units only; static units keep a plain `&CodeUnit`), and a dead unit's slot is by definition unborrowed, so the sweep frees it and returns its inline-cache range to the `IcStore` for reuse (the store gains a free list of ranges beside `ic_len`). A freed slot is reused by the next dynamic publication. Static units (published before the program runs) stay for the runtime's lifetime: they are the program, and section 4's snapshot serializes them as a whole.
-
-If the per-frame borrow costs the eight V8 v7 programs more than the 2% gate (Code-Load is the only suite program that runs dynamic units in its hot path; the eight run none, so the expected cost is the kind test at frame entry), the fallback is reclamation at the runtime boundary (`run_script`, `run_jobs`, the host's entry points), where `&mut CodeStore` is available with no loop running; the item records which one it builds and Code-Load's peak RSS under each.
-
-**Acceptance (dynamic code item).** A program that compiles 10⁵ functions through `new Function` and keeps none has a steady `MemoryReport` code-store size and a steady peak RSS under a 32 MiB cap; a program that keeps every tenth one keeps exactly those units; a function returned from `eval` and called after the collection that freed its siblings runs (`core/tests/corpus` gains these programs); Code-Load's peak RSS is within 2× QuickJS's (19 MiB) in the memory table.
-
-### 3.4 Runtime options and the out-of-memory error
+### 3.3 Runtime options and the out-of-memory error
 
 `RuntimeOptions` (`core/src/runtime.rs`) holds the cap (`heap: HeapLimits`), `min_heap`, `growth`, `stack_limit` (registers, 2²⁰ by default), `native_stack_budget` (1 MiB) and `native_depth_limit`; `qjs` exposes them as `--heap-cap-mib`, `--min-heap-mib`, `--gc-growth` and `--stack-limit`. This item adds the behavior of 3.1 and 3.2 behind them, the register file's shrink, and one field:
 
@@ -107,7 +94,7 @@ A PSP-class profile is one `RuntimeOptions` value, documented in `core/README.md
 
 `HeapError::OutOfMemory` is thrown as the realm's preallocated `%OutOfMemoryError%` intrinsic (`InternalError: out of memory`, QuickJS's), which is catchable. The item makes every allocating opcode and native reach `vm::error::oom` rather than unwrap, keeps the thrown value free of allocation, and checks that the heap is usable after the catch (a failed allocation leaves the heap unchanged). A `try { … } catch` loop that fills the heap to the cap and recovers 100 times is the test, under `gc-stress`.
 
-### 3.5 PSP-class controlled workloads
+### 3.4 PSP-class controlled workloads
 
 The "controlled workloads under PSP-class memory" of #122's exit are: the 37 suite programs at one `run()` and the 20 fixed probes at smoke size, under caps of 32, 24 and 16 MiB, plus the churn ring (`heap_workloads.py churn`, a 12–16 MB live set) under an 8 MiB cap once the ring is sized to 4 MiB live, on x86_64 and on the 32-bit target of section 5, each recording completion or `OutOfMemory`, collections, pauses, heap reserved and peak RSS (the capped-run table). The pass condition: under a cap of C, every program whose live set at exit is below C/2 completes with the manifest's stdout, and its peak RSS is at most C plus the process floor plus 10%. Splay (75 MiB live) is expected to fail every cap and is reported, not excused; QuickJS cannot run it in 32 MiB either.
 
@@ -131,7 +118,7 @@ Every cross-record reference in the core is an index (`ObjectId`, `StringId`, `S
 - per arena: the live bitmap, then the live records in index order; the loader fills dead indices into the free list from the bitmap. Record fields that own Rust allocations (string units, BigInt limbs, buffers, the shape's transitions and lazy table, the collection tables) are written as their contents and rebuilt as allocations by the loader;
 - hash tables are rebuilt at load from what they index: the atom table from the records flagged `is_atom` (their stored `hash` is written, so rebuilding is insertion without rehashing), `shape_roots` from the shapes without a parent, each shape's `transitions` from its children's parent links, `prototypes` (cells and dependents) from the shapes' prototype fields and the cell arena, the regular-expression index from the records. A shape's lazy property table stays unbuilt until the first lookup that wants it;
 - the inline caches start empty: the loader reserves each unit's `ic_count` entries in publication order, so `ic_base` is unchanged;
-- the code store writes static and dynamic units alike (a `Function`-made function live in the heap keeps its unit), each as its `Insn`s, handlers, captures, children, flags, counts, name atom, length, the position table and, unless the snapshot is stripped, the source text; `DebugInfo.filename` goes through one string table;
+- the static units and the heap's live dynamic units are written alike (a `Function`-made function live in the heap keeps its unit), each as its `Insn`s, handlers, captures, children, flags, counts, name atom, length, the position table and, unless the snapshot is stripped, the source text; `DebugInfo.filename` goes through one string table;
 - ropes are flattened by the writer (a snapshot runs a full collection first, which the writer triggers; flattening is what the next operation on the rope would do anyway);
 - a `SharedArrayBuffer`'s bytes are written as bytes (sharing is a property of a running process); a detached buffer writes its flag;
 - of the collector's state, only `live_bytes` is written; the loaded runtime starts with `allocated = 0` and the usual threshold rule.
@@ -211,15 +198,14 @@ The mechanism that fits a non-moving arena heap is **generational marking with s
 CI:
 - `fast`: `cargo check -p oxide-core --no-default-features --target thumbv7em-none-eabi` (`no_std` item); `cargo check --target i686-unknown-linux-musl -p quickjs-oxide-cli` (32-bit item); the snapshot round-trip, determinism and truncation tests run inside `cargo test -p oxide-core` (snapshot item).
 - `suite-32bit` (nightly and dispatch, with the 32-bit item): build the i686 `qjs` and `run-test262` in release, run the corpus and the probes under stress, the 37 programs at one `run()` under the `suite-stress` intervals, and the frozen focused vector; compare the realm snapshot with the x86_64 build's byte for byte.
-- `suite-stress` additionally runs the 37 programs at one `run()` under a 32 MiB cap (heap cap item) and the churn ring under 8 MiB, checking the pass condition of 3.5.
+- `suite-stress` additionally runs the 37 programs at one `run()` under a 32 MiB cap (heap cap item) and the churn ring under 8 MiB, checking the pass condition of 3.4.
 - Reference-machine measurements (the instruction gate, the section 9 tables) are recorded in pull requests, not run in CI.
 
 ## 8. Items and order
 
 | Item | Content | Acceptance | Taken when | Estimate |
 | --- | --- | --- | --- | --- |
-| Heap cap | the memory table's first column; the cap-aware trigger, growth to the cap, shrinking, the register file's limit and shrink, the catchable `OutOfMemory` (3.1, 3.2, 3.4); the suite under a 32 MiB cap in `suite-stress` | the 100-recoveries test under stress; the shrink numbers for Splay, Havlak, PdfJS, TypeScript recorded; the pass condition of 3.5 at 32 MiB; the instruction gate (the clamp is inactive without a cap) | first: an embedder with a memory budget, or the maintainer | 6–8 days |
-| Dynamic code | reclaiming dynamic units (3.3) | the three corpus programs; Code-Load's peak RSS within 2× QuickJS; the per-frame cost on the eight under the gate, or the boundary fallback recorded | with the heap cap, or when `eval`/`Function` churn is reported | 5–8 days |
+| Heap cap | the memory table's first column; the cap-aware trigger, growth to the cap, shrinking, the register file's limit and shrink, the catchable `OutOfMemory` (3.1, 3.2, 3.3); the suite under a 32 MiB cap in `suite-stress` | the 100-recoveries test under stress; the shrink numbers for Splay, Havlak, PdfJS, TypeScript recorded; the pass condition of 3.4 at 32 MiB; the instruction gate (the clamp is inactive without a cap) | first: an embedder with a memory budget, or the maintainer | 6–8 days |
 | Code images | `encode_image`, `load_image`, `--compile`, `.oxc` programs; the fuzz-style flip test (4.1, 4.2, 4.4) | every suite program's image loads and prints the manifest's stdout; the validator rejects a flipped image at every offset without a panic; the image rows of the snapshot and image table | when a device port is scheduled | 6–8 days |
 | Heap snapshots | writer, loader, quiescence, fingerprint, truncation test, `--snapshot`, `--load-snapshot` (4.2–4.4) | the realm round trip is byte-identical across two runs and loads to a runtime that passes `core/tests/corpus`; a snapshot after each of the three setup corpora runs its program to the manifest's stdout; the gate of 4.5 for the realm | when a port asks for a warm start | 8–12 days |
 | 32-bit | the i686 gate and the audit (5.1, 5.2); the `suite-32bit` tier | section 5.1's acceptance; the audit in the pull request; the 32-bit table | with code images, or when a 32-bit port is scheduled | 3–5 days |
@@ -227,7 +213,7 @@ CI:
 | Measurement | each item's tables on the reference machine; the fixed-work suite tables and the Test262 receipt replayed | section 9's exit conditions | per item, as each lands | 4–6 days |
 | Generational collector | section 6, if not struck | the go/no-go of section 6 recorded either way | only on the maintainer's request | 10–15 days |
 
-Total, if every item is taken: about 39–58 working days without the generational collector, 49–73 with it. The order is the priority: the heap cap and dynamic code are what any embedder with a memory budget asks for first and need no port to exist; code images are what a device port needs before anything else (compiling on the host); heap snapshots and `no_std` wait for a port that asks for a warm start or has no `std`; 32-bit goes with code images or with the first 32-bit port; measurement is done per item as items land; the generational collector is read against the finished memory, capped-run, snapshot and 32-bit tables, if it is taken at all. Each item is its own exit (section 9).
+Total, if every item is taken: about 34–50 working days without the generational collector, 44–65 with it. The order is the priority: the heap cap is what any embedder with a memory budget asks for first and needs no port to exist; code images are what a device port needs before anything else (compiling on the host); heap snapshots and `no_std` wait for a port that asks for a warm start or has no `std`; 32-bit goes with code images or with the first 32-bit port; measurement is done per item as items land; the generational collector is read against the finished memory, capped-run, snapshot and 32-bit tables, if it is taken at all. Each item is its own exit (section 9).
 
 ## 9. Measurement and exit
 
@@ -245,7 +231,7 @@ Every number is produced by [Measurement method](performance/measurement.md) on 
 
 **Exit condition, per item.** Each item lands with its table in its pull request and with the replayed tables on its final binary; `gc-stress` green on the corpus, the probes and the 37 programs (x86_64, and i686 once the 32-bit item has landed). The conditions below belong to the items named; an item not taken leaves its condition open, not failed:
 
-- **Memory.** The pass condition of 3.5 holds at 32 MiB on both targets; Code-Load's peak RSS is within 2× QuickJS's; no program's reserved-to-live ratio after a collection is above 3 except within one growth step of a collection.
+- **Memory.** The pass condition of 3.4 holds at 32 MiB on both targets; no program's reserved-to-live ratio after a collection is above 3 except within one growth step of a collection.
 - **Snapshots.** The realm snapshot is deterministic, width-independent and loads below half the cold initialization's instructions; every suite program's image loads below a tenth of its compilation's instructions and prints the manifest's stdout; the truncation and flip tests end in `Err` at every offset.
 - **32-bit.** Section 5.1's acceptance holds in the nightly tier; the `no_std` check is in `fast`.
 - **No regression.** No V8 v7 program retires more than 2% more instructions than the base branch's binary; the Test262 receipts replay (or are re-frozen with the reason recorded); `run_at` is under the loop-size gate.
@@ -260,8 +246,7 @@ Made:
 - the items are taken by need, in section 8's order;
 - the trigger keeps a 4 MiB minimum and growth 2; under a cap it is clamped (3.1);
 - the heap stays non-moving and gives back trailing free capacity (3.2);
-- dynamic units are reclaimed at the collection, through per-slot cells, with the boundary fallback only on a measured gate failure (3.3);
-- static units live as long as the runtime; a snapshot writes them whole (3.3, 4.2);
+- a snapshot writes the static units whole and the heap's live dynamic units with the rest of the heap (4.2);
 - two artifacts, images and snapshots, in one little-endian `u32`-indexed format with a build fingerprint; hash tables rebuilt at load; inline caches empty at load; loaders treat input as untrusted and the publication validator runs on every image (4.2);
 - a snapshot requires quiescence and holds no host state (4.3);
 - the 32-bit gate target is `i686-unknown-linux-musl`, with `wasm32` as the second 32-bit build; MIPS targets are left to the ports' nightly recipe (5.1, 5.3);
@@ -270,7 +255,6 @@ Made:
 
 Open, with the item that decides each:
 
-- whether reclamation at the collection or at the runtime boundary ships: dynamic code, by the instruction gate;
 - the shrink thresholds (a quarter trailing, half free, `bytes > 2 × live`): heap cap, by the memory table's ratios and the churn ring's steady state;
 - whether `oxide-regexp` needs a `std` feature: `no_std`;
 - whether a non-gating weekly job runs the PSP recipe with a nightly toolchain: the maintainer, with the `no_std` item;
@@ -280,7 +264,6 @@ Open, with the item that decides each:
 
 ## 11. Risks
 
-- **A dangling unit.** Reclaiming code the loop may still be running is the one way to make the register VM read freed instructions. Mitigation: the per-slot borrow makes a running unit unfreeable by construction (the sweep cannot take the cell); the frame table is a root for units as it is for functions; the stress mode runs the dynamic corpus at interval 1.
 - **Snapshot drift.** Every record field or store added later must be written and read, or snapshots silently lose state. Mitigation: the writer and reader are generated from one description per record (a `Serial` trait implemented once per type, with a round-trip test that compares the `MemoryReport` and the corpus output before and after), and the fingerprint rejects a stale file rather than loading it.
 - **Determinism of a snapshot.** Hash-table iteration order could make two snapshots of one runtime differ. Mitigation: tables are rebuilt at load rather than written (4.2); everything written is in index order; the byte-identity test is in `fast`.
 - **The barrier's cost.** A write barrier on the `SetField` hit path is paid by every program for Splay's benefit. Mitigation: the go/no-go's 2% gate on the eight, and removal rather than a feature if it fails.

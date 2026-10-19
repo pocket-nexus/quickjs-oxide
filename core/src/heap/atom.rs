@@ -1,7 +1,11 @@
 //! The atom table and `PropertyKey`.
 //!
 //! An atom is a string record with `is_atom` set, found by content through the
-//! table. Atoms are strong roots: the collector marks every one.
+//! table. An atom lives as long as something holds it, like any string: a
+//! shape, a dictionary, a live dynamic unit's key list, a value. The atoms
+//! interned while the runtime is created or before the program runs are
+//! pinned and live as long as the heap ([`AtomMode`](super::AtomMode)); a
+//! swept atom leaves the table.
 //!
 //! `PropertyKey(u32)` is tagged: bit 31 marks an immediate array index
 //! (`0 ..= 2^31 - 1`), which never enters the atom table; otherwise bit 30
@@ -122,6 +126,8 @@ const OVERFLOW: u32 = 1 << 31;
 pub struct AtomTable {
     buckets: FxHashMap<u32, u32>,
     collisions: Vec<Vec<StringId>>,
+    /// Collision lists no bucket uses.
+    free_collisions: Vec<u32>,
     count: usize,
 }
 
@@ -168,11 +174,48 @@ impl AtomTable {
                 self.buckets.insert(hash, id.0);
             }
             Some(bucket) if *bucket & OVERFLOW == 0 => {
-                self.collisions.push(vec![StringId(*bucket), id]);
-                *bucket = (self.collisions.len() as u32 - 1) | OVERFLOW;
+                let ids = vec![StringId(*bucket), id];
+                let list = match self.free_collisions.pop() {
+                    Some(list) => {
+                        self.collisions[list as usize] = ids;
+                        list
+                    }
+                    None => {
+                        self.collisions.push(ids);
+                        self.collisions.len() as u32 - 1
+                    }
+                };
+                *bucket = list | OVERFLOW;
             }
             Some(bucket) => self.collisions[(*bucket & !OVERFLOW) as usize].push(id),
         }
+    }
+
+    /// Removes atom `id`, whose content hashes to `hash` (it is being
+    /// swept).
+    pub fn remove(&mut self, hash: u32, id: StringId) {
+        let Some(bucket) = self.buckets.get_mut(&hash) else {
+            debug_assert!(false, "an atom outside the table");
+            return;
+        };
+        if *bucket & OVERFLOW == 0 {
+            debug_assert_eq!(*bucket, id.0);
+            self.buckets.remove(&hash);
+        } else {
+            let list = *bucket & !OVERFLOW;
+            let ids = &mut self.collisions[list as usize];
+            let Some(position) = ids.iter().position(|&other| other == id) else {
+                debug_assert!(false, "an atom outside the table");
+                return;
+            };
+            ids.swap_remove(position);
+            if let [last] = ids[..] {
+                *bucket = last.0;
+                self.collisions[list as usize] = Vec::new();
+                self.free_collisions.push(list);
+            }
+        }
+        self.count -= 1;
     }
 
     pub fn len(&self) -> usize {

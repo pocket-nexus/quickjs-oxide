@@ -25,15 +25,16 @@ crate depends on it; it does not depend on the root crate.
 | `heap::string`, `atom`, `symbol`, `bigint` | leaf records, interning, `PropertyKey` |
 | `heap::gc` | root stack, handles, mark-sweep, trigger, stress mode, heap cap |
 | `heap::buffer`, `table` | array-buffer storage and views; the ordered hash table of `Map`, `Set` and the weak collections |
-| `heap::report` | `MemoryReport`: what every arena, the value heap, the code store and the caches hold, read without a collection |
+| `heap::code` | the code units compiled at run time, owned and collected by the heap |
+| `heap::report` | `MemoryReport`: what every arena, the value heap, the code and the caches hold, read without a collection |
 | `shape` | transition tree, dictionary mode, validity cells |
-| `bytecode` | `Insn` (8 bytes), `Opcode` and its operand formats, `CodeUnit`, `CodeStore`, the builder, the publication validator, the disassembler |
+| `bytecode` | `Insn` (8 bytes), `Opcode` and its operand formats, `CodeUnit`, `CodeStore` (the static units), `UnitRef` and `Units`, the builder, the publication validator, the disassembler |
 | `vm` | the register file and frame table, the main loop (`interp`), conversions and operators (`ops`, `number`, `bigint`), property access (`property`), the inline caches (`ic`), regular-expression objects (`regexp`), the value printer (`print`) and the internal methods by kind (`object`, `proxy`, `typed`, `arguments`), iteration (`iter`), suspension (`suspend`, `async_generator`), jobs and promises (`jobs`), classes (`class`), modules (`module`), the compile host (`compile`), errors and the native ABI (`error`, `native`) |
 | `builtins` | the realm's constructors, prototypes and globals as natives over the re-entrant `call`, one file per builtin object, plus `$262` (`test262`, `agent`) |
 | `host` | the `Host` trait: output, clock, time zone, random seed, promise-rejection events and files |
 | `embed` | the embedder's entries the root crate's API calls: objects, properties, conversions, value construction |
 | `clock` | the monotonic clock the collector times its pauses with |
-| `runtime` | `Runtime`: the heap, the code store beside it, the single realm and the host services |
+| `runtime` | `Runtime`: the heap, the static code store beside it, the single realm and the host services |
 
 ## The rooting rule
 
@@ -49,8 +50,15 @@ takes `&mut self` and returns `Result<_, HeapError>`), never elsewhere.
   a handle (`heap.handles().create(v)`), or stored in an object that is itself
   rooted.
 - An allocating call roots its own arguments for its own collection, so a value
-  passed straight into one call needs no rooting. Atoms are strong roots;
-  symbols, BigInts and plain strings are not.
+  passed straight into one call needs no rooting. Pinned atoms (those
+  interned while the runtime is created, the keys of static units, and
+  `Heap::intern_pinned`'s) are strong roots; every other atom follows the
+  same rule as symbols, BigInts and plain strings. A compilation holds the
+  atoms it interns until it ends.
+- A `PropertyKey` converted from a string is a fresh atom when no atom has
+  its content yet: held across JavaScript (a trap, a getter) or a second
+  allocation, it is rooted (`object::root_keys`). `own_property_keys`
+  returns its keys rooted.
 
 Code that breaks the rule fails under the stress mode:
 
@@ -71,8 +79,8 @@ check nothing.
 
 - The root stack, the handle table and the fixed roots live inside `Heap`, so
   a safepoint in `Heap::alloc_*` sees them without extra parameters. `Runtime`
-  holds the heap, the code store, the realm, the host services and the
-  regular-expression programs.
+  holds the heap, the static code store, the realm and the host services;
+  the dynamic units and the regular-expression programs are in the heap.
 - The special values use payload bits 0–1 for the kind (Bool, Undefined, Null,
   Empty) and bit 2 for the boolean, so `kind()` is a branchless table lookup.
 - Every value-heap range is a power of two, including large ones, so a header
@@ -206,12 +214,13 @@ check nothing.
 - The `IcStore` lives inside the `Heap`, beside the register file:
   collection happens inside heap safepoints, and the store is pruned after
   every marking before an index is recycled. The loop reads it as
-  `cx.heap.ics`; the code store stays outside the heap.
+  `cx.heap.ics`; the static code store stays outside the heap.
 - Cache sites are numbered by `CodeBuilder::finish`: the named-property
   sites first in instruction order (0 to 254 in `c`, the rest sharing the
   reserved site 255), then the global forms (`b | c << 8`), then `New`
-  (`imm`). `CodeStore::publish` assigns `ic_base` and `Runtime::publish`
-  reserves the entries, with each site's kind for pruning.
+  (`imm`). `Compiler::publish` reserves the entries, with each site's kind
+  for pruning, and assigns `ic_base`: the first free range that fits, since
+  a freed dynamic unit returns its range.
 - The `GetField` hit reads the object, cell and value arenas as fields of
   the heap, disjoint from the register file, so the loop keeps its register
   window across a hit.
@@ -256,9 +265,10 @@ check nothing.
   snapshot in its elements (index keys as `Int32`, turned into strings as
   they are yielded), the object and the count in two raw slots, the cursor
   in its payload.
-- Regular-expression literals and `new RegExp` share one append-only store
-  keyed by the `(source, flags)` atoms, beside the code store in `Runtime`
-  and reached from the loop through `Cx`. A program compiles when a literal
+- Regular-expression literals and `new RegExp` share one store keyed by the
+  `(source, flags)` atoms, inside the heap: a `RegExp` object's payload names
+  its program, and a collection frees the programs no live object names
+  (with their keys). A program compiles when a literal
   is first evaluated or `RegExp` is called, and runs on a string's own
   one-byte or two-byte storage. `split` with a regular expression searches
   forward from each position, which finds the specification's matches and

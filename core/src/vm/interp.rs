@@ -5,6 +5,7 @@
 //! the handler tables.
 
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 use super::arguments;
 use super::error::{self, ErrorKind};
@@ -623,8 +624,7 @@ fn call_other(
 #[inline(never)]
 fn construct_failure(cx: &mut Cx<'_>, function: Value, pc: usize) -> Throw {
     let frame = *cx.heap.vm.frames.last().expect("a frame");
-    let spread =
-        cx.code.get(frame.unit).code.get(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
+    let spread = cx.unit(frame.unit).code.get(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
     if spread && !ops::is_callable(cx.heap, function) {
         return error::type_error(cx, "not a function");
     }
@@ -656,6 +656,61 @@ fn call_exotic(
     }
 }
 
+/// How entering a bytecode callee from the loop ended.
+enum Entry {
+    /// Its frame is on top.
+    Entered,
+    /// Creating the receiver of a construction threw, at the call.
+    Threw(Throw),
+    /// Entering the frame failed: [`entry_failed`]'s result for the call.
+    Failed(Result<Value, Throw>),
+}
+
+/// Enters `frame` over `unit` for a call from the loop: for a construction
+/// (its frame flags say so), the receiver first; `site` is the `New` cache.
+#[inline(always)]
+fn enter_callee(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    frame: Frame,
+    function: Value,
+    mut this: Value,
+    site: Option<usize>,
+) -> Entry {
+    let at = frame.base as usize;
+    let construct = frame.flags & frame_flags::CONSTRUCT != 0;
+    let mut new_target = Value::UNDEFINED;
+    if construct {
+        match construct_this(cx, frame.function, function, unit, at, site) {
+            Ok(pair) => (this, new_target) = pair,
+            Err(throw) => return Entry::Threw(throw),
+        }
+    }
+    cx.heap.vm.registers[at] = this;
+    let tail = frame.flags & frame_flags::TAIL != 0;
+    if let Err(throw) = enter_frame(cx, unit, frame) {
+        return Entry::Failed(entry_failed(cx, unit, throw, tail));
+    }
+    if construct {
+        write_new_target(cx, at, unit, new_target);
+    }
+    Entry::Entered
+}
+
+/// [`enter_callee`] for a dynamic unit, held while it is entered.
+#[cold]
+#[inline(never)]
+fn enter_dynamic_callee(
+    cx: &mut Cx<'_>,
+    frame: Frame,
+    function: Value,
+    this: Value,
+    site: Option<usize>,
+) -> Entry {
+    let unit = cx.heap.code.get(frame.unit);
+    enter_callee(cx, &unit, frame, function, this, site)
+}
+
 /// Writes `new.target` into the register a unit that reads it reserves: its
 /// first local, right after the parameters.
 #[inline]
@@ -676,9 +731,8 @@ pub(super) fn call_from_rust(
     match callee(cx.heap, function) {
         Callee::Bytecode(object, bytecode) => {
             cx.heap.vm.frameless_native = false;
-            let store: &CodeStore = cx.code;
             let unit_id = cx.heap.bytecode_unit(bytecode);
-            let unit = store.get(unit_id);
+            let unit = cx.unit(unit_id);
             let frame = Frame {
                 unit: unit_id,
                 function: object,
@@ -692,9 +746,9 @@ pub(super) fn call_from_rust(
             if !cx.heap.vm.enter_native() {
                 return Err(error::stack_overflow(cx));
             }
-            let result = match enter(cx, unit, frame) {
+            let result = match enter(cx, &unit, frame) {
                 Ok(()) => run(cx),
-                Err(throw) => entry_failed(cx, unit, throw, false),
+                Err(throw) => entry_failed(cx, &unit, throw, false),
             };
             cx.heap.vm.leave_native();
             result
@@ -789,9 +843,8 @@ pub(super) fn construct_from_rust(
 ) -> Result<Value, Throw> {
     match callee(cx.heap, function) {
         Callee::Bytecode(object, bytecode) => {
-            let store: &CodeStore = cx.code;
             let unit_id = cx.heap.bytecode_unit(bytecode);
-            let unit = store.get(unit_id);
+            let unit = cx.unit(unit_id);
             if !unit.has(flags::CONSTRUCTOR) {
                 return Err(error::not_a_constructor(cx, function));
             }
@@ -819,8 +872,8 @@ pub(super) fn construct_from_rust(
             if !cx.heap.vm.enter_native() {
                 return Err(error::stack_overflow(cx));
             }
-            let result = enter(cx, unit, frame).and_then(|()| {
-                write_new_target(cx, base, unit, new_target);
+            let result = enter(cx, &unit, frame).and_then(|()| {
+                write_new_target(cx, base, &unit, new_target);
                 run(cx)
             });
             cx.heap.vm.leave_native();
@@ -962,9 +1015,8 @@ fn make_closure(
     unit: &CodeUnit,
     index: u32,
 ) -> Result<Value, Throw> {
-    let store: &CodeStore = cx.code;
     let child = cx.heap.bytecode_child(frame.bytecode, index);
-    let child_unit = store.get(unit.children[index as usize]);
+    let child_unit = cx.unit(unit.children[index as usize]);
     let mark = cx.heap.roots().mark();
     let result = (|| {
         let scope = if child_unit.captures.is_empty() {
@@ -996,7 +1048,7 @@ fn make_closure(
             cx.heap.roots().push(Value::object(scope.object()));
             Some(scope)
         };
-        closure_function(cx, child, child_unit, scope).map(Value::object)
+        closure_function(cx, child, &child_unit, scope).map(Value::object)
     })();
     cx.heap.roots().truncate(mark);
     result
@@ -1103,14 +1155,13 @@ pub(crate) fn closure_over_captures(
     root: ObjectId,
     index: u32,
 ) -> Result<ObjectId, Throw> {
-    let store: &CodeStore = cx.code;
     let bytecode = cx
         .heap
         .function_bytecode(root)
         .expect("a bytecode function");
-    let unit = store.get(cx.heap.bytecode_unit(bytecode));
+    let unit = cx.unit(cx.heap.bytecode_unit(bytecode));
     let child = cx.heap.bytecode_child(bytecode, index);
-    let child_unit = store.get(unit.children[index as usize]);
+    let child_unit = cx.unit(unit.children[index as usize]);
     let mark = cx.heap.roots().mark();
     let result = (|| {
         let scope = if child_unit.captures.is_empty() {
@@ -1141,7 +1192,7 @@ pub(crate) fn closure_over_captures(
             cx.heap.roots().push(Value::object(scope.object()));
             Some(scope)
         };
-        closure_function(cx, child, child_unit, scope)
+        closure_function(cx, child, &child_unit, scope)
     })();
     cx.heap.roots().truncate(mark);
     result
@@ -1253,7 +1304,7 @@ fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
         return;
     }
     let caller = cx.heap.vm.frames.last().expect("a caller");
-    let unit = cx.code.get(caller.unit);
+    let unit = cx.unit(caller.unit);
     let insn = unit.code[done.return_pc as usize - 1];
     if insn.op != Opcode::New {
         return;
@@ -1571,11 +1622,28 @@ fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
     run_at(cx, 0)
 }
 
+/// Unit `id` for the loop, when it or the unit the loop leaves is dynamic:
+/// `held` keeps a dynamic one alive while it runs and lets go of the last.
+#[cold]
+#[inline(never)]
+fn switch_unit<'h>(
+    code: &'h CodeStore,
+    heap: &Heap,
+    held: &'h mut Option<Rc<CodeUnit>>,
+    id: CodeUnitId,
+) -> &'h CodeUnit {
+    if !id.is_dynamic() {
+        *held = None;
+        return code.get(id);
+    }
+    held.insert(heap.code.get(id))
+}
+
 /// Starts a resumed entry frame by throwing `thrown` at the instruction before
 /// `pc`: its handler takes it, or the frame is popped and the throw returned.
 pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<Value, Throw> {
     let frame = *cx.heap.vm.frames.last().expect("an entry frame");
-    let unit = cx.code.get(frame.unit);
+    let unit = cx.unit(frame.unit);
     let at = pc.saturating_sub(1);
     if let Some(handler) = unit
         .handlers
@@ -1595,12 +1663,24 @@ pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
 pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
-    let store: &CodeStore = cx.code;
     let mut frame = *cx.heap.vm.frames.last().expect("an entry frame");
-    let mut unit: &CodeUnit = store.get(frame.unit);
+    // The running unit: borrowed from the code store, or from `held`, which
+    // keeps a dynamic unit alive while it runs.
+    let mut held: Option<Rc<CodeUnit>> = None;
+    let mut unit: &CodeUnit;
+    macro_rules! set_unit {
+        ($id:expr) => {{
+            let id: CodeUnitId = $id;
+            unit = if id.is_dynamic() | held.is_some() {
+                switch_unit(cx.static_code, cx.heap, &mut held, id)
+            } else {
+                cx.static_code.get(id)
+            };
+        }};
+    }
+    set_unit!(frame.unit);
     let mut code: &[Insn] = &unit.code;
     let mut base = frame.base as usize;
-    let mut strict = unit.has(flags::STRICT);
     let mut ic_base = unit.ic_base as usize;
     let mut pc = start;
 
@@ -1619,10 +1699,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     macro_rules! load_frame {
         () => {{
             frame = *cx.heap.vm.frames.last().expect("a frame");
-            unit = store.get(frame.unit);
+            set_unit!(frame.unit);
             code = &unit.code;
             base = frame.base as usize;
-            strict = unit.has(flags::STRICT);
             ic_base = unit.ic_base as usize;
         }};
     }
@@ -2024,7 +2103,15 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         continue 'dispatch;
                     }
                     let fill = insn.c != FIELD_NO_SITE;
-                    property::set_cached(cx, object, insn.key(), value, strict, site, fill)
+                    property::set_cached(
+                        cx,
+                        object,
+                        insn.key(),
+                        value,
+                        unit.has(flags::STRICT),
+                        site,
+                        fill,
+                    )
                 }
                 Opcode::DefineField => {
                     let (object, value) = (reg!(insn.a), reg!(insn.b));
@@ -2034,7 +2121,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 Opcode::DeleteField => {
                     let object = reg!(insn.b);
                     write!('dispatch, insn.a,
-                        property::delete(cx, object, insn.key(), strict).map(Value::bool)
+                        property::delete(cx, object, insn.key(), unit.has(flags::STRICT)).map(Value::bool)
                     )
                 }
                 Opcode::GetElem => {
@@ -2089,8 +2176,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             continue 'dispatch;
                         }
                     }
-                    ops::to_property_key(cx, key)
-                        .and_then(|key| property::set(cx, object, key, value, strict))
+                    ops::to_property_key(cx, key).and_then(|key| {
+                        property::set(cx, object, key, value, unit.has(flags::STRICT))
+                    })
                 }
                 Opcode::DefineElem => {
                     let (object, key, value) = (reg!(insn.a), reg!(insn.b), reg!(insn.c));
@@ -2101,7 +2189,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 Opcode::DeleteElem => {
                     let (object, key) = (reg!(insn.b), reg!(insn.c));
                     let result = ops::to_property_key(cx, key)
-                        .and_then(|key| property::delete(cx, object, key, strict));
+                        .and_then(|key| property::delete(cx, object, key, unit.has(flags::STRICT)));
                     write!('dispatch, insn.a, result.map(Value::bool))
                 }
 
@@ -2130,7 +2218,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         cx.heap.ics.count_hit(IcKind::Global);
                         continue 'dispatch;
                     }
-                    set_global(cx, insn, value, strict, site)
+                    set_global(cx, insn, value, unit.has(flags::STRICT), site)
                 }
                 Opcode::DefineGlobal => {
                     let value = reg!(insn.a);
@@ -2334,24 +2422,6 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     match target {
                         Callee::Bytecode(object, bytecode) => {
                             let unit_id: CodeUnitId = cx.heap.bytecode_unit(bytecode);
-                            let callee_unit = store.get(unit_id);
-                            let mut new_target = Value::UNDEFINED;
-                            if construct {
-                                let site =
-                                    (insn.op == Opcode::New).then(|| ic_base + insn.imm as usize);
-                                match construct_this(
-                                    cx,
-                                    object,
-                                    function,
-                                    callee_unit,
-                                    base + window,
-                                    site,
-                                ) {
-                                    Ok(pair) => (this, new_target) = pair,
-                                    Err(throw) => break 'op Err(throw),
-                                }
-                            }
-                            cx.heap.vm.registers[base + window] = this;
                             let mut frame_flags = via;
                             if construct {
                                 frame_flags |= frame_flags::CONSTRUCT;
@@ -2369,15 +2439,20 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 argc: argc as u32,
                                 flags: frame_flags,
                             };
-                            if let Err(throw) = enter_frame(cx, callee_unit, callee_frame) {
-                                break 'op write!(
-                                    'dispatch,
-                                    insn.a,
-                                    entry_failed(cx, callee_unit, throw, tail)
-                                );
-                            }
-                            if construct {
-                                write_new_target(cx, base + window, callee_unit, new_target);
+                            let site = (construct && insn.op == Opcode::New)
+                                .then(|| ic_base + insn.imm as usize);
+                            let entry = if unit_id.is_dynamic() {
+                                enter_dynamic_callee(cx, callee_frame, function, this, site)
+                            } else {
+                                let callee_unit = cx.static_code.get(unit_id);
+                                enter_callee(cx, callee_unit, callee_frame, function, this, site)
+                            };
+                            match entry {
+                                Entry::Entered => {}
+                                Entry::Threw(throw) => break 'op Err(throw),
+                                Entry::Failed(result) => {
+                                    break 'op write!('dispatch, insn.a, result);
+                                }
                             }
                             load_frame!();
                             pc = 0;
@@ -2427,15 +2502,13 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     {
                         cx.heap.vm.frames.pop();
                         let caller = *cx.heap.vm.frames.last().expect("a caller");
-                        let caller_unit = store.get(caller.unit);
-                        raise_top(cx, frame_end(&caller, caller_unit));
+                        set_unit!(caller.unit);
+                        raise_top(cx, frame_end(&caller, unit));
                         cx.heap.vm.registers[frame.return_dst as usize] = value;
                         pc = frame.return_pc as usize;
                         frame = caller;
-                        unit = caller_unit;
                         code = &unit.code;
                         base = frame.base as usize;
-                        strict = unit.has(flags::STRICT);
                         ic_base = unit.ic_base as usize;
                         regs = window!();
                         continue 'dispatch;
@@ -2845,8 +2918,8 @@ fn suspend_op(
                 return Ok(Returned::Exit(promise));
             }
             let caller = *cx.heap.vm.frames.last().expect("a caller");
-            let caller_unit = cx.code.get(caller.unit);
-            raise_top(cx, frame_end(&caller, caller_unit));
+            let caller_unit = cx.unit(caller.unit);
+            raise_top(cx, frame_end(&caller, &caller_unit));
             cx.heap.vm.registers[done.return_dst as usize] = promise;
             Ok(Returned::Resume(done.return_pc))
         }
@@ -2891,8 +2964,8 @@ fn finish_return(cx: &mut Cx<'_>, mut value: Value) -> Returned {
             continue;
         }
         let caller = *cx.heap.vm.frames.last().expect("a caller");
-        let unit = cx.code.get(caller.unit);
-        raise_top(cx, frame_end(&caller, unit));
+        let unit = cx.unit(caller.unit);
+        raise_top(cx, frame_end(&caller, &unit));
         cx.heap.vm.registers[done.return_dst as usize] = value;
         return Returned::Resume(done.return_pc);
     }

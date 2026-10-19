@@ -1,0 +1,7 @@
+functions 159600 8 151
+regexps 600 r
+generators 10000 true
+names n0=n0,n40=n40,n80=n80,n120=n120,n160=n160
+source function anonymous(o ) { return o.k50 + 50 }
+error TypeError     at <eval> (<input>:3:5)
+classes 7 7 20

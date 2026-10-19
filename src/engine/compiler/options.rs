@@ -13,6 +13,9 @@ pub const DEFAULT_EVAL_FILENAME: &str = "<input>";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CompileOptions {
     pub filename: String,
+    /// The code is freed once nothing names it (a REPL's line), instead of
+    /// living as long as the runtime.
+    pub transient: bool,
 }
 
 impl CompileOptions {
@@ -20,7 +23,15 @@ impl CompileOptions {
     pub fn new(filename: impl Into<String>) -> Self {
         Self {
             filename: filename.into(),
+            transient: false,
         }
+    }
+
+    /// These options with [`CompileOptions::transient`] set.
+    #[must_use]
+    pub fn transient(mut self) -> Self {
+        self.transient = true;
+        self
     }
 }
 

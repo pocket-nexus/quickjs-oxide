@@ -43,11 +43,11 @@ pub(super) fn revocable(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw>
     cx.heap.roots().push(Value::object(result));
     let proxy_key = cx
         .heap
-        .property_key("proxy")
+        .property_key_pinned("proxy")
         .map_err(|error| error::heap_error(cx, error))?;
     let revoke_key = cx
         .heap
-        .property_key("revoke")
+        .property_key_pinned("revoke")
         .map_err(|error| error::heap_error(cx, error))?;
     let heap = &mut *cx.heap;
     heap.add_property(

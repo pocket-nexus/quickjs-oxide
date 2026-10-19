@@ -15,7 +15,7 @@ A missed root fails under the stress mode, where every allocating call collects 
 
 ## The `&mut` discipline
 
-`Cx` holds the heap mutably and the code store, realm and host shared. The running unit's code stays borrowed from the `CodeStore` across every heap call; nothing that the loop must hold across a call lives in a `CodeUnit` (the caches are in the heap for this reason).
+`Cx` holds the heap mutably and the code store, realm and host shared. The running unit's code stays borrowed across every heap call: a static unit from the `CodeStore`, a dynamic unit (compiled at run time, owned by the heap) through the `Rc` the loop holds while it runs it, taken out of line at a frame switch so the static path is a plain borrow. `Cx::unit` reads either kind. Nothing that the loop must hold across a call lives in a `CodeUnit` (the caches are in the heap for this reason).
 
 The register file is inside the heap, so the loop's window (`regs`) is a borrow of the heap. An arm that calls into the heap copies its operands out of the window first and takes the window again afterwards; a heap call never receives a register by reference. A hot path that must keep the window across a heap access (the cache hits) takes the heap's arenas as separate fields, disjoint from the register file. Slow paths take `&mut Cx` and register indices, not values borrowed from the window.
 

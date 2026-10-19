@@ -1,6 +1,6 @@
 # The heap and the collector
 
-This page describes the heap of `oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with a cap-aware trigger, growth that stops at the cap, shrinking after a collection, reclaiming dynamic code and heap snapshots.
+This page describes the heap of `oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with a cap-aware trigger, growth that stops at the cap, shrinking after a collection and heap snapshots.
 
 ## Values
 
@@ -42,7 +42,7 @@ The heap (`Heap` in `heap/mod.rs`) has nine arenas and the value heap:
 | `payloads.bytecode` | `FunctionBytecode` | per published code unit: its constant table and child records, both value-heap ranges |
 | `payloads.internals` | `Internal` | the internal slots and non-value data of the builtin kinds |
 
-A record's out-of-line bytes (string contents, BigInt limbs, internal slot vectors) are reported through `Record::extra_bytes` and count toward the heap's size. The code store (lowered code units, their position tables and source text) and the regular-expression programs live beside the heap in `Runtime`: they are not collected and do not count toward the cap.
+A record's out-of-line bytes (string contents, BigInt limbs, internal slot vectors) are reported through `Record::extra_bytes` and count toward the heap's size. The code store (the static code units, their position tables and source text) lives beside the heap in `Runtime` for the runtime's lifetime and does not count toward the cap; the dynamic units and the regular-expression programs are in the heap ([Code compiled at run time](#code-compiled-at-run-time)).
 
 ## The value heap
 
@@ -70,7 +70,7 @@ An object with the `SPARSE` flag keeps its index properties as named properties 
 ## Strings, atoms and property keys
 
 - A `StringRecord` is flat or a rope. The flat representation is canonical: `OneByte(Box<[u8]>)` whenever every code unit fits in a byte, otherwise `TwoByte(Box<[u16]>)`, so equal contents have equal representations. A rope is a concatenation whose halves live in `Heap.ropes`, keyed by the record; it flattens on the first use of its units, and its entry is dropped at the next collection after it flattens or dies. The content hash is computed on first use.
-- An atom is a string record with `is_atom` set. The atom table maps a content hash to an atom index (collisions in a side list) and compares by content against the string arena, so an entry is 8 bytes and holds no second copy of the string. Atoms are strong: every collection marks every atom. The 99th-percentile Test262 test interns 194 atoms, and one runtime running every file stays at 16 MiB.
+- An atom is a string record with `is_atom` set. The atom table maps a content hash to an atom index (collisions in a side list) and compares by content against the string arena, so an entry is 8 bytes and holds no second copy of the string. An atom lives as long as something holds it, like any string: a shape or dictionary key, a value, a live dynamic unit's key list ([Code compiled at run time](#code-compiled-at-run-time)); a swept atom leaves the table, and its index is reused. The atoms interned while the runtime is created (the realm's names, the builtins' properties) and the keys of the static units are pinned: `Heap.pinned_atoms` roots them for the heap's lifetime. `Heap::intern_pinned` pins a name a native spells as a literal and holds across allocations.
 - `PropertyKey(u32)`: bit 31 set marks an immediate array index below 2³¹, which never enters the atom table; otherwise bit 30 set marks a symbol, and a clear bit 30 an atom. Array indices from 2³¹ to 2³² − 2 are atoms whose record caches the index, so key ordering still treats them as indices. String and symbol indices used as keys must stay below 2³⁰; interning past that fails with `OutOfMemory`.
 
 ## Shapes and validity cells
@@ -89,6 +89,19 @@ The inline caches (`vm/ic.rs`, the `IcStore` inside the heap) use these as their
 
 Indices are recycled, so a cache entry that names a dead shape, object or cell would hit on a recycled record. Cache entries are therefore weak: every collection prunes the entries whose records were not marked before it sweeps.
 
+## Code compiled at run time
+
+The units published before the program runs (the script, its modules, whatever the embedder compiles through `Runtime::compiler()`) live in the `CodeStore` beside the heap for the runtime's lifetime, and their atoms are pinned. A unit compiled at run time (`eval`, the `Function` constructors, `$262.evalScript`, a module loaded while the program runs, and what the embedder compiles through `Runtime::transient_compiler()`, the embedding API's `EvalOptions::transient` and `CompileOptions::transient`, such as a REPL's lines) lives in the heap (`heap/code.rs`, `DynamicUnits`) and is freed by the collection that finds no bytecode record naming it.
+
+- **Reachability.** Every bytecode record names its unit. A function reaches its record; a running frame reaches its function; a suspended generator or async frame reaches its function through its internal slots; a pending job reaches the functions it calls. A unit with no live record is unreachable by any of them.
+- **The loop's hold.** The loop holds the running unit through an `Rc`, so a collection inside a call never frees the instructions it is executing; by the time a unit is swept no frame names it and its count is one, which debug builds assert. A static unit is borrowed with no count.
+- **A compilation's window.** Between `publish` and `instantiate` a unit has no record. A `Compiler` pins the units it publishes and holds the atoms it interns (keys, names, string constants), each once, until it is dropped; a `Compiler::reborrow` (a host callback's view) ends nothing. A compilation that fails leaves its units to the next collection.
+- **Atoms.** Publishing a unit records the distinct atoms its instructions name as keys, and its name (`CodeUnit::atoms`); a live unit marks them.
+- **Cache ranges.** A unit's cache entries are one range of the `IcStore`. A freed unit's range is emptied and returned to a free list sorted by position, where adjacent ranges merge; the next unit takes the first range that fits. Polymorphic rows are reused the same way.
+- **Regular expressions.** A program is compiled once per distinct `(source, flags)` and named by the payload of every `RegExp` object over it; a collection frees the programs no live object names, and their keys leave the index.
+
+Under `gc-stress`, freed unit slots and program slots are quarantined for one collection like arena indices, and `Heap::verify` checks that exactly the reachable units and programs are live and that every free cache range is empty.
+
 ## The collector
 
 Non-moving mark-sweep (`heap/gc.rs`). Marking uses an explicit stack, never recursion; mark bits are the arenas' side bitmaps; sweep is eager and scans every arena. A collection runs only at an allocation safepoint or on an explicit `Heap::collect` (the embedding API's `Runtime::run_gc`).
@@ -103,7 +116,7 @@ Non-moving mark-sweep (`heap/gc.rs`). Marking uses an explicit stack, never recu
 | the register file | `registers[..top]`: the running frame's window and every frame below it |
 | the frame table | each frame's function object |
 | the job queue | each pending job's values |
-| atoms, the static cell, the cached closure and `arguments` shapes | |
+| pinned and held atoms, pinned dynamic units, the static cell, the cached closure and `arguments` shapes | atoms that live as long as the heap; the atoms and the published units of a compilation still running |
 | `kept`, `rejections`, `modules` | `WeakRef` targets kept until the current job ends, unhandled rejected promises while the embedder tracks them, every module record |
 
 Registers above `top` belong to returned frames and may name records a collection has since freed. They are not roots. Each collection lowers `stale_from` to `top`, and a frame that resumes after a return or an unwind clears its registers from `stale_from` up before they become roots again (`interp::raise_top`). A suspended generator or async frame keeps its registers in its `Internal` record's slots, which are traced like any object's.
@@ -114,22 +127,22 @@ An allocating call (any `Heap` method that takes `&mut self` and returns `Result
 
 ### Marking, weak references and sweep
 
-1. **Mark** from the roots. Objects push their shape (shapes mark their parent chains and push the keys and prototypes they hold), their slots and elements, and their payload's values; a bytecode record marks its children and pushes its constants.
+1. **Mark** from the roots. Objects push their shape (shapes mark their parent chains and push the keys and prototypes they hold), their slots and elements, and their payload's values; a bytecode record marks its children, pushes its constants and marks its unit when it is dynamic, pushing the unit's atoms; a `RegExp` object marks its program and pushes the program's source and flags atoms; a module namespace pushes its export keys.
 2. **Ephemerons.** A `WeakMap` entry's value is live once its key is. After the first drain each weak map reached is scanned once: a live key's value is pushed, an unmarked key's value waits in a map keyed by the key, and marking that key later pushes it. Draining may reach further weak maps, scanned in the next round, until the stack stays empty.
 3. **Validity cells** owned by live prototypes are marked; the prototype table itself is weak.
 4. **Weak processing.** Dead keys leave `WeakMap` and `WeakSet` tables, a dead `WeakRef` target becomes `undefined`, and a dead `FinalizationRegistry` target queues its cleanup callback as a job. The rope table, the prototype table and its dependents lists, the root-shape table and every shape's transitions drop their dead entries.
-5. **Prune** the inline caches.
-6. **Sweep** every arena, returning the dead objects' and bytecode records' value-heap ranges to their classes.
+5. **Prune** the inline caches, including the megamorphic entries whose key atom dies.
+6. **Sweep** every arena, returning the dead objects' and bytecode records' value-heap ranges to their classes; a dead atom leaves the atom table. Unmarked dynamic units and regular-expression programs are freed, and a freed unit's cache range returns to the `IcStore`.
 
 ### The trigger
 
-The safepoint charges each allocation's nominal bytes (record sizes, value-heap ranges at their class size, out-of-line bytes; shapes and validity cells are reserved for the cap but not charged) to a counter, and collects when the counter reaches the threshold. After every collection the counter resets and
+The safepoint charges each allocation's nominal bytes (record sizes, value-heap ranges at their class size, out-of-line bytes; shapes and validity cells are reserved for the cap but not charged) to a counter, and collects when the counter reaches the threshold. Publishing a dynamic unit charges its bytes to the same counter. After every collection the counter resets and
 
 ```
 threshold = max(min_heap, live_bytes × growth)
 ```
 
-where `live_bytes` is the bytes held by live records and live ranges. The defaults are a 4 MiB minimum heap and growth 2. Under `GcPolicy::Manual` of the embedding API the threshold is unbounded: collections happen only at the cap and when the embedder calls `run_gc`.
+where `live_bytes` is the bytes held by live records and live ranges, the live dynamic units and the regular-expression programs. The defaults are a 4 MiB minimum heap and growth 2. Under `GcPolicy::Manual` of the embedding API the threshold is unbounded: collections happen only at the cap and when the embedder calls `run_gc`.
 
 | Setting | `RuntimeOptions` | `qjs` |
 | --- | --- | --- |
@@ -139,7 +152,7 @@ where `live_bytes` is the bytes held by live records and live ranges. The defaul
 
 ### The memory cap
 
-The cap limits `Heap::bytes()`: the bytes reserved by every arena (record storage, bitmaps, free lists, out-of-line bytes), the value heap's backing vector and flattened ropes. With a cap set every safepoint takes the slow path. If reserving what the allocation needs would cross the cap, the safepoint collects first (whatever the trigger says); if the heap would still cross it, the allocation fails with `HeapError::OutOfMemory` and allocates nothing. The loop and the natives turn that error into the realm's preallocated `%OutOfMemoryError%` intrinsic, an `InternalError: out of memory` created at realm initialization, so throwing it allocates nothing. The error is catchable.
+The cap limits `Heap::bytes()`: the bytes reserved by every arena (record storage, bitmaps, free lists, out-of-line bytes), the value heap's backing vector, flattened ropes, the live dynamic units and the regular-expression programs. Publishing a unit does not check the cap; the next safepoint collects or fails with `OutOfMemory` if the heap is over it. With a cap set every safepoint takes the slow path. If reserving what the allocation needs would cross the cap, the safepoint collects first (whatever the trigger says); if the heap would still cross it, the allocation fails with `HeapError::OutOfMemory` and allocates nothing. The loop and the natives turn that error into the realm's preallocated `%OutOfMemoryError%` intrinsic, an `InternalError: out of memory` created at realm initialization, so throwing it allocates nothing. The error is catchable.
 
 Reserved memory never shrinks, and arenas and the value heap grow by doubling, so a heap stops one doubling short of the cap: a churn ring under a 32 MB cap settles at 18.8 MiB reserved. [Planned work](planned.md#3-the-heap-cap-as-a-policy) describes the cap-aware trigger and the growth step clamped to the cap.
 
@@ -172,9 +185,9 @@ gc: 2 collections, total pause 2.7 ms, p50 1.846 ms, p99 1.846 ms, max 1.846 ms,
 
 - per arena: live records, slots, bytes used by live records, bytes reserved;
 - the value heap: slots in use, free ranges by size class, capacity, bytes reserved;
-- rope bytes and the atom count;
-- the code store: units, instructions, position tables, source text, regular-expression programs (outside the heap);
-- the register file's capacity and high-water mark, and the inline-cache entry count;
+- rope bytes, the atom count and the pinned atoms among them;
+- the code: units (static and dynamic counted apart), instructions, position tables, source text, the bytes the dynamic units hold (counted in `reserved_bytes()`), regular-expression programs;
+- the register file's capacity and high-water mark, and the inline-cache entries, held and free;
 - the collector's statistics, the bytes allocated since the last collection, the threshold and the cap.
 
 Its `reserved_bytes()` is by construction `Heap::bytes()`, the figure the cap compares against. Peak RSS also includes the process floor and the allocator's overhead, which the heap does not see; the [profiling guide](profiling.md) covers both.

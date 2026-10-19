@@ -197,7 +197,7 @@ pub(crate) fn add_stack_at(
     let mut unpositioned = Vec::new();
     for index in (0..top).rev().take(BACKTRACE_FRAMES) {
         let frame = &vm.frames[index];
-        let unit = cx.code.get(frame.unit);
+        let unit = cx.unit(frame.unit);
         // The natives this frame called and which are still running (one
         // the loop called, then those it called from Rust): their lines,
         // innermost first, then this frame at the loop's call.
@@ -243,8 +243,8 @@ pub(crate) fn add_stack_at(
         // lacks: the unit's name stands in.
         let key = Names::key(cx.realm.names.name);
         let name =
-            if cx.heap.lookup_own(frame.function, key).is_none() && !debug_name(unit).is_empty() {
-                debug_name(unit).to_owned()
+            if cx.heap.lookup_own(frame.function, key).is_none() && !debug_name(&unit).is_empty() {
+                debug_name(&unit).to_owned()
             } else {
                 native_name(cx, frame.function)
             };

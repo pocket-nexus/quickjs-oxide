@@ -17,13 +17,13 @@ pub mod value;
 pub mod vm;
 
 pub use builtins::agent::ScriptRunner;
-pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode};
+pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, UnitRef, Units};
 pub use embed::{KeyName, PropertyDescriptor};
 pub use heap::atom::{KeyKind, PropertyKey};
 pub use heap::gc::{Handle, HeapLimits, RootMark};
 pub use heap::object::ObjectKind;
 pub use heap::report::MemoryReport;
-pub use heap::{BytecodeTemplate, Heap, HeapError};
+pub use heap::{AtomMode, BytecodeTemplate, Heap, HeapError};
 pub use runtime::{Intrinsic, Realm, Runtime, RuntimeOptions, ThrownSummary};
 pub use shape::PropertyFlags;
 pub use value::{

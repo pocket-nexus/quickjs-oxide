@@ -234,26 +234,33 @@ impl Entry<'_> {
         &mut self,
         key: &PropertyKey,
     ) -> Result<oxide_core::PropertyKey, RuntimeError> {
-        match &key.0 {
-            Key::Index(index) => Ok(oxide_core::PropertyKey::index(*index).map_or_else(
+        let key = match &key.0 {
+            Key::Index(index) => oxide_core::PropertyKey::index(*index).map_or_else(
                 || {
                     let units: Vec<u16> = index.to_string().encode_utf16().collect();
                     self.inner.core.key_from_units(&units)
                 },
                 Ok,
-            )?),
+            )?,
             Key::String(text) => {
                 let units: Vec<u16> = text.utf16_units().collect();
-                Ok(self.inner.core.key_from_units(&units)?)
+                self.inner.core.key_from_units(&units)?
             }
+            // The symbol's handle roots it.
             Key::Symbol(symbol) => {
                 let value = self.own(&symbol.slot)?;
-                self.inner
+                return self
+                    .inner
                     .core
                     .key_from_symbol(value)
-                    .ok_or(RuntimeError::Invariant("a symbol reference"))
+                    .ok_or(RuntimeError::Invariant("a symbol reference"));
             }
+        };
+        // An atom lives only while something names it.
+        if let Some(value) = key.heap_value() {
+            self.temp(value);
         }
+        Ok(key)
     }
 
     /// The API key of a core key.
@@ -785,7 +792,7 @@ impl Runtime {
             }
         };
         let mut text = String::new();
-        for unit in entry.core.code().tree(lowered.root) {
+        for unit in entry.core.units().tree(lowered.root) {
             text.push_str(&entry.core.disassemble(unit));
             text.push('\n');
         }

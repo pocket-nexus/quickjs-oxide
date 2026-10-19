@@ -6,58 +6,95 @@
 //! compiles and lowers source into a [`Compiler`], the part of the runtime a
 //! lowering needs (the heap, the code store, the realm), which the natives
 //! can lend while the loop holds the code store: units compiled at run time
-//! are published into the store's dynamic chunks.
+//! are published into the heap, which frees them once unreachable.
+//!
+//! A compilation keeps what it makes alive until it ends: a unit published
+//! but not yet instantiated is pinned, and the atoms it interns (keys, names,
+//! string constants) are held. Before the program runs, its atoms are pinned
+//! for good instead.
 
 use super::native::CallSite;
 use super::{Cx, Throw, error, ops};
 use crate::ErrorKind;
-use crate::bytecode::{CodeStore, CodeUnit, CodeUnitId, ValidateError};
+use crate::bytecode::{CodeStore, CodeUnit, CodeUnitId, Units, ValidateError, validate};
 use crate::heap::hash::FxHashMap;
-use crate::heap::{BytecodeTemplate, Heap, HeapError};
+use crate::heap::{AtomMode, BytecodeTemplate, Heap, HeapError};
 use crate::runtime::{Intrinsic, Realm};
 use crate::value::{ObjectId, Value};
 
 /// The code store a compilation publishes into: owned before the program
-/// runs (units go in the static store), shared while it runs (the dynamic
-/// chunks).
+/// runs (units go in the static store), shared while it runs (units go in
+/// the heap).
 enum Store<'a> {
     Owned(&'a mut CodeStore),
     Shared(&'a CodeStore),
 }
 
-/// The runtime's parts a compilation uses.
+/// The runtime's parts a compilation uses. Dropping it ends the
+/// compilation: its pinned units and held atoms are released (a
+/// [`Compiler::reborrow`] ends nothing).
 pub struct Compiler<'a> {
     heap: &'a mut Heap,
     code: Store<'a>,
     realm: &'a Realm,
+    /// The atom mode before the compilation, restored after it.
+    mode: AtomMode,
+    /// Where the compilation's pinned units and held atoms start.
+    pins: usize,
+    held: usize,
+    /// Whether dropping it ends the compilation (not a reborrow's).
+    ends: bool,
+}
+
+impl Drop for Compiler<'_> {
+    fn drop(&mut self) {
+        if !self.ends {
+            return;
+        }
+        self.heap.set_atom_mode(self.mode);
+        self.heap.code.unpin(self.pins);
+        self.heap.release_held_atoms(self.held);
+    }
 }
 
 impl<'a> Compiler<'a> {
-    pub(crate) fn new(heap: &'a mut Heap, code: &'a CodeStore, realm: &'a Realm) -> Self {
+    fn with(heap: &'a mut Heap, code: Store<'a>, realm: &'a Realm, mode: AtomMode) -> Self {
+        let pins = heap.code.pin_mark();
+        let held = heap.held_atoms_mark();
+        let mode = heap.set_atom_mode(mode);
         Compiler {
             heap,
-            code: Store::Shared(code),
+            code,
             realm,
+            mode,
+            pins,
+            held,
+            ends: true,
         }
     }
 
+    pub(crate) fn new(heap: &'a mut Heap, code: &'a CodeStore, realm: &'a Realm) -> Self {
+        Compiler::with(heap, Store::Shared(code), realm, AtomMode::Hold)
+    }
+
     pub(crate) fn owned(heap: &'a mut Heap, code: &'a mut CodeStore, realm: &'a Realm) -> Self {
-        Compiler {
-            heap,
-            code: Store::Owned(code),
-            realm,
-        }
+        Compiler::with(heap, Store::Owned(code), realm, AtomMode::Pin)
     }
 
     /// The same parts for a shorter borrow (a host callback's view).
     pub fn reborrow(&mut self) -> Compiler<'_> {
+        let code = match &mut self.code {
+            Store::Owned(code) => Store::Owned(code),
+            Store::Shared(code) => Store::Shared(code),
+        };
         Compiler {
             heap: self.heap,
-            code: match &mut self.code {
-                Store::Owned(code) => Store::Owned(code),
-                Store::Shared(code) => Store::Shared(code),
-            },
+            code,
             realm: self.realm,
+            mode: self.mode,
+            pins: self.pins,
+            held: self.held,
+            ends: false,
         }
     }
 
@@ -162,10 +199,15 @@ impl<'a> Compiler<'a> {
         self.heap
     }
 
-    pub fn code(&self) -> &CodeStore {
-        match &self.code {
-            Store::Owned(code) => code,
-            Store::Shared(code) => code,
+    /// Every published unit, static and dynamic.
+    pub fn units(&self) -> Units<'_> {
+        let code = match &self.code {
+            Store::Owned(code) => &**code,
+            Store::Shared(code) => *code,
+        };
+        Units {
+            code,
+            dynamic: &self.heap.code,
         }
     }
 
@@ -173,20 +215,34 @@ impl<'a> Compiler<'a> {
         self.realm.intrinsic(intrinsic)
     }
 
-    /// Validates `unit` and appends it to the code store. Its children must
-    /// be published first.
-    pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
-        let (id, code) = match &mut self.code {
-            Store::Owned(code) => (code.publish(unit)?, &**code),
-            Store::Shared(code) => (code.publish_shared(unit)?, *code),
-        };
-        self.heap.ics.reserve(code.get(id));
-        Ok(id)
+    /// Validates `unit`, reserves its cache entries and publishes it: into
+    /// the code store before the program runs (its key atoms pinned), into
+    /// the heap (pinned until the compilation ends, its bytes charged to the
+    /// collection trigger) while it runs. Its children must be published
+    /// first.
+    pub fn publish(&mut self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
+        validate::validate(&unit, &|id| self.units().lookup(id))?;
+        self.heap.ics.reserve(&mut unit);
+        match &mut self.code {
+            // A static unit lives as long as the runtime, and so do its keys,
+            // wherever they were interned.
+            Store::Owned(code) => {
+                for &atom in &unit.key_atoms() {
+                    self.heap.pin_atom(atom);
+                }
+                Ok(code.push(unit))
+            }
+            Store::Shared(_) => {
+                let (id, bytes) = self.heap.code.publish(unit);
+                self.heap.gc.allocated += bytes;
+                Ok(id)
+            }
+        }
     }
 
     /// A function object for the published unit `root`, with a bytecode
     /// record for it and every unit below it. `constants` holds one table per
-    /// unit, in the pre-order of [`CodeStore::tree`].
+    /// unit, in the pre-order of [`Units::tree`].
     pub fn instantiate(
         &mut self,
         root: CodeUnitId,
@@ -195,6 +251,10 @@ impl<'a> Compiler<'a> {
         let code = match &self.code {
             Store::Owned(code) => &**code,
             Store::Shared(code) => *code,
+        };
+        let code = Units {
+            code,
+            dynamic: &self.heap.code,
         };
         let order = code.tree(root);
         assert_eq!(order.len(), constants.len(), "one constant table per unit");
@@ -245,6 +305,10 @@ impl Compiler<'_> {
         let names = self.realm.names;
         let heap = &mut *self.heap;
         let mark = heap.roots().mark();
+        // An atom interned outside a compilation is weak.
+        for &value in cooked.iter().chain(raw) {
+            heap.roots().push(value);
+        }
         let result = (|| {
             let raw_array = heap.alloc_array(Some(prototype), raw.len() as u32)?;
             heap.roots().push(Value::object(raw_array));
@@ -271,8 +335,6 @@ impl Compiler<'_> {
                 Value::object(raw_array),
             )?;
             for target in [raw_array, array] {
-                let header = heap.header(target);
-                let _ = header;
                 heap.set_object_flag(target, flags::SPARSE | flags::LENGTH_READONLY);
                 heap.clear_object_flag(target, flags::EXTENSIBLE);
             }
@@ -382,7 +444,10 @@ pub(crate) fn compile_named(
         kind,
         filename,
     };
-    let result = compile(&mut Compiler::new(cx.heap, cx.code, cx.realm), &request);
+    let result = compile(
+        &mut Compiler::new(cx.heap, cx.static_code, cx.realm),
+        &request,
+    );
     match result {
         Ok(function) => Ok(function),
         Err(failure) => Err(throw_failure(cx, failure)),
@@ -484,7 +549,7 @@ pub(crate) fn function_kind_flags(cx: &Cx<'_>, function: ObjectId) -> Option<u16
     }
     let bytecode = cx.heap.function_bytecode(function)?;
     let unit = cx.heap.bytecode_unit(bytecode);
-    Some(cx.code.get(unit).flags)
+    Some(cx.unit(unit).flags)
 }
 
 /// The source text of a bytecode function, if it was recorded.
@@ -494,8 +559,8 @@ pub(crate) fn function_source(cx: &Cx<'_>, function: ObjectId) -> Option<Vec<u16
     }
     let bytecode = cx.heap.function_bytecode(function)?;
     let unit = cx.heap.bytecode_unit(bytecode);
-    let source = cx.code.get(unit).source.as_ref()?;
-    Some(wtf8_units(source))
+    let unit = cx.unit(unit);
+    Some(wtf8_units(unit.source.as_ref()?))
 }
 
 /// The UTF-16 units of source `bytes` as QuickJS's `JS_NewStringLen` reads
@@ -603,4 +668,35 @@ pub(crate) fn eval_script(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
     let source = ops::to_string(cx, source)?;
     let units = ops::units(cx.heap, source.as_string().unwrap());
     run(cx, &units, CompileKind::Script)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{Runtime, RuntimeOptions};
+
+    #[test]
+    fn a_compilation_holds_each_atom_once_until_it_ends() {
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        let mut compiler = runtime.transient_compiler();
+        let mark = compiler.heap().held_atoms_mark();
+        let atom = compiler.heap_mut().intern("held once").unwrap();
+        for _ in 0..3 {
+            assert_eq!(compiler.heap_mut().intern("held once").unwrap(), atom);
+        }
+        assert_eq!(
+            compiler.heap_mut().intern_latin1(b"held once").unwrap(),
+            atom
+        );
+        assert_eq!(compiler.heap().held_atoms_mark(), mark + 1);
+        // A reborrow (a host callback's view) ends nothing when dropped.
+        {
+            let mut view = compiler.reborrow();
+            view.heap_mut().intern("seen by the view").unwrap();
+        }
+        compiler.heap_mut().collect();
+        assert_eq!(compiler.heap().string_text(atom), "held once");
+        assert_eq!(compiler.heap().held_atoms_mark(), mark + 2);
+        drop(compiler);
+        assert_eq!(runtime.heap().held_atoms_mark(), mark);
+    }
 }

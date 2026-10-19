@@ -35,6 +35,31 @@ fn the_report_matches_the_heap_and_a_known_graph() {
 }
 
 #[test]
+fn the_reserved_total_counts_regexp_programs() {
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    let key = runtime.heap_mut().property_key("RegExp").unwrap();
+    let constructor = runtime
+        .heap()
+        .get_property(runtime.global_object(), key)
+        .unwrap();
+    let pattern = runtime.heap_mut().alloc_string("a+(b|c)*").unwrap();
+    let regexp = runtime
+        .call(constructor, Value::UNDEFINED, &[Value::string(pattern)])
+        .unwrap();
+    let handle = runtime.hold(regexp);
+    runtime.run_gc();
+    let report = runtime.memory_report();
+    assert_eq!(report.code.regexp_programs, 1);
+    assert!(report.code.regexp_bytes > 0);
+    assert_eq!(report.reserved_bytes(), runtime.heap().bytes());
+    runtime.release(handle);
+    runtime.run_gc();
+    let freed = runtime.memory_report();
+    assert_eq!(freed.code.regexp_programs, 0);
+    assert_eq!(freed.reserved_bytes(), runtime.heap().bytes());
+}
+
+#[test]
 fn options_reach_the_heap_and_the_stack() {
     let options = RuntimeOptions {
         min_heap: 1 << 20,

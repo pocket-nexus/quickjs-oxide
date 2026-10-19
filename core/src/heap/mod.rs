@@ -10,6 +10,7 @@ pub mod arena;
 pub mod atom;
 pub mod bigint;
 pub mod buffer;
+pub mod code;
 pub mod gc;
 pub(crate) mod hash;
 pub mod object;
@@ -30,7 +31,7 @@ use self::object::{
     FunctionBytecode, FunctionRecord, Internal, InternalData, InternalTag, NONE, ObjectHeader,
     ObjectKind, PayloadArenas, flags,
 };
-use self::string::{StringRecord, StringRepr};
+use self::string::{AtomKeep, StringRecord, StringRepr};
 use self::symbol::SymbolRecord;
 use self::values::{Range, ValueHeap};
 use crate::bytecode::CodeUnitId;
@@ -135,6 +136,18 @@ pub struct Heap {
     pub(crate) values: ValueHeap,
     pub(crate) payloads: PayloadArenas,
     pub(crate) atoms: AtomTable,
+    /// What [`Heap::intern`] does with the atoms it returns.
+    pub(crate) atom_mode: AtomMode,
+    /// The atoms interned in [`AtomMode::Pin`]: roots for the heap's
+    /// lifetime.
+    pub(crate) pinned_atoms: Vec<StringId>,
+    /// The atoms interned in [`AtomMode::Hold`]: roots until the
+    /// compilation that interned them ends.
+    pub(crate) held_atoms: Vec<StringId>,
+    /// The code units compiled at run time.
+    pub(crate) code: code::DynamicUnits,
+    /// The regular-expression programs, by `RegExp` object payload.
+    pub(crate) regexps: crate::vm::regexp::RegExpStore,
     /// Transition-tree roots by `(prototype index or NONE, kind)`. Weak.
     pub(crate) shape_roots: FxHashMap<(u32, ObjectKind), ShapeId>,
     /// One-entry cache in front of `shape_roots`; cleared by every collection.
@@ -170,6 +183,23 @@ pub struct Heap {
     pub(crate) jobs: std::collections::VecDeque<crate::vm::jobs::Job>,
 }
 
+/// How long an atom [`Heap::intern`] returns is kept. Atoms are otherwise
+/// collected like any string: a property key, a shape, a dynamic unit or a
+/// value keeps one alive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AtomMode {
+    /// For the heap's lifetime: the realm's names and the builtins'
+    /// properties, interned while the runtime is created, and the keys of
+    /// the units published before the program runs.
+    Pin,
+    /// Until the running compilation ends: the keys, names and string
+    /// constants of code compiled at run time, before its units are
+    /// published and instantiated.
+    Hold,
+    /// No longer than its holders.
+    Weak,
+}
+
 /// The function kinds with a cached closure shape: plain, with a
 /// `prototype`, async, generator, async generator.
 pub(crate) const CLOSURE_SHAPES: usize = 5;
@@ -199,6 +229,11 @@ impl Heap {
             values: ValueHeap::new(),
             payloads: PayloadArenas::default(),
             atoms: AtomTable::default(),
+            atom_mode: AtomMode::Pin,
+            pinned_atoms: Vec::new(),
+            held_atoms: Vec::new(),
+            code: code::DynamicUnits::default(),
+            regexps: Default::default(),
             shape_roots: FxHashMap::default(),
             last_root: None,
             prototypes: FxHashMap::default(),
@@ -268,6 +303,8 @@ impl Heap {
             + self.payloads.bytecode.bytes()
             + self.payloads.internals.bytes()
             + self.values.bytes()
+            + self.code.live_bytes()
+            + self.regexps.bytes()
     }
 
     /// Bytes held by live records and live value ranges.
@@ -283,6 +320,8 @@ impl Heap {
             + self.payloads.bytecode.used_bytes()
             + self.payloads.internals.used_bytes()
             + self.values.used_slots() * 8
+            + self.code.live_bytes()
+            + self.regexps.bytes()
     }
 
     pub fn ics(&self) -> &IcStore {
@@ -310,6 +349,11 @@ impl Heap {
 
     pub fn value_heap(&self) -> &ValueHeap {
         &self.values
+    }
+
+    /// The regular-expression programs.
+    pub fn regexps(&self) -> &crate::vm::regexp::RegExpStore {
+        &self.regexps
     }
 
     pub fn atom_table(&self) -> &AtomTable {
@@ -362,8 +406,11 @@ impl Heap {
             | ObjectKind::Array
             | ObjectKind::Native
             | ObjectKind::Arguments
-            | ObjectKind::RegExp
             | ObjectKind::ForInIterator => self.alloc_plain(kind, prototype, slot_capacity, 0),
+            // No program until `vm::regexp::set_program` names one.
+            ObjectKind::RegExp => {
+                self.alloc_object_with(kind, prototype, slot_capacity, 0, NONE, Need::default())
+            }
             ObjectKind::Scope | ObjectKind::GlobalObject => {
                 self.alloc_object_with(kind, prototype, slot_capacity, 0, NONE, Need::default())
             }
@@ -1153,6 +1200,7 @@ impl Heap {
     fn intern_repr(&mut self, repr: StringRepr) -> Result<StringId, HeapError> {
         let hash = repr.content_hash();
         if let Some(id) = self.atoms.find(&self.strings, &repr, hash) {
+            self.retain_atom(id);
             return Ok(id);
         }
         self.insert_atom(repr, hash)
@@ -1170,7 +1218,81 @@ impl Heap {
             return Err(HeapError::OutOfMemory);
         }
         self.atoms.insert(hash, id);
+        self.retain_atom(id);
         Ok(id)
+    }
+
+    /// Keeps an interned atom as [`Heap::atom_mode`] says.
+    #[inline]
+    fn retain_atom(&mut self, id: StringId) {
+        match self.atom_mode {
+            AtomMode::Weak => {}
+            AtomMode::Hold => self.hold_atom(id),
+            AtomMode::Pin => self.pin_atom(id),
+        }
+    }
+
+    /// Keeps atom `id` until the compilation holding it releases it; an atom
+    /// already held (or pinned) is not held twice.
+    fn hold_atom(&mut self, id: StringId) {
+        let record = self.strings.get_mut(id.0);
+        if record.keep == AtomKeep::Weak {
+            record.keep = AtomKeep::Held;
+            self.held_atoms.push(id);
+        }
+    }
+
+    /// Keeps atom `id` for the heap's lifetime.
+    pub fn pin_atom(&mut self, id: StringId) {
+        let record = self.strings.get_mut(id.0);
+        debug_assert!(record.is_atom, "pinning a string that is not an atom");
+        if record.keep != AtomKeep::Pinned {
+            record.keep = AtomKeep::Pinned;
+            self.pinned_atoms.push(id);
+        }
+    }
+
+    /// Sets how [`Heap::intern`] keeps its atoms; returns the mode before.
+    pub fn set_atom_mode(&mut self, mode: AtomMode) -> AtomMode {
+        std::mem::replace(&mut self.atom_mode, mode)
+    }
+
+    pub fn atom_mode(&self) -> AtomMode {
+        self.atom_mode
+    }
+
+    /// The atom with this content, kept for the heap's lifetime: a name the
+    /// natives spell as a literal and hold across allocations.
+    pub fn intern_pinned(&mut self, text: &str) -> Result<StringId, HeapError> {
+        let mode = self.set_atom_mode(AtomMode::Pin);
+        let result = self.intern(text);
+        self.atom_mode = mode;
+        result
+    }
+
+    /// [`Heap::property_key`] kept for the heap's lifetime, as
+    /// [`Heap::intern_pinned`].
+    pub fn property_key_pinned(&mut self, text: &str) -> Result<PropertyKey, HeapError> {
+        let mode = self.set_atom_mode(AtomMode::Pin);
+        let result = self.property_key(text);
+        self.atom_mode = mode;
+        result
+    }
+
+    /// The position the atoms held for a compilation start at.
+    pub(crate) fn held_atoms_mark(&self) -> usize {
+        self.held_atoms.len()
+    }
+
+    pub(crate) fn release_held_atoms(&mut self, mark: usize) {
+        for position in mark..self.held_atoms.len() {
+            let id = self.held_atoms[position];
+            let record = self.strings.get_mut(id.0);
+            if record.keep == AtomKeep::Held {
+                record.keep = AtomKeep::Weak;
+            }
+        }
+        self.held_atoms.truncate(mark);
     }
 
     /// The atom with this content.
@@ -1187,6 +1309,7 @@ impl Heap {
     pub fn intern_latin1(&mut self, bytes: &[u8]) -> Result<StringId, HeapError> {
         let hash = string::content_hash(bytes.iter().map(|&byte| u16::from(byte)));
         if let Some(id) = self.atoms.find_one_byte(&self.strings, bytes, hash) {
+            self.retain_atom(id);
             return Ok(id);
         }
         self.insert_atom(StringRepr::OneByte(bytes.into()), hash)
@@ -1196,6 +1319,7 @@ impl Heap {
     pub fn intern_string(&mut self, string: StringId) -> Result<StringId, HeapError> {
         let record = self.string(string);
         if record.is_atom {
+            self.retain_atom(string);
             return Ok(string);
         }
         let repr = record.repr().clone();

@@ -1,5 +1,5 @@
 use super::*;
-use crate::engine::test_support::test_context;
+use crate::engine::test_support::{assert_script_true, test_context};
 
 #[test]
 fn compiler_marks_only_syntactic_eval_identifier_calls() {
@@ -1269,4 +1269,131 @@ fn eval_scope_descriptors_are_semantic_metadata_in_strip_debug_mode() {
         .expect("create context")
         .compile(source)
         .unwrap();
+}
+
+/// The dynamic units, cache entries in use and atoms after a full
+/// collection.
+fn collected_code(runtime: &Runtime) -> (usize, usize, usize) {
+    runtime.run_gc().unwrap();
+    let report = runtime.memory_report().unwrap();
+    (
+        report.code.dynamic_units,
+        report.ic_entries - report.ic_free,
+        report.atoms,
+    )
+}
+
+#[test]
+fn code_compiled_at_run_time_is_freed_with_its_last_function() {
+    let (runtime, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
+        function round() {
+            for (var i = 0; i < 2000; i++) {
+                var f = new Function("o", "return o.k" + i + " + " + i);
+                if (f({}) === f({}) || f({ ["k" + i]: 1 }) !== i + 1) throw new Error("" + i);
+                eval("var e = { p" + i + ": " + i + " }; e.p" + i);
+            }
+            return true;
+        }
+        true
+        "#,
+    );
+    // Each round's own script is a static unit (one global cache entry);
+    // the code it compiles leaves nothing behind.
+    let rounds: Vec<_> = (0..3)
+        .map(|_| {
+            assert_script_true(&mut context, "round()");
+            collected_code(&runtime)
+        })
+        .collect();
+    assert_eq!(rounds[0].0, 0, "no dynamic unit survives");
+    assert_eq!(rounds[1].0, 0);
+    assert_eq!(rounds[1].1 - rounds[0].1, rounds[2].1 - rounds[1].1);
+    assert!(rounds[2].1 - rounds[1].1 <= 2, "{rounds:?}");
+    assert_eq!(rounds[0].2, rounds[2].2, "atoms");
+}
+
+#[test]
+fn a_kept_function_keeps_exactly_its_unit() {
+    let (runtime, mut context) = test_context();
+    let (before, _, _) = collected_code(&runtime);
+    assert_script_true(
+        &mut context,
+        r#"
+        var kept = [];
+        for (var i = 0; i < 300; i++) {
+            var f = new Function("return 'r" + i + "'");
+            if (i % 10 === 0) kept.push(f);
+        }
+        f = null;
+        true
+        "#,
+    );
+    let (units, _, _) = collected_code(&runtime);
+    assert_eq!(units - before, 30);
+    assert_script_true(
+        &mut context,
+        r#"
+        kept.every(function (f, n) {
+            return f() === "r" + n * 10 && f.name === "anonymous" &&
+                f.toString().indexOf("return 'r" + n * 10 + "'") > 0;
+        })
+        "#,
+    );
+}
+
+#[test]
+fn eval_code_survives_collections_while_it_runs_or_waits() {
+    let (runtime, mut context) = test_context();
+    assert_script_true(
+        &mut context,
+        r#"
+        var g = eval("(function* gen(n) { var a = yield n; yield a + n; })")(1);
+        var e = eval("\n\n(function named() { return new Error('at three'); })");
+        true
+        "#,
+    );
+    // Fresh code around them, then a collection: the generator's and the
+    // function's units stay.
+    assert_script_true(
+        &mut context,
+        r#"
+        for (var i = 0; i < 200; i++) eval("(function () { return " + i + "; })")();
+        true
+        "#,
+    );
+    runtime.run_gc().unwrap();
+    assert_script_true(
+        &mut context,
+        r#"
+        var first = g.next().value;
+        for (var i = 0; i < 200; i++) eval("(function () { return " + i + "; })")();
+        var second = g.next(10).value;
+        var error = e();
+        first === 1 && second === 11 && e.name === "named" &&
+            error.stack.indexOf(":3:") > 0
+        "#,
+    );
+    runtime.run_gc().unwrap();
+    assert_script_true(&mut context, "g.next().done && e().message === 'at three'");
+}
+
+#[test]
+fn atoms_of_collected_code_leave_the_table() {
+    let (runtime, mut context) = test_context();
+    let source = r#"
+        for (var i = 0; i < 20000; i++) {
+            var o = eval("({k" + i + ": 1, ['c' + " + i + "]: 2})");
+            o["x" + i] = 3;
+        }
+        true
+    "#;
+    assert_script_true(&mut context, source);
+    let (_, _, first) = collected_code(&runtime);
+    assert_script_true(&mut context, source);
+    let (_, _, second) = collected_code(&runtime);
+    assert_eq!(first, second);
+    assert_script_true(&mut context, "o.k19999 + o.c19999 + o.x19999 === 6");
 }

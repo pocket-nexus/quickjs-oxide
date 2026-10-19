@@ -975,7 +975,7 @@ fn slow_arguments(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
 // ---- [[OwnPropertyKeys]] ----
 
 /// `object.[[OwnPropertyKeys]]()`: integer indices ascending, then strings,
-/// then symbols, each in creation order. Symbol keys are rooted on the root
+/// then symbols, each in creation order. The keys are rooted on the root
 /// stack (the caller cuts it back).
 pub(crate) fn own_property_keys(
     cx: &mut Cx<'_>,
@@ -1010,12 +1010,19 @@ pub(crate) fn own_property_keys(
         }
         _ => ordinary_own_keys(cx, object),
     };
-    for key in &keys {
-        if let KeyKind::Symbol(symbol) = key.kind() {
-            cx.heap.roots().push(Value::symbol(symbol));
+    root_keys(cx, &keys);
+    Ok(keys)
+}
+
+/// Roots the strings and symbols of `keys` on the root stack: an atom lives
+/// only while something names it, and the caller may run code that deletes
+/// the property.
+pub(crate) fn root_keys(cx: &mut Cx<'_>, keys: &[PropertyKey]) {
+    for key in keys {
+        if let Some(value) = key.heap_value() {
+            cx.heap.roots().push(value);
         }
     }
-    Ok(keys)
 }
 
 /// `OrdinaryOwnPropertyKeys`, with the mapped indices of an `arguments`

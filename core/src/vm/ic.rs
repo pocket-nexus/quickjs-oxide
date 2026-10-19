@@ -1,15 +1,18 @@
 //! Inline caches: one 16-byte entry per cache site, in a store beside the code
 //! store.
 //!
-//! The loop borrows the running unit's code from the [`CodeStore`] across every
-//! heap call, so a cache cannot live in a [`CodeUnit`]. Entries live here
-//! instead, indexed by the unit's `ic_base` plus the site operand of the
-//! instruction. The store sits inside the [`Heap`], as the register file does,
-//! so the collector prunes it at every collection without a parameter: shape,
-//! object and cell indices are recycled, and an entry naming a dead record
-//! would hit on a recycled id. Entries are weak.
+//! The loop borrows the running unit's code across every heap call, so a
+//! cache cannot live in a [`CodeUnit`]. Entries live here instead, indexed by
+//! the unit's `ic_base` plus the site operand of the instruction. The store
+//! sits inside the [`Heap`], as the register file does, so the collector
+//! prunes it at every collection without a parameter: shape, object, cell and
+//! atom indices are recycled, and an entry naming a dead record would hit on
+//! a recycled id. Entries are weak.
 //!
-//! [`CodeStore`]: crate::bytecode::CodeStore
+//! A unit's entries are one range. A freed dynamic unit returns its range,
+//! emptied, to a free list sorted by position, where it merges with its
+//! neighbours; a unit published later takes the first range that fits.
+//!
 //! [`CodeUnit`]: crate::bytecode::CodeUnit
 //! [`Heap`]: crate::heap::Heap
 
@@ -81,6 +84,9 @@ pub struct IcEntry {
 }
 
 const _: () = assert!(size_of::<IcEntry>() == 16);
+
+/// Bytes one cache site holds: its entry and its kind.
+pub const ENTRY_BYTES: usize = size_of::<IcEntry>() + size_of::<IcKind>();
 
 /// `w0` of an empty entry: no shape has this index.
 pub const EMPTY_TAG: u32 = NONE;
@@ -233,16 +239,21 @@ pub struct IcStats {
     pub iter_generic: u64,
 }
 
-/// Every cache entry of every published unit. Append-only, like the code
-/// store: unit `u`'s entries are `entries[u.ic_base..u.ic_base + u.ic_count]`.
+/// Every cache entry of every published unit: unit `u`'s entries are
+/// `entries[u.ic_base..u.ic_base + u.ic_count]`.
 #[derive(Default)]
 pub struct IcStore {
     pub(crate) entries: Vec<IcEntry>,
     pub(crate) kinds: Vec<IcKind>,
+    /// The ranges no unit holds, as `(start, len)`, sorted and never
+    /// adjacent; their entries are empty.
+    free: Vec<(u32, u32)>,
     /// The rows of polymorphic sites, each owned by one site.
     pub(crate) poly: Vec<[IcEntry; POLY]>,
     /// The kind of each row's site.
     poly_kinds: Vec<IcKind>,
+    /// Rows no site owns, reused first.
+    poly_free: Vec<u32>,
     /// The megamorphic table: `(shape, key)` and a `GetField` entry for that
     /// shape; empty until a site goes megamorphic.
     mega: Vec<(u32, u32, IcEntry)>,
@@ -251,22 +262,112 @@ pub struct IcStore {
 }
 
 impl IcStore {
-    /// Appends the entries of a unit published at `ic_base`.
-    pub(crate) fn reserve(&mut self, unit: &CodeUnit) {
-        debug_assert_eq!(self.entries.len(), unit.ic_base as usize);
-        let first = self.kinds.len();
-        let len = first + unit.ic_count as usize;
-        self.entries.resize(len, IcEntry::EMPTY);
+    /// Reserves the entries of a unit about to be published and sets its
+    /// `ic_base`: the first free range that fits, else the end of the store.
+    pub(crate) fn reserve(&mut self, unit: &mut CodeUnit) {
+        let count = unit.ic_count;
+        let end = self.entries.len() as u32;
+        let first = match self.free.iter().position(|&(_, len)| len >= count) {
+            _ if count == 0 => end,
+            Some(position) => {
+                let (start, len) = self.free[position];
+                if len == count {
+                    self.free.remove(position);
+                } else {
+                    self.free[position] = (start + count, len - count);
+                }
+                start
+            }
+            // A free range at the end grows into the new entries.
+            None if self
+                .free
+                .last()
+                .is_some_and(|&(start, len)| start + len == end) =>
+            {
+                let (start, _) = self.free.pop().expect("a free range");
+                start
+            }
+            None => end,
+        };
+        let len = first.checked_add(count).expect("cache store overflow") as usize;
+        if len > self.entries.len() {
+            self.entries.resize(len, IcEntry::EMPTY);
+            self.kinds.resize(len, IcKind::Get);
+            #[cfg(any(feature = "ic-stats", debug_assertions))]
+            self.stats.site_misses.resize(len, 0);
+        }
         // Sites the instructions do not name (the reserved no-cache field
         // site) keep the field kind and stay empty.
-        self.kinds.resize(len, IcKind::Get);
+        let first = first as usize;
+        self.kinds[first..len].fill(IcKind::Get);
         for insn in unit.code.iter() {
             if let (Some(kind), Some(site)) = (IcKind::of(insn.op), insn.site()) {
                 self.kinds[first + site as usize] = kind;
             }
         }
+        unit.ic_base = first as u32;
+    }
+
+    /// Empties the entries of a freed unit and returns its range (and the
+    /// polymorphic rows its sites own) to the free lists.
+    pub(crate) fn release(&mut self, unit: &CodeUnit) {
+        let (start, count) = (unit.ic_base, unit.ic_count);
+        if count == 0 {
+            return;
+        }
+        let range = start as usize..(start + count) as usize;
+        for entry in &mut self.entries[range.clone()] {
+            if entry.w0 == POLY_TAG {
+                self.poly[entry.w1 as usize] = [IcEntry::EMPTY; POLY];
+                self.poly_free.push(entry.w1);
+            }
+            *entry = IcEntry::EMPTY;
+        }
         #[cfg(any(feature = "ic-stats", debug_assertions))]
-        self.stats.site_misses.resize(len, 0);
+        self.stats.site_misses[range].fill(0);
+        let position = self.free.partition_point(|&(free, _)| free < start);
+        let after = self
+            .free
+            .get(position)
+            .is_some_and(|&(free, _)| free == start + count);
+        let before = position > 0 && {
+            let (free, len) = self.free[position - 1];
+            free + len == start
+        };
+        match (before, after) {
+            (true, true) => {
+                let (_, next) = self.free.remove(position);
+                self.free[position - 1].1 += count + next;
+            }
+            (true, false) => self.free[position - 1].1 += count,
+            (false, true) => {
+                let next = &mut self.free[position];
+                *next = (start, next.1 + count);
+            }
+            (false, false) => self.free.insert(position, (start, count)),
+        }
+    }
+
+    /// Entries no unit holds.
+    pub fn free_len(&self) -> usize {
+        self.free.iter().map(|&(_, len)| len as usize).sum()
+    }
+
+    /// Debug check: every free entry is empty and no free row is linked.
+    pub(crate) fn verify_free(&self) {
+        for &(start, len) in &self.free {
+            let range = start as usize..(start + len) as usize;
+            assert!(
+                self.entries[range].iter().all(IcEntry::is_empty),
+                "gc verify: a free cache range at {start} is not empty"
+            );
+        }
+        for &row in &self.poly_free {
+            assert!(
+                self.poly[row as usize].iter().all(IcEntry::is_empty),
+                "gc verify: free polymorphic row {row} is not empty"
+            );
+        }
     }
 
     #[inline(always)]
@@ -306,10 +407,19 @@ impl IcStore {
             if current.w0 == fill.w0 {
                 self.entries[index] = fill;
             } else {
-                let row = self.poly.len() as u32;
-                self.poly
-                    .push([current, fill, IcEntry::EMPTY, IcEntry::EMPTY]);
-                self.poly_kinds.push(kind);
+                let entries = [current, fill, IcEntry::EMPTY, IcEntry::EMPTY];
+                let row = match self.poly_free.pop() {
+                    Some(row) => {
+                        self.poly[row as usize] = entries;
+                        self.poly_kinds[row as usize] = kind;
+                        row
+                    }
+                    None => {
+                        self.poly.push(entries);
+                        self.poly_kinds.push(kind);
+                        self.poly.len() as u32 - 1
+                    }
+                };
                 self.entries[index] = IcEntry {
                     w0: POLY_TAG,
                     w1: row,
@@ -330,6 +440,9 @@ impl IcStore {
                 true
             }
             None => {
+                let row = current.w1;
+                self.poly[row as usize] = [IcEntry::EMPTY; POLY];
+                self.poly_free.push(row);
                 self.entries[index] = IcEntry {
                     w0: MEGA_TAG,
                     ..IcEntry::EMPTY
@@ -478,7 +591,7 @@ impl IcStore {
             .mega
             .iter()
             .filter(|(_, _, entry)| entry.is_filled())
-            .flat_map(|&(_, _, entry)| records(IcKind::Get, entry));
+            .flat_map(|&(_, key, entry)| records(IcKind::Get, entry).chain(key_atom(key)));
         mono.chain(poly).chain(mega)
     }
 
@@ -489,23 +602,33 @@ impl IcStore {
         let mut cleared = 0;
         let rows = self.poly.iter_mut().zip(&self.poly_kinds);
         let poly = rows.flat_map(|(row, kind)| row.iter_mut().map(move |entry| (entry, kind)));
-        let mega = self
-            .mega
-            .iter_mut()
-            .map(|(_, _, entry)| (entry, &IcKind::Get));
-        for (entry, &kind) in self
-            .entries
-            .iter_mut()
-            .zip(&self.kinds)
-            .chain(poly)
-            .chain(mega)
-        {
+        for (entry, &kind) in self.entries.iter_mut().zip(&self.kinds).chain(poly) {
             if entry.is_filled() && !records(kind, *entry).all(&mut live) {
                 *entry = IcEntry::EMPTY;
                 cleared += 1;
             }
         }
+        // A megamorphic entry is also keyed by its property key, whose atom
+        // index a dead atom gives up.
+        for (_, key, entry) in &mut self.mega {
+            if entry.is_filled()
+                && !records(IcKind::Get, *entry)
+                    .chain(key_atom(*key))
+                    .all(&mut live)
+            {
+                *entry = IcEntry::EMPTY;
+                cleared += 1;
+            }
+        }
         cleared
+    }
+}
+
+/// The atom a megamorphic entry's key names, if it is one.
+fn key_atom(key: u32) -> Option<Record> {
+    match crate::heap::atom::PropertyKey::from_raw(key).kind() {
+        crate::heap::atom::KeyKind::String(id) => Some(Record::Atom(id.index())),
+        _ => None,
     }
 }
 /// A heap record an entry names.
@@ -514,6 +637,7 @@ pub(crate) enum Record {
     Shape(u32),
     Object(u32),
     Cell(u32),
+    Atom(u32),
 }
 
 /// The records a filled entry of `kind` names.
@@ -543,4 +667,82 @@ fn records(kind: IcKind, entry: IcEntry) -> impl Iterator<Item = Record> {
         IcKind::Construct => found[0] = Some(Record::Shape(entry.w0)),
     }
     found.into_iter().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::bytecode::CodeBuilder;
+    use crate::bytecode::builder::UnitLayout;
+
+    /// A unit with `sites` cache sites.
+    fn unit(sites: u32) -> CodeUnit {
+        let mut builder = CodeBuilder::new();
+        builder.a(Opcode::Return, 0);
+        let mut unit = builder.finish(UnitLayout {
+            register_count: 1,
+            ..UnitLayout::default()
+        });
+        unit.ic_count = sites;
+        unit
+    }
+
+    fn reserve(store: &mut IcStore, sites: u32) -> CodeUnit {
+        let mut unit = unit(sites);
+        store.reserve(&mut unit);
+        unit
+    }
+
+    #[test]
+    fn freed_ranges_merge_and_split() {
+        let mut store = IcStore::default();
+        let [a, b, c, d] = [4, 6, 3, 5].map(|sites| reserve(&mut store, sites));
+        assert_eq!([a.ic_base, b.ic_base, c.ic_base, d.ic_base], [0, 4, 10, 13]);
+        store.release(&b);
+        store.release(&a);
+        assert_eq!(store.free, [(0, 10)], "adjacent ranges merge");
+        store.release(&c);
+        assert_eq!(store.free, [(0, 13)]);
+        assert_eq!(store.free_len(), 13);
+        // First fit, and the rest stays free.
+        let e = reserve(&mut store, 8);
+        assert_eq!(e.ic_base, 0);
+        assert_eq!(store.free, [(8, 5)]);
+        // Too large for the hole: appended.
+        let f = reserve(&mut store, 9);
+        assert_eq!(f.ic_base, 18);
+        // A free range at the end grows into the new entries.
+        store.release(&f);
+        let g = reserve(&mut store, 12);
+        assert_eq!(g.ic_base, 18);
+        assert_eq!(store.len(), 30);
+        store.verify_free();
+    }
+
+    #[test]
+    fn a_freed_unit_empties_its_entries_and_rows() {
+        let mut store = IcStore::default();
+        let a = reserve(&mut store, 2);
+        store.kinds[0] = IcKind::Get;
+        let fill = |shape: u32| IcEntry {
+            w0: shape,
+            w1: NONE,
+            w2: 0,
+            w3: STATIC_CELL.index(),
+        };
+        assert!(store.record(0, fill(1)));
+        assert!(store.record(0, fill(2)));
+        assert!(store.poly_row(0).is_some());
+        assert!(store.record(1, fill(3)));
+        store.release(&a);
+        assert!(store.entries[..2].iter().all(IcEntry::is_empty));
+        store.verify_free();
+        // The next polymorphic site takes the freed row.
+        let b = reserve(&mut store, 1);
+        assert_eq!(b.ic_base, 0);
+        assert!(store.record(0, fill(4)));
+        assert!(store.record(0, fill(5)));
+        assert_eq!(store.entries[0].w1, 0, "the row is reused");
+        assert_eq!(store.poly.len(), 1);
+    }
 }

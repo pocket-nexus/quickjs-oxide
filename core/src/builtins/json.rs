@@ -340,6 +340,10 @@ impl Parser<'_> {
                     .heap
                     .property_key_units(&name)
                     .map_err(|error| heap_failure(cx, error))?;
+                // Parsing the value allocates; the entry keeps the key too.
+                if let Some(key) = key.heap_value() {
+                    cx.heap.roots().push(key);
+                }
                 self.skip_space()?;
                 if !self.eat(b':') {
                     return self.syntax("expecting ':'");
@@ -965,6 +969,10 @@ fn property_list(cx: &mut Cx<'_>, replacer: ObjectId) -> Result<Vec<PropertyKey>
             .property_key_units(&units)
             .map_err(|error| error::heap_error(cx, error))?;
         if !keys.contains(&key) {
+            // Rooted until the native returns, for the whole serialization.
+            if let Some(key) = key.heap_value() {
+                cx.heap.roots().push(key);
+            }
             keys.push(key);
         }
     }

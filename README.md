@@ -89,6 +89,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 `examples/eval.rs` handles every completion value and uncaught exceptions.
+Code compiled through `eval`/`compile` lives as long as the runtime; an
+application that evaluates input repeatedly (a REPL) passes
+`EvalOptions::default().transient()` so that each input's code is freed
+once unreachable ([code lifetime](src/engine/api/README.md#code-lifetime)).
 A host (`SystemHost`, or an application's own `Host`) supplies time,
 randomness and output; a module loader lets an application resolve and load
 ES modules. A runtime has one realm; separate runtimes isolate code.

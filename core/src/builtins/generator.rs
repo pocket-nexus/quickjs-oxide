@@ -209,7 +209,7 @@ fn yielded_star(cx: &Cx<'_>, generator: ObjectId) -> bool {
     let crate::heap::object::InternalData::Frame(saved) = cx.heap.internal(generator).data else {
         return false;
     };
-    let unit = cx.code.get(crate::bytecode::CodeUnitId(saved.unit));
+    let unit = cx.unit(crate::bytecode::CodeUnitId(saved.unit));
     unit.code[saved.pc as usize - 1].op == crate::bytecode::Opcode::YieldStar
 }
 

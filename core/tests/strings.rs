@@ -1,6 +1,6 @@
 //! Interning, property keys, symbols and BigInt records.
 
-use oxide_core::{Heap, KeyKind, ObjectKind, PropertyFlags, PropertyKey, Value};
+use oxide_core::{AtomMode, Heap, KeyKind, ObjectKind, PropertyFlags, PropertyKey, Value};
 
 #[test]
 fn interning_is_by_content() {
@@ -100,7 +100,8 @@ fn index_keys_stay_out_of_the_atom_table() {
 }
 
 #[test]
-fn atoms_survive_collection() {
+fn pinned_atoms_survive_collection() {
+    // A heap starts in `AtomMode::Pin`.
     let mut heap = Heap::default();
     let atom = heap.intern("survivor").unwrap();
     let plain = heap.alloc_string("transient").unwrap();
@@ -109,6 +110,32 @@ fn atoms_survive_collection() {
     assert!(!heap.is_live(Value::string(plain)));
     assert_eq!(heap.intern("survivor").unwrap(), atom);
     assert_eq!(heap.string_text(atom), "survivor");
+}
+
+#[test]
+fn weak_atoms_live_as_long_as_their_holders() {
+    let mut heap = Heap::default();
+    heap.set_atom_mode(AtomMode::Weak);
+    let holder = heap.alloc_object(ObjectKind::Ordinary, None, 4).unwrap();
+    heap.handles().create(Value::object(holder));
+    let kept = heap.property_key("kept").unwrap();
+    heap.add_property(holder, kept, PropertyFlags::DEFAULT, Value::TRUE)
+        .unwrap();
+    let dropped = heap.intern("dropped").unwrap();
+    let pinned = heap.intern_pinned("pinned").unwrap();
+    heap.collect();
+    assert!(!heap.is_live(Value::string(dropped)), "no holder");
+    assert!(heap.is_live(Value::string(pinned)));
+    assert_eq!(heap.property_key("kept").unwrap(), kept, "a shape holds it");
+    let again = heap.intern("dropped").unwrap();
+    assert_eq!(heap.string_text(again), "dropped");
+    assert_eq!(heap.intern("dropped").unwrap(), again);
+    // An atom found again in pin mode is pinned from then on.
+    heap.set_atom_mode(AtomMode::Pin);
+    assert_eq!(heap.intern("dropped").unwrap(), again);
+    heap.set_atom_mode(AtomMode::Weak);
+    heap.collect();
+    assert!(heap.is_live(Value::string(again)));
 }
 
 #[test]

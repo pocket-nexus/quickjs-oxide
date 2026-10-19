@@ -22,6 +22,8 @@ fn run_with(source: &str, setup: impl FnOnce(&mut Runtime)) -> (String, u64) {
     let script = compile_unlinked_script(source).expect("compiles");
     let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
     setup(&mut runtime);
+    // `eval` and the `Function` constructors compile through the API's host.
+    runtime.set_compiler(crate::engine::api::core::compile::compile_for_core);
     runtime.install_print().unwrap();
     runtime.capture_output();
     let lowered = lower_script(&mut runtime, &script).unwrap_or_else(|error| panic!("{error}"));

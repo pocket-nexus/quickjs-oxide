@@ -353,7 +353,7 @@ impl Printer<'_, '_> {
                 "Function"
             };
         };
-        let unit = self.cx.code.get(heap.bytecode_unit(bytecode));
+        let unit = self.cx.unit(heap.bytecode_unit(bytecode));
         use crate::bytecode::flags as unit_flags;
         match (unit.has(unit_flags::ASYNC), unit.has(unit_flags::GENERATOR)) {
             (false, false) => "Function",
@@ -794,7 +794,7 @@ impl Printer<'_, '_> {
 
     fn regexp(&mut self, object: ObjectId) {
         let index = self.cx.heap.header(object).payload;
-        let record = self.cx.regexps.get(index);
+        let record = self.cx.heap.regexps.get(index);
         let pattern = self.units(record.source);
         let flags = self.units(record.flags);
         self.out.push('/');
@@ -852,7 +852,7 @@ impl Printer<'_, '_> {
                 self.out.push(flag);
             }
         }
-        if self.cx.regexps.program(index).has_named_captures() {
+        if self.cx.heap.regexps.program(index).has_named_captures() {
             self.out.push('v');
         }
     }

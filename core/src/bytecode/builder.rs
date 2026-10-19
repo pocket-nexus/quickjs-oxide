@@ -200,6 +200,7 @@ impl CodeBuilder {
             length: layout.length,
             source: layout.source,
             direct_eval_sites: Box::new([]),
+            atoms: Box::new([]),
         }
     }
 }

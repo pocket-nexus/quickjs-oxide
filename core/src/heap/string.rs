@@ -108,6 +108,18 @@ pub fn content_hash(units: impl Iterator<Item = u16>) -> u32 {
     hash
 }
 
+/// What keeps an atom alive besides its holders.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AtomKeep {
+    /// Nothing: it lives while a value, shape or unit names it.
+    Weak,
+    /// On `Heap::held_atoms`, until its compilation ends
+    /// ([`super::AtomMode::Hold`]).
+    Held,
+    /// The heap's lifetime ([`super::AtomMode::Pin`]).
+    Pinned,
+}
+
 pub struct StringRecord {
     /// The units; unset while the record is an unflattened rope (whose
     /// halves are in `Heap::ropes`).
@@ -118,6 +130,8 @@ pub struct StringRecord {
     /// Computed on first use; 0 means not yet computed.
     hash: Cell<u32>,
     pub is_atom: bool,
+    /// What keeps an atom alive besides its holders.
+    pub keep: AtomKeep,
     /// For atoms spelling an array index too large for an immediate
     /// `PropertyKey`: that index, else [`NONE`].
     pub array_index: u32,
@@ -136,6 +150,7 @@ impl StringRecord {
             born_rope: false,
             hash: Cell::new(0),
             is_atom: false,
+            keep: AtomKeep::Weak,
             array_index: NONE,
         }
     }
@@ -149,6 +164,7 @@ impl StringRecord {
             born_rope: true,
             hash: Cell::new(0),
             is_atom: false,
+            keep: AtomKeep::Weak,
             array_index: NONE,
         }
     }

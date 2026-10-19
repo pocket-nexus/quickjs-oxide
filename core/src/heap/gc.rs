@@ -357,6 +357,8 @@ impl Heap {
         self.payloads.functions.clear_marks();
         self.payloads.bytecode.clear_marks();
         self.payloads.internals.clear_marks();
+        self.code.clear_marks();
+        self.regexps.clear_marks();
     }
 
     /// Marks everything reachable from the root set. A reference to a freed
@@ -381,8 +383,16 @@ impl Heap {
                 .iter()
                 .map(|frame| Value::object(frame.function)),
         );
-        for id in self.atoms.ids() {
+        for &id in self.pinned_atoms.iter().chain(&self.held_atoms) {
             self.strings.mark(id.0);
+        }
+        // Units published but not yet instantiated.
+        for position in 0..self.code.pinned().len() {
+            let index = self.code.pinned()[position];
+            let id = crate::bytecode::CodeUnitId(index | crate::bytecode::DYNAMIC);
+            if let Some(unit) = self.code.mark(id) {
+                stack.extend(unit.atoms.iter().map(|&atom| Value::string(atom)));
+            }
         }
         let mut shapes = mem::take(&mut self.gc.shape_stack);
         shapes.extend(self.closure_shapes.iter().flatten());
@@ -488,6 +498,10 @@ impl Heap {
                                     }
                                     _ => push_heap_values(stack, &internal.slots),
                                 }
+                                // A module namespace's export keys.
+                                if let super::object::InternalData::Exports(keys) = &internal.data {
+                                    stack.extend(keys.iter().filter_map(|key| key.heap_value()));
+                                }
                             }
                         }
                         ObjectKind::Function => {
@@ -501,6 +515,12 @@ impl Heap {
                                 if record.bytecode != NONE {
                                     self.mark_bytecode(record.bytecode, stack);
                                 }
+                            }
+                        }
+                        ObjectKind::RegExp if header.payload != NONE => {
+                            if let Some(record) = self.regexps.mark(header.payload) {
+                                stack.push(Value::string(record.source));
+                                stack.push(Value::string(record.flags));
                             }
                         }
                         _ => {}
@@ -551,6 +571,12 @@ impl Heap {
                 continue;
             }
             let record = *self.payloads.bytecode.get(index);
+            let unit = crate::bytecode::CodeUnitId(record.unit);
+            if unit.is_dynamic()
+                && let Some(unit) = self.code.mark(unit)
+            {
+                stack.extend(unit.atoms.iter().map(|&atom| Value::string(atom)));
+            }
             push_heap_values(stack, self.values.slice(record.constants));
             let children = &self.values.slice(record.children)[..record.child_count as usize];
             pending.extend(
@@ -720,11 +746,13 @@ impl Heap {
     /// Clears the cache entries that name a record about to be swept, before
     /// its index can be recycled.
     fn prune_caches(&mut self) {
-        let (objects, shapes, cells) = (&self.objects, &self.shapes, &self.cells);
+        let (objects, shapes, cells, strings) =
+            (&self.objects, &self.shapes, &self.cells, &self.strings);
         self.ics.prune(|record| match record {
             Record::Shape(index) => shapes.is_marked(index),
             Record::Object(index) => objects.is_marked(index),
             Record::Cell(index) => cells.is_marked(index),
+            Record::Atom(index) => strings.is_marked(index),
         });
     }
 
@@ -741,9 +769,15 @@ impl Heap {
         freed += self.payloads.functions.sweep(|_, _| {});
         freed += self.payloads.internals.sweep(|_, _| {});
         freed += self.shapes.sweep(|_, _| {});
-        let rope_bytes = &self.rope_bytes;
-        freed += self.strings.sweep(|_, record| {
+        let ics = &mut self.ics;
+        self.code.sweep(|unit| ics.release(unit));
+        self.regexps.sweep();
+        let (rope_bytes, atoms) = (&self.rope_bytes, &mut self.atoms);
+        freed += self.strings.sweep(|index, record| {
             rope_bytes.set(rope_bytes.get() - record.flattened_rope_bytes());
+            if record.is_atom {
+                atoms.remove(record.repr().content_hash(), crate::value::StringId(index));
+            }
         });
         freed += self.symbols.sweep(|_, _| {});
         freed += self.bigints.sweep(|_, _| {});
@@ -783,6 +817,16 @@ impl Heap {
         check("function", &self.payloads.functions);
         check("bytecode", &self.payloads.bytecode);
         check("internal", &self.payloads.internals);
+        self.code.verify();
+        self.regexps.verify();
+        self.ics.verify_free();
+        for index in self.payloads.bytecode.live_indices() {
+            let unit = crate::bytecode::CodeUnitId(self.payloads.bytecode.get(index).unit);
+            assert!(
+                !unit.is_dynamic() || self.code.lookup(unit).is_some(),
+                "gc verify: bytecode {index} names a freed dynamic unit"
+            );
+        }
 
         let mut owner = vec![false; self.values.total_slots()];
         let mut claim = |range: super::values::Range, what: &str| {
@@ -814,6 +858,7 @@ impl Heap {
                 Record::Shape(index) => self.shapes.is_live(index),
                 Record::Object(index) => self.objects.is_live(index),
                 Record::Cell(index) => self.cells.is_live(index),
+                Record::Atom(index) => self.strings.is_live(index),
             };
             assert!(live, "gc verify: a cache entry names freed {record:?}");
         }

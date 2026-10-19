@@ -36,7 +36,7 @@ pub mod regexp;
 
 use std::fmt;
 
-use crate::bytecode::{CodeStore, CodeUnitId};
+use crate::bytecode::{CodeStore, CodeUnitId, UnitRef};
 use crate::heap::Heap;
 use crate::runtime::Realm;
 use crate::value::{BytecodeId, ObjectId, Value};
@@ -341,15 +341,34 @@ impl Services {
 
 /// What the loop and its slow paths borrow from the [`Runtime`]: the heap
 /// mutably, the code store and the realm shared, so the running unit's code
-/// stays borrowed across every heap call.
+/// stays borrowed across every heap call ([`Cx::unit`]).
 ///
 /// [`Runtime`]: crate::Runtime
 pub(crate) struct Cx<'a> {
     pub heap: &'a mut Heap,
-    pub code: &'a CodeStore,
+    /// The static units only: [`Cx::unit`] reads any unit.
+    pub static_code: &'a CodeStore,
     pub realm: &'a Realm,
     pub host: &'a mut Services,
-    pub regexps: &'a mut regexp::RegExpStore,
+}
+
+impl<'a> Cx<'a> {
+    /// Unit `id`: borrowed from the code store, or counted from the heap,
+    /// so it stays valid across every heap call either way.
+    #[inline(always)]
+    pub(crate) fn unit(&self, id: CodeUnitId) -> UnitRef<'a> {
+        if id.is_dynamic() {
+            return dynamic_unit(self.heap, id);
+        }
+        let code: &'a CodeStore = self.static_code;
+        UnitRef::Static(code.get(id))
+    }
+}
+
+#[cold]
+#[inline(never)]
+fn dynamic_unit(heap: &Heap, id: CodeUnitId) -> UnitRef<'static> {
+    UnitRef::Dynamic(heap.code.get(id))
 }
 
 impl Cx<'_> {

@@ -47,19 +47,27 @@ pub struct ValueHeapReport {
     pub reserved_bytes: usize,
 }
 
-/// What the code store and its side tables hold. The code store is not on
-/// the heap: it is not collected and does not count against the cap.
+/// What the code units and their side tables hold. The static units (the
+/// code store) are not on the heap: they are not collected and do not count
+/// against the cap. The dynamic units (compiled at run time) are, and
+/// `dynamic_bytes` counts toward [`MemoryReport::reserved_bytes`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CodeReport {
+    /// Live units, static and dynamic.
     pub units: usize,
+    pub static_units: usize,
+    pub dynamic_units: usize,
+    /// Bytes the dynamic units hold ([`CodeUnit::bytes`](crate::CodeUnit::bytes)).
+    pub dynamic_bytes: usize,
     pub instructions: usize,
     pub instruction_bytes: usize,
     /// Bytes of the units' source-position tables.
     pub position_bytes: usize,
     /// Bytes of source text kept for `Function.prototype.toString`.
     pub source_bytes: usize,
-    /// Compiled regular-expression programs.
+    /// Compiled regular-expression programs, and the bytes they hold.
     pub regexp_programs: usize,
+    pub regexp_bytes: usize,
 }
 
 /// A runtime's memory, part by part.
@@ -79,14 +87,18 @@ pub struct MemoryReport {
     pub rope_bytes: usize,
     /// Interned strings.
     pub atoms: usize,
+    /// Atoms that live as long as the heap.
+    pub pinned_atoms: usize,
     pub code: CodeReport,
     /// Registers the register file has room for.
     pub register_capacity: usize,
     /// Registers made addressable so far: the file never shrinks, so this is
     /// its high-water mark.
     pub register_high_water: usize,
-    /// Inline-cache entries.
+    /// Inline-cache entries, held or free.
     pub ic_entries: usize,
+    /// Entries no unit holds, reused by the next units published.
+    pub ic_free: usize,
     pub gc: GcStats,
     /// Nominal bytes allocated since the last collection, and the count at
     /// which the next one runs.
@@ -120,6 +132,8 @@ impl MemoryReport {
             .sum::<usize>()
             + self.values.reserved_bytes
             + self.rope_bytes
+            + self.code.dynamic_bytes
+            + self.code.regexp_bytes
     }
 }
 
@@ -151,10 +165,18 @@ impl Heap {
             },
             rope_bytes: self.rope_bytes.get(),
             atoms: self.atoms.len(),
-            code: CodeReport::default(),
+            pinned_atoms: self.pinned_atoms.len(),
+            code: CodeReport {
+                dynamic_units: self.code.len(),
+                dynamic_bytes: self.code.live_bytes(),
+                regexp_programs: self.regexps.len(),
+                regexp_bytes: self.regexps.bytes(),
+                ..CodeReport::default()
+            },
             register_capacity: self.vm.registers.capacity(),
             register_high_water: self.vm.registers.len(),
             ic_entries: self.ics.len(),
+            ic_free: self.ics.free_len(),
             gc: self.gc.stats,
             allocated_since_gc: self.gc.allocated,
             threshold: self.gc.threshold,
@@ -200,7 +222,13 @@ impl fmt::Display for MemoryReport {
             "  free value slots: {free} in {:?} by class",
             self.values.free_by_class
         )?;
-        writeln!(f, "ropes: {}; atoms: {}", kib(self.rope_bytes), self.atoms)?;
+        writeln!(
+            f,
+            "ropes: {}; atoms: {} ({} pinned)",
+            kib(self.rope_bytes),
+            self.atoms,
+            self.pinned_atoms
+        )?;
         writeln!(
             f,
             "heap reserved: {}; threshold {}; cap {}",
@@ -214,18 +242,23 @@ impl fmt::Display for MemoryReport {
         )?;
         writeln!(
             f,
-            "code: {} units, {} instructions ({}), positions {}, source {}, {} regexp programs",
+            "code: {} units ({} static, {} dynamic holding {}), {} instructions ({}), \
+             positions {}, source {}, {} regexp programs ({})",
             self.code.units,
+            self.code.static_units,
+            self.code.dynamic_units,
+            kib(self.code.dynamic_bytes),
             self.code.instructions,
             kib(self.code.instruction_bytes),
             kib(self.code.position_bytes),
             kib(self.code.source_bytes),
-            self.code.regexp_programs
+            self.code.regexp_programs,
+            kib(self.code.regexp_bytes)
         )?;
         writeln!(
             f,
-            "registers: {} high-water, {} capacity; inline caches: {} entries",
-            self.register_high_water, self.register_capacity, self.ic_entries
+            "registers: {} high-water, {} capacity; inline caches: {} entries, {} free",
+            self.register_high_water, self.register_capacity, self.ic_entries, self.ic_free
         )?;
         writeln!(
             f,

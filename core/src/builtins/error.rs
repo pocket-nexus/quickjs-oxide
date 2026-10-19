@@ -28,7 +28,8 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
             // `message`.
             methods(cx, prototype, &[Native::ErrorToString])?;
         }
-        // Atoms are strong roots: the name needs no rooting.
+        // Atoms interned while the runtime is created are pinned: the name
+        // needs no rooting.
         let name = cx.heap.intern(kind.name())?;
         cx.heap.add_property(
             prototype,
