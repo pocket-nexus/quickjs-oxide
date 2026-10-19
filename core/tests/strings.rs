@@ -37,6 +37,35 @@ fn interning_is_by_content() {
 }
 
 #[test]
+fn latin1_entries_agree_with_the_unit_entries() {
+    let mut heap = Heap::default();
+    let ascii = heap.intern("length").unwrap();
+    assert_eq!(heap.intern_latin1(b"length").unwrap(), ascii);
+    let latin1 = heap.intern_latin1(&[0x63, 0x61, 0x66, 0xE9]).unwrap();
+    assert_eq!(heap.intern("caf\u{e9}").unwrap(), latin1);
+    assert_eq!(heap.intern_latin1(b"").unwrap(), heap.intern("").unwrap());
+    assert_eq!(heap.atom_table().len(), 3);
+    for text in [
+        "0",
+        "42",
+        "2147483647",
+        "01",
+        "4294967294",
+        "4294967295",
+        "x",
+    ] {
+        let units: Vec<u16> = text.encode_utf16().collect();
+        assert_eq!(
+            heap.property_key_latin1(text.as_bytes()).unwrap(),
+            heap.property_key_units(&units).unwrap(),
+            "{text}"
+        );
+    }
+    // The atoms of the non-index spellings, and no others.
+    assert_eq!(heap.atom_table().len(), 7);
+}
+
+#[test]
 fn index_keys_stay_out_of_the_atom_table() {
     let mut heap = Heap::default();
     for text in ["0", "1", "42", "2147483647"] {

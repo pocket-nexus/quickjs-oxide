@@ -400,6 +400,7 @@ fn census(script: &crate::engine::code::function::UnlinkedFunction) -> Census {
                 let layout = super::Layout::of(function, &analysis)?;
                 lower_function(
                     &mut runtime.compiler(),
+                    &mut super::TreeCache::default(),
                     function,
                     analysis,
                     layout,

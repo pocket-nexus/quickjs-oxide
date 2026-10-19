@@ -73,26 +73,31 @@ impl StringRepr {
 
     /// The canonical array index (`0 ..= 2^32 - 2`) this string spells, if any.
     pub fn array_index(&self) -> Option<u32> {
-        let len = self.len();
-        if len == 0 || len > 10 {
-            return None;
-        }
-        if self.unit(0) == u16::from(b'0') {
-            return (len == 1).then_some(0);
-        }
-        let mut value: u64 = 0;
-        for unit in self.units() {
-            let digit = unit
-                .checked_sub(u16::from(b'0'))
-                .filter(|digit| *digit <= 9)?;
-            value = value * 10 + u64::from(digit);
-        }
-        (value < u64::from(u32::MAX)).then_some(value as u32)
+        array_index(self.len(), self.units())
     }
 
     pub fn content_hash(&self) -> u32 {
         content_hash(self.units())
     }
+}
+
+/// The canonical array index (`0 ..= 2^32 - 2`) that `len` units spell, if any.
+pub fn array_index(len: usize, mut units: impl Iterator<Item = u16>) -> Option<u32> {
+    if len == 0 || len > 10 {
+        return None;
+    }
+    let first = units.next()?;
+    if first == u16::from(b'0') {
+        return (len == 1).then_some(0);
+    }
+    let mut value: u64 = 0;
+    for unit in std::iter::once(first).chain(units) {
+        let digit = unit
+            .checked_sub(u16::from(b'0'))
+            .filter(|digit| *digit <= 9)?;
+        value = value * 10 + u64::from(digit);
+    }
+    (value < u64::from(u32::MAX)).then_some(value as u32)
 }
 
 pub fn content_hash(units: impl Iterator<Item = u16>) -> u32 {

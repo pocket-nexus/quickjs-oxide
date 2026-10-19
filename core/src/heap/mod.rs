@@ -1155,6 +1155,11 @@ impl Heap {
         if let Some(id) = self.atoms.find(&self.strings, &repr, hash) {
             return Ok(id);
         }
+        self.insert_atom(repr, hash)
+    }
+
+    /// A new atom for `repr`, whose content hash is `hash`.
+    fn insert_atom(&mut self, repr: StringRepr, hash: u32) -> Result<StringId, HeapError> {
         let array_index = repr.array_index().unwrap_or(NONE);
         let mut record = StringRecord::new(repr);
         record.is_atom = true;
@@ -1175,6 +1180,16 @@ impl Heap {
 
     pub fn intern_units(&mut self, units: &[u16]) -> Result<StringId, HeapError> {
         self.intern_repr(StringRepr::from_units(units))
+    }
+
+    /// The atom of the Latin-1 string `bytes`; it allocates only when the
+    /// atom is new.
+    pub fn intern_latin1(&mut self, bytes: &[u8]) -> Result<StringId, HeapError> {
+        let hash = string::content_hash(bytes.iter().map(|&byte| u16::from(byte)));
+        if let Some(id) = self.atoms.find_one_byte(&self.strings, bytes, hash) {
+            return Ok(id);
+        }
+        self.insert_atom(StringRepr::OneByte(bytes.into()), hash)
     }
 
     /// The atom with the content of `string` (itself, if it is one).
@@ -1203,6 +1218,15 @@ impl Heap {
 
     pub fn property_key_units(&mut self, units: &[u16]) -> Result<PropertyKey, HeapError> {
         self.key_for_repr(StringRepr::from_units(units))
+    }
+
+    /// [`Self::property_key`] for the Latin-1 string `bytes`.
+    pub fn property_key_latin1(&mut self, bytes: &[u8]) -> Result<PropertyKey, HeapError> {
+        let units = || bytes.iter().map(|&byte| u16::from(byte));
+        if let Some(key) = string::array_index(bytes.len(), units()).and_then(PropertyKey::index) {
+            return Ok(key);
+        }
+        Ok(PropertyKey::atom(self.intern_latin1(bytes)?))
     }
 
     pub fn alloc_symbol(

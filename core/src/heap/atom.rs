@@ -132,7 +132,22 @@ impl AtomTable {
         repr: &StringRepr,
         hash: u32,
     ) -> Option<StringId> {
-        let matches = |id: &StringId| strings.get(id.0).flat() == Some(repr);
+        self.find_by(hash, |id| strings.get(id.0).flat() == Some(repr))
+    }
+
+    /// [`Self::find`] for the content of a one-byte representation.
+    pub fn find_one_byte(
+        &self,
+        strings: &Arena<StringRecord>,
+        bytes: &[u8],
+        hash: u32,
+    ) -> Option<StringId> {
+        self.find_by(hash, |id| {
+            matches!(strings.get(id.0).flat(), Some(StringRepr::OneByte(atom)) if **atom == *bytes)
+        })
+    }
+
+    fn find_by(&self, hash: u32, matches: impl Fn(&StringId) -> bool) -> Option<StringId> {
         let bucket = *self.buckets.get(&hash)?;
         if bucket & OVERFLOW == 0 {
             let id = StringId(bucket);

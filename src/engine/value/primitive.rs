@@ -464,6 +464,13 @@ impl JsString {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
+    /// The address of the representation, which [`Self::same_representation`]
+    /// compares; it identifies the string while a clone of it is alive.
+    #[must_use]
+    pub(crate) fn address(&self) -> usize {
+        Rc::as_ptr(&self.0).addr()
+    }
+
     #[must_use]
     pub fn content_hash(&self) -> u32 {
         if let Some(hash) = self.0.content_hash.get() {

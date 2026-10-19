@@ -263,7 +263,7 @@ pub(super) fn lower_unlinked_tree(
 ) -> Result<UnlinkedFunction, Error> {
     let FunctionTree {
         functions: tree_functions,
-        names,
+        mut names,
         source,
         filename,
         module: _,
@@ -354,7 +354,7 @@ pub(super) fn lower_unlinked_tree(
             .parameters
             .iter()
             .map(|name| {
-                name.map(|id| JsString::try_from_utf8(names.name(id)))
+                name.map(|id| names.js_string(id))
                     .transpose()
                     .map(UnlinkedVariableDefinition::ordinary)
                     .map_err(Error::from)
@@ -383,7 +383,7 @@ pub(super) fn lower_unlinked_tree(
             {
                 None
             } else {
-                Some(JsString::try_from_utf8(names.name(binding.name))?)
+                Some(names.js_string(binding.name)?)
             };
             *definition = match binding.kind {
                 BindingKind::Lexical { is_const } => {
@@ -623,7 +623,7 @@ pub(super) fn lower_unlinked_tree(
         };
         let func_name = function
             .function_name
-            .map(|id| JsString::try_from_utf8(names.name(id)))
+            .map(|id| names.js_string(id))
             .transpose()?;
         let debug = match debug_info {
             DebugInfoMode::Full | DebugInfoMode::StripSource => Some(build_unlinked_debug(
