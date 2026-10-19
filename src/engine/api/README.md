@@ -34,7 +34,7 @@ always succeeds.
 ## Realm
 
 A runtime has one realm. `Runtime::context`, `Runtime::new_context` and
-`Context::new` all return its `Context` (deviation `NEWCORE-REALMS-001`).
+`Context::new` all return its `Context` (deviation `TARGET-REALMS-001`).
 
 ## Host
 

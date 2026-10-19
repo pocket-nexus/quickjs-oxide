@@ -172,7 +172,7 @@ var catchResult = Promise.prototype.catch.call(receiver, 'reject-handler');
 "#,
         )),
         // QuickJS gives `true` for the fourth: a subclass instance's `then`
-        // returns a subclass instance. NEWCORE-SPECIES-001 drops
+        // returns a subclass instance. TARGET-SPECIES-001 drops
         // `Symbol.species`, so it returns a base `Promise`.
         "true|true|true|false|true|false|42|undefined:reject-handler"
     );

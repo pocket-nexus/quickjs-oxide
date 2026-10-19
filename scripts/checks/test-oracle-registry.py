@@ -49,7 +49,7 @@ class OracleRegistryTests(unittest.TestCase):
     def test_new_registered_topic_needs_no_fixed_count_update(self):
         self.write('ordinary.rs', 'mod nested;\n#[test]\nfn first() {}\n')
         self.write('ordinary/nested.rs', '#[test]\nfn second() {}\n')
-        self.assertEqual(self.inventory(), {False: 2, True: 3})
+        self.assertEqual(self.inventory(), {False: 2, True: len(registry.HOST_MODULES)})
 
     def test_unregistered_source_is_rejected(self):
         self.write('forgotten.rs', '#[test]\nfn lost() {}\n')
@@ -99,7 +99,7 @@ class OracleRegistryTests(unittest.TestCase):
         self.write('main.rs', (self.oracle / 'main.rs').read_text() + 'mod cases;\n')
         self.write('cases.rs', '#[test]\nfn topic() {}\n')
         self.write('cases/topic/values.js', '// case: one\n1\n')
-        self.assertEqual(self.inventory(), {False: 2, True: 3})
+        self.assertEqual(self.inventory(), {False: 2, True: len(registry.HOST_MODULES)})
 
     def test_non_js_case_fixture_is_rejected(self):
         self.write('main.rs', (self.oracle / 'main.rs').read_text() + 'mod cases;\n')

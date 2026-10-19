@@ -157,7 +157,7 @@ A heap built with the feature starts with stress on at interval 1. The embedding
 ```sh
 cargo test -p oxide-core --features gc-stress
 cargo build -p quickjs-oxide-cli --features gc-stress --bin qjs
-python3 scripts/checks/check-new-core-stress.py --qjs target/debug/qjs
+python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 ```
 
 ## Statistics and the memory report

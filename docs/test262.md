@@ -58,18 +58,18 @@ the frozen `full_*_body_sha256` hashes; the scheduled `test262-full` job and the
 
 The runner `run-test262` (`conformance/test262`) has one backend, the engine
 through `api::core`'s Test262 host. The frozen dropped-variant list
-[`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+[`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv)
 is part of the metric's definition: it names, with a reason each, the D =
-1,897 variants that pass with the five features of the `NEWCORE-*` entries of
+1,897 variants that pass with the five features of the `TARGET-*` entries of
 the [deviation ledger](deviations.md) and fail without them:
 
 | Reason | Ledger entry | Variants |
 | --- | --- | ---: |
-| `species` | `NEWCORE-SPECIES-001` | 528 |
-| `direct-eval` | `NEWCORE-DIRECT-EVAL-001` | 517 |
-| `realm` | `NEWCORE-REALMS-001` | 488 |
-| `with` | `NEWCORE-WITH-001` | 311 |
-| `unscopables` | `NEWCORE-UNSCOPABLES-001` | 53 |
+| `species` | `TARGET-SPECIES-001` | 528 |
+| `direct-eval` | `TARGET-DIRECT-EVAL-001` | 517 |
+| `realm` | `TARGET-REALMS-001` | 488 |
+| `with` | `TARGET-WITH-001` | 311 |
+| `unscopables` | `TARGET-UNSCOPABLES-001` | 53 |
 
 These variants fail by decision. 27 of them pass anyway (negative `with` tests
 whose expected early error the front end gives either way); the other 1,870

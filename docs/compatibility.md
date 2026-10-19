@@ -31,7 +31,7 @@ oracle.
 <!-- current-test262-metrics:end -->
 
 Of the 1,913 failing variants, 1,870 fail by decision: they are in the
-dropped-variant list of the five `NEWCORE-*` ledger entries. The other 43 are
+dropped-variant list of the five `TARGET-*` ledger entries. The other 43 are
 variants that QuickJS 2026-06-04 also fails, as listed in the release's
 `test262_errors.txt`. The variants not yet run are Module tests whose import
 graphs are not yet admitted and negative tests outside the diagnostic audit.
@@ -61,15 +61,15 @@ the runner requires it to still differ.
 The [deviation ledger](deviations.md) lists every approved difference from
 QuickJS 2026-06-04, each with its exact scope and Test262 variants:
 
-- `with` is an early `SyntaxError` in sloppy code (`NEWCORE-WITH-001`).
-- `Symbol.unscopables` exists; nothing reads it (`NEWCORE-UNSCOPABLES-001`).
+- `with` is an early `SyntaxError` in sloppy code (`TARGET-WITH-001`).
+- `Symbol.unscopables` exists; nothing reads it (`TARGET-UNSCOPABLES-001`).
 - `eval(src)` at a direct-eval call site runs as indirect eval in the global
-  scope (`NEWCORE-DIRECT-EVAL-001`).
+  scope (`TARGET-DIRECT-EVAL-001`).
 - A runtime has one realm; `$262.createRealm` throws `TypeError: realms are
-  not supported` (`NEWCORE-REALMS-001`).
+  not supported` (`TARGET-REALMS-001`).
 - Methods that the specification routes through `Symbol.species` construct
   the intrinsic constructor; `Symbol.species` exists and nothing reads it
-  (`NEWCORE-SPECIES-001`).
+  (`TARGET-SPECIES-001`).
 - WeakRef targets and call arguments follow ECMAScript lifetimes
   (`ECMASCRIPT-WEAKREF-LIFETIME-001`).
 - An arrow function in a classic `for` head is parsed as ECMAScript requires

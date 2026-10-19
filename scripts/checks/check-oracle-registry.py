@@ -115,8 +115,8 @@ ORACLE_ATTRIBUTIONS = ROOT / 'dev-support/oracle-attributions.tsv'
 SPEC_DEPARTURES = ROOT / 'dev-support/quickjs-spec-departures.tsv'
 SPEC_DEPARTURE = re.compile(r'^QUICKJS-SPEC-\d{3}$')
 LEDGER_ENTRY = re.compile(r'^### ([A-Z0-9]+(?:-[A-Z0-9]+)*-\d{3})$', re.MULTILINE)
-# The fields every `NEWCORE-` entry (a dropped feature) carries.
-NEWCORE_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
+# The fields every `TARGET-` entry (a dropped feature) carries.
+TARGET_FIELDS = ('Status', 'Surface', 'Authority', 'Required behavior',
                   'Baseline evidence', 'Acceptance', 'Specification')
 
 
@@ -140,7 +140,7 @@ def spec_departures():
 
 
 def ledger_entries():
-    """The deviation ledger's entry identifiers; checks the `NEWCORE-` entries'
+    """The deviation ledger's entry identifiers; checks the `TARGET-` entries'
     form and that every fixture and oracle-case attribution names an entry or
     a QuickJS spec departure, and every departure is attributed."""
     text = LEDGER.read_text()
@@ -151,16 +151,16 @@ def ledger_entries():
     bodies = re.split(r'^### ', text, flags=re.MULTILINE)[1:]
     for body in bodies:
         name = body.split('\n', 1)[0].strip()
-        if not name.startswith('NEWCORE-'):
+        if not name.startswith('TARGET-'):
             continue
-        for field in NEWCORE_FIELDS:
+        for field in TARGET_FIELDS:
             if not re.search(rf'^- {re.escape(field)}:\s', body, re.MULTILINE):
                 fail(f'deviation ledger entry {name} lacks its {field} field')
-    newcore = {entry for entry in entries if entry.startswith('NEWCORE-')}
-    expected = {'NEWCORE-WITH-001', 'NEWCORE-UNSCOPABLES-001', 'NEWCORE-DIRECT-EVAL-001',
-                'NEWCORE-REALMS-001', 'NEWCORE-SPECIES-001'}
-    if newcore != expected:
-        fail(f'deviation ledger NEWCORE entries differ: {sorted(newcore ^ expected)}')
+    target = {entry for entry in entries if entry.startswith('TARGET-')}
+    expected = {'TARGET-WITH-001', 'TARGET-UNSCOPABLES-001', 'TARGET-DIRECT-EVAL-001',
+                'TARGET-REALMS-001', 'TARGET-SPECIES-001'}
+    if target != expected:
+        fail(f'deviation ledger TARGET entries differ: {sorted(target ^ expected)}')
     departures = spec_departures()
     used = set()
     rows = FIXTURE_GATES.read_text().splitlines()
@@ -184,7 +184,7 @@ def ledger_entries():
         seen.add(case)
         if value in departures:
             used.add(value)
-        elif value not in newcore:
+        elif value not in target:
             fail(f'oracle case {case} is attributed to no dropped feature or departure: {value}')
     if unused := sorted(set(departures) - used):
         fail(f'QuickJS spec departures attributed to no case or fixture: {unused}')

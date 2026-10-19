@@ -147,7 +147,7 @@ fn primitive_string_eval_executes_indirect_and_direct_completion_values() {
         "eval source incorrectly rejected a nested indirect eval",
     );
 
-    // Direct eval of the caller's bindings: NEWCORE-DIRECT-EVAL-001.
+    // Direct eval of the caller's bindings: TARGET-DIRECT-EVAL-001.
 }
 
 #[test]
@@ -208,7 +208,7 @@ fn eval_syntax_errors_are_catchable() {
         Value::Int(8),
         "sloppy direct eval unexpectedly inherited strict mode",
     );
-    // Direct eval inheriting the caller's strictness: NEWCORE-DIRECT-EVAL-001.
+    // Direct eval inheriting the caller's strictness: TARGET-DIRECT-EVAL-001.
 }
 
 fn global_eval(runtime: &Runtime, context: &mut Context) -> CallableRef {

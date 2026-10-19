@@ -113,7 +113,7 @@ Builtins are natives: one `Native` enum generated with its table of entry points
 
 ## Verification
 
-- The loop, frames, calls and suspension: `core/tests/vm.rs` and the corpus in `core/tests/corpus`, also under `cargo test -p oxide-core --features gc-stress` and `scripts/checks/check-new-core-stress.py`.
+- The loop, frames, calls and suspension: `core/tests/vm.rs` and the corpus in `core/tests/corpus`, also under `cargo test -p oxide-core --features gc-stress` and `scripts/checks/check-gc-stress.py`.
 - Caches: `core/tests/ic.rs` and `src/engine/compiler/register/ic_tests.rs`.
 - Instruction encoding and validation: `core/tests/bytecode.rs`.
 - The lowering and the register window: `src/engine/compiler/register/run_tests.rs` and `window_tests.rs`, with `--features register-stress`.

@@ -479,7 +479,7 @@ fn stack_preflight_returns_a_caller_promise_rejected_with_a_caller_error() {
     // its frame returns that promise rejected, never throws. Where the stack
     // runs out depends on each engine's frame sizes, so the async frame here
     // is the largest and is the one that overflows. (The pinned test's two
-    // realms are one under NEWCORE-REALMS-001.)
+    // realms are one under TARGET-REALMS-001.)
     let (runtime, mut context) = host_runtime_context();
     let locals = (0..200)
         .map(|index| format!("var local{index} = {index};"))

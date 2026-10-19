@@ -86,4 +86,4 @@ The collector is a non-moving mark-sweep. Collection happens only inside an allo
 
 ## Language surface
 
-The core runs the language the front end accepts, with the five differences from QuickJS that the `NEWCORE-*` entries of the [deviation ledger](deviations.md) define: `with`, `Symbol.unscopables`, direct `eval` (it runs as indirect `eval`), one realm per runtime, and `Symbol.species`. Source and module inputs keep exact bytes and positions, and strings keep UTF-16 code units. Jobs own their pending computations; the application drains the queue. The [status page](status.md) lists language coverage and the verification commands.
+The core runs the language the front end accepts, with the five differences from QuickJS that the `TARGET-*` entries of the [deviation ledger](deviations.md) define: `with`, `Symbol.unscopables`, direct `eval` (it runs as indirect `eval`), one realm per runtime, and `Symbol.species`. Source and module inputs keep exact bytes and positions, and strings keep UTF-16 code units. Jobs own their pending computations; the application drains the queue. The [status page](status.md) lists language coverage and the verification commands.

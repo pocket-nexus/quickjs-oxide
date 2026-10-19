@@ -1334,7 +1334,7 @@ if (activeResult !== 42) {
 
 var parentJobRan = false;
 Promise.resolve().then(function() { parentJobRan = true; });
-// NEWCORE-REALMS-001: one realm per runtime.
+// TARGET-REALMS-001: one realm per runtime.
 var realmError;
 try {
     $262.createRealm();

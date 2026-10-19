@@ -34,6 +34,7 @@ STALE = [
     ("a retired feature", r"\b(checked-handles|dropped-features-probe)\b|--features[= ]profiling\b"),
     ("a retired qjs option", r"(?<![\w-])--(dump|trace|profile-[a-z-]+)\b"),
     ("a retired page", r"\b(roadmap|typed-arenas|cycle-collection|baseline)\.md\b|new-core-phase"),
+    ("a retired name", r"\bnew-core\b|\bNEWCORE-"),
     ("phase numbering", r"\b[Pp]hase [0-9]|\bM[0-9]b?\b"),
 ]
 

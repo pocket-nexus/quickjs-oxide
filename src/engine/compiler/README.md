@@ -41,7 +41,7 @@ temporaries in a spill scope (the `register-stress` feature lowers every
 function that way, with two temporaries in registers, for the corpora).
 The lowering also checks the surface the core runs: a `with` statement is
 an early `SyntaxError`, and a direct `eval` runs as indirect `eval`, so the
-lowering compiles indirect eval code (deviation ledger, `NEWCORE-*`).
+lowering compiles indirect eval code (deviation ledger, `TARGET-*`).
 
 compiler uses the exact source representation from source and the stack
 instruction and unlinked-record contracts from code. The lowering hands each unit to the core's

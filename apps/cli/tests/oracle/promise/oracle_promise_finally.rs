@@ -21,7 +21,7 @@ fn promise_finally_matches_pinned_quickjs() {
     let Value::String(transcript) = eval(&mut context, "r3oTranscript.join('\\n') + '\\n'") else {
         panic!("R3o Promise.finally transcript was not a string");
     };
-    // The fixture differs from pinned QuickJS by NEWCORE-SPECIES-001 (its
+    // The fixture differs from pinned QuickJS by TARGET-SPECIES-001 (its
     // gate row in dev-support/quickjs-fixture-gates.tsv): the
     // `species-abrupt` check expects `finally` to read `constructor` and
     // `@@species`, fails, and ends the transcript after its first line.

@@ -7,7 +7,7 @@ specification leaves a behavior to the implementation or the host. A
 departure is therefore one of two kinds:
 
 - an **approved target deviation** below: a behavior that differs from both
-  QuickJS and, for the `NEWCORE-*` entries, the specification, by the
+  QuickJS and, for the `TARGET-*` entries, the specification, by the
   maintainer's decision, or that follows the specification where pinned
   QuickJS fails a Test262 variant;
 - a **specification departure of QuickJS**, registered in
@@ -21,15 +21,15 @@ open, and any mismatch with the specification, is a defect.
 
 ## Approved target deviations
 
-The five entries `NEWCORE-*` record features the maintainer decided on
+The five entries `TARGET-*` record features the maintainer decided on
 2026-10-16 the engine does not implement. Their Test262 evidence is
-[`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv):
+[`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv):
 the 1,897 variants (D) that pass with the five features and fail without
 them, each with its reason. Of these, 27 pass anyway (negative `with` tests
 whose expected early error the front end gives either way) and are not
 deviations; the other 1,870 fail by decision.
 
-### NEWCORE-WITH-001
+### TARGET-WITH-001
 
 - Status: approved target deviation (2026-10-17).
 - Surface: the `with` statement in sloppy code.
@@ -38,7 +38,7 @@ deviations; the other 1,870 fail by decision.
   supported`) in sloppy code, as it is in strict code. Every identifier resolves
   at compile time to a register, a scope slot or a global; no object environment
   enters the scope chain.
-- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+- Baseline evidence: [`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv)
   lists 311 variants of reason `with`.
 - Acceptance: `with ({}) {}` throws `SyntaxError` before any statement of the
   script runs. The variants of reason `with` fail by decision and are excluded
@@ -53,7 +53,7 @@ Minimal probe:
 with ({ x: 1 }) { print(x); }
 ```
 
-### NEWCORE-UNSCOPABLES-001
+### TARGET-UNSCOPABLES-001
 
 - Status: approved target deviation (2026-10-17).
 - Surface: `Symbol.unscopables`.
@@ -61,11 +61,11 @@ with ({ x: 1 }) { print(x); }
 - Required behavior: `Symbol.unscopables` and
   `Array.prototype[Symbol.unscopables]` exist with their specified values;
   nothing reads them, since no object environment exists to consult them
-  (`NEWCORE-WITH-001`).
-- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+  (`TARGET-WITH-001`).
+- Baseline evidence: [`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv)
   lists 53 variants of reason `unscopables`.
 - Acceptance: `typeof Symbol.unscopables` is `"symbol"`; the variants that
-  observe a lookup through `with` fail with `NEWCORE-WITH-001`'s `SyntaxError`.
+  observe a lookup through `with` fail with `TARGET-WITH-001`'s `SyntaxError`.
   The variants of reason `unscopables` fail by decision and are excluded from
   the Test262 metric's difference list; any other variant that fails is a
   defect.
@@ -78,7 +78,7 @@ Minimal probe:
 print(typeof Symbol.unscopables, Array.prototype[Symbol.unscopables].flat);
 ```
 
-### NEWCORE-DIRECT-EVAL-001
+### TARGET-DIRECT-EVAL-001
 
 - Status: approved target deviation (2026-10-17).
 - Surface: direct `eval`.
@@ -87,7 +87,7 @@ print(typeof Symbol.unscopables, Array.prototype[Symbol.unscopables].flat);
   eval: in the global scope, sloppy unless `src` is strict, with no access to
   the caller's bindings, `this`, `arguments` or `new.target`, and no `var`
   injection into the caller. `new Function` and indirect eval are unchanged.
-- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+- Baseline evidence: [`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv)
   lists 517 variants of reason `direct-eval`.
 - Acceptance: inside `function f() { var x = 2; return eval("x"); }` with a
   global `var x = 1`, `f()` returns `1`. The variants of reason `direct-eval`
@@ -102,7 +102,7 @@ Minimal probe:
 var x = 1; function f() { var x = 2; return eval('x'); } print(f());
 ```
 
-### NEWCORE-REALMS-001
+### TARGET-REALMS-001
 
 - Status: approved target deviation (2026-10-17).
 - Surface: realms.
@@ -111,7 +111,7 @@ var x = 1; function f() { var x = 2; return eval('x'); } print(f());
   runtime (`Context::new` returns the runtime's one realm, and a request for
   another is `RuntimeError::Unsupported`); `$262.createRealm` throws `TypeError:
   realms are not supported`. Isolation uses separate runtimes.
-- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+- Baseline evidence: [`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv)
   lists 488 variants of reason `realm`.
 - Acceptance: `$262.createRealm()` under the Test262 host throws a `TypeError`
   with that message. The variants of reason `realm` fail by decision and are
@@ -120,7 +120,7 @@ var x = 1; function f() { var x = 2; return eval('x'); } print(f());
 - Specification:
   [Realms](https://tc39.es/ecma262/multipage/executable-code-and-execution-contexts.html#sec-code-realms).
 
-### NEWCORE-SPECIES-001
+### TARGET-SPECIES-001
 
 - Status: approved target deviation (2026-10-17).
 - Surface: `Symbol.species`.
@@ -132,7 +132,7 @@ var x = 1; function f() { var x = 2; return eval('x'); } print(f());
   `@@species`. `Symbol.species` and the `get [Symbol.species]` accessors exist;
   nothing reads them. A subclass instance's `map`, `filter`, `slice`, `then` and
   the like return a base-class instance.
-- Baseline evidence: [`new-core-dropped-variants.tsv`](../dev-support/test262/new-core-dropped-variants.tsv)
+- Baseline evidence: [`dropped-variants.tsv`](../dev-support/test262/dropped-variants.tsv)
   lists 528 variants of reason `species`.
 - Acceptance: `class A extends Array {}; new A(1, 2).map(x => x) instanceof A`
   is `false`. The variants of reason `species` fail by decision and are excluded
@@ -248,7 +248,7 @@ reasons is attributed to its entry, in
 [`quickjs-fixture-gates.tsv`](../dev-support/quickjs-fixture-gates.tsv), and
 the oracle runner requires such a case to still differ from QuickJS.
 `check-oracle-registry.py` requires every registry entry to be attributed and
-every attribution to name a registry entry or a `NEWCORE-*` ledger entry.
+every attribution to name a registry entry or a `TARGET-*` ledger entry.
 
 What the specification leaves open follows QuickJS and is not a departure:
 error message text and `stack`, the printer, the creation order of the

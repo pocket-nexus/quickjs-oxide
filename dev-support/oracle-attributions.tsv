@@ -1,173 +1,173 @@
 case	deviation
-arguments/spread / eval / direct eval accepts an empty leading spread and ignores later arguments	NEWCORE-DIRECT-EVAL-001
-array/assignment / nested target Reference is prepared after the outer step and before the inner step	NEWCORE-WITH-001
-array/assignment / with resolves a missing identifier before IteratorNext adds that property	NEWCORE-WITH-001
-array/assignment / with retains an existing property Reference across IteratorNext deletion	NEWCORE-WITH-001
-array/concat / a custom result property under a source hole is not deleted	NEWCORE-SPECIES-001
-array/concat / a rejected final length Set leaves all indexed writes observable	NEWCORE-SPECIES-001
-array/concat / a rejected indexed definition preserves only the written prefix	NEWCORE-SPECIES-001
-array/concat / concat itself as species	NEWCORE-SPECIES-001
-array/concat / custom species receive zero and ordinary results get a final length	NEWCORE-SPECIES-001
-array/concat / indexed defines bypass setters while final length uses an inherited setter	NEWCORE-SPECIES-001
-array/concat / plain object species	NEWCORE-SPECIES-001
-array/concat / primitive constructor	NEWCORE-SPECIES-001
-array/concat / species allocation precedes spreadability length and indexed access	NEWCORE-SPECIES-001
-array/flatten / a rejected custom result definition preserves the completed prefix	NEWCORE-SPECIES-001
-array/flatten / custom species receives zero and CreateDataProperty skips inherited setters	NEWCORE-SPECIES-001
-array/flatten / flat converts depth then creates species before indexed reads	NEWCORE-SPECIES-001
-array/flatten / flat preserves species getter throw	NEWCORE-SPECIES-001
-array/flatten / flatMap creates species before alternating source Gets and mapper calls	NEWCORE-SPECIES-001
-array/flatten / species may alias the result to the source and later reads see writes	NEWCORE-SPECIES-001
-array/map_filter / a rejected result definition preserves callback order and stops traversal	NEWCORE-SPECIES-001
-array/map_filter / callable non-constructor species has the pinned constructor error	NEWCORE-SPECIES-001
-array/map_filter / custom species receive map length or filter zero without a final length Set	NEWCORE-SPECIES-001
-array/map_filter / null constructor is not a function	NEWCORE-SPECIES-001
-array/map_filter / plain object species is not a constructor	NEWCORE-SPECIES-001
-array/map_filter / primitive constructor is not a function	NEWCORE-SPECIES-001
-array/map_filter / primitive species is not a function	NEWCORE-SPECIES-001
-array/map_filter / species allocation precedes indexed access and callbacks	NEWCORE-SPECIES-001
-array/slice_splice / a failed removed-result length Set prevents splice source mutation	NEWCORE-SPECIES-001
-array/slice_splice / a rejected result definition leaves the completed slice prefix externally observable	NEWCORE-SPECIES-001
-array/slice_splice / constructor species lookup and constructor validation preserve abrupt order	NEWCORE-SPECIES-001
-array/slice_splice / generic slice ignores a throwing constructor while custom species sees exact empty count	NEWCORE-SPECIES-001
-array/slice_splice / slice converts bounds before constructor species and indexed reads	NEWCORE-SPECIES-001
-array/slice_splice / species construction mutation is observed by later slice reads	NEWCORE-SPECIES-001
-array/slice_splice / species may alias a slice result to its source	NEWCORE-SPECIES-001
-array/slice_splice / species may alias the splice result to its source	NEWCORE-SPECIES-001
-array/slice_splice / species result uses CreateDataProperty and leaves preseeded hole properties intact	NEWCORE-SPECIES-001
-array/slice_splice / splice finishes the removed result before moving and inserting on source	NEWCORE-SPECIES-001
-binary_data/array_buffer / slice species ordering and post-constructor revalidation	NEWCORE-SPECIES-001
-class_initialization/base / a computed key's eval runs sloppy code	NEWCORE-WITH-001
-class_initialization/derived / direct eval relays super() from a derived constructor	NEWCORE-DIRECT-EVAL-001
-class_initialization/public_init / arguments context boundaries and QuickJS shorthand capture	NEWCORE-DIRECT-EVAL-001
-control_flow/annex_b_statements / with containing an if would reopen Annex B once with is implemented	NEWCORE-WITH-001
-control_flow/catch_destructuring / direct eval reads and writes a pattern binding	NEWCORE-DIRECT-EVAL-001
-control_flow/catch_destructuring / direct eval var cannot redeclare a pattern catch binding	NEWCORE-DIRECT-EVAL-001
-control_flow/catch_destructuring / direct eval var reuses a simple catch binding	NEWCORE-DIRECT-EVAL-001
-control_flow/for_of / nested var binding prepares its with reference after inner acquisition and before step	NEWCORE-WITH-001
-control_flow/for_of / var declaration prepares a with reference before iterator step	NEWCORE-WITH-001
-control_flow/for_of / var for-of binding prepares a with reference before inner step	NEWCORE-WITH-001
-control_flow/for_of / var rest keeps its prepared with reference while draining	NEWCORE-WITH-001
-control_flow/with / Get rechecks HasProperty after an unscopables getter deletes the selection	NEWCORE-WITH-001
-control_flow/with / TypedArray prototype numeric-index rejection composes with repeated with HasProperty	NEWCORE-WITH-001
-control_flow/with / a missing strict global reference stays missing across RHS creation	NEWCORE-WITH-001
-control_flow/with / a strict child reports a missing selected property after its RHS deletes it	NEWCORE-WITH-001
-control_flow/with / a var initializer inside with assigns the object and not the function var	NEWCORE-WITH-001
-control_flow/with / a var initializer selects its with reference before evaluating the RHS	NEWCORE-WITH-001
-control_flow/with / an eval var object selected under syntactic with becomes the call receiver	NEWCORE-WITH-001
-control_flow/with / an eval-created closure imports with lookup but still calls with undefined receiver	NEWCORE-WITH-001
-control_flow/with / compound assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
-control_flow/with / delete distinguishes selected fallback and missing bindings	NEWCORE-WITH-001
-control_flow/with / direct eval assignment resolves its imported with environment after the RHS	NEWCORE-WITH-001
-control_flow/with / direct eval imports with lookup without importing reference-call receiver rules	NEWCORE-WITH-001
-control_flow/with / eval variable objects use prototype-aware HasProperty under with	NEWCORE-WITH-001
-control_flow/with / failed selected writes are silent in sloppy code and throw in strict code	NEWCORE-WITH-001
-control_flow/with / for-in and for-of assignment targets resolve through with on every iteration	NEWCORE-WITH-001
-control_flow/with / logical assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
-control_flow/with / loop closures retain the with object from each closed scope	NEWCORE-WITH-001
-control_flow/with / postfix update rechecks HasProperty after coercion deletes the property	NEWCORE-WITH-001
-control_flow/with / readonly fallback rejects compound logical and update references eagerly	NEWCORE-WITH-001
-control_flow/with / readonly fallback throws before evaluating the assignment RHS	NEWCORE-WITH-001
-control_flow/with / simple assignment keeps its selected base when the RHS deletes the property	NEWCORE-WITH-001
-control_flow/with / simple compound logical prefix and postfix writes target the with object	NEWCORE-WITH-001
-control_flow/with / single-statement contextual let honors ASI after with	NEWCORE-WITH-001
-control_flow/with / unscopables skips the inner binding and preserves nested fallback order	NEWCORE-WITH-001
-control_flow/with / with applies ToObject and rejects nullish values	NEWCORE-WITH-001
-control_flow/with / with methods receive the object while lexical fallback receives undefined	NEWCORE-WITH-001
-eval/intrinsic / catch lexicals and implicit bindings	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / declaration conflicts and global flags	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / direct and indirect eval syntax	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / eval environment	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / global Proxy binding internal methods	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / labelled functions	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / nested direct eval environment relay	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / primitive string directness	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / private function expression names	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / strict and indirect eval declarations	NEWCORE-DIRECT-EVAL-001
-eval/intrinsic / var objects and source order	NEWCORE-DIRECT-EVAL-001
-eval/var_destructuring	NEWCORE-DIRECT-EVAL-001
-function_semantics/arrow / direct-eval / an eval-created arrow and nested eval retain with and unscopables	NEWCORE-WITH-001
-function_semantics/arrow / direct-eval / direct eval in an arrow observes the outer new target	NEWCORE-DIRECT-EVAL-001
-function_semantics/arrow / direct-eval / direct eval in an arrow sees its parameter and outer lexical bindings	NEWCORE-DIRECT-EVAL-001
-function_semantics/arrow / direct-eval / strict direct eval preserves typeof this as an authenticated pseudo read	NEWCORE-DIRECT-EVAL-001
-function_semantics/arrow / lookahead / a strict reserved word cannot be an arrow parameter	NEWCORE-DIRECT-EVAL-001
-function_semantics/arrow / with / an escaped arrow retains with lookup and honors unscopables	NEWCORE-WITH-001
-object/accessors / direct-eval / direct eval resolves accessor-owned this arguments and new target	NEWCORE-DIRECT-EVAL-001
-object/assignment / for-of prepares a with Reference independently for each yielded object	NEWCORE-WITH-001
-object/assignment / with resolves a missing identifier before the source getter adds it	NEWCORE-WITH-001
-object/assignment / with retains an existing identifier Reference across source deletion	NEWCORE-WITH-001
-object/bindings / binding Put fault closes the outer iterator and keeps the Put fault	NEWCORE-WITH-001
-object/bindings / computed sloppy var evaluates key then prepares with reference before get	NEWCORE-WITH-001
-object/bindings / fixed sloppy var prepares its with reference before the property getter	NEWCORE-WITH-001
-object/bindings / nested var prepares its leaf reference after the outer get and before the inner get	NEWCORE-WITH-001
-object/methods / direct-eval / direct eval resolves the method this arguments and new target owners	NEWCORE-DIRECT-EVAL-001
-object/rest / rest target Put fault follows copy then closes the outer iterator	NEWCORE-WITH-001
-object/rest / sloppy with resolves a missing rest target before copy adds that name	NEWCORE-WITH-001
-object/rest / sloppy with retains an existing rest target reference after copy deletes it	NEWCORE-WITH-001
-object/super_eval / accessors / getter and setter direct eval inherit their own HomeObject this and arguments	NEWCORE-DIRECT-EVAL-001
-object/super_eval / authored-arrow / an escaped authored arrow carries method direct-eval super across a live prototype change	NEWCORE-DIRECT-EVAL-001
-object/super_eval / call-receiver / direct-eval super call reads from the base and invokes with the method receiver	NEWCORE-DIRECT-EVAL-001
-object/super_eval / delete / direct-eval delete super throws before computed-key coercion	NEWCORE-DIRECT-EVAL-001
-object/super_eval / eval-created-arrow / an escaped arrow created by eval retains imported this and HomeObject cells	NEWCORE-DIRECT-EVAL-001
-object/super_eval / first-slot-wins / eval-visible pseudo relays are reused by authored super in the same escaped arrow	NEWCORE-DIRECT-EVAL-001
-object/super_eval / method-read / dot and computed direct eval use the live HomeObject prototype and method receiver	NEWCORE-DIRECT-EVAL-001
-object/super_eval / nested-eval / method and arrow nested direct eval recursively preserve super capability	NEWCORE-DIRECT-EVAL-001
-object/super_eval / strictness / caller and eval-source strictness govern rejected direct-eval super writes	NEWCORE-DIRECT-EVAL-001
-object/super_eval / update / direct-eval postfix and prefix super updates preserve values receiver and ordering	NEWCORE-DIRECT-EVAL-001
-object/super_eval / write / computed direct-eval super assignment writes through the current receiver	NEWCORE-DIRECT-EVAL-001
-operators/optional_chaining / eval / eval optional call is indirect and cannot see the caller lexical environment	NEWCORE-DIRECT-EVAL-001
-parameters/binding_patterns / direct eval observes initialized pattern BoundNames	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / a descendant arrow arguments capture is appended to the caller closure suffix seen by eval	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / an arrow parameter eval may create arguments in the argument variable object	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / an authored arguments capture is appended to the caller closure suffix seen by eval	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / an authored body function named arguments precedes the body eval variable object	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / an authored body var named arguments precedes the body eval variable object	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / an eval var cannot redeclare a named arguments parameter	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / arguments / an eval var cannot redeclare the synthetic parameter arguments cell	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / dynamic object / a repeated object-backed var declaration resets the property to undefined	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / dynamic object / an eval function closure survives deletion of its dynamic binding	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / environment split / a function created by body eval captures the body binding	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / environment split / body eval creates a body variable that shadows the argument eval variable	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / environment split / body eval updates exact body bindings without overwriting the argument variable object	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / environment split / nested body eval targets the body variable object before the argument variable object	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / a BindingPattern copies its final parameter cell value into the body environment	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / a closure created by parameter eval captures the parameter cell rather than the body copy	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / a default anywhere moves a preceding plain formal into the parameter lexical environment	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / an eval assignment mutates the parameter cell while the body keeps its copied argument	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / an eval assignment to a later parameter observes its temporal dead zone	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / an eval function cannot redeclare a later parameter lexical cell	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / an eval var cannot redeclare a later parameter lexical cell	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / parameter target / an eval var cannot redeclare an earlier parameter lexical cell	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / scope switch / a computed parameter key without any default remains in the function variable scope	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / strict eval / a strict eval source mutates imported parameters but does not leak its var declaration	NEWCORE-DIRECT-EVAL-001
-parameters/direct_eval / strict eval / direct eval inherits strictness from the containing function bytecode	NEWCORE-DIRECT-EVAL-001
-parameters/rest / direct eval observes the initialized rest binding	NEWCORE-DIRECT-EVAL-001
-regexp/dotall / matchAll preserves s while split preserves s and appends sticky	NEWCORE-SPECIES-001
-regexp/match_all / empty global matches advance by code unit or Unicode code point from matcher lastIndex	NEWCORE-SPECIES-001
-regexp/match_all / exec throws and primitive results leave the iterator retryable	NEWCORE-SPECIES-001
-regexp/match_all / iterator next result objects preserve match identity and stable done state	NEWCORE-SPECIES-001
-regexp/match_all / match zero and empty-match lastIndex errors leave the iterator retryable	NEWCORE-SPECIES-001
-regexp/match_all / matchAll abrupt completions stop at exact construction boundaries	NEWCORE-SPECIES-001
-regexp/match_all / matchAll converts input then resolves species flags construction and lastIndex	NEWCORE-SPECIES-001
-regexp/match_all / non-global iterators finish after one match while global iterators run to null	NEWCORE-SPECIES-001
-regexp/match_all / source lastIndex is ToLength copied once without mutating the source	NEWCORE-SPECIES-001
-regexp/match_indices / matchAll preserves d and g while split preserves d and appends sticky	NEWCORE-SPECIES-001
-regexp/split / RegExp split observes input constructor species flags construct limit and exec order	NEWCORE-SPECIES-001
-regexp/split / abstract exec accepts branded fallback and rejects missing or primitive results	NEWCORE-SPECIES-001
-regexp/split / capture values remain raw and are read only through the active limit	NEWCORE-SPECIES-001
-regexp/split / empty input executes once without setting lastIndex and distinguishes hit from miss	NEWCORE-SPECIES-001
-regexp/split / empty matches advance and a retreating lastIndex is consumed exactly	NEWCORE-SPECIES-001
-regexp/split / lastIndex is clamped to input length after a successful abstract exec	NEWCORE-SPECIES-001
-regexp/split / loop abrupt completions stop at setter exec end length and capture boundaries	NEWCORE-SPECIES-001
-regexp/split / prefix abrupt completions stop at each input species flags construct and limit boundary	NEWCORE-SPECIES-001
-regexp/split / primitive constructor and nonconstructor species are TypeErrors before flags	NEWCORE-SPECIES-001
-regexp/split / recursive String and RegExp split protocol calls are catchable and recover	NEWCORE-SPECIES-001
-regexp/split / split appends sticky once and uses u or v for surrogate-pair advancement	NEWCORE-SPECIES-001
-regexp/split / zero limit still constructs the species but never executes it	NEWCORE-SPECIES-001
-templates/tagged / dynamic-compilation-sites / authored eval and separately constructed Function bytecode own distinct sites	NEWCORE-DIRECT-EVAL-001
-templates/tagged / super-member-this / super member tags and direct eval preserve the method receiver	NEWCORE-DIRECT-EVAL-001
-templates/tagged / with-receiver / an identifier tag resolved through with receives the with object as this	NEWCORE-WITH-001
-typed_array/of / static from shares only the direct constructor diagnostic seam	NEWCORE-SPECIES-001
+arguments/spread / eval / direct eval accepts an empty leading spread and ignores later arguments	TARGET-DIRECT-EVAL-001
+array/assignment / nested target Reference is prepared after the outer step and before the inner step	TARGET-WITH-001
+array/assignment / with resolves a missing identifier before IteratorNext adds that property	TARGET-WITH-001
+array/assignment / with retains an existing property Reference across IteratorNext deletion	TARGET-WITH-001
+array/concat / a custom result property under a source hole is not deleted	TARGET-SPECIES-001
+array/concat / a rejected final length Set leaves all indexed writes observable	TARGET-SPECIES-001
+array/concat / a rejected indexed definition preserves only the written prefix	TARGET-SPECIES-001
+array/concat / concat itself as species	TARGET-SPECIES-001
+array/concat / custom species receive zero and ordinary results get a final length	TARGET-SPECIES-001
+array/concat / indexed defines bypass setters while final length uses an inherited setter	TARGET-SPECIES-001
+array/concat / plain object species	TARGET-SPECIES-001
+array/concat / primitive constructor	TARGET-SPECIES-001
+array/concat / species allocation precedes spreadability length and indexed access	TARGET-SPECIES-001
+array/flatten / a rejected custom result definition preserves the completed prefix	TARGET-SPECIES-001
+array/flatten / custom species receives zero and CreateDataProperty skips inherited setters	TARGET-SPECIES-001
+array/flatten / flat converts depth then creates species before indexed reads	TARGET-SPECIES-001
+array/flatten / flat preserves species getter throw	TARGET-SPECIES-001
+array/flatten / flatMap creates species before alternating source Gets and mapper calls	TARGET-SPECIES-001
+array/flatten / species may alias the result to the source and later reads see writes	TARGET-SPECIES-001
+array/map_filter / a rejected result definition preserves callback order and stops traversal	TARGET-SPECIES-001
+array/map_filter / callable non-constructor species has the pinned constructor error	TARGET-SPECIES-001
+array/map_filter / custom species receive map length or filter zero without a final length Set	TARGET-SPECIES-001
+array/map_filter / null constructor is not a function	TARGET-SPECIES-001
+array/map_filter / plain object species is not a constructor	TARGET-SPECIES-001
+array/map_filter / primitive constructor is not a function	TARGET-SPECIES-001
+array/map_filter / primitive species is not a function	TARGET-SPECIES-001
+array/map_filter / species allocation precedes indexed access and callbacks	TARGET-SPECIES-001
+array/slice_splice / a failed removed-result length Set prevents splice source mutation	TARGET-SPECIES-001
+array/slice_splice / a rejected result definition leaves the completed slice prefix externally observable	TARGET-SPECIES-001
+array/slice_splice / constructor species lookup and constructor validation preserve abrupt order	TARGET-SPECIES-001
+array/slice_splice / generic slice ignores a throwing constructor while custom species sees exact empty count	TARGET-SPECIES-001
+array/slice_splice / slice converts bounds before constructor species and indexed reads	TARGET-SPECIES-001
+array/slice_splice / species construction mutation is observed by later slice reads	TARGET-SPECIES-001
+array/slice_splice / species may alias a slice result to its source	TARGET-SPECIES-001
+array/slice_splice / species may alias the splice result to its source	TARGET-SPECIES-001
+array/slice_splice / species result uses CreateDataProperty and leaves preseeded hole properties intact	TARGET-SPECIES-001
+array/slice_splice / splice finishes the removed result before moving and inserting on source	TARGET-SPECIES-001
+binary_data/array_buffer / slice species ordering and post-constructor revalidation	TARGET-SPECIES-001
+class_initialization/base / a computed key's eval runs sloppy code	TARGET-WITH-001
+class_initialization/derived / direct eval relays super() from a derived constructor	TARGET-DIRECT-EVAL-001
+class_initialization/public_init / arguments context boundaries and QuickJS shorthand capture	TARGET-DIRECT-EVAL-001
+control_flow/annex_b_statements / with containing an if would reopen Annex B once with is implemented	TARGET-WITH-001
+control_flow/catch_destructuring / direct eval reads and writes a pattern binding	TARGET-DIRECT-EVAL-001
+control_flow/catch_destructuring / direct eval var cannot redeclare a pattern catch binding	TARGET-DIRECT-EVAL-001
+control_flow/catch_destructuring / direct eval var reuses a simple catch binding	TARGET-DIRECT-EVAL-001
+control_flow/for_of / nested var binding prepares its with reference after inner acquisition and before step	TARGET-WITH-001
+control_flow/for_of / var declaration prepares a with reference before iterator step	TARGET-WITH-001
+control_flow/for_of / var for-of binding prepares a with reference before inner step	TARGET-WITH-001
+control_flow/for_of / var rest keeps its prepared with reference while draining	TARGET-WITH-001
+control_flow/with / Get rechecks HasProperty after an unscopables getter deletes the selection	TARGET-WITH-001
+control_flow/with / TypedArray prototype numeric-index rejection composes with repeated with HasProperty	TARGET-WITH-001
+control_flow/with / a missing strict global reference stays missing across RHS creation	TARGET-WITH-001
+control_flow/with / a strict child reports a missing selected property after its RHS deletes it	TARGET-WITH-001
+control_flow/with / a var initializer inside with assigns the object and not the function var	TARGET-WITH-001
+control_flow/with / a var initializer selects its with reference before evaluating the RHS	TARGET-WITH-001
+control_flow/with / an eval var object selected under syntactic with becomes the call receiver	TARGET-WITH-001
+control_flow/with / an eval-created closure imports with lookup but still calls with undefined receiver	TARGET-WITH-001
+control_flow/with / compound assignment keeps its selected base when the RHS deletes the property	TARGET-WITH-001
+control_flow/with / delete distinguishes selected fallback and missing bindings	TARGET-WITH-001
+control_flow/with / direct eval assignment resolves its imported with environment after the RHS	TARGET-WITH-001
+control_flow/with / direct eval imports with lookup without importing reference-call receiver rules	TARGET-WITH-001
+control_flow/with / eval variable objects use prototype-aware HasProperty under with	TARGET-WITH-001
+control_flow/with / failed selected writes are silent in sloppy code and throw in strict code	TARGET-WITH-001
+control_flow/with / for-in and for-of assignment targets resolve through with on every iteration	TARGET-WITH-001
+control_flow/with / logical assignment keeps its selected base when the RHS deletes the property	TARGET-WITH-001
+control_flow/with / loop closures retain the with object from each closed scope	TARGET-WITH-001
+control_flow/with / postfix update rechecks HasProperty after coercion deletes the property	TARGET-WITH-001
+control_flow/with / readonly fallback rejects compound logical and update references eagerly	TARGET-WITH-001
+control_flow/with / readonly fallback throws before evaluating the assignment RHS	TARGET-WITH-001
+control_flow/with / simple assignment keeps its selected base when the RHS deletes the property	TARGET-WITH-001
+control_flow/with / simple compound logical prefix and postfix writes target the with object	TARGET-WITH-001
+control_flow/with / single-statement contextual let honors ASI after with	TARGET-WITH-001
+control_flow/with / unscopables skips the inner binding and preserves nested fallback order	TARGET-WITH-001
+control_flow/with / with applies ToObject and rejects nullish values	TARGET-WITH-001
+control_flow/with / with methods receive the object while lexical fallback receives undefined	TARGET-WITH-001
+eval/intrinsic / catch lexicals and implicit bindings	TARGET-DIRECT-EVAL-001
+eval/intrinsic / declaration conflicts and global flags	TARGET-DIRECT-EVAL-001
+eval/intrinsic / direct and indirect eval syntax	TARGET-DIRECT-EVAL-001
+eval/intrinsic / eval environment	TARGET-DIRECT-EVAL-001
+eval/intrinsic / global Proxy binding internal methods	TARGET-DIRECT-EVAL-001
+eval/intrinsic / labelled functions	TARGET-DIRECT-EVAL-001
+eval/intrinsic / nested direct eval environment relay	TARGET-DIRECT-EVAL-001
+eval/intrinsic / primitive string directness	TARGET-DIRECT-EVAL-001
+eval/intrinsic / private function expression names	TARGET-DIRECT-EVAL-001
+eval/intrinsic / strict and indirect eval declarations	TARGET-DIRECT-EVAL-001
+eval/intrinsic / var objects and source order	TARGET-DIRECT-EVAL-001
+eval/var_destructuring	TARGET-DIRECT-EVAL-001
+function_semantics/arrow / direct-eval / an eval-created arrow and nested eval retain with and unscopables	TARGET-WITH-001
+function_semantics/arrow / direct-eval / direct eval in an arrow observes the outer new target	TARGET-DIRECT-EVAL-001
+function_semantics/arrow / direct-eval / direct eval in an arrow sees its parameter and outer lexical bindings	TARGET-DIRECT-EVAL-001
+function_semantics/arrow / direct-eval / strict direct eval preserves typeof this as an authenticated pseudo read	TARGET-DIRECT-EVAL-001
+function_semantics/arrow / lookahead / a strict reserved word cannot be an arrow parameter	TARGET-DIRECT-EVAL-001
+function_semantics/arrow / with / an escaped arrow retains with lookup and honors unscopables	TARGET-WITH-001
+object/accessors / direct-eval / direct eval resolves accessor-owned this arguments and new target	TARGET-DIRECT-EVAL-001
+object/assignment / for-of prepares a with Reference independently for each yielded object	TARGET-WITH-001
+object/assignment / with resolves a missing identifier before the source getter adds it	TARGET-WITH-001
+object/assignment / with retains an existing identifier Reference across source deletion	TARGET-WITH-001
+object/bindings / binding Put fault closes the outer iterator and keeps the Put fault	TARGET-WITH-001
+object/bindings / computed sloppy var evaluates key then prepares with reference before get	TARGET-WITH-001
+object/bindings / fixed sloppy var prepares its with reference before the property getter	TARGET-WITH-001
+object/bindings / nested var prepares its leaf reference after the outer get and before the inner get	TARGET-WITH-001
+object/methods / direct-eval / direct eval resolves the method this arguments and new target owners	TARGET-DIRECT-EVAL-001
+object/rest / rest target Put fault follows copy then closes the outer iterator	TARGET-WITH-001
+object/rest / sloppy with resolves a missing rest target before copy adds that name	TARGET-WITH-001
+object/rest / sloppy with retains an existing rest target reference after copy deletes it	TARGET-WITH-001
+object/super_eval / accessors / getter and setter direct eval inherit their own HomeObject this and arguments	TARGET-DIRECT-EVAL-001
+object/super_eval / authored-arrow / an escaped authored arrow carries method direct-eval super across a live prototype change	TARGET-DIRECT-EVAL-001
+object/super_eval / call-receiver / direct-eval super call reads from the base and invokes with the method receiver	TARGET-DIRECT-EVAL-001
+object/super_eval / delete / direct-eval delete super throws before computed-key coercion	TARGET-DIRECT-EVAL-001
+object/super_eval / eval-created-arrow / an escaped arrow created by eval retains imported this and HomeObject cells	TARGET-DIRECT-EVAL-001
+object/super_eval / first-slot-wins / eval-visible pseudo relays are reused by authored super in the same escaped arrow	TARGET-DIRECT-EVAL-001
+object/super_eval / method-read / dot and computed direct eval use the live HomeObject prototype and method receiver	TARGET-DIRECT-EVAL-001
+object/super_eval / nested-eval / method and arrow nested direct eval recursively preserve super capability	TARGET-DIRECT-EVAL-001
+object/super_eval / strictness / caller and eval-source strictness govern rejected direct-eval super writes	TARGET-DIRECT-EVAL-001
+object/super_eval / update / direct-eval postfix and prefix super updates preserve values receiver and ordering	TARGET-DIRECT-EVAL-001
+object/super_eval / write / computed direct-eval super assignment writes through the current receiver	TARGET-DIRECT-EVAL-001
+operators/optional_chaining / eval / eval optional call is indirect and cannot see the caller lexical environment	TARGET-DIRECT-EVAL-001
+parameters/binding_patterns / direct eval observes initialized pattern BoundNames	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / a descendant arrow arguments capture is appended to the caller closure suffix seen by eval	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an arrow parameter eval may create arguments in the argument variable object	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an authored arguments capture is appended to the caller closure suffix seen by eval	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an authored body function named arguments precedes the body eval variable object	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an authored body var named arguments precedes the body eval variable object	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an eval var cannot redeclare a named arguments parameter	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / arguments / an eval var cannot redeclare the synthetic parameter arguments cell	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / dynamic object / a repeated object-backed var declaration resets the property to undefined	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / dynamic object / an eval function closure survives deletion of its dynamic binding	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / environment split / a function created by body eval captures the body binding	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / environment split / body eval creates a body variable that shadows the argument eval variable	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / environment split / body eval updates exact body bindings without overwriting the argument variable object	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / environment split / nested body eval targets the body variable object before the argument variable object	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / a BindingPattern copies its final parameter cell value into the body environment	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / a closure created by parameter eval captures the parameter cell rather than the body copy	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / a default anywhere moves a preceding plain formal into the parameter lexical environment	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval assignment mutates the parameter cell while the body keeps its copied argument	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval assignment to a later parameter observes its temporal dead zone	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval function cannot redeclare a later parameter lexical cell	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval var cannot redeclare a later parameter lexical cell	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / parameter target / an eval var cannot redeclare an earlier parameter lexical cell	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / scope switch / a computed parameter key without any default remains in the function variable scope	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / strict eval / a strict eval source mutates imported parameters but does not leak its var declaration	TARGET-DIRECT-EVAL-001
+parameters/direct_eval / strict eval / direct eval inherits strictness from the containing function bytecode	TARGET-DIRECT-EVAL-001
+parameters/rest / direct eval observes the initialized rest binding	TARGET-DIRECT-EVAL-001
+regexp/dotall / matchAll preserves s while split preserves s and appends sticky	TARGET-SPECIES-001
+regexp/match_all / empty global matches advance by code unit or Unicode code point from matcher lastIndex	TARGET-SPECIES-001
+regexp/match_all / exec throws and primitive results leave the iterator retryable	TARGET-SPECIES-001
+regexp/match_all / iterator next result objects preserve match identity and stable done state	TARGET-SPECIES-001
+regexp/match_all / match zero and empty-match lastIndex errors leave the iterator retryable	TARGET-SPECIES-001
+regexp/match_all / matchAll abrupt completions stop at exact construction boundaries	TARGET-SPECIES-001
+regexp/match_all / matchAll converts input then resolves species flags construction and lastIndex	TARGET-SPECIES-001
+regexp/match_all / non-global iterators finish after one match while global iterators run to null	TARGET-SPECIES-001
+regexp/match_all / source lastIndex is ToLength copied once without mutating the source	TARGET-SPECIES-001
+regexp/match_indices / matchAll preserves d and g while split preserves d and appends sticky	TARGET-SPECIES-001
+regexp/split / RegExp split observes input constructor species flags construct limit and exec order	TARGET-SPECIES-001
+regexp/split / abstract exec accepts branded fallback and rejects missing or primitive results	TARGET-SPECIES-001
+regexp/split / capture values remain raw and are read only through the active limit	TARGET-SPECIES-001
+regexp/split / empty input executes once without setting lastIndex and distinguishes hit from miss	TARGET-SPECIES-001
+regexp/split / empty matches advance and a retreating lastIndex is consumed exactly	TARGET-SPECIES-001
+regexp/split / lastIndex is clamped to input length after a successful abstract exec	TARGET-SPECIES-001
+regexp/split / loop abrupt completions stop at setter exec end length and capture boundaries	TARGET-SPECIES-001
+regexp/split / prefix abrupt completions stop at each input species flags construct and limit boundary	TARGET-SPECIES-001
+regexp/split / primitive constructor and nonconstructor species are TypeErrors before flags	TARGET-SPECIES-001
+regexp/split / recursive String and RegExp split protocol calls are catchable and recover	TARGET-SPECIES-001
+regexp/split / split appends sticky once and uses u or v for surrogate-pair advancement	TARGET-SPECIES-001
+regexp/split / zero limit still constructs the species but never executes it	TARGET-SPECIES-001
+templates/tagged / dynamic-compilation-sites / authored eval and separately constructed Function bytecode own distinct sites	TARGET-DIRECT-EVAL-001
+templates/tagged / super-member-this / super member tags and direct eval preserve the method receiver	TARGET-DIRECT-EVAL-001
+templates/tagged / with-receiver / an identifier tag resolved through with receives the with object as this	TARGET-WITH-001
+typed_array/of / static from shares only the direct constructor diagnostic seam	TARGET-SPECIES-001
 primitives/values / bigint decrement subtracts one outside int64	QUICKJS-SPEC-001
 promise/combinators / allSettled element functions share one alreadyCalled record	QUICKJS-SPEC-006
 promise/combinators / a late onRejected after fulfillment leaves the result unchanged	QUICKJS-SPEC-006

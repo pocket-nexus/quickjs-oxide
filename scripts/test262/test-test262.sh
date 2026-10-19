@@ -20,7 +20,6 @@ usage() {
 
 die() { echo "error: $*" >&2; exit 1; }
 
-vm_configuration=stack-vm
 mode=check
 spec_arg=$default_spec
 mode_seen=false
@@ -515,11 +514,10 @@ QUICKJS_OXIDE_TEST262_ENGINE_SEMANTICS_SHA256=$workspace_engine_semantics_sha256
     cargo build --locked --release --target "$build_host" \
     --target-dir "$target_dir" -p quickjs-oxide-test262 --bin run-test262 \
     --message-format json-render-diagnostics > "$tmp/runner-build.jsonl"
-python3 - "$tmp/runner-build.jsonl" "$vm_configuration" <<'PY_BUILD'
+python3 - "$tmp/runner-build.jsonl" <<'PY_BUILD'
 import json, sys
 artifacts = [r for line in open(sys.argv[1]) if (r := json.loads(line)).get("reason") == "compiler-artifact" and r.get("target", {}).get("name") == "run-test262"]
 assert len(artifacts) == 1, "expected one authenticated runner artifact"
-assert "stack-vm" not in artifacts[0]["features"], "retired VM feature selected"
 PY_BUILD
 assert_workspace_engine_unchanged 'runner build'
 built_runner=$target_dir/$build_host/release/run-test262
@@ -558,11 +556,11 @@ runner_sha256=$(sha256_file "$runner")
 printf 'Rust Test262 runner provenance passed: engine_semantics_sha256=%s binary_sha256=%s\n' \
     "$workspace_engine_semantics_sha256" "$runner_sha256"
 
-python3 - "$output_dir/test262-runner-$vm_configuration.json" "$tmp/runner-build.jsonl" "$vm_configuration" "$workspace_engine_semantics_sha256" "$runner_sha256" <<'PY_RECEIPT'
+python3 - "$output_dir/test262-runner.json" "$tmp/runner-build.jsonl" "$workspace_engine_semantics_sha256" "$runner_sha256" <<'PY_RECEIPT'
 import json, sys
 artifact = next(r for line in open(sys.argv[2]) if (r := json.loads(line)).get("reason") == "compiler-artifact" and r.get("target", {}).get("name") == "run-test262")
 with open(sys.argv[1], "w") as output:
-    json.dump(dict(vm_configuration=sys.argv[3], features=artifact["features"], engine_semantics_sha256=sys.argv[4], binary_sha256=sys.argv[5]), output, indent=2)
+    json.dump(dict(features=artifact["features"], engine_semantics_sha256=sys.argv[3], binary_sha256=sys.argv[4]), output, indent=2)
     output.write("\n")
 PY_RECEIPT
 

@@ -20,9 +20,8 @@ fn array_flatten_basic_rust_smoke() {
 #[test]
 fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
     let (_runtime, mut context) = host_runtime_context();
-    // Owned callbacks consume logical frames, so the old native-stack ceiling
-    // must not reject this finite chain. Keep the legacy ceiling probe below
-    // for the default VM and exercise a true infinite chain for stack-vm.
+    // A finite chain of callbacks runs to completion; an unbounded one throws
+    // a catchable stack overflow.
 
     assert_eq!(
         primitive_value_text(

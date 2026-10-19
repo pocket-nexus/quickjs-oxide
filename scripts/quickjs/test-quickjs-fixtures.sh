@@ -136,7 +136,7 @@ tail -n +2 "$registry" | while IFS= read -r line; do
     [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]] || die "invalid expected hash for $id"
     [[ "$prepared_sha" =~ ^[0-9a-f]{64}$ ]] || die "invalid prepared hash for $id"
     [[ "$label" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || die "invalid label for $id"
-    [[ "$deviation" == - || "$deviation" =~ ^(NEWCORE-[A-Z-]+|QUICKJS-SPEC)-[0-9]{3}$ ]] \
+    [[ "$deviation" == - || "$deviation" =~ ^(TARGET-[A-Z-]+|QUICKJS-SPEC)-[0-9]{3}$ ]] \
         || die "invalid deviation for $id: $deviation"
     case $mode in
         value)
