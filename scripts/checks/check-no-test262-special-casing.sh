@@ -77,6 +77,7 @@ printf '%s\n' \
     "apps/cli/src/main.rs:        if filename.ends_with(\".json\") || import_type_is(attributes, \"json\") {" \
     "apps/cli/src/main.rs:    filename.ends_with(\".mjs\") || quickjs_detect_module_bytes(source)" \
     "apps/cli/examples/compile_probe.rs:    if path == \"--version\" {" \
+    "apps/cli/examples/compile_probe_thread.rs:    if path == \"--version\" {" \
     > "$filename_probe_allowlist"
 
 filter_exact_allowlist() {
