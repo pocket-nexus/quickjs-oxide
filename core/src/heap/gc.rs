@@ -900,10 +900,14 @@ impl Heap {
             }
             for index in arena.free_indices() {
                 assert!(
-                    !arena.is_live(index) && !arena.is_marked(index),
-                    "gc verify: free {name} {index} is live or marked"
+                    !arena.is_marked(index),
+                    "gc verify: free {name} {index} is marked"
                 );
             }
+            assert!(
+                arena.free_count_matches(),
+                "gc verify: {name}'s free count or cursor disagrees with its bitmap"
+            );
         }
         check("object", &self.objects);
         check("shape", &self.shapes);
