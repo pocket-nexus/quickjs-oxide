@@ -1,6 +1,6 @@
 # The heap and the collector
 
-This page describes the heap of `oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with a cap-aware trigger, growth that stops at the cap, shrinking after a collection and heap snapshots.
+This page describes the heap of `oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with a cap-aware trigger, growth that stops at the cap, shrinking after a collection and heap snapshots; [the memory plan](memory-plan.md) is the plan for peak memory against QuickJS.
 
 ## Values
 

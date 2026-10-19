@@ -10,7 +10,7 @@ The work is a list of items taken by need, in the priority order of section 8; n
 
 **Outside this plan.** The shape of the embedding API beyond the entry points named in 4.4 and the `Host::math` method of 5.4; a JIT; linking for the PSP itself, whose Rust target is tier 3 and needs a nightly toolchain with `-Zbuild-std` (section 5.3 says what this plan delivers instead and how a port consumes it); any change to the loop-size gate or the instruction gate of [Execution principles](performance/principles.md).
 
-**Fixed constraints.** The collector's trigger keeps its 4 MiB minimum heap and growth 2; the generational collector of section 6 is an addition behind that trigger, and the maintainer may strike section 6 before it starts.
+**Fixed constraints.** The collector's trigger keeps growth 2 with the 1 MiB minimum heap and the reserved-bytes budget of [the memory plan](memory-plan.md#4-item-c-the-trigger-growth-and-the-arenas); the generational collector of section 6 is an addition behind that trigger, and the maintainer may strike section 6 before it starts.
 
 **What motivates the work.** The core is at or below QuickJS's time on most suite programs; its memory is not. Measured on the reference machine at the default trigger, one `run()` per program:
 
@@ -244,7 +244,7 @@ Failing a memory or snapshot gate is a finding that names the mechanism, recorde
 Made:
 
 - the items are taken by need, in section 8's order;
-- the trigger keeps a 4 MiB minimum and growth 2; under a cap it is clamped (3.1);
+- the trigger keeps growth 2 over a 1 MiB minimum and bounds reserved bytes by a budget ([the memory plan](memory-plan.md), item C); under a cap the budget is clamped (3.1);
 - the heap stays non-moving and gives back trailing free capacity (3.2);
 - a snapshot writes the static units whole and the heap's live dynamic units with the rest of the heap (4.2);
 - two artifacts, images and snapshots, in one little-endian `u32`-indexed format with a build fingerprint; hash tables rebuilt at load; inline caches empty at load; loaders treat input as untrusted and the publication validator runs on every image (4.2);
