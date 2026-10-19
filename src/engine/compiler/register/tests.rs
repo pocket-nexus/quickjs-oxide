@@ -289,6 +289,37 @@ fn nested_handlers_are_innermost_first_at_their_depths() {
 }
 
 #[test]
+fn alternating_catch_and_iterator_regions_split_into_runs() {
+    let code = function(
+        "function f(a) { for (const x of a) { try { for (const y of x) { \
+         try { g(y); } catch (e) { h(e); } k(); } } catch (e) { m(e); } n(); } return 0; }",
+        "f",
+    );
+    let handlers: Vec<&str> = code
+        .iter()
+        .map(String::as_str)
+        .filter(|line| line.starts_with("handler"))
+        .collect();
+    // Innermost first, each region's runs in order; the iterator stubs at
+    // the end run inside the regions that enclose their records.
+    assert_eq!(
+        handlers,
+        [
+            "handler @17..@21 -> @24, t7",
+            "handler @26..@29 -> @32, t7",
+            "handler @12..@14 -> @63, t7",
+            "handler @16..@40 -> @63, t7",
+            "handler @10..@40 -> @43, t3",
+            "handler @45..@48 -> @51, t3",
+            "handler @63..@65 -> @43, t3",
+            "handler @6..@8 -> @61, t3",
+            "handler @9..@59 -> @61, t3",
+            "handler @63..@65 -> @61, t3",
+        ]
+    );
+}
+
+#[test]
 fn handler_resumes_above_live_operands() {
     // The array literal's first element is live below the try expression.
     let code = function(

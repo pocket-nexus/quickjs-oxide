@@ -23,14 +23,23 @@ pub(super) struct CatchRegion {
     /// The instruction that opens the region; the regions active there
     /// enclose it.
     pub(super) opened_at: usize,
+    /// The innermost region active at `opened_at`, or [`NO_REGION`].
+    pub(super) parent: u32,
+    /// The number of regions that enclose this one.
+    pub(super) level: u32,
 }
+
+/// No active region.
+pub(super) const NO_REGION: u32 = u32::MAX;
 
 pub(super) struct Analysis {
     /// Operand-stack depth before each instruction; `None` if unreachable.
     pub(super) depth: Vec<Option<u32>>,
-    /// Active catch regions before each instruction, innermost last, as
-    /// indices into `catches`.
-    pub(super) regions: Vec<Vec<u32>>,
+    /// The innermost catch region active before each instruction, as an
+    /// index into `catches`, or [`NO_REGION`]; the rest follow its
+    /// `parent` chain. A region is opened at one instruction only, so the
+    /// chain from a region is the same wherever it is active.
+    pub(super) regions: Vec<u32>,
     /// Jump, handler and `Gosub` targets, and the instruction after each
     /// `Gosub` (where `Ret` returns).
     pub(super) label: Vec<bool>,
@@ -42,14 +51,14 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
     let len = code.len();
     let mut analysis = Analysis {
         depth: vec![None; len],
-        regions: vec![Vec::new(); len],
+        regions: vec![NO_REGION; len],
         label: vec![false; len],
         catches: Vec::new(),
         max_depth: 0,
     };
     let mut catch_ids = vec![u32::MAX; len];
     let internal = |message: &str| LowerError::Internal(message.to_owned());
-    let mut worklist = VecDeque::from([(0_usize, 0_u32, Vec::<u32>::new())]);
+    let mut worklist = VecDeque::from([(0_usize, 0_u32, NO_REGION)]);
     let target = |t: u32| -> Result<usize, LowerError> {
         let t = t as usize;
         if t < len {
@@ -58,7 +67,7 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
             Err(internal("jump target out of range"))
         }
     };
-    while let Some((pc, depth, mut regions)) = worklist.pop_front() {
+    while let Some((pc, depth, mut region)) = worklist.pop_front() {
         let Some(instruction) = code.get(pc) else {
             return Err(internal("control falls off the end of the code"));
         };
@@ -69,7 +78,7 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
             continue;
         }
         analysis.depth[pc] = Some(depth);
-        analysis.regions[pc] = regions.clone();
+        analysis.regions[pc] = region;
         analysis.max_depth = analysis.max_depth.max(depth);
 
         let (popped, pushed) = instruction.stack_effect();
@@ -77,51 +86,49 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
             .checked_sub(popped as u32)
             .ok_or_else(|| internal("stack underflow"))?;
         let mut next = remaining + pushed as u32;
+        // The region a cleanup instruction closes.
+        let closed = |catches: &[CatchRegion], region: u32, message: &str| {
+            catches
+                .get(region as usize)
+                .copied()
+                .ok_or_else(|| internal(message))
+        };
         match instruction {
             Instruction::DropCatch => {
-                regions
-                    .pop()
-                    .ok_or_else(|| internal("catch region underflow"))?;
+                region = closed(&analysis.catches, region, "catch region underflow")?.parent;
             }
             Instruction::NipCatch => {
-                let region = regions
-                    .pop()
-                    .ok_or_else(|| internal("catch region underflow"))?;
-                if analysis.catches[region as usize].iterator {
+                let catch = closed(&analysis.catches, region, "catch region underflow")?;
+                if catch.iterator {
                     return Err(internal("NipCatch over an iterator record"));
                 }
-                next = analysis.catches[region as usize].marker_depth + 1;
+                next = catch.marker_depth + 1;
+                region = catch.parent;
             }
             Instruction::ForOfStart | Instruction::ForAwaitOfStart => {
                 if catch_ids[pc] == u32::MAX {
                     catch_ids[pc] = analysis.catches.len() as u32;
-                    analysis.catches.push(CatchRegion {
-                        marker_depth: remaining,
-                        target: usize::MAX,
-                        iterator: true,
-                        opened_at: pc,
-                    });
+                    let catch = open(&analysis.catches, region, remaining, usize::MAX, true, pc);
+                    analysis.catches.push(catch);
                 }
-                regions.push(catch_ids[pc]);
+                region = catch_ids[pc];
             }
             Instruction::IteratorClose
             | Instruction::IteratorClosePreserve
             | Instruction::IteratorDropPreserve
             | Instruction::IteratorDetachPreserve => {
-                let region = regions
-                    .pop()
-                    .ok_or_else(|| internal("iterator region underflow"))?;
-                let region = analysis.catches[region as usize];
-                if !region.iterator {
+                let catch = closed(&analysis.catches, region, "iterator region underflow")?;
+                if !catch.iterator {
                     return Err(internal("iterator cleanup over a catch region"));
                 }
                 match instruction {
                     Instruction::IteratorClosePreserve | Instruction::IteratorDropPreserve => {
-                        next = region.marker_depth + 1;
+                        next = catch.marker_depth + 1;
                     }
-                    Instruction::IteratorDetachPreserve => next = region.marker_depth + 2,
+                    Instruction::IteratorDetachPreserve => next = catch.marker_depth + 2,
                     _ => {}
                 }
+                region = catch.parent;
             }
             _ => {}
         }
@@ -138,29 +145,24 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
             Instruction::Goto(t) => {
                 let t = target(t)?;
                 analysis.label[t] = true;
-                worklist.push_back((t, next, regions));
+                worklist.push_back((t, next, region));
             }
             Instruction::IfFalse(t) | Instruction::IfTrue(t) => {
                 let t = target(t)?;
                 analysis.label[t] = true;
-                worklist.push_back((t, next, regions.clone()));
-                worklist.push_back((pc + 1, next, regions));
+                worklist.push_back((t, next, region));
+                worklist.push_back((pc + 1, next, region));
             }
             Instruction::Catch(t) => {
                 let t = target(t)?;
                 analysis.label[t] = true;
                 if catch_ids[pc] == u32::MAX {
                     catch_ids[pc] = analysis.catches.len() as u32;
-                    analysis.catches.push(CatchRegion {
-                        marker_depth: depth,
-                        target: t,
-                        iterator: false,
-                        opened_at: pc,
-                    });
+                    let catch = open(&analysis.catches, region, depth, t, false, pc);
+                    analysis.catches.push(catch);
                 }
-                worklist.push_back((t, next, regions.clone()));
-                regions.push(catch_ids[pc]);
-                worklist.push_back((pc + 1, next, regions));
+                worklist.push_back((t, next, region));
+                worklist.push_back((pc + 1, next, catch_ids[pc]));
             }
             Instruction::Gosub(t) => {
                 let t = target(t)?;
@@ -169,11 +171,45 @@ pub(super) fn analyze(code: &[Instruction]) -> Result<Analysis, LowerError> {
                     analysis.label[pc + 1] = true;
                 }
                 analysis.max_depth = analysis.max_depth.max(depth + 1);
-                worklist.push_back((t, depth + 1, regions.clone()));
-                worklist.push_back((pc + 1, next, regions));
+                worklist.push_back((t, depth + 1, region));
+                worklist.push_back((pc + 1, next, region));
             }
-            _ => worklist.push_back((pc + 1, next, regions)),
+            _ => worklist.push_back((pc + 1, next, region)),
         }
     }
     Ok(analysis)
+}
+
+/// A region opened inside `parent`.
+fn open(
+    catches: &[CatchRegion],
+    parent: u32,
+    marker_depth: u32,
+    target: usize,
+    iterator: bool,
+    opened_at: usize,
+) -> CatchRegion {
+    CatchRegion {
+        marker_depth,
+        target,
+        iterator,
+        opened_at,
+        parent,
+        level: catches
+            .get(parent as usize)
+            .map_or(0, |parent| parent.level + 1),
+    }
+}
+
+impl Analysis {
+    /// The regions active before `pc`, innermost first.
+    pub(super) fn chain(&self, pc: usize) -> impl Iterator<Item = (u32, &CatchRegion)> {
+        let mut region = self.regions.get(pc).copied().unwrap_or(NO_REGION);
+        std::iter::from_fn(move || {
+            let catch = self.catches.get(region as usize)?;
+            let id = region;
+            region = catch.parent;
+            Some((id, catch))
+        })
+    }
 }

@@ -1511,9 +1511,10 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.checked.clear();
                 // A Catch marker survives a join only above its region's
                 // handler; every other entry is canonical.
-                let markers: Vec<usize> = self.analysis.regions[pc]
-                    .iter()
-                    .map(|&region| self.analysis.catches[region as usize])
+                let markers: Vec<usize> = self
+                    .analysis
+                    .chain(pc)
+                    .map(|(_, region)| region)
                     .filter(|region| !region.iterator)
                     .map(|region| region.marker_depth as usize)
                     .collect();
@@ -1909,10 +1910,12 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 }
             }
             I::NipCatch => {
-                let region = *self.analysis.regions[pc]
-                    .last()
+                let (_, region) = self
+                    .analysis
+                    .chain(pc)
+                    .next()
                     .ok_or_else(|| LowerError::Internal("NipCatch outside a region".into()))?;
-                let marker = self.analysis.catches[region as usize].marker_depth as usize;
+                let marker = region.marker_depth as usize;
                 let (depth, value) = self.pop()?;
                 self.stack.truncate(marker);
                 if value == Entry::Canon {
@@ -2739,10 +2742,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
 
     /// The depth of the innermost iterator record active at stack PC `pc`.
     fn innermost_iterator(&self, pc: usize) -> Result<usize, LowerError> {
-        let region = *self.analysis.regions[pc]
-            .last()
+        let (_, region) = self
+            .analysis
+            .chain(pc)
+            .next()
             .ok_or_else(|| LowerError::Internal("no iterator record".into()))?;
-        let region = self.analysis.catches[region as usize];
         if !region.iterator {
             return Err(LowerError::Internal("innermost region is a catch".into()));
         }
@@ -3318,10 +3322,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
 
     /// One handler entry per run of register instructions inside a catch
     /// region, innermost regions first.
+    ///
+    /// One pass over the instructions keeps the regions open at the current
+    /// one, outermost first, each with the instruction its run started at; a
+    /// region's position in that stack is its nesting.
     fn handlers(&self, stubs: &[Option<(u32, u16)>]) -> Result<Vec<Handler>, LowerError> {
-        let mut entries = Vec::new();
+        let mut destinations = Vec::with_capacity(self.analysis.catches.len());
         for (region, catch) in self.analysis.catches.iter().enumerate() {
-            let (target, register) = match stubs[region] {
+            destinations.push(match stubs[region] {
                 Some(stub) => stub,
                 None => {
                     let target = self.labels[catch.target]
@@ -3332,49 +3340,54 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                         })?;
                     (target, register)
                 }
-            };
-            let region = region as u32;
-            let mut start = None;
-            let mut nesting = 0;
-            for (at, &origin) in self.origins.iter().enumerate() {
-                let regions = self
-                    .analysis
-                    .regions
-                    .get(origin)
-                    .map_or(&[][..], |r| &r[..]);
-                let inside = regions.iter().position(|&active| active == region);
-                match (inside, start) {
-                    (Some(level), None) => {
-                        start = Some(at as u32);
-                        nesting = level;
-                    }
-                    (None, Some(first)) => {
-                        entries.push((
-                            nesting,
-                            Handler {
-                                start: first,
-                                end: at as u32,
-                                target,
-                                register,
-                            },
-                        ));
-                        start = None;
-                    }
-                    _ => {}
-                }
-            }
-            if let Some(first) = start {
+            });
+        }
+        let mut entries = Vec::new();
+        let mut open: Vec<(u32, u32)> = Vec::new();
+        let mut close = |open: &mut Vec<(u32, u32)>, keep: usize, end: u32| {
+            while open.len() > keep {
+                let (region, start) = open.pop().expect("an open region");
+                let (target, register) = destinations[region as usize];
                 entries.push((
-                    nesting,
+                    open.len(),
                     Handler {
-                        start: first,
-                        end: self.origins.len() as u32,
+                        start,
+                        end,
                         target,
                         register,
                     },
                 ));
             }
+        };
+        let mut entered = Vec::new();
+        for (at, &origin) in self.origins.iter().enumerate() {
+            let innermost = self
+                .analysis
+                .regions
+                .get(origin)
+                .copied()
+                .unwrap_or(analysis::NO_REGION);
+            if open.last().map(|&(region, _)| region) == Some(innermost)
+                || (open.is_empty() && innermost == analysis::NO_REGION)
+            {
+                continue;
+            }
+            // The regions active here, innermost first, down to the first
+            // one already open: those above it close, these open.
+            entered.clear();
+            let mut keep = 0;
+            for (region, catch) in self.analysis.chain(origin) {
+                let level = catch.level as usize;
+                if open.get(level).is_some_and(|&(open, _)| open == region) {
+                    keep = level + 1;
+                    break;
+                }
+                entered.push(region);
+            }
+            close(&mut open, keep, at as u32);
+            open.extend(entered.iter().rev().map(|&region| (region, at as u32)));
         }
+        close(&mut open, 0, self.origins.len() as u32);
         entries.sort_by_key(|&(nesting, handler)| (std::cmp::Reverse(nesting), handler.start));
         Ok(entries.into_iter().map(|(_, handler)| handler).collect())
     }
