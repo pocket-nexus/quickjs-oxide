@@ -1,4 +1,4 @@
-"""Build a probe against an explicit checkout and feature set.
+"""Build a probe against an explicit checkout.
 
 By default this builds the public compile probe. `--probe`/`--name` point the
 same generated standalone crate (and its provenance receipts) at another probe
@@ -124,7 +124,7 @@ def main():
     metadata = dict(command=command, repository=str(repo), binary=str(binary), binary_sha256=digest(binary),
                     source_sha256=probe_source_sha256, cargo_lock_sha256=digest(output / "Cargo.lock"),
                     dependency_commit=dependency_commit, source_identity=source_identity,
-                    source_patch_sha256=source_patch_sha256, features=features,
+                    source_patch_sha256=source_patch_sha256,
                     rustc=subprocess.check_output(["rustc", "-vV"], text=True),
                     rustflags=os.environ.get("RUSTFLAGS"), encoded_rustflags=os.environ.get("CARGO_ENCODED_RUSTFLAGS"))
     (output / "build.json").write_text(json.dumps(metadata, indent=2) + "\n")
