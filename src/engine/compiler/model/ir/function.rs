@@ -3,7 +3,9 @@
 use crate::engine::api::error::Error;
 use crate::engine::api::error::ErrorKind;
 use crate::engine::code::function::metadata::ClassInitializerKind;
+use crate::engine::code::function::metadata::ClosureSource;
 use crate::engine::code::function::metadata::ClosureVariable;
+use crate::engine::code::function::metadata::ClosureVariableName;
 use crate::engine::code::function::metadata::EvalCallerProfile;
 use crate::engine::code::function::metadata::EvalCallerVariableTarget;
 use crate::engine::code::function::metadata::EvalEnvironment;
@@ -202,7 +204,10 @@ pub(in crate::engine::compiler) struct FunctionIr {
     pub(in crate::engine::compiler) locals: Vec<NameId>,
     pub(in crate::engine::compiler) scopes: Vec<IrScope>,
     pub(in crate::engine::compiler) bindings: Vec<IrBinding>,
+    /// Appended through [`FunctionIr::push_global_declaration`], which keeps
+    /// `global_declaration_index`.
     pub(in crate::engine::compiler) global_declarations: Vec<IrGlobalDeclaration>,
+    global_declaration_index: HashMap<NameId, FirstGlobalDeclarations>,
     /// Last direct function declaration attached to each ordinary
     /// function-scoped argument/local binding.
     pub(in crate::engine::compiler) hoisted_functions: Vec<IrHoistedFunction>,
@@ -237,6 +242,9 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// First primitive string occurrence; constant ordinals remain append-only.
     pub(in crate::engine::compiler) string_constants: HashMap<JsString, u32>,
     pub(in crate::engine::compiler) closure_variables: Vec<ClosureVariable>,
+    /// The first slot of each storage in `closure_variables`, kept by
+    /// `push_closure_variable`.
+    pub(in crate::engine::compiler) closure_index: HashMap<ClosureKey, u16>,
     /// Exact flattened caller bindings imported by a synthetic direct-eval
     /// root. Entries retain their original R1w descriptor indices even though
     /// bindings are inserted into the synthetic root in outer-to-inner order
@@ -301,6 +309,35 @@ pub(in crate::engine::compiler) struct FunctionIrOptions {
     pub(in crate::engine::compiler) rest_parameter: Option<u16>,
     pub(in crate::engine::compiler) strict: bool,
     pub(in crate::engine::compiler) super_capabilities: SuperCapabilities,
+}
+
+/// The storage a closure slot names: one per parent source, and for a
+/// global binding or declaration one per name, as QuickJS's
+/// `get_closure_var` matches them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(in crate::engine::compiler) enum ClosureKey {
+    Source(ClosureSource),
+    Named(ClosureSource, ClosureVariableName),
+}
+
+impl ClosureKey {
+    pub(in crate::engine::compiler) fn of(variable: &ClosureVariable) -> Self {
+        match variable.source {
+            source @ (ClosureSource::Global | ClosureSource::GlobalDeclaration) => {
+                Self::Named(source, variable.name)
+            }
+            source => Self::Source(source),
+        }
+    }
+}
+
+/// The positions in `global_declarations` of a name's first declaration,
+/// and of its first `var` and first lexical one.
+#[derive(Clone, Copy, Debug)]
+struct FirstGlobalDeclarations {
+    any: usize,
+    normal: Option<usize>,
+    lexical: Option<usize>,
 }
 
 impl FunctionIr {
@@ -432,6 +469,7 @@ impl FunctionIr {
             scopes,
             bindings: Vec::new(),
             global_declarations: Vec::new(),
+            global_declaration_index: HashMap::new(),
             hoisted_functions: Vec::new(),
             eval_declarations: Vec::new(),
             eval_declarations_installed: false,
@@ -448,6 +486,7 @@ impl FunctionIr {
             constants: Vec::new(),
             string_constants: HashMap::new(),
             closure_variables: Vec::new(),
+            closure_index: HashMap::new(),
             external_bindings: Vec::new(),
             eval_caller_profile: EvalCallerProfile {
                 scope_kinds: Box::new([]),
@@ -628,10 +667,54 @@ impl FunctionIr {
         &self,
         name: NameId,
     ) -> bool {
-        self.global_declarations
-            .iter()
-            .find(|declaration| declaration.name == name)
+        self.first_global_declaration(name)
             .is_some_and(|declaration| !declaration.is_lexical)
+    }
+
+    pub(in crate::engine::compiler) fn push_global_declaration(
+        &mut self,
+        declaration: IrGlobalDeclaration,
+    ) {
+        let index = self.global_declarations.len();
+        let first = self
+            .global_declaration_index
+            .entry(declaration.name)
+            .or_insert(FirstGlobalDeclarations {
+                any: index,
+                normal: None,
+                lexical: None,
+            });
+        let kind = if declaration.is_lexical {
+            &mut first.lexical
+        } else {
+            &mut first.normal
+        };
+        kind.get_or_insert(index);
+        self.global_declarations.push(declaration);
+    }
+
+    /// The first global declaration of `name`.
+    pub(in crate::engine::compiler) fn first_global_declaration(
+        &self,
+        name: NameId,
+    ) -> Option<&IrGlobalDeclaration> {
+        let first = self.global_declaration_index.get(&name)?;
+        self.global_declarations.get(first.any)
+    }
+
+    /// The first global declaration of `name` that is lexical, or not.
+    pub(in crate::engine::compiler) fn first_global_declaration_of(
+        &self,
+        name: NameId,
+        is_lexical: bool,
+    ) -> Option<&IrGlobalDeclaration> {
+        let first = self.global_declaration_index.get(&name)?;
+        let index = if is_lexical {
+            first.lexical
+        } else {
+            first.normal
+        };
+        self.global_declarations.get(index?)
     }
 
     pub(in crate::engine::compiler) fn binding_from_scope(

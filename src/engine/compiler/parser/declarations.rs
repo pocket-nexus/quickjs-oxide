@@ -17,6 +17,7 @@ use crate::engine::compiler::model::bindings::EvalDeclarationMode;
 use crate::engine::compiler::model::bindings::EvalDeclarationTarget;
 use crate::engine::compiler::model::bindings::EvalDeclarationValue;
 use crate::engine::compiler::model::bindings::IrAnnexBinding;
+use crate::engine::compiler::model::bindings::IrBinding;
 use crate::engine::compiler::model::bindings::IrEvalDeclaration;
 use crate::engine::compiler::model::bindings::IrGlobalDeclaration;
 use crate::engine::compiler::model::bindings::IrHoistedFunction;
@@ -139,7 +140,7 @@ impl<'source> Parser<'source> {
             }
         }
         if matches!(function.kind, FunctionKind::Script) {
-            function.global_declarations.push(IrGlobalDeclaration {
+            function.push_global_declaration(IrGlobalDeclaration {
                 name,
                 is_lexical: false,
                 is_const: false,
@@ -364,7 +365,7 @@ impl<'source> Parser<'source> {
             }
             EvalDeclarationMode::Global => {
                 let function = &mut self.functions[self.current_function];
-                function.global_declarations.push(IrGlobalDeclaration {
+                function.push_global_declaration(IrGlobalDeclaration {
                     name,
                     is_lexical: false,
                     is_const: false,
@@ -524,10 +525,7 @@ impl<'source> Parser<'source> {
                 .eval_declarations
                 .iter()
                 .any(|declaration| declaration.name == name)
-                || function
-                    .global_declarations
-                    .iter()
-                    .any(|declaration| !declaration.is_lexical && declaration.name == name))
+                || function.first_global_declaration_of(name, false).is_some())
         {
             return Err(Error::syntax(
                 "invalid redefinition of lexical identifier",
@@ -576,7 +574,7 @@ impl<'source> Parser<'source> {
                     BindingKind::Lexical { .. }
                 );
             if masked_program_duplicate {
-                function.global_declarations.push(IrGlobalDeclaration {
+                function.push_global_declaration(IrGlobalDeclaration {
                     name,
                     is_lexical: true,
                     is_const,
@@ -667,7 +665,7 @@ impl<'source> Parser<'source> {
             }
         }
         if is_global {
-            function.global_declarations.push(IrGlobalDeclaration {
+            function.push_global_declaration(IrGlobalDeclaration {
                 name,
                 is_lexical: true,
                 is_const,
@@ -722,7 +720,7 @@ impl<'source> Parser<'source> {
         // including duplicates. It deliberately does not run the ordinary
         // `define_var` conflict check here, which permits a preceding Program
         // lexical with the same name.
-        function.global_declarations.push(IrGlobalDeclaration {
+        function.push_global_declaration(IrGlobalDeclaration {
             name,
             is_lexical: false,
             is_const: false,
@@ -777,7 +775,7 @@ impl<'source> Parser<'source> {
         match self.current_eval_declaration_mode()? {
             EvalDeclarationMode::Global => {
                 let function = &mut self.functions[self.current_function];
-                function.global_declarations.push(IrGlobalDeclaration {
+                function.push_global_declaration(IrGlobalDeclaration {
                     name,
                     is_lexical: false,
                     is_const: false,
@@ -1234,7 +1232,7 @@ impl<'source> Parser<'source> {
             function.eval_redeclaration = Some(name);
         }
         if global {
-            function.global_declarations.push(IrGlobalDeclaration {
+            function.push_global_declaration(IrGlobalDeclaration {
                 name,
                 is_lexical: false,
                 is_const: false,
@@ -1242,35 +1240,36 @@ impl<'source> Parser<'source> {
                 closure_index: None,
             });
         }
-        if let Some(binding) =
-            function.scopes[root.0]
-                .bindings
-                .iter()
-                .rev()
-                .copied()
-                .find(|binding| {
+        // The root's last binding of the name whose storage fits this
+        // function: usually the last binding of the name.
+        let fits = |binding: &IrBinding| match (function.kind, eval_mode) {
+            (FunctionKind::Script, _) => binding.storage == BindingStorage::Global,
+            (FunctionKind::Module, _) => false,
+            (FunctionKind::Ordinary | FunctionKind::Method | FunctionKind::Arrow, _) => {
+                matches!(binding.storage, BindingStorage::Local(_))
+            }
+            (FunctionKind::Eval(_), Some(EvalDeclarationMode::Global)) => {
+                binding.storage == BindingStorage::Global
+            }
+            (FunctionKind::Eval(_), Some(EvalDeclarationMode::Local)) => {
+                matches!(binding.storage, BindingStorage::Local(_))
+            }
+            (FunctionKind::Eval(_), Some(EvalDeclarationMode::Dynamic(_)))
+            | (FunctionKind::Eval(_), None) => false,
+        };
+        let scope = &function.scopes[root.0];
+        let existing = scope
+            .binding_named(name, &function.bindings)
+            .and_then(|last| {
+                if fits(&function.bindings[last.0]) {
+                    return Some(last);
+                }
+                scope.bindings.iter().rev().copied().find(|binding| {
                     let binding = &function.bindings[binding.0];
-                    binding.name == name
-                        && match (function.kind, eval_mode) {
-                            (FunctionKind::Script, _) => binding.storage == BindingStorage::Global,
-                            (FunctionKind::Module, _) => false,
-                            (
-                                FunctionKind::Ordinary | FunctionKind::Method | FunctionKind::Arrow,
-                                _,
-                            ) => {
-                                matches!(binding.storage, BindingStorage::Local(_))
-                            }
-                            (FunctionKind::Eval(_), Some(EvalDeclarationMode::Global)) => {
-                                binding.storage == BindingStorage::Global
-                            }
-                            (FunctionKind::Eval(_), Some(EvalDeclarationMode::Local)) => {
-                                matches!(binding.storage, BindingStorage::Local(_))
-                            }
-                            (FunctionKind::Eval(_), Some(EvalDeclarationMode::Dynamic(_)))
-                            | (FunctionKind::Eval(_), None) => false,
-                        }
+                    binding.name == name && fits(binding)
                 })
-        {
+            });
+        if let Some(binding) = existing {
             if function.bindings[binding.0].kind != BindingKind::Normal {
                 return Err(Error::internal(
                     "Annex B declaration found a malformed function-root binding",

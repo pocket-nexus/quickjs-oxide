@@ -1,8 +1,9 @@
 //! Resolve lexical names, declaration hoists, eval environments, and closure captures in the IR.
 use crate::engine::compiler::model::bindings::{
-    BindingKind, BindingStorage, EvalDeclarationTarget, EvalDeclarationValue, IrHoistedFunction,
-    binding_kind_from_closure_flags, binding_kinds_compatible,
+    BindingKind, BindingStorage, EvalDeclarationTarget, EvalDeclarationValue, IrBinding,
+    IrHoistedFunction, binding_kind_from_closure_flags, binding_kinds_compatible,
 };
+use crate::engine::compiler::model::ir::function::ClosureKey;
 use crate::engine::compiler::model::ir::function::FunctionIr;
 use crate::engine::compiler::model::ir::function::FunctionKind;
 use crate::engine::compiler::model::ir::function::FunctionTree;
@@ -1161,9 +1162,7 @@ fn install_global_function_hoists(tree: &mut FunctionTree) -> Result<(), Error> 
     let mut prefix = Vec::with_capacity(declarations.len().saturating_mul(2));
     for (name, constant) in declarations {
         let target = tree.functions[0]
-            .global_declarations
-            .iter()
-            .find(|declaration| declaration.name == name)
+            .first_global_declaration(name)
             .and_then(|declaration| declaration.closure_index)
             .ok_or_else(|| Error::internal("global function hoist target was not seeded"))?;
         prefix.push(SpannedIrOp {
@@ -1779,16 +1778,28 @@ fn resolve_identifier_path(
                     .scopes
                     .get(scope.0)
                     .ok_or_else(|| Error::internal("identifier use scope is out of bounds"))?;
-                let exact = current.bindings.iter().rev().find_map(|binding| {
-                    let binding = function.bindings.get(binding.0)?;
-                    (binding.name == name
-                        && (pseudo.is_some()
-                            || !matches!(binding.storage, BindingStorage::External(_))))
-                    .then_some(ResolvedBinding {
+                // The scope's last binding of the name, unless it is an
+                // eval root's imported descriptor, which only a pseudo
+                // binding resolves to: then the last one that is not.
+                let visible = |binding: &IrBinding| {
+                    pseudo.is_some() || !matches!(binding.storage, BindingStorage::External(_))
+                };
+                let exact = current
+                    .binding_named(name, &function.bindings)
+                    .and_then(|binding| function.bindings.get(binding.0))
+                    .and_then(|last| {
+                        if visible(last) {
+                            return Some(last);
+                        }
+                        current.bindings.iter().rev().find_map(|binding| {
+                            let binding = function.bindings.get(binding.0)?;
+                            (binding.name == name && visible(binding)).then_some(binding)
+                        })
+                    })
+                    .map(|binding| ResolvedBinding {
                         storage: binding.storage,
                         kind: binding.kind,
-                    })
-                });
+                    });
                 let with_binding = (pseudo.is_none() && current.kind == ScopeKind::With)
                     .then(|| {
                         current
@@ -2417,9 +2428,7 @@ fn capture_global_declaration_path(
     path.reverse();
 
     let (root_index, root_descriptor) = tree.functions[0]
-        .global_declarations
-        .iter()
-        .find(|declaration| declaration.name == name && declaration.is_lexical == is_lexical)
+        .first_global_declaration_of(name, is_lexical)
         .and_then(|declaration| declaration.closure_index)
         .and_then(|index| {
             tree.functions[0]
@@ -3024,12 +3033,16 @@ fn ensure_captured_closure_variable(
     descriptor: ClosureVariable,
     requested_kind: BindingKind,
 ) -> Result<(u16, BindingKind), Error> {
-    if let Some((index, candidate)) = function
-        .closure_variables
-        .iter_mut()
-        .enumerate()
-        .find(|(_, candidate)| candidate.source == descriptor.source)
-    {
+    let found = match ClosureKey::of(&descriptor) {
+        // A global's slots are keyed by name too: the first of any name.
+        ClosureKey::Named(..) => function
+            .closure_variables
+            .iter()
+            .position(|candidate| candidate.source == descriptor.source),
+        key => find_closure_variable(function, key),
+    };
+    if let Some(index) = found {
+        let candidate = &mut function.closure_variables[index];
         let actual_kind = binding_kind_from_closure_descriptor(*candidate)?;
         let function_name_erasure = matches!(
             (actual_kind, requested_kind),
@@ -3044,6 +3057,9 @@ fn ensure_captured_closure_variable(
         match (candidate.name, descriptor.name) {
             (ClosureVariableName::None, ClosureVariableName::Constant(_)) => {
                 candidate.name = descriptor.name;
+                if matches!(ClosureKey::of(candidate), ClosureKey::Named(..)) {
+                    rebuild_closure_index(function);
+                }
             }
             (ClosureVariableName::Constant(left), ClosureVariableName::Constant(right))
                 if left != right =>
@@ -3073,13 +3089,8 @@ pub(super) fn ensure_closure_variable(
     function: &mut FunctionIr,
     descriptor: ClosureVariable,
 ) -> Result<u16, Error> {
-    if let Some((index, candidate)) = function
-        .closure_variables
-        .iter()
-        .enumerate()
-        .find(|(_, candidate)| same_closure_storage(candidate, &descriptor))
-    {
-        if *candidate != descriptor {
+    if let Some(index) = find_closure_variable(function, ClosureKey::of(&descriptor)) {
+        if function.closure_variables[index] != descriptor {
             return Err(Error::internal(
                 "closure storage source has conflicting binding metadata",
             ));
@@ -3102,16 +3113,30 @@ pub(super) fn push_closure_variable(
     }
     let index = u16::try_from(function.closure_variables.len())
         .map_err(|_| Error::new(ErrorKind::JsInternal, "too many closure variables"))?;
+    function
+        .closure_index
+        .entry(ClosureKey::of(&descriptor))
+        .or_insert(index);
     function.closure_variables.push(descriptor);
     Ok(index)
 }
 
-fn same_closure_storage(left: &ClosureVariable, right: &ClosureVariable) -> bool {
-    match (left.source, right.source) {
-        (ClosureSource::Global, ClosureSource::Global) => left.name == right.name,
-        (ClosureSource::GlobalDeclaration, ClosureSource::GlobalDeclaration) => {
-            left.name == right.name
-        }
-        (left, right) => left == right,
+/// The first closure slot of the storage `key` names.
+fn find_closure_variable(function: &FunctionIr, key: ClosureKey) -> Option<usize> {
+    let index = usize::from(*function.closure_index.get(&key)?);
+    function
+        .closure_variables
+        .get(index)
+        .is_some_and(|candidate| ClosureKey::of(candidate) == key)
+        .then_some(index)
+}
+
+fn rebuild_closure_index(function: &mut FunctionIr) {
+    function.closure_index.clear();
+    for (index, variable) in function.closure_variables.iter().enumerate() {
+        function
+            .closure_index
+            .entry(ClosureKey::of(variable))
+            .or_insert(index as u16);
     }
 }

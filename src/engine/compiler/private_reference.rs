@@ -154,13 +154,13 @@ fn resolve_private_binding(
                     .scopes
                     .get(scope.0)
                     .ok_or_else(|| Error::internal("private-name use scope is out of bounds"))?;
-                let exact = current.bindings.iter().rev().find_map(|binding| {
-                    let binding = function.bindings.get(binding.0)?;
-                    (binding.name == name).then_some(ResolvedBinding {
+                let exact = current
+                    .binding_named(name, &function.bindings)
+                    .and_then(|binding| function.bindings.get(binding.0))
+                    .map(|binding| ResolvedBinding {
                         storage: binding.storage,
                         kind: binding.kind,
-                    })
-                });
+                    });
                 (current.parent, exact)
             };
 
