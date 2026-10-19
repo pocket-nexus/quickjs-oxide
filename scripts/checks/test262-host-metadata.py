@@ -55,9 +55,16 @@ if len(runner) != 1:
 runner_dependencies = [d for d in runner_package["dependencies"] if d["name"] == "quickjs-oxide"]
 if len(runner_dependencies) != 1 or runner_dependencies[0]["features"] != ["test262-host"]:
     fail("runner must explicitly enable the Test262 host")
+# The one reviewed build script: `qjs`'s, which only passes its link order
+# file to the linker. Its package is outside the Test262 runner's graph.
+allowed_build_scripts = {"quickjs-oxide-cli": "apps/cli/build.rs"}
 for package in packages.values():
-    if any("custom-build" in t.get("kind", []) for t in package["targets"]):
-        fail("workspace must not introduce an unhashed custom build target")
+    for target in package["targets"]:
+        if "custom-build" not in target.get("kind", []):
+            continue
+        allowed = allowed_build_scripts.get(package["name"])
+        if allowed is None or not target["src_path"].endswith("/" + allowed):
+            fail("workspace must not introduce an unhashed custom build target")
     for dependency in package["dependencies"]:
         if dependency.get("path") is not None and dependency["name"] not in expected_packages:
             fail("unreviewed path dependency is outside engine fingerprint coverage")
