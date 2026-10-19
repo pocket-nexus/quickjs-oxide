@@ -39,8 +39,8 @@ impl ArenaReport {
 pub struct ValueHeapReport {
     /// Slots held by live ranges.
     pub used_slots: usize,
-    /// Free slots by size class: `free_by_class[k]` counts free ranges of
-    /// `2^k` slots.
+    /// Free ranges by size class: `free_by_class[k]` counts free ranges of
+    /// `class_size(k)` slots.
     pub free_by_class: Vec<usize>,
     /// Free runs the class lists do not hold, and their slots.
     pub free_runs: usize,
@@ -150,7 +150,7 @@ impl Heap {
     pub(crate) fn report(&self) -> MemoryReport {
         let mut free_by_class = Vec::new();
         for range in self.values.free_blocks() {
-            let class = range.len.trailing_zeros() as usize;
+            let class = super::values::class_of(range.len) as usize;
             if free_by_class.len() <= class {
                 free_by_class.resize(class + 1, 0);
             }

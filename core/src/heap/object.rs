@@ -170,22 +170,25 @@ impl ObjectHeader {
             slots_start: slots.start,
             elements_start: elements.start,
             payload,
-            slots_log: slots.log(),
+            slots_log: slots.exponent(),
             elements_log: elements.log(),
             kind,
             flags,
         }
     }
 
+    /// The named property slots: always a power of two
+    /// ([`ValueHeap::alloc_slots`](super::values::ValueHeap::alloc_slots)).
     #[inline]
     pub fn slots(&self) -> Range {
-        Range::from_log(self.slots_start, self.slots_log)
+        Range::from_exponent(self.slots_start, self.slots_log)
     }
 
     #[inline]
     pub fn set_slots(&mut self, range: Range) {
+        debug_assert!(range.len == 0 || range.len.is_power_of_two());
         self.slots_start = range.start;
-        self.slots_log = range.log();
+        self.slots_log = range.exponent();
     }
 
     #[inline]

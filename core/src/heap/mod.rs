@@ -103,7 +103,7 @@ impl Need {
             + self.functions * size_of::<FunctionRecord>()
             + self.bytecodes * size_of::<FunctionBytecode>()
             + self.internals * size_of::<Internal>()
-            + (values::class_len(self.values[0]) + values::class_len(self.values[1])) as usize * 8
+            + (self.values[0].next_power_of_two() + values::class_len(self.values[1])) as usize * 8
             + self.extra
     }
 }
@@ -462,7 +462,7 @@ impl Heap {
         };
         self.safepoint(&need, &keep)?;
         let shape = self.root_shape(prototype, kind);
-        let range = self.values.alloc(slot_capacity, &mut self.gc.room);
+        let range = self.values.alloc_slots(slot_capacity, &mut self.gc.room);
         let payload = self.payloads.internals.alloc(
             Internal {
                 tag,
@@ -553,7 +553,7 @@ impl Heap {
         };
         self.safepoint(&need, &[prototype.map_or(Value::UNDEFINED, Value::object)])?;
         let shape = self.root_shape(prototype, kind);
-        let slots = self.values.alloc(slot_capacity, &mut self.gc.room);
+        let slots = self.values.alloc_slots(slot_capacity, &mut self.gc.room);
         let elements = self.values.alloc(element_capacity, &mut self.gc.room);
         let header = ObjectHeader::new(kind, shape, slots, elements, 0, flags::EXTENSIBLE);
         Ok(ObjectId(self.objects.alloc(header, &mut self.gc.room)))
@@ -590,7 +590,7 @@ impl Heap {
         } else {
             self.root_shape(prototype, kind)
         };
-        let slots = self.values.alloc(slot_capacity, &mut self.gc.room);
+        let slots = self.values.alloc_slots(slot_capacity, &mut self.gc.room);
         let elements = self.values.alloc(element_capacity, &mut self.gc.room);
         if kind == ObjectKind::Function {
             object_flags |= flags::CALLABLE;
@@ -690,12 +690,12 @@ impl Heap {
         let header = *self.objects.get(object.0);
         let mut elements = header.elements();
         if index >= elements.len {
-            // Doubling until 1,024 elements, then 1.5×: the value heap rounds
-            // each range up to a power of two anyway.
+            // Doubling until 1,024 elements, then the next size class (1.5×
+            // from a power of two, 4/3× from three times one).
             let grown = if elements.len < 1024 {
                 elements.len * 2
             } else {
-                elements.len + elements.len / 2
+                values::next_class_len(elements.len)
             };
             let new_len = grown.max(index + 1).max(4);
             self.safepoint(

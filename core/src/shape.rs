@@ -676,7 +676,7 @@ impl Heap {
         };
         let mut slots = slots;
         if grow {
-            slots = self.values.grow(slots, new_len, &mut self.gc.room);
+            slots = self.values.grow_slots(slots, new_len, &mut self.gc.room);
         }
         let header = self.objects.get_mut(object.0);
         header.shape = next;
@@ -720,7 +720,7 @@ impl Heap {
             };
             let keep = [Value::object(object), key.to_value(), values[0], values[1]];
             self.safepoint(&need, &keep)?;
-            slots = self.values.grow(slots, new_len, &mut self.gc.room);
+            slots = self.values.grow_slots(slots, new_len, &mut self.gc.room);
             self.objects.get_mut(object.0).set_slots(slots);
         }
         let dictionary = self
@@ -909,7 +909,7 @@ impl Heap {
                         },
                         &[Value::object(object)],
                     )?;
-                    let slots = self.values.grow(slots, new_len, &mut self.gc.room);
+                    let slots = self.values.grow_slots(slots, new_len, &mut self.gc.room);
                     self.objects.get_mut(object.0).set_slots(slots);
                 }
                 self.dictionary_changed(object);

@@ -1,8 +1,10 @@
-//! The value heap: one `Vec<Value>` allocated in power-of-two ranges.
+//! The value heap: one `Vec<Value>` allocated in ranges of size classes.
 //!
-//! Every property value, dense element and scope slot lives in a range. Each
-//! power-of-two size class keeps a free list. A range's length is always its
-//! class size, which lets an object header store it as one `u8` exponent.
+//! Every property value, dense element and scope slot lives in a range. The
+//! classes are the powers of two and three times the powers of two (1, 2, 3,
+//! 4, 6, 8, 12, 16, 24, …), and each keeps a free list. A range's length is
+//! always its class size, which lets an object header store it as one `u8`
+//! code: an exponent and one mantissa bit.
 //! A collection's sweep records the ranges it frees in a bitmap of free slots
 //! and rebuilds the free space from its maximal runs: short runs go on the
 //! class lists, long ones become free runs that requests take from in address
@@ -15,11 +17,57 @@ use super::arena::{grown_capacity, step_bytes};
 use super::gc::Room;
 use crate::value::Value;
 
-const CLASSES: usize = 32;
+/// Class `i` holds [`class_size`]`(i)` slots; index 1 (a second class of one
+/// slot) is unused, so the sizes increase with the index.
+const CLASSES: usize = 64;
+/// The largest class, 2^31 slots.
+const LARGEST: u32 = 62;
 /// Free runs shorter than this go on the class lists after a collection.
 const SHORT_RUN: usize = 64;
 
-/// A block of the value heap. `len` is zero or a power of two.
+/// The slots of class `class`: `2^(class / 2)` for an even class, `3 ×
+/// 2^(class / 2 - 1)` for an odd one.
+#[inline]
+pub const fn class_size(class: u32) -> u32 {
+    ((((2 | (class & 1)) as u64) << (class >> 1)) >> 1) as u32
+}
+
+/// The class of a class size.
+#[inline]
+pub const fn class_of(len: u32) -> u32 {
+    let k = len.trailing_zeros();
+    if len.is_power_of_two() {
+        2 * k
+    } else {
+        2 * k + 3
+    }
+}
+
+/// The size and the class of the smallest class of at least `len` slots
+/// (`len` at least one).
+#[inline]
+fn class_for(len: u32) -> (u32, u32) {
+    let k = u32::BITS - (len - 1).leading_zeros();
+    if k >= 2 && len <= 3 << (k - 2) {
+        (3 << (k - 2), 2 * k - 1)
+    } else {
+        (1 << k, 2 * k)
+    }
+}
+
+/// The largest class of at most `slots` slots (at least one).
+#[inline]
+fn class_at_most(slots: usize) -> u32 {
+    let k = usize::BITS - 1 - slots.leading_zeros();
+    let class = if k >= 1 && slots >= 3 << (k - 1) {
+        2 * k + 1
+    } else {
+        2 * k
+    };
+    class.min(LARGEST)
+}
+
+/// A block of the value heap. `len` is zero or a class size.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Range {
     pub start: u32,
@@ -29,9 +77,22 @@ pub struct Range {
 impl Range {
     pub const EMPTY: Range = Range { start: 0, len: 0 };
 
-    /// The `u8` exponent stored in object headers; `u8::MAX` for an empty range.
+    /// The `u8` code stored in object headers: the class's exponent, with
+    /// bit 7 set for three times a power of two (`len = ((2 | m) << e) / 2`);
+    /// `u8::MAX` for an empty range.
     #[inline]
     pub const fn log(self) -> u8 {
+        if self.len == 0 {
+            u8::MAX
+        } else {
+            let class = class_of(self.len);
+            ((class >> 1) | ((class & 1) << 7)) as u8
+        }
+    }
+
+    /// [`Range::log`] of a power-of-two range.
+    #[inline]
+    pub const fn exponent(self) -> u8 {
         if self.len == 0 {
             u8::MAX
         } else {
@@ -39,8 +100,10 @@ impl Range {
         }
     }
 
+    /// [`Range::from_log`] for a code without the mantissa bit (a
+    /// power-of-two range).
     #[inline]
-    pub const fn from_log(start: u32, log: u8) -> Range {
+    pub const fn from_exponent(start: u32, log: u8) -> Range {
         if log == u8::MAX {
             Range::EMPTY
         } else {
@@ -50,12 +113,28 @@ impl Range {
             }
         }
     }
+
+    #[inline]
+    pub const fn from_log(start: u32, log: u8) -> Range {
+        if log == u8::MAX {
+            Range::EMPTY
+        } else {
+            let len = ((((2 | (log >> 7)) as u64) << (log & 0x7f)) >> 1) as u32;
+            Range { start, len }
+        }
+    }
 }
 
 /// Rounds a requested length to its class size.
 #[inline]
 pub fn class_len(len: u32) -> u32 {
-    if len == 0 { 0 } else { len.next_power_of_two() }
+    if len == 0 { 0 } else { class_for(len).0 }
+}
+
+/// The class above `len`'s.
+pub fn next_class_len(len: u32) -> u32 {
+    let class = class_for(len.max(1)).1;
+    class_size(if class == 0 { 2 } else { class + 1 })
 }
 
 pub struct ValueHeap {
@@ -63,7 +142,7 @@ pub struct ValueHeap {
     free: [Vec<u32>; CLASSES],
     /// Bit `k` is set while list `k` may hold a range: set by every push,
     /// cleared when a split finds the list empty.
-    listed: u32,
+    listed: u64,
     /// The long free runs `[start, end)` the last collection left, highest
     /// first, each with the longest length among it and the runs above it.
     runs: Vec<(u32, u32, u32)>,
@@ -101,8 +180,24 @@ impl ValueHeap {
         if len == 0 {
             return Range::EMPTY;
         }
+        let (len, class) = class_for(len);
+        self.alloc_class(len, class, room)
+    }
+
+    /// [`ValueHeap::alloc`] rounded to a power of two: an object's named
+    /// property slots, which the header decodes with one shift.
+    #[inline]
+    pub fn alloc_slots(&mut self, len: u32, room: &mut Room) -> Range {
+        if len == 0 {
+            return Range::EMPTY;
+        }
         let len = len.next_power_of_two();
-        if let Some(start) = self.free[len.trailing_zeros() as usize].pop() {
+        self.alloc_class(len, 2 * len.trailing_zeros(), room)
+    }
+
+    #[inline]
+    fn alloc_class(&mut self, len: u32, class: u32, room: &mut Room) -> Range {
+        if let Some(start) = self.free[class as usize].pop() {
             self.free_slots -= len as usize;
             return Range { start, len };
         }
@@ -112,13 +207,13 @@ impl ValueHeap {
             self.free_slots -= len as usize;
             return Range { start, len };
         }
-        self.alloc_slow(len, room)
+        self.alloc_slow(len, class, room)
     }
 
-    /// A range of class `len` from the current free run, split from the
-    /// smallest larger free range, or fresh past the end.
+    /// A range of class `class` (`len` slots) from the current free run,
+    /// split from the smallest larger free range, or fresh past the end.
     #[inline(never)]
-    fn alloc_slow(&mut self, len: u32, room: &mut Room) -> Range {
+    fn alloc_slow(&mut self, len: u32, class: u32, room: &mut Room) -> Range {
         loop {
             let (start, end) = self.current;
             if end - start >= len {
@@ -137,8 +232,7 @@ impl ValueHeap {
                 }
             }
         }
-        let class = len.trailing_zeros();
-        let mut larger = self.listed & !((2u32 << class) - 1);
+        let mut larger = self.listed & !((2u64 << class) - 1);
         while larger != 0 {
             let source = larger.trailing_zeros();
             larger &= larger - 1;
@@ -148,7 +242,10 @@ impl ValueHeap {
             };
             // `[start, start + len)` is returned and the rest of the block
             // goes back as the largest ranges that fit.
-            self.push_run((start + len) as usize, (start + (1 << source)) as usize);
+            self.push_run(
+                (start + len) as usize,
+                (start + class_size(source)) as usize,
+            );
             self.free_slots -= len as usize;
             return Range { start, len };
         }
@@ -165,9 +262,9 @@ impl ValueHeap {
     /// from `start`.
     fn push_run(&mut self, mut start: usize, stop: usize) {
         while start < stop {
-            let class = (usize::BITS - 1 - (stop - start).leading_zeros()).min(CLASSES as u32 - 1);
+            let class = class_at_most(stop - start);
             self.push(start as u32, class);
-            start += 1 << class;
+            start += class_size(class) as usize;
         }
     }
 
@@ -195,7 +292,7 @@ impl ValueHeap {
                 .runs
                 .last()
                 .is_some_and(|&(_, _, longest)| longest >= len)
-            || self.free[len.trailing_zeros() as usize..]
+            || self.free[class_of(len) as usize..]
                 .iter()
                 .any(|list| !list.is_empty())
         {
@@ -214,6 +311,20 @@ impl ValueHeap {
             return range;
         }
         let new = self.alloc(new_len, room);
+        self.moved(range, new)
+    }
+
+    /// [`ValueHeap::grow`] for named property slots, to a power of two.
+    pub fn grow_slots(&mut self, range: Range, new_len: u32, room: &mut Room) -> Range {
+        if new_len <= range.len {
+            return range;
+        }
+        let new = self.alloc_slots(new_len, room);
+        self.moved(range, new)
+    }
+
+    /// Copies `range`'s values into `new` and frees `range`.
+    fn moved(&mut self, range: Range, new: Range) -> Range {
         let (from, to) = (range.start as usize, new.start as usize);
         self.values.copy_within(from..from + range.len as usize, to);
         self.free(range);
@@ -225,10 +336,10 @@ impl ValueHeap {
         if range.len == 0 {
             return;
         }
-        debug_assert!(range.len.is_power_of_two());
+        debug_assert_eq!(class_len(range.len), range.len);
         let start = range.start as usize;
         self.values[start..start + range.len as usize].fill(Value::EMPTY);
-        self.push(range.start, range.len.trailing_zeros());
+        self.push(range.start, class_of(range.len));
         self.free_slots += range.len as usize;
     }
 
@@ -241,7 +352,8 @@ impl ValueHeap {
         bits.resize(self.values.len().div_ceil(64), 0);
         for (class, list) in self.free.iter_mut().enumerate() {
             for start in list.drain(..) {
-                set_bits(&mut bits, start as usize, start as usize + (1 << class));
+                let end = start as usize + class_size(class as u32) as usize;
+                set_bits(&mut bits, start as usize, end);
             }
         }
         let (start, end) = std::mem::take(&mut self.current);
@@ -268,8 +380,8 @@ impl ValueHeap {
 
     /// Ends the sweep: rebuilds the free space from the maximal runs of free
     /// slots. A run shorter than [`SHORT_RUN`] goes on the class lists, cut
-    /// from its start into the largest power-of-two ranges that fit (a run
-    /// of six becomes ranges of four and two); a longer one becomes a free
+    /// from its start into the largest class ranges that fit (a run of seven
+    /// becomes ranges of six and one); a longer one becomes a free
     /// run. A run that ends the heap and spans more than a quarter of its
     /// capacity is cut off instead, and the capacity past one growth step
     /// goes back to the allocator. Lower ranges and runs are reused first.
@@ -409,7 +521,7 @@ impl ValueHeap {
         self.free.iter().enumerate().flat_map(|(class, starts)| {
             starts.iter().map(move |&start| Range {
                 start,
-                len: 1 << class,
+                len: class_size(class as u32),
             })
         })
     }
@@ -468,15 +580,15 @@ mod tests {
     fn classes_round_up_and_reuse() {
         let room = &mut Room::unbounded();
         let mut heap = ValueHeap::new();
-        let a = heap.alloc(3, room);
-        assert_eq!(a, Range { start: 0, len: 4 });
+        let a = heap.alloc(5, room);
+        assert_eq!(a, Range { start: 0, len: 6 });
         assert!(heap.slice(a).iter().all(|v| v.is_empty()));
         heap.set(a, 2, Value::int32(5));
         let b = heap.alloc(1, room);
-        assert_eq!(b, Range { start: 4, len: 1 });
+        assert_eq!(b, Range { start: 6, len: 1 });
         heap.free(a);
-        assert_eq!(heap.free_slots(), 4);
-        let c = heap.alloc(4, room);
+        assert_eq!(heap.free_slots(), 6);
+        let c = heap.alloc(6, room);
         assert_eq!(c.start, 0);
         assert!(heap.get(c, 2).is_empty(), "freed slots are poisoned");
         assert_eq!(heap.alloc(0, room), Range::EMPTY);
@@ -491,7 +603,7 @@ mod tests {
         heap.set(a, 1, Value::int32(2));
         assert_eq!(heap.grow(a, 2, room), a);
         let b = heap.grow(a, 3, room);
-        assert_eq!(b.len, 4);
+        assert_eq!(b.len, 3);
         assert_eq!(heap.get(b, 0), Value::int32(1));
         assert_eq!(heap.get(b, 1), Value::int32(2));
         assert!(heap.get(b, 2).is_empty());
@@ -550,11 +662,9 @@ mod tests {
         heap.coalesce();
         assert_eq!(heap.total_slots(), 10);
         assert_eq!(heap.free_slots(), 6);
-        let mut free: Vec<Range> = heap.free_blocks().collect();
-        free.sort_by_key(|range| range.start);
         assert_eq!(
-            free,
-            [Range { start: 2, len: 4 }, Range { start: 6, len: 2 }]
+            heap.free_blocks().collect::<Vec<_>>(),
+            [Range { start: 2, len: 6 }]
         );
         assert_eq!(heap.alloc(4, room).start, 2);
         assert_eq!(heap.alloc(2, room).start, 6);
@@ -599,8 +709,31 @@ mod tests {
     }
 
     #[test]
+    fn classes_are_powers_of_two_and_three_times_them() {
+        let sizes: Vec<u32> = (0..12)
+            .filter(|&class| class != 1)
+            .map(class_size)
+            .collect();
+        assert_eq!(sizes, [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48]);
+        assert_eq!(class_size(LARGEST), 1 << 31);
+        for len in 1..5000 {
+            let (size, class) = class_for(len);
+            assert_eq!(class_size(class), size);
+            assert_eq!(class_of(size), class);
+            assert!(size >= len);
+            assert!(class <= 2 || class_size(class - 1 - u32::from(class == 2)) < len);
+        }
+        assert_eq!(class_len(10), 12);
+        assert_eq!(next_class_len(1024), 1536);
+        assert_eq!(next_class_len(1536), 2048);
+        assert_eq!(next_class_len(1), 2);
+        assert_eq!(class_at_most(7), class_of(6));
+        assert_eq!(class_at_most(5), class_of(4));
+    }
+
+    #[test]
     fn range_log_round_trips() {
-        for len in [0, 1, 2, 256, 1 << 20] {
+        for len in [0, 1, 2, 3, 6, 12, 256, 384, 1 << 20, 3 << 29, 1 << 31] {
             let range = Range { start: 9, len };
             let decoded = Range::from_log(9, range.log());
             assert_eq!(decoded.len, len);
