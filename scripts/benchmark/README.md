@@ -288,6 +288,21 @@ Use `--corpus` with any flat directory of `.js` files, or with a manifest produc
 by `compile_workloads.py`. Third-party bundles stay outside the repository.
 The runner records raw samples and per-case ratios in its output directory.
 
+For instruction and allocation counts, use `compile_probe_thread`. It has the
+same measured interval and output line as `compile_probe`, but compiles on a
+thread with a declared 512 MiB stack, so the parser's stack guard holds under
+valgrind. Its `--version` line is `oxide-compile-probe-thread 1`, which
+`compile_matrix.py` does not accept; cross-engine timing stays on
+`compile_probe`.
+
+```sh
+cargo build --release -p quickjs-oxide-cli --example compile_probe_thread
+valgrind --tool=callgrind --callgrind-out-file=target/cg.out \
+  target/release/examples/compile_probe_thread target/compile-corpus/expressions-524288.js
+valgrind --tool=dhat --dhat-out-file=target/dhat.json \
+  target/release/examples/compile_probe_thread target/compile-corpus/expressions-65536.js
+```
+
 ## Output and validation
 
 Every invocation requires a new output directory, preserving prior evidence.
