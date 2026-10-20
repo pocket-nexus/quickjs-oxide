@@ -1015,6 +1015,49 @@ fn host_objects_carry_the_embedders_value() {
 }
 
 #[test]
+fn a_host_object_reads_as_an_ordinary_object() {
+    let (runtime, context) = runtime();
+    let global = context.global_object().unwrap();
+    let plain = context
+        .new_host_object(Counter(std::cell::Cell::new(0)), None)
+        .unwrap();
+    let key = runtime.intern_property_key("plain").unwrap();
+    context
+        .set_property(&global, &key, Value::Object(plain.clone()))
+        .unwrap();
+    context.eval("plain.x = 1").unwrap();
+    assert_eq!(
+        runtime.print_value(&Value::Object(plain)).unwrap(),
+        "Object { x: 1 }"
+    );
+    assert_eq!(
+        text(
+            &context
+                .eval("typeof plain + ' ' + Object.prototype.toString.call(plain)")
+                .unwrap()
+        ),
+        "object [object Object]"
+    );
+    let Value::Object(prototype) = context
+        .eval("({ [Symbol.toStringTag]: 'Counter' })")
+        .unwrap()
+    else {
+        panic!("an object");
+    };
+    let tagged = context
+        .new_host_object(Counter(std::cell::Cell::new(0)), Some(&prototype))
+        .unwrap();
+    let key = runtime.intern_property_key("tagged").unwrap();
+    context
+        .set_property(&global, &key, Value::Object(tagged))
+        .unwrap();
+    assert_eq!(
+        text(&context.eval("String(tagged)").unwrap()),
+        "[object Counter]"
+    );
+}
+
+#[test]
 fn a_module_loader_makes_host_functions() {
     struct Loader;
     impl ModuleLoader for Loader {
