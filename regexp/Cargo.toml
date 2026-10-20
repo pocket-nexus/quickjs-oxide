@@ -3,7 +3,8 @@ name = "quickjs-oxide-regexp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
+# The generated tables carry Unicode 17 data (NOTICE).
+license = "MIT AND Unicode-3.0"
 repository.workspace = true
 publish.workspace = true
 description = "The quickjs-oxide regular-expression engine and Unicode tables, over UTF-16 code units"

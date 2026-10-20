@@ -36,7 +36,7 @@ The items build on the current implementation: the embedding API described in [`
 | `apps/cli`, `apps/web`, `conformance/test262`, `tests` | apps | the `Exception(Value)` migration (5.3) |
 | `examples/host.rs` | root crate | the example of section 11 |
 
-Delivery: one pull request per item in the order of section 12, each with its acceptance check in the description and the gates of the [pull request template](../.github/pull_request_template.md): `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `cargo test --locked --workspace --all-targets`, `cargo test -p quickjs-oxide-core --features gc-stress`, `core/tests/corpus` under `gc-stress`, `scripts/checks/check-gc-stress.py`, the loop-size check and the instruction gate for items 2 and 6, and the Test262 focused vector. Each pull request updates the documents that describe what it changes, so that the documentation describes the current implementation at every commit.
+Delivery: one commit per item in the order of section 12, in one pull request whose description carries each item's acceptance check and the gates of the [pull request template](../.github/pull_request_template.md): `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `cargo test --locked --workspace --all-targets`, `cargo test -p quickjs-oxide-core --features gc-stress`, `core/tests/corpus` under `gc-stress`, `scripts/checks/check-gc-stress.py`, the loop-size check and the instruction gate for items 2 and 6, and the Test262 focused vector. Each commit updates the documents that describe what it changes, so that the documentation describes the current implementation at every commit.
 
 ## 2. Host functions in the core
 
@@ -442,7 +442,7 @@ A missing argument converts `undefined` (so `Option<T>` is how a function takes 
 | 10. Conversions | `FromJs`, `IntoJs`, the tuple impls | 4 | 1.5 days |
 | 11. The example and the README's embedding section | `examples/host.rs` | all | 0.5 day |
 
-Each row is one pull request, stacked on the previous; the documents of section 11 are updated in the pull request that changes what they describe.
+Each row is one commit on the previous; the documents of section 11 are updated in the commit that changes what they describe.
 
 **Measured before it is designed.** Lifting a string argument copies its units into a `JsString` once per read. Before any zero-copy variant is added, the pull request of item 10 records a microbenchmark (a host function taking a 1 KiB string, one million calls) beside the empty-function cost of item 2's gate; a borrowed string view is designed only if the copy is more than a third of the call.
 
