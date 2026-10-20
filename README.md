@@ -88,7 +88,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 ```
 
-`examples/eval.rs` handles every completion value and uncaught exceptions.
+A Rust closure becomes a JavaScript function; its arguments are converted
+to the closure's parameter types:
+
+```rust
+use quickjs_oxide::engine::api::core::{Runtime, Scope};
+
+let runtime = Runtime::new();
+let context = runtime.context();
+let global = context.global_object()?;
+context.define_function(&global, "add", 2, |_: &mut Scope<'_>, a: f64, b: f64| Ok(a + b))?;
+assert_eq!(context.eval("add(40, 2)")?.as_number(), Some(42.0));
+```
+
+`examples/eval.rs` handles every completion value and uncaught exceptions;
+`examples/host.rs` shows host functions, a host object, a promise settled
+from Rust, a native module and an interrupt.
 Code compiled through `eval`/`compile` lives as long as the runtime; an
 application that evaluates input repeatedly (a REPL) passes
 `EvalOptions::default().transient()` so that each input's code is freed
@@ -103,7 +118,7 @@ The language, built-ins and ES modules (static and dynamic `import`,
 top-level `await`, import attributes, JSON modules) follow ECMA-262 within
 QuickJS 2026-06-04's feature set, apart from the five ledger entries above.
 The `std` and `os` modules, the REPL, `Worker`, `qjsc` and the C API are not
-yet supported. [Compatibility](docs/compatibility.md) details the baseline,
+yet supported; the Rust embedding API provides the C API's equivalents. [Compatibility](docs/compatibility.md) details the baseline,
 how conformance is measured, the approved deviations and the full product
 surface.
 
