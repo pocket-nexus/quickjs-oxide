@@ -130,11 +130,9 @@ fn named_function_self_assignment_matches_quickjs_strict_and_sloppy_rules() {
     );
 
     let (runtime, mut context) = test_context();
-    assert_eq!(
-        context.eval("(function named() { 'use strict'; named = 1; })()"),
-        Err(RuntimeError::Exception)
-    );
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) =
+        context.eval("(function named() { 'use strict'; named = 1; })()")
+    else {
         panic!("strict function-name assignment did not materialize TypeError");
     };
     let name = runtime.intern_property_key("name").unwrap();
@@ -148,11 +146,9 @@ fn named_function_self_assignment_matches_quickjs_strict_and_sloppy_rules() {
         Value::String(JsString::from_static("'named' is read-only"))
     );
 
-    assert_eq!(
-        context.eval("(function named() { 'use strict'; return function() { named = 1; }; })()()"),
-        Err(RuntimeError::Exception)
-    );
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) =
+        context.eval("(function named() { 'use strict'; return function() { named = 1; }; })()()")
+    else {
         panic!("captured strict function-name assignment did not materialize TypeError");
     };
     assert_eq!(

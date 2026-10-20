@@ -63,7 +63,7 @@ fn label_of(value: Result<Value, RuntimeError>) -> String {
     match value {
         Ok(Value::String(label)) => label.to_utf8_lossy(),
         Ok(other) => format!("unexpected:{other:?}"),
-        Err(RuntimeError::Exception) => "UNCAUGHT".to_owned(),
+        Err(RuntimeError::Exception(_)) => "UNCAUGHT".to_owned(),
         Err(error) => format!("ERROR:{error}"),
     }
 }

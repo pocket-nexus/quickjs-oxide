@@ -54,14 +54,8 @@ fn math_methods_are_not_constructable() {
         );
         assert!(matches!(
             context.construct(&callable, &[]),
-            Err(RuntimeError::Exception)
+            Err(RuntimeError::Exception(_))
         ));
-        drop(
-            context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take new Math.{name} exception: {error}"))
-                .unwrap_or_else(|| panic!("new Math.{name} did not publish an exception")),
-        );
     }
 }
 

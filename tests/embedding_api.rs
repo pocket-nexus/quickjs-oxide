@@ -17,12 +17,14 @@ fn runtime() -> (Runtime, Context) {
     (runtime, context)
 }
 
-fn thrown(context: &mut Context) -> String {
-    let exception = context
-        .take_exception()
-        .unwrap()
-        .expect("a pending exception");
-    context.runtime().print_value(&exception).unwrap()
+/// The printed value `result` threw.
+fn thrown<T: std::fmt::Debug>(context: &Context, result: Result<T, RuntimeError>) -> String {
+    match result {
+        Err(RuntimeError::Exception(exception)) => {
+            context.runtime().print_value(&exception).unwrap()
+        }
+        other => panic!("not an exception: {other:?}"),
+    }
 }
 
 #[test]
@@ -52,27 +54,27 @@ fn eval_returns_completion_values_of_every_kind() {
 }
 
 #[test]
-fn errors_are_pending_exceptions() {
+fn errors_carry_the_thrown_value() {
     let (_, mut context) = runtime();
-    assert_eq!(context.eval("null.x"), Err(RuntimeError::Exception));
-    assert!(context.has_exception().unwrap());
+    let result = context.eval("null.x");
     assert!(
-        thrown(&mut context)
+        thrown(&context, result)
             .starts_with("TypeError: cannot read property 'x' of null\n    at <eval> (<input>")
     );
-    assert!(!context.has_exception().unwrap());
-    // A syntax error is thrown with its location, as `JS_Eval` throws it.
+    // The value is the thrown one, whatever its type.
     assert_eq!(
-        context.eval_with_filename("var x = ;", "f.js"),
-        Err(RuntimeError::Exception)
+        context.eval("throw 7"),
+        Err(RuntimeError::Exception(Value::Int(7)))
     );
+    // A syntax error is thrown with its location, as `JS_Eval` throws it.
+    let result = context.eval_with_filename("var x = ;", "f.js");
     assert_eq!(
-        thrown(&mut context),
+        thrown(&context, result),
         "SyntaxError: unexpected token in expression: ';'\n    at f.js:1:9"
     );
     // A dropped feature (`with`) is an early SyntaxError.
-    assert_eq!(context.eval("with ({}) {}"), Err(RuntimeError::Exception));
-    assert!(thrown(&mut context).starts_with("SyntaxError: with statements are not supported"));
+    let result = context.eval("with ({}) {}");
+    assert!(thrown(&context, result).starts_with("SyntaxError: with statements are not supported"));
 }
 
 #[test]
@@ -152,8 +154,8 @@ fn calls_construct_and_properties() {
     };
     let arrow = runtime.as_callable(&arrow).unwrap().unwrap();
     assert!(!runtime.is_constructor(&arrow).unwrap());
-    assert_eq!(context.construct(&arrow, &[]), Err(RuntimeError::Exception));
-    assert!(thrown(&mut context).starts_with("TypeError"));
+    let result = context.construct(&arrow, &[]);
+    assert!(thrown(&context, result).starts_with("TypeError"));
     // Descriptors.
     let object = context.new_object().unwrap();
     let key = runtime.intern_property_key("k").unwrap();
@@ -430,11 +432,11 @@ fn run_module(context: &mut Context, source: &str) -> Result<Value, String> {
     let runtime = context.runtime().clone();
     let module = context
         .compile_module_bytes_with_filename(source.as_bytes(), "main.js")
-        .map_err(|_| thrown(context))?;
+        .map_err(|error| thrown::<()>(context, Err(error)))?;
     let promise = match context.execute_module(&module) {
         Ok(Value::Object(promise)) => promise,
         Ok(other) => panic!("not a promise: {other:?}"),
-        Err(_) => return Err(thrown(context)),
+        Err(error) => return Err(thrown::<()>(context, Err(error))),
     };
     runtime.run_jobs().unwrap();
     let snapshot = runtime.promise_snapshot(&promise).unwrap().unwrap();

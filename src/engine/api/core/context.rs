@@ -1,5 +1,5 @@
 //! The realm's handle: evaluation, calls, objects and
-//! properties, the intrinsics, the pending exception.
+//! properties, the intrinsics, native errors.
 
 use std::rc::Rc;
 
@@ -174,7 +174,7 @@ impl Context {
 
     /// Compiles and runs `source` as a script named `filename`; the
     /// completion value. A syntax error is thrown (`RuntimeError::Exception`
-    /// with a `SyntaxError` pending), as QuickJS's `JS_Eval` does.
+    /// with a `SyntaxError`), as QuickJS's `JS_Eval` does.
     pub fn eval_bytes_with_filename(
         &mut self,
         source: &[u8],
@@ -217,7 +217,7 @@ impl Context {
     }
 
     /// Compiles `source` as a script named `filename`. A syntax error is
-    /// thrown (`RuntimeError::Exception`, a `SyntaxError` pending).
+    /// thrown (`RuntimeError::Exception` with a `SyntaxError`).
     pub fn compile_bytes_with_filename(
         &mut self,
         source: &[u8],
@@ -627,16 +627,7 @@ impl Context {
         self.intrinsic(Intrinsic::Function).map(CallableRef)
     }
 
-    // ---- exceptions ----
-
-    pub fn has_exception(&self) -> Result<bool, RuntimeError> {
-        Ok(self.enter()?.exception.is_some())
-    }
-
-    /// The pending exception, cleared.
-    pub fn take_exception(&mut self) -> Result<Option<Value>, RuntimeError> {
-        Ok(self.enter()?.exception.take())
-    }
+    // ---- errors ----
 
     /// A new native error object (not thrown).
     pub fn new_native_error(

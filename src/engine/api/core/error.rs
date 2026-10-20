@@ -2,15 +2,15 @@
 
 use std::fmt;
 
+use super::value::Value;
 use crate::engine::api::error::Error;
 use crate::engine::value::JsStringError;
 
 /// Why an API call failed.
 #[derive(Clone, Debug, PartialEq)]
 pub enum RuntimeError {
-    /// JavaScript threw: the value is the context's pending exception
-    /// ([`Context::take_exception`](super::Context::take_exception)).
-    Exception,
+    /// JavaScript threw this value.
+    Exception(Value),
     /// An API call was made from inside a host callback without its
     /// [`Scope`](super::Scope).
     Reentered,
@@ -29,7 +29,7 @@ pub enum RuntimeError {
 impl fmt::Display for RuntimeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RuntimeError::Exception => f.write_str("JavaScript exception"),
+            RuntimeError::Exception(_) => f.write_str("JavaScript exception"),
             RuntimeError::Reentered => {
                 f.write_str("the runtime was re-entered from a host callback")
             }

@@ -367,8 +367,7 @@ fn oracle_number_observation(oracle: &OsStr, source: &str, description: &str) ->
 
 fn rust_error_observation(source: &str) -> String {
     let (runtime, mut context) = host_runtime_context();
-    assert_eq!(context.eval(source), Err(RuntimeError::Exception));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) = context.eval(source) else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
     };
     let name = runtime.intern_property_key("name").unwrap();
@@ -401,8 +400,7 @@ fn oracle_error_observation(oracle: &OsStr, source: &str) -> String {
 
 fn rust_diagnostic_observation(source: &str) -> String {
     let (runtime, mut context) = host_runtime_context();
-    assert_eq!(context.eval(source), Err(RuntimeError::Exception));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) = context.eval(source) else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
     };
     let read = |context: &mut quickjs_oxide::engine::api::core::Context, name: &str| {

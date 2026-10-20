@@ -90,13 +90,7 @@ fn observe_call(
 ) -> String {
     match context.call(callable, this_value, arguments) {
         Ok(value) => show_value(value),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap()
-                .expect("exception completion had no value");
-            show_exception(runtime, context, exception)
-        }
+        Err(RuntimeError::Exception(exception)) => show_exception(runtime, context, exception),
         Err(error) => panic!("call probe failed with an engine error: {error}"),
     }
 }

@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::runtime_observation::host_runtime;
 
-use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{JsString, Value};
 
 // This target pins QuickJS 2026-06-04's shared `js_array_reduce` kernel:
 // reduce and reduceRight, including their omitted-initial-value scan.
@@ -53,15 +53,14 @@ fn array_reduce_boxing_accumulators_and_errors_use_pinned_realms() {
     );
 
     let empty = eval_object(&mut caller, "[]", "caller empty Array");
-    assert!(matches!(
+    let invalid_callback = exception_object(
         caller.call(
             &reduce,
             Value::Object(empty.try_clone().expect("duplicate root")),
-            &[Value::Int(0)]
+            &[Value::Int(0)],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let invalid_callback = take_exception_object(&mut caller, "Array.reduce callback TypeError");
+        "Array.reduce callback TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&invalid_callback).unwrap(),
         Some(defining_type_error.try_clone().expect("duplicate root")),
@@ -74,17 +73,16 @@ fn array_reduce_boxing_accumulators_and_errors_use_pinned_realms() {
         "(function(acc){return acc})",
         "caller identity reduce callback",
     );
-    assert!(matches!(
+    let empty_error = exception_object(
         caller.call(
             &reduce,
             Value::Object(empty.try_clone().expect("duplicate root")),
             &[Value::Object(
-                identity.as_object().try_clone().expect("duplicate root")
+                identity.as_object().try_clone().expect("duplicate root"),
             )],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let empty_error = take_exception_object(&mut caller, "Array.reduce empty TypeError");
+        "Array.reduce empty TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&empty_error).unwrap(),
         Some(defining_type_error),
@@ -114,18 +112,17 @@ fn array_reduce_boxing_accumulators_and_errors_use_pinned_realms() {
         "caller throwing reduce callback",
     );
     let one = eval_object(&mut caller, "[1]", "caller one-element Array");
-    assert!(matches!(
+    let user_error = exception_object(
         caller.call(
             &reduce,
             Value::Object(one.try_clone().expect("duplicate root")),
             &[
                 Value::Object(throwing.as_object().try_clone().expect("duplicate root")),
-                Value::Int(0)
+                Value::Int(0),
             ],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let user_error = take_exception_object(&mut caller, "Array.reduce user callback error");
+        "Array.reduce user callback error",
+    );
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

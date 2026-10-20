@@ -110,9 +110,9 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
         let substitutions = "${0}".repeat(count);
         let reachable = format!("`{substitutions}`");
         let (runtime, mut context) = host_runtime_context();
-        assert_eq!(context.compile(&reachable), Err(RuntimeError::Exception));
+        let rust = context.compile(&reachable);
         assert_eq!(
-            take_rust_error_name_message(&runtime, &mut context),
+            rust_error_name_message(&runtime, &mut context, rust),
             "InternalError|stack overflow"
         );
         let upstream = run_oracle_file(&oracle, &reachable, &format!("{suffix}-reachable"));
@@ -392,9 +392,8 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
                 String::from_utf8_lossy(&upstream.stderr)
             );
         } else {
-            assert_eq!(rust, Err(RuntimeError::Exception));
             assert_eq!(
-                take_rust_error_name_message(&runtime, &mut context),
+                rust_error_name_message(&runtime, &mut context, rust),
                 "InternalError|stack overflow"
             );
             assert!(
@@ -476,11 +475,9 @@ fn install_concat_getter_source(runtime: &Runtime, context: &mut Context, source
 fn rust_getter_fault_location(source: &str) -> String {
     let (runtime, mut context) = host_runtime_context();
     install_throwing_concat_getter(&runtime, &mut context);
-    assert_eq!(
-        context.eval_with_filename(source, "<evalScript>"),
-        Err(RuntimeError::Exception)
-    );
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) =
+        context.eval_with_filename(source, "<evalScript>")
+    else {
         panic!("template getter did not throw an Error object");
     };
     let stack = runtime.intern_property_key("stack").unwrap();
@@ -535,9 +532,13 @@ fn eval_script_location(stack: &str) -> String {
         .to_owned()
 }
 
-fn take_rust_error_name_message(runtime: &Runtime, context: &mut Context) -> String {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("Rust compiler did not materialize an Error object");
+fn rust_error_name_message<T: std::fmt::Debug>(
+    runtime: &Runtime,
+    context: &mut Context,
+    result: Result<T, RuntimeError>,
+) -> String {
+    let Err(RuntimeError::Exception(Value::Object(error))) = result else {
+        panic!("Rust compiler did not throw an Error object: {result:?}");
     };
     let read = |context: &mut Context, name: &str| {
         let key = runtime.intern_property_key(name).unwrap();

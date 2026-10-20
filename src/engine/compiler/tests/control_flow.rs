@@ -517,11 +517,10 @@ fn switch_uses_quickjs_case_fallthrough_and_abrupt_cleanup() {
     );
 
     let (_, mut context) = test_context();
-    assert!(matches!(
-        context.eval("switch(1){case 1:throw 4;}"),
-        Err(RuntimeError::Exception)
-    ));
-    assert_eq!(context.take_exception().unwrap(), Some(Value::Int(4)));
+    assert_eq!(
+        context.eval("switch(1){case 1:throw 4;}").err(),
+        Some(RuntimeError::Exception(Value::Int(4)))
+    );
 
     let bytecode =
         compile_unlinked_script("switch(Function){case Function:1;break;default:2;}").unwrap();

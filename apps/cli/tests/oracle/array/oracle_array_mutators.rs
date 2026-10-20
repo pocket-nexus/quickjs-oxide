@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::runtime_observation::host_runtime;
 
-use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{JsString, Value};
 
 // This target pins QuickJS 2026-06-04's shared `js_array_pop` and
 // `js_array_push` kernels. It covers both magic selectors for each kernel:
@@ -63,11 +63,10 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
         "(function(){var source=Object();source.length=9007199254740991;return source})()",
         "caller MAX_SAFE array-like",
     );
-    assert!(matches!(
+    let native_error = exception_object(
         caller.call(&push, Value::Object(too_long), &[Value::Int(1)]),
-        Err(RuntimeError::Exception),
-    ));
-    let native_error = take_exception_object(&mut caller, "Array.push MAX_SAFE TypeError");
+        "Array.push MAX_SAFE TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
         Some(defining_type_error.try_clone().expect("duplicate root")),
@@ -79,11 +78,10 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
         "(function(){var source=Object(),descriptor=Object();source.length=1;descriptor.value='tail';descriptor.writable=true;descriptor.enumerable=true;descriptor.configurable=false;Object.defineProperty(source,'0',descriptor);return source})()",
         "caller non-configurable pop tail",
     );
-    assert!(matches!(
+    let native_error = exception_object(
         caller.call(&pop, Value::Object(fixed_tail), &[]),
-        Err(RuntimeError::Exception),
-    ));
-    let native_error = take_exception_object(&mut caller, "Array.pop Delete TypeError");
+        "Array.pop Delete TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
         Some(defining_type_error),
@@ -95,11 +93,10 @@ fn array_mutator_boxing_native_errors_and_user_throws_use_pinned_realms() {
         "(function(){var source=Object();source.__defineGetter__('length',function(){throw new TypeError('caller length')});return source})()",
         "caller throwing mutator length",
     );
-    assert!(matches!(
+    let user_error = exception_object(
         caller.call(&push, Value::Object(throwing_length), &[Value::Int(1)]),
-        Err(RuntimeError::Exception),
-    ));
-    let user_error = take_exception_object(&mut caller, "Array.push length getter TypeError");
+        "Array.push length getter TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

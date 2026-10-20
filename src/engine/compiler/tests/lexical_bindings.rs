@@ -198,11 +198,9 @@ fn nested_block_and_switch_lexicals_lower_scope_lifetimes() {
     );
 
     let (runtime, mut context) = test_context();
-    assert!(matches!(
-        context.eval("(function(){{let value=40;throw function(){return ++value};}})()"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(thrown) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(thrown))) =
+        context.eval("(function(){{let value=40;throw function(){return ++value};}})()")
+    else {
         panic!("nested lexical throw did not preserve the escaped closure");
     };
     let callable = runtime.as_callable(&thrown).unwrap().unwrap();

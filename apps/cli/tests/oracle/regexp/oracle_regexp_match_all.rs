@@ -1,11 +1,11 @@
 use crate::object_graph_observation::{
     callable_property, checked_property_value as object_property,
 };
+use crate::runtime_observation::exception_object;
 use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_value;
-use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::Value;
 
 // Differential lock for pinned QuickJS 2026-06-04
 // `js_regexp_Symbol_matchAll` (`quickjs.c` 48419-48482) and the RegExp String
@@ -94,11 +94,10 @@ fn regexp_match_all_iterator_and_match_results_use_their_defining_realms() {
         "species-created foreign RegExp did not retain its match-result Array realm",
     );
 
-    assert_eq!(
+    let native_error = exception_object(
         caller.call(&method, Value::Int(1), &[string_value("x")]),
-        Err(RuntimeError::Exception),
+        "RegExp matchAll receiver TypeError",
     );
-    let native_error = take_exception_object(&mut caller, "RegExp matchAll receiver TypeError");
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
         Some(defining_type_error),
@@ -115,15 +114,14 @@ fn regexp_match_all_iterator_and_match_results_use_their_defining_realms() {
         "caller throwing matchAll input",
     );
     let receiver = eval_object(&mut caller, "/a/g", "caller RegExp for throwing input");
-    assert_eq!(
+    let user_error = exception_object(
         caller.call(
             &method,
             Value::Object(receiver),
             &[Value::Object(throwing_input)],
         ),
-        Err(RuntimeError::Exception),
+        "caller input TypeError",
     );
-    let user_error = take_exception_object(&mut caller, "caller input TypeError");
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

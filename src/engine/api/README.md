@@ -15,11 +15,11 @@ options and report types.
 | Item | Content |
 | --- | --- |
 | `Runtime` | an `Rc` of the shared state (`oxide_core::Runtime` in a `RefCell`, the module loader, the preloaded modules); cloning shares it. `new()`, `with_options(RuntimeOptions)`, `with_host(impl Host, RuntimeOptions)`; jobs (`run_pending_job`, `run_jobs`, `with_execution_turn`), rejection tracking, collection (`run_gc`, `gc_stats`, `GcPolicy`, `set_gc_stress`), the reports (`memory_report`, `gc_report`, `ic_report`, `disassemble`), property keys, symbols, prototypes and own-property operations, `type_of` and the printer |
-| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, the pending exception (`has_exception`, `take_exception`), `new_native_error`, the `qjs` helpers |
+| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, the `qjs` helpers |
 | `Value` | `Undefined`, `Null`, `Bool`, `Int`, `Float`, `BigInt(JsBigInt)` and `String(JsString)` as Rust data copied out of the core; `Symbol(SymbolRef)` and `Object(ObjectRef)` as handles |
 | `ObjectRef`, `SymbolRef`, `CallableRef` | a handle in the core's handle table, released on the last drop |
 | `PropertyKey`, `OrdinaryPropertyDescriptor`, `CompleteOrdinaryPropertyDescriptor`, `DescriptorField`, `AccessorValue`, `WellKnownSymbol` | keys and descriptors |
-| `RuntimeError` | `Exception` (the value is the context's pending exception), `Reentered`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
+| `RuntimeError` | `Exception(Value)` (the thrown value), `Reentered`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
 | `Host`, `Stream`, `RejectionEvent`, `SystemHost` | the core's host trait and its default, re-exported |
 | `ModuleLoader`, `ModuleSource`, `CompiledModule`, `Scope` | module loading |
 | `RuntimeOptions`, `HeapLimits`, `MemoryReport`, `GcStats` | the core's configuration and reports, re-exported |

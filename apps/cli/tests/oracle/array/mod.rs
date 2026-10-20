@@ -3,8 +3,8 @@
 
 mod support {
     pub(super) use crate::runtime_observation::{
-        primitive_value_text, property_callable_with_read_context as property_callable,
-        take_exception_object,
+        exception_object, primitive_value_text,
+        property_callable_with_read_context as property_callable,
     };
     pub(super) use crate::runtime_oracle::{eval_callable, eval_object};
 }

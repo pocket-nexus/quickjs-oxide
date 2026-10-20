@@ -366,9 +366,8 @@ fn relational_membership_uses_runtime_object_protocols() {
         .unwrap());
     assert!(matches!(
         context.eval("Function in (Function.membershipTrace+='R',1)"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("Function.membershipTrace").unwrap(),
         Value::String(JsString::from_static("R"))

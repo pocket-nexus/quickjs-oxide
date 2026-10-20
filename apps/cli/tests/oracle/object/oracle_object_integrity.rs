@@ -1,10 +1,8 @@
 use crate::object_graph_observation::{eval_object, global_callable, intrinsic_prototype};
 use crate::runtime_observation::host_runtime;
 
-use crate::runtime_observation::{
-    property_callable, take_pending_exception_object as take_exception_object,
-};
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
+use quickjs_oxide::engine::api::core::Value;
 
 // Pins QuickJS 2026-06-04 `js_object_seal` and `js_object_isSealed` for
 // Object.seal/freeze/isSealed/isFrozen. Proxy trap invariants and non-empty
@@ -97,8 +95,7 @@ fn object_integrity_cross_realm_identity_and_constructor_error_are_exact() {
     );
 
     let caller_type_error = intrinsic_prototype(&runtime, &mut caller, "TypeError");
-    assert_eq!(caller.construct(&seal, &[]), Err(RuntimeError::Exception));
-    let error = take_exception_object(&mut caller);
+    let error = exception_object(caller.construct(&seal, &[]));
     assert_eq!(
         runtime.get_prototype_of(&error).unwrap(),
         Some(caller_type_error),

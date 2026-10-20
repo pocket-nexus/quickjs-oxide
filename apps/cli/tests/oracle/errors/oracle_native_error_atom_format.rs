@@ -118,12 +118,9 @@ fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
                     .set_property(&global, &probe_key, Value::String(spelling))
                     .unwrap()
             );
-            assert_eq!(
-                context
-                    .eval("(function(){'use strict'; Function[__native_error_atom_key] = 1;})()",),
-                Err(RuntimeError::Exception)
-            );
-            let Some(Value::Object(error)) = context.take_exception().unwrap() else {
+            let Err(RuntimeError::Exception(Value::Object(error))) = context
+                .eval("(function(){'use strict'; Function[__native_error_atom_key] = 1;})()")
+            else {
                 panic!("strict read-only write did not install an Error object");
             };
             let Value::String(name) = context.get_property(&error, &name_key).unwrap() else {

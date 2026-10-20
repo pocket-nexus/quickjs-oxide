@@ -227,16 +227,10 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
     );
     define_getter(&runtime, target.as_object(), "prototype", getter);
     assert_eq!(
-        constructor_context.construct_with_new_target(
-            &number,
-            &target,
-            &[Value::Object(throwing_argument)],
-        ),
-        Err(RuntimeError::Exception)
-    );
-    assert_eq!(
-        constructor_context.take_exception().unwrap(),
-        Some(Value::Int(71))
+        constructor_context
+            .construct_with_new_target(&number, &target, &[Value::Object(throwing_argument)],)
+            .err(),
+        Some(RuntimeError::Exception(Value::Int(71)))
     );
     assert_eq!(
         string_global(&runtime, &mut constructor_context, &global, "orderLog"),
@@ -273,16 +267,10 @@ fn number_construct_preserves_conversion_and_prototype_getter_throws_in_order() 
         throwing_getter,
     );
     assert_eq!(
-        constructor_context.construct_with_new_target(
-            &number,
-            &getter_throw_target,
-            &[Value::Object(argument)],
-        ),
-        Err(RuntimeError::Exception)
-    );
-    assert_eq!(
-        constructor_context.take_exception().unwrap(),
-        Some(Value::Int(72))
+        constructor_context
+            .construct_with_new_target(&number, &getter_throw_target, &[Value::Object(argument)],)
+            .err(),
+        Some(RuntimeError::Exception(Value::Int(72)))
     );
     assert_eq!(
         string_global(&runtime, &mut constructor_context, &global, "orderLog"),

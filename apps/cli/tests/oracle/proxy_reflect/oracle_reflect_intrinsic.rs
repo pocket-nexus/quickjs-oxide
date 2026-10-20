@@ -1,9 +1,9 @@
 use crate::runtime_observation::host_runtime_context;
 use crate::runtime_observation::{
-    property_callable_with_read_context as property_callable,
-    string_property_with_read_context as string_property, take_exception_object,
+    exception_object, property_callable_with_read_context as property_callable,
+    string_property_with_read_context as string_property,
 };
-use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, Value};
 
 // Pins the complete QuickJS 2026-06-04 Reflect intrinsic. In particular, the
 // construct-order vectors intentionally follow `js_reflect_construct` rather
@@ -47,11 +47,10 @@ fn reflect_exposes_all_thirteen_nonconstructable_methods() {
             !runtime.is_constructor(callable.as_object()).unwrap(),
             "Reflect.{name} unexpectedly carried the constructor bit",
         );
-        assert_eq!(
+        exception_object(
             context.construct(&callable, &[]),
-            Err(RuntimeError::Exception)
+            &format!("new Reflect.{name}"),
         );
-        take_exception_object(&mut context, &format!("new Reflect.{name}"));
     }
 }
 

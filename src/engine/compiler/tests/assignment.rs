@@ -131,9 +131,8 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
     );
     assert!(matches!(
         context.eval("null[keyObject]"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("keyHint").unwrap(),
         Value::String(JsString::from_static("none"))
@@ -334,9 +333,8 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
     assert_script_true(&mut context, "delete __qjo_delete_reconnect");
     assert!(matches!(
         context.call(&reader, Value::Undefined, &[]),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    assert!(context.take_exception().unwrap().is_some());
     assert_eq!(
         context.eval("__qjo_delete_reconnect = 2").unwrap(),
         Value::Int(2)

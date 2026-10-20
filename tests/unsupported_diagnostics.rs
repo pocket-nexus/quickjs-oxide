@@ -111,7 +111,6 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
         Value::Int(42)
     );
     assert!(!runtime.is_job_pending().expect("runtime state"));
-    assert!(context.take_exception().unwrap().is_none());
 }
 
 #[test]
@@ -126,7 +125,6 @@ fn public_entrypoints_execute_dynamic_import_promise_jobs() {
         !runtime.is_job_pending().expect("runtime state"),
         "compilation scheduled an import job"
     );
-    assert!(context.take_exception().unwrap().is_none());
 
     assert_dynamic_import_jobs(
         "globalThis.__dynamicImportPromise = \
@@ -177,7 +175,6 @@ fn public_module_entrypoint_executes_top_level_await_jobs() {
             context.eval("globalThis.__tlaPublic").unwrap(),
             Value::Int(42)
         );
-        assert!(context.take_exception().unwrap().is_none());
     }
 }
 

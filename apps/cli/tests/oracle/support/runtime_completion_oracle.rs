@@ -99,38 +99,32 @@ fn observe_eval_completion_with(
             value_type(runtime, &value),
             value_text(value),
         ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    observed_error_string_property(
-                        runtime,
-                        context,
-                        &error,
-                        "name",
-                        description,
-                        error_property_style,
-                    ),
-                    observed_error_string_property(
-                        runtime,
-                        context,
-                        &error,
-                        "message",
-                        description,
-                        error_property_style,
-                    ),
+        Err(RuntimeError::Exception(exception)) => match exception {
+            Value::Object(error) => format!(
+                "throw|object|{}|{}",
+                observed_error_string_property(
+                    runtime,
+                    context,
+                    &error,
+                    "name",
+                    description,
+                    error_property_style,
                 ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    value_text(value),
+                observed_error_string_property(
+                    runtime,
+                    context,
+                    &error,
+                    "message",
+                    description,
+                    error_property_style,
                 ),
-            }
-        }
+            ),
+            value => format!(
+                "throw|{}|{}",
+                value_type(runtime, &value),
+                value_text(value),
+            ),
+        },
         Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
     }
 }
@@ -244,34 +238,18 @@ pub(crate) fn rust_case_observation(case: &Case) -> String {
             checked_value_type(&runtime, &value),
             primitive_value_text(value),
         ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| {
-                    panic!(
-                        "take Rust exception for {} / {}: {error}",
-                        case.group, case.description,
-                    )
-                })
-                .unwrap_or_else(|| {
-                    panic!(
-                        "Rust exception was missing for {} / {}",
-                        case.group, case.description,
-                    )
-                });
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    error_string_property_2(&runtime, &mut context, &error, "name", case),
-                    error_string_property_2(&runtime, &mut context, &error, "message", case),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    checked_value_type(&runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
+        Err(RuntimeError::Exception(exception)) => match exception {
+            Value::Object(error) => format!(
+                "throw|object|{}|{}",
+                error_string_property_2(&runtime, &mut context, &error, "name", case),
+                error_string_property_2(&runtime, &mut context, &error, "message", case),
+            ),
+            value => format!(
+                "throw|{}|{}",
+                checked_value_type(&runtime, &value),
+                primitive_value_text(value),
+            ),
+        },
         Err(error) => panic!(
             "Rust engine failure for {} / {} ({:?}): {error}",
             case.group, case.description, case.source,
@@ -295,24 +273,18 @@ pub(crate) fn observe_array_aware_eval(
             value_type(runtime, &value),
             primitive_value_text(value),
         ),
-        Err(RuntimeError::Exception) => {
-            let exception = context
-                .take_exception()
-                .unwrap_or_else(|error| panic!("take Rust exception for {description}: {error}"))
-                .unwrap_or_else(|| panic!("Rust exception was missing for {description}"));
-            match exception {
-                Value::Object(error) => format!(
-                    "throw|object|{}|{}",
-                    error_string_property(runtime, context, &error, "name", description),
-                    error_string_property(runtime, context, &error, "message", description),
-                ),
-                value => format!(
-                    "throw|{}|{}",
-                    value_type(runtime, &value),
-                    primitive_value_text(value),
-                ),
-            }
-        }
+        Err(RuntimeError::Exception(exception)) => match exception {
+            Value::Object(error) => format!(
+                "throw|object|{}|{}",
+                error_string_property(runtime, context, &error, "name", description),
+                error_string_property(runtime, context, &error, "message", description),
+            ),
+            value => format!(
+                "throw|{}|{}",
+                value_type(runtime, &value),
+                primitive_value_text(value),
+            ),
+        },
         Err(error) => panic!("Rust engine failure for {description} ({source:?}): {error}"),
     }
 }

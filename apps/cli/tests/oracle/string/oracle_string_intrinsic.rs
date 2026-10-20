@@ -1,8 +1,6 @@
 use crate::object_graph_observation::{eval_object, intrinsic_prototype};
 use crate::runtime_observation::host_runtime;
-use crate::runtime_observation::{
-    property_callable, take_pending_exception_object as take_exception_object,
-};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
 use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
 
 // Pins QuickJS 2026-06-04 `js_string_constructor`, `js_string_fromCharCode`,
@@ -45,32 +43,30 @@ fn string_cross_realm_results_errors_and_user_throws_are_exact() {
         .new_symbol(Some(JsString::try_from_utf8("construct").unwrap()))
         .unwrap();
     assert_eq!(
-        caller.construct(&string, &[Value::Symbol(symbol)]),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
         runtime
-            .get_prototype_of(&take_exception_object(&mut caller))
+            .get_prototype_of(&exception_object(
+                caller.construct(&string, &[Value::Symbol(symbol)])
+            ))
             .unwrap(),
         Some(defining_type_error.try_clone().expect("duplicate root")),
     );
     assert_eq!(
-        caller.call(&from_code_point, Value::Undefined, &[Value::Int(-1)]),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
         runtime
-            .get_prototype_of(&take_exception_object(&mut caller))
+            .get_prototype_of(&exception_object(caller.call(
+                &from_code_point,
+                Value::Undefined,
+                &[Value::Int(-1)]
+            )))
             .unwrap(),
         Some(defining_range_error),
     );
     assert_eq!(
-        caller.call(&raw, Value::Undefined, &[Value::Null]),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
         runtime
-            .get_prototype_of(&take_exception_object(&mut caller))
+            .get_prototype_of(&exception_object(caller.call(
+                &raw,
+                Value::Undefined,
+                &[Value::Null]
+            )))
             .unwrap(),
         Some(defining_type_error),
     );
@@ -91,19 +87,16 @@ fn string_cross_realm_results_errors_and_user_throws_are_exact() {
         r#"(function(){var value=Object();value[Symbol.toPrimitive]=function(){throw stringSentinel};return value})()"#,
     );
     assert_eq!(
-        defining.call(&string, Value::Undefined, &[Value::Object(throwing)]),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
-        defining.take_exception().unwrap(),
-        Some(Value::Object(sentinel)),
+        defining
+            .call(&string, Value::Undefined, &[Value::Object(throwing)])
+            .err(),
+        Some(RuntimeError::Exception(Value::Object(sentinel))),
         "an explicit user throw did not retain identity",
     );
 
-    assert_eq!(caller.construct(&raw, &[]), Err(RuntimeError::Exception));
     assert_eq!(
         runtime
-            .get_prototype_of(&take_exception_object(&mut caller))
+            .get_prototype_of(&exception_object(caller.construct(&raw, &[])))
             .unwrap(),
         Some(caller_type_error),
         "non-constructor rejection did not use the caller realm",

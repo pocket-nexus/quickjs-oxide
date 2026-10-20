@@ -1,7 +1,7 @@
 use super::support::*;
 use crate::runtime_observation::host_runtime;
 
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::Value;
 
 // This target pins QuickJS 2026-06-04's shared `js_array_find` kernel. Unlike
 // indexOf, every index is read and passed to the predicate, including holes.
@@ -78,11 +78,10 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
     );
 
     let empty = eval_object(&mut caller, "[]", "caller empty Array");
-    assert!(matches!(
+    let native_error = exception_object(
         caller.call(&find, Value::Object(empty), &[Value::Int(0)]),
-        Err(RuntimeError::Exception),
-    ));
-    let native_error = take_exception_object(&mut caller, "Array.find predicate TypeError");
+        "Array.find predicate TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
         Some(defining_type_error),
@@ -96,17 +95,16 @@ fn array_find_native_errors_and_user_throws_use_pinned_realms() {
         "caller throwing predicate",
     );
     let one = eval_object(&mut caller, "[1]", "caller one-element Array");
-    assert!(matches!(
+    let user_error = exception_object(
         caller.call(
             &find,
             Value::Object(one),
             &[Value::Object(
-                throwing.as_object().try_clone().expect("duplicate root")
+                throwing.as_object().try_clone().expect("duplicate root"),
             )],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let user_error = take_exception_object(&mut caller, "Array.find user predicate error");
+        "Array.find user predicate error",
+    );
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

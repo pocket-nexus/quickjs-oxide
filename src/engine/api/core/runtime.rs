@@ -70,8 +70,6 @@ impl Shared {
 
 pub(crate) struct Inner {
     pub(crate) core: oxide_core::Runtime,
-    /// The pending exception (`RuntimeError::Exception`).
-    pub(crate) exception: Option<Value>,
     /// Handles an entry took for converted arguments; released when the
     /// entry ends.
     temps: Vec<Handle>,
@@ -280,17 +278,14 @@ impl Entry<'_> {
         })
     }
 
-    /// Records a throw as the pending exception; the error to return.
+    /// The error a throw returns: the thrown value, lifted.
     pub(crate) fn thrown(&mut self, thrown: oxide_core::Throw) -> RuntimeError {
         let out_of_memory = self.inner.core.intrinsic(Intrinsic::OutOfMemoryError);
         if thrown.0.as_object() == Some(out_of_memory) {
             return RuntimeError::OutOfMemory;
         }
         match self.lift(thrown.0) {
-            Ok(value) => {
-                self.inner.exception = Some(value);
-                RuntimeError::Exception
-            }
+            Ok(value) => RuntimeError::Exception(value),
             Err(error) => error,
         }
     }
@@ -466,7 +461,6 @@ impl Runtime {
             shared: Rc::new(Shared {
                 inner: RefCell::new(Inner {
                     core,
-                    exception: None,
                     temps: Vec::new(),
                 }),
                 released: RefCell::new(Vec::new()),
@@ -572,9 +566,9 @@ impl Runtime {
         Ok(self.enter()?.core.has_pending_jobs())
     }
 
-    /// Runs the oldest pending job. A job that throws leaves its value as
-    /// the pending exception and returns `RuntimeError::Exception`; the
-    /// queue keeps the jobs after it. Rejected inside an execution turn,
+    /// Runs the oldest pending job. A job that throws returns
+    /// `RuntimeError::Exception` with the thrown value; the queue keeps the
+    /// jobs after it. Rejected inside an execution turn,
     /// leaving the job queued.
     pub fn run_pending_job(&self) -> Result<PendingJobOutcome, RuntimeError> {
         if self.shared.turns.get() > 0 {

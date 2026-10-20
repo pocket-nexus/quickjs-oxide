@@ -26,8 +26,7 @@ fn main() -> ExitCode {
             println!("{}", completion_text(value));
             ExitCode::SUCCESS
         }
-        Err(RuntimeError::Exception) => {
-            let exception = context.take_exception().ok().flatten();
+        Err(RuntimeError::Exception(exception)) => {
             eprintln!("uncaught JavaScript exception: {exception:?}");
             ExitCode::from(1)
         }

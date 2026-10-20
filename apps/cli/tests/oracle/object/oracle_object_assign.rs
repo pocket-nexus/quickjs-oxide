@@ -1,10 +1,8 @@
 use crate::object_graph_observation::{eval_object, global_callable, intrinsic_prototype};
 use crate::runtime_observation::{host_runtime, host_runtime_context};
 
-use crate::runtime_observation::{
-    property_callable, take_pending_exception_object as take_exception_object,
-};
-use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
+use quickjs_oxide::engine::api::core::{JsString, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_assign` and `JS_CopyDataProperties`.
 // Ordinary sources use QuickJS's enumerable-at-snapshot optimization; Proxy
@@ -72,11 +70,7 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
     );
 
     let defining_type_error = intrinsic_prototype(&runtime, &mut defining, "TypeError");
-    assert_eq!(
-        caller.call(&assign, Value::Undefined, &[Value::Null]),
-        Err(RuntimeError::Exception),
-    );
-    let framework_error = take_exception_object(&mut caller);
+    let framework_error = exception_object(caller.call(&assign, Value::Undefined, &[Value::Null]));
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
         Some(defining_type_error.try_clone().expect("duplicate root")),
@@ -90,15 +84,11 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
         &mut caller,
         "(function(){var value=Object();value.x=2;return value})()",
     );
-    assert_eq!(
-        caller.call(
-            &assign,
-            Value::Undefined,
-            &[Value::Object(readonly), Value::Object(readonly_source),],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    let set_error = take_exception_object(&mut caller);
+    let set_error = exception_object(caller.call(
+        &assign,
+        Value::Undefined,
+        &[Value::Object(readonly), Value::Object(readonly_source)],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&set_error).unwrap(),
         Some(defining_type_error),
@@ -109,15 +99,11 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
         &mut caller,
         r#"(function(){var value=Object();value.__defineGetter__("x",function(){throw new RangeError("source")});return value})()"#,
     );
-    assert_eq!(
-        caller.call(
-            &assign,
-            Value::Undefined,
-            &[Value::Object(target), Value::Object(throwing)],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    let user_error = take_exception_object(&mut caller);
+    let user_error = exception_object(caller.call(
+        &assign,
+        Value::Undefined,
+        &[Value::Object(target), Value::Object(throwing)],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_range_error.try_clone().expect("duplicate root")),
@@ -131,15 +117,11 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
         &mut caller,
         "(function(){var value=Object();value.x=3;return value})()",
     );
-    assert_eq!(
-        caller.call(
-            &assign,
-            Value::Undefined,
-            &[Value::Object(setter_target), Value::Object(setter_source),],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    let setter_error = take_exception_object(&mut caller);
+    let setter_error = exception_object(caller.call(
+        &assign,
+        Value::Undefined,
+        &[Value::Object(setter_target), Value::Object(setter_source)],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&setter_error).unwrap(),
         Some(caller_range_error),

@@ -247,9 +247,8 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
     );
     assert!(matches!(
         context.eval("Function.hostRead()"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("var hostValue;hostValue").unwrap(),
         Value::Undefined
@@ -294,9 +293,8 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
     );
     assert!(matches!(
         context.eval("'use strict';var fixedVar=2"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.get_own_property(&global, &fixed).unwrap(),
         Some(CompleteOrdinaryPropertyDescriptor::Data {
@@ -425,11 +423,8 @@ fn program_var_preflight_conflicts_and_parser_scope() {
         context.eval("let existingLexical=1").unwrap(),
         Value::Undefined
     );
-    assert!(matches!(
-        context.eval("var existingLexical"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) = context.eval("var existingLexical")
+    else {
         panic!("global var/lexical conflict did not throw an Error object");
     };
     let name = runtime.intern_property_key("name").unwrap();
@@ -448,9 +443,8 @@ fn program_var_preflight_conflicts_and_parser_scope() {
     );
     assert!(matches!(
         context.eval("varMarker=1;var freshBefore=(varMarker=2),existingLexical=(varMarker=3),freshAfter=(varMarker=4)"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("varMarker").unwrap(), Value::Int(0));
     assert_eq!(
         context
@@ -467,11 +461,8 @@ fn program_var_preflight_conflicts_and_parser_scope() {
     );
     let sealed_global = sealed.global_object().unwrap();
     sealed_runtime.prevent_extensions(&sealed_global).unwrap();
-    assert!(matches!(
-        sealed.eval("var sealedLexical"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = sealed.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) = sealed.eval("var sealedLexical")
+    else {
         panic!("sealed global var declaration did not throw an Error object");
     };
     // 16.1.7 step 4: a var name with a lexical declaration is a
@@ -497,9 +488,8 @@ fn program_var_preflight_conflicts_and_parser_scope() {
     atomic_runtime.prevent_extensions(&atomic_global).unwrap();
     assert!(matches!(
         atomic.eval("atomicMarker=1;var atomicExisting=6,atomicMissing=7"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(atomic.take_exception().unwrap().unwrap());
     assert_eq!(atomic.eval("atomicMarker").unwrap(), Value::Int(0));
     assert_eq!(atomic.eval("atomicExisting").unwrap(), Value::Int(5));
     assert_eq!(
@@ -556,18 +546,13 @@ fn program_global_lexical_preflight_and_failed_initializers() {
     assert_eq!(context.execute(&delayed).unwrap(), Value::Int(7));
     assert!(matches!(
         context.execute(&delayed),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
 
     let atomic = context
         .compile("let untouched=function(){return Infinity},NaN=1,Infinity=2")
         .unwrap();
-    assert!(matches!(
-        context.execute(&atomic),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) = context.execute(&atomic) else {
         panic!("global declaration preflight did not throw an Error object");
     };
     assert_eq!(
@@ -583,31 +568,28 @@ fn program_global_lexical_preflight_and_failed_initializers() {
         Value::Int(4)
     );
 
-    assert!(matches!(
-        context.eval(
-            "Function.saved=function(){return captured};let captured=(function(){throw 17})()"
-        ),
-        Err(RuntimeError::Exception)
-    ));
-    assert_eq!(context.take_exception().unwrap(), Some(Value::Int(17)));
-    assert!(matches!(
-        context.eval("Function.saved()"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    assert_eq!(
+        context
+            .eval(
+                "Function.saved=function(){return captured};let captured=(function(){throw 17})()"
+            )
+            .err(),
+        Some(RuntimeError::Exception(Value::Int(17)))
+    );
+    let Err(RuntimeError::Exception(Value::Object(error))) = context.eval("Function.saved()")
+    else {
         panic!("declaring-script capture did not preserve the global lexical TDZ");
     };
     assert_eq!(
         context.get_property(&error, &message).unwrap(),
         Value::String(JsString::from_static("captured is not initialized"))
     );
-    assert!(matches!(
-        context.eval("captured"),
-        Err(RuntimeError::Exception)
-    ));
+    let Err(RuntimeError::Exception(exception)) = context.eval("captured") else {
+        panic!("expected a JavaScript exception");
+    };
     // The binding stays uninitialized: every reference to it is in its TDZ
     // (9.1.1.4.6 GetBindingValue), `typeof` too.
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Value::Object(error) = exception else {
         panic!("later eval did not throw the global lexical's TDZ error");
     };
     assert_eq!(
@@ -620,13 +602,11 @@ fn program_global_lexical_preflight_and_failed_initializers() {
     );
     assert!(matches!(
         context.eval("typeof captured"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("delete captured").unwrap(), Value::Bool(false));
     assert!(matches!(
         context.eval("let captured=1"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
 }

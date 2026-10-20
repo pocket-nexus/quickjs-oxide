@@ -1,7 +1,7 @@
 use crate::object_graph_observation::{define_to_primitive, eval_callable, intrinsic_prototype};
 use crate::runtime_observation::host_runtime;
-use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
-use quickjs_oxide::engine::api::core::{JsBigInt, JsString, RuntimeError, Value};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
+use quickjs_oxide::engine::api::core::{JsBigInt, JsString, Value};
 
 #[test]
 fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
@@ -22,15 +22,11 @@ fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
     );
 
     let first_type_error = intrinsic_prototype(&runtime, &mut first, "TypeError");
-    assert_eq!(
-        second.call(
-            &at,
-            Value::String(JsString::try_from_utf8("x").unwrap()),
-            &[Value::BigInt(JsBigInt::one())],
-        ),
-        Err(RuntimeError::Exception)
-    );
-    let framework_error = take_exception_object(&mut second);
+    let framework_error = exception_object(second.call(
+        &at,
+        Value::String(JsString::try_from_utf8("x").unwrap()),
+        &[Value::BigInt(JsBigInt::one())],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
         Some(first_type_error)
@@ -44,15 +40,11 @@ fn string_utf16_prefix_cross_realm_and_error_realms_match_quickjs() {
         "(function(){throw new RangeError('user');})",
     );
     define_to_primitive(&runtime, &throwing_index, user_throw);
-    assert_eq!(
-        first.call(
-            &at,
-            Value::String(JsString::try_from_utf8("x").unwrap()),
-            &[Value::Object(throwing_index)],
-        ),
-        Err(RuntimeError::Exception)
-    );
-    let user_error = take_exception_object(&mut first);
+    let user_error = exception_object(first.call(
+        &at,
+        Value::String(JsString::try_from_utf8("x").unwrap()),
+        &[Value::Object(throwing_index)],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(second_range_error)

@@ -167,33 +167,24 @@ pub(crate) fn error_string_property(
     value.to_utf8_lossy()
 }
 
-/// Take a described pending exception and require an object value.
-pub(crate) fn take_exception_object(context: &mut Context, description: &str) -> ObjectRef {
-    let Value::Object(error) = context
-        .take_exception()
-        .unwrap_or_else(|failure| panic!("take {description}: {failure}"))
-        .unwrap_or_else(|| panic!("{description} was missing"))
-    else {
-        panic!("{description} was not an object");
-    };
-    error
+/// The object a described operation threw.
+pub(crate) fn exception_object<T: std::fmt::Debug>(
+    result: Result<T, RuntimeError>,
+    description: &str,
+) -> ObjectRef {
+    match result {
+        Err(RuntimeError::Exception(Value::Object(error))) => error,
+        Err(RuntimeError::Exception(_)) => panic!("{description} was not an object"),
+        other => panic!("{description} did not throw: {other:?}"),
+    }
 }
 
-/// Take the compact, undescribed pending exception used by most object and
-/// string intrinsic vectors.
-pub(crate) fn take_pending_exception_object(context: &mut Context) -> ObjectRef {
-    let Some(Value::Object(error)) = context.take_exception().unwrap() else {
-        panic!("pending exception was not an object");
-    };
-    error
-}
-
-/// Take a pending exception expected to be an Error object.
-pub(crate) fn take_error_object(context: &mut Context) -> ObjectRef {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
-        panic!("operation did not throw an Error object");
-    };
-    error
+/// The object an operation threw, for the compact, undescribed vectors of
+/// most object and string intrinsics.
+pub(crate) fn pending_exception_object<T: std::fmt::Debug>(
+    result: Result<T, RuntimeError>,
+) -> ObjectRef {
+    exception_object(result, "the exception")
 }
 
 pub(crate) fn string_units(value: &JsString) -> String {
@@ -205,13 +196,11 @@ pub(crate) fn string_units(value: &JsString) -> String {
 }
 
 pub(crate) fn eval(context: &mut Context, source: &str) -> Value {
-    context.eval(source).unwrap_or_else(|error| {
-        assert!(
-            error != RuntimeError::Exception,
-            "unexpected JavaScript exception: {:?}",
-            context.take_exception()
-        );
-        panic!("unexpected engine error: {error}");
+    context.eval(source).unwrap_or_else(|error| match error {
+        RuntimeError::Exception(exception) => {
+            panic!("unexpected JavaScript exception: {exception:?}")
+        }
+        error => panic!("unexpected engine error: {error}"),
     })
 }
 

@@ -2,7 +2,7 @@ use super::support::*;
 use crate::runtime_observation::host_runtime;
 
 use crate::object_graph_observation::int_property;
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::Value;
 
 // This target pins QuickJS 2026-06-04 `Array.prototype.copyWithin`, including
 // overlap direction and the hole-to-throwing-Delete path in `JS_CopySubArray`.
@@ -74,15 +74,14 @@ fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
         })()"#,
         "caller read-only copyWithin receiver",
     );
-    assert!(matches!(
+    let set_error = exception_object(
         caller.call(
             &method,
             Value::Object(readonly),
             &[Value::Int(0), Value::Int(1), Value::Int(2)],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let set_error = take_exception_object(&mut caller, "Array.copyWithin Set TypeError");
+        "Array.copyWithin Set TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&set_error).unwrap(),
         Some(defining_type_error.try_clone().expect("duplicate root")),
@@ -98,15 +97,14 @@ fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
         })()"#,
         "caller undeletable copyWithin receiver",
     );
-    assert!(matches!(
+    let delete_error = exception_object(
         caller.call(
             &method,
             Value::Object(undeletable),
             &[Value::Int(0), Value::Int(1), Value::Int(2)],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let delete_error = take_exception_object(&mut caller, "Array.copyWithin Delete TypeError");
+        "Array.copyWithin Delete TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&delete_error).unwrap(),
         Some(defining_type_error),
@@ -122,15 +120,14 @@ fn array_copy_within_boxing_native_errors_and_user_throws_use_pinned_realms() {
         })()"#,
         "caller throwing copyWithin receiver",
     );
-    assert!(matches!(
+    let user_error = exception_object(
         caller.call(
             &method,
             Value::Object(throwing_receiver),
             &[Value::Int(0), Value::Int(0), Value::Int(1)],
         ),
-        Err(RuntimeError::Exception),
-    ));
-    let user_error = take_exception_object(&mut caller, "Array.copyWithin user getter error");
+        "Array.copyWithin user getter error",
+    );
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

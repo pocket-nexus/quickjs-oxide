@@ -1,8 +1,8 @@
 use crate::object_graph_observation::object_property;
+use crate::runtime_observation::exception_object;
 use crate::runtime_observation::host_runtime_context;
-use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::eval_object;
-use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, Value};
 
 // Pins QuickJS 2026-06-04's complete Proxy surface: all thirteen handler
 // traps, null/undefined forwarding, revocation, callable/constructor caching,
@@ -51,11 +51,10 @@ fn proxy_hidden_edges_survive_gc_and_revocation_is_safe_across_collection() {
     runtime
         .run_gc()
         .expect("collect after one-shot revoke capture");
-    assert!(matches!(
+    let error = exception_object(
         context.get_property(&proxy, &runtime.intern_property_key("answer").unwrap()),
-        Err(RuntimeError::Exception),
-    ));
-    let error = take_exception_object(&mut context, "revoked Proxy after collection");
+        "revoked Proxy after collection",
+    );
     assert_eq!(
         string_property(&runtime, &mut context, &error, "name"),
         "TypeError",

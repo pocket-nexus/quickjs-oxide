@@ -319,13 +319,20 @@ fn oxide_observation(case: &Case, source: &[u8]) -> RawScriptObservation {
         Ok(value) => RawScriptObservation::EngineFailure(format!(
             "raw observer returned an unexpected value: {value:?}"
         )),
-        Err(RuntimeError::Exception) => oxide_exception(&runtime, &mut context, case),
+        Err(RuntimeError::Exception(exception)) => {
+            oxide_exception(&runtime, &mut context, case, exception)
+        }
         Err(error) => RawScriptObservation::EngineFailure(error.to_string()),
     }
 }
 
-fn oxide_exception(runtime: &Runtime, context: &mut Context, case: &Case) -> RawScriptObservation {
-    let Some(Value::Object(error)) = context.take_exception().unwrap() else {
+fn oxide_exception(
+    runtime: &Runtime,
+    context: &mut Context,
+    case: &Case,
+    exception: Value,
+) -> RawScriptObservation {
+    let Value::Object(error) = exception else {
         return RawScriptObservation::EngineFailure(
             "raw Script exception was not an object".to_owned(),
         );

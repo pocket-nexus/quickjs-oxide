@@ -8,11 +8,7 @@ const QUICKJS_2026_06_04: &str =
 
 fn eval(context: &mut Context, source: &str) -> Value {
     context.eval(source).unwrap_or_else(|error| {
-        if error == RuntimeError::Exception {
-            let exception = context
-                .take_exception()
-                .expect("take exception")
-                .expect("exception");
+        if let RuntimeError::Exception(exception) = error {
             let message = if let Value::Object(object) = &exception {
                 let key = context.runtime().intern_property_key("message").unwrap();
                 context.get_property(object, &key).ok()
@@ -36,18 +32,16 @@ fn install_test262_gc(context: &mut Context) {
 /// queued. QuickJS's reference counts release a job's captures as it
 /// returns; a tracing collector finds them at its next collection, which
 /// the queue's end stands in for here.
-fn drain_jobs(runtime: &Runtime, context: &mut Context) {
+fn drain_jobs(runtime: &Runtime) {
     let mut jobs = 0usize;
     for _ in 0..2 {
         while runtime.is_job_pending().expect("runtime state") {
             jobs += 1;
             assert!(jobs <= 64, "host GC fixture did not settle within 64 jobs");
             if let Err(error) = runtime.execute_pending_job() {
-                assert!(
-                    error != RuntimeError::Exception,
-                    "host GC fixture job threw: {:?}",
-                    context.take_exception()
-                );
+                if let RuntimeError::Exception(exception) = error {
+                    panic!("host GC fixture job threw: {exception:?}");
+                }
                 panic!("host GC fixture job failed: {error}");
             }
         }
@@ -73,7 +67,7 @@ fn test262_gc_reentry_preserves_execution_turn_roots_and_job_order() {
     // the pending reaction still owns its captured object.
     runtime.run_gc().unwrap();
     assert_eq!(eval(&mut context, "hostGcJobOrder.length"), Value::Int(0));
-    drain_jobs(&runtime, &mut context);
+    drain_jobs(&runtime);
 
     let transcript = text(eval(&mut context, "hostGcTranscript.join('\\n')"));
     let lines: Vec<_> = transcript.lines().collect();
@@ -161,6 +155,6 @@ fn test262_gc_nested_embedding_entries_share_the_explicit_execution_turn() {
         eval(&mut context, "scopeRef.deref() === undefined"),
         Value::Bool(true)
     );
-    drain_jobs(&runtime, &mut context);
+    drain_jobs(&runtime);
     assert_eq!(eval(&mut context, "scopeJobs"), Value::Int(1));
 }

@@ -2,10 +2,8 @@ use crate::object_graph_observation::object_property;
 use crate::object_graph_observation::{eval_object, global_callable, intrinsic_prototype};
 use crate::runtime_completion_oracle::observe_eval_completion as observe_rust_eval;
 use crate::runtime_observation::{host_runtime, host_runtime_context};
-use crate::runtime_observation::{
-    property_callable, take_pending_exception_object as take_exception_object,
-};
-use quickjs_oxide::engine::api::core::{JsString, RuntimeError, Value};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
+use quickjs_oxide::engine::api::core::{JsString, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_getOwnPropertyDescriptor` and
 // `js_object_getOwnPropertyDescriptors`. Proxy descriptor traps and TypedArray
@@ -107,18 +105,14 @@ fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
     );
 
     let defining_type_error = intrinsic_prototype(&runtime, &mut defining, "TypeError");
-    assert_eq!(
-        caller.call(
-            &singular,
-            Value::Undefined,
-            &[
-                Value::Null,
-                Value::String(JsString::try_from_utf8("x").unwrap()),
-            ],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    let framework_error = take_exception_object(&mut caller);
+    let framework_error = exception_object(caller.call(
+        &singular,
+        Value::Undefined,
+        &[
+            Value::Null,
+            Value::String(JsString::try_from_utf8("x").unwrap()),
+        ],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
         Some(defining_type_error),
@@ -130,15 +124,11 @@ fn object_descriptor_cross_realm_results_nested_objects_and_errors_are_exact() {
         &mut caller,
         r#"(function(){var key=Object();key[Symbol.toPrimitive]=function(){throw new RangeError("key")};return key})()"#,
     );
-    assert_eq!(
-        caller.call(
-            &singular,
-            Value::Undefined,
-            &[Value::Object(target), Value::Object(throwing_key)],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    let user_error = take_exception_object(&mut caller);
+    let user_error = exception_object(caller.call(
+        &singular,
+        Value::Undefined,
+        &[Value::Object(target), Value::Object(throwing_key)],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_range_error),

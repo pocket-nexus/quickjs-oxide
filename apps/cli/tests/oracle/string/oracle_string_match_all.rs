@@ -1,11 +1,11 @@
 use crate::object_graph_observation::{
     callable_property, checked_property_value as object_property,
 };
+use crate::runtime_observation::exception_object;
 use crate::runtime_observation::host_runtime;
 use crate::runtime_observation::string_value;
-use crate::runtime_observation::take_exception_object;
 use crate::runtime_oracle::{eval_callable, eval_object};
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::Value;
 
 // Differential lock for pinned QuickJS 2026-06-04 `js_string_match`'s
 // Symbol.matchAll path and `check_regexp_g_flag` (`quickjs.c` 45583-45657).
@@ -136,11 +136,10 @@ fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
     );
 
     let nonglobal = eval_object(&mut caller, "/a/", "caller non-global RegExp");
-    assert_eq!(
-        caller.call(&method, string_value("a"), &[Value::Object(nonglobal)],),
-        Err(RuntimeError::Exception),
+    let native_error = exception_object(
+        caller.call(&method, string_value("a"), &[Value::Object(nonglobal)]),
+        "String matchAll g-check TypeError",
     );
-    let native_error = take_exception_object(&mut caller, "String matchAll g-check TypeError");
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
         Some(defining_type_error),
@@ -160,15 +159,14 @@ fn string_match_all_delegation_and_fallback_preserve_cross_realm_ownership() {
         })()"#,
         "caller throwing matchAll pattern",
     );
-    assert_eq!(
+    let user_error = exception_object(
         caller.call(
             &method,
             string_value("a"),
             &[Value::Object(throwing_pattern)],
         ),
-        Err(RuntimeError::Exception),
+        "caller flags TypeError",
     );
-    let user_error = take_exception_object(&mut caller, "caller flags TypeError");
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

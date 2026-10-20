@@ -1,10 +1,8 @@
 use crate::object_graph_observation::{eval_object, global_callable, intrinsic_prototype};
 use crate::runtime_observation::host_runtime;
 
-use crate::runtime_observation::{
-    property_callable, take_pending_exception_object as take_exception_object,
-};
-use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, RuntimeError, Value};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
+use quickjs_oxide::engine::api::core::{Context, ObjectRef, Runtime, Value};
 
 // Pins QuickJS 2026-06-04 `js_object_keys` for Object.keys/values/entries.
 // Proxy ownKeys/getOwnPropertyDescriptor/get traps are intentionally outside
@@ -67,11 +65,7 @@ fn object_enumeration_cross_realm_results_and_error_realms_are_exact() {
     );
 
     let defining_type_error = intrinsic_prototype(&runtime, &mut defining, "TypeError");
-    assert_eq!(
-        caller.call(&keys, Value::Undefined, &[Value::Null]),
-        Err(RuntimeError::Exception),
-    );
-    let framework_error = take_exception_object(&mut caller);
+    let framework_error = exception_object(caller.call(&keys, Value::Undefined, &[Value::Null]));
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
         Some(defining_type_error)
@@ -82,11 +76,8 @@ fn object_enumeration_cross_realm_results_and_error_realms_are_exact() {
         &mut caller,
         r#"(function(){var value=Object();value.__defineGetter__("x",function(){throw new RangeError("user")});return value})()"#,
     );
-    assert_eq!(
-        caller.call(&values, Value::Undefined, &[Value::Object(throwing)]),
-        Err(RuntimeError::Exception),
-    );
-    let user_error = take_exception_object(&mut caller);
+    let user_error =
+        exception_object(caller.call(&values, Value::Undefined, &[Value::Object(throwing)]));
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_range_error)

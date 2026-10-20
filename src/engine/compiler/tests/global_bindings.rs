@@ -71,11 +71,9 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
     );
     assert_eq!(context.eval("readonly = 2").unwrap(), Value::Int(2));
     assert_eq!(context.eval("readonly").unwrap(), Value::Int(1));
-    assert!(matches!(
-        context.eval("'use strict'; readonly = 2"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(exception) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(exception))) =
+        context.eval("'use strict'; readonly = 2")
+    else {
         panic!("strict read-only global assignment did not throw an object");
     };
     let message = runtime.intern_property_key("message").unwrap();
@@ -91,14 +89,12 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
     );
     assert!(matches!(
         context.eval("'use strict'; readonly += 2"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert!(matches!(
         context.eval("'use strict'; readonly &&= 2"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
 
     let inherited = runtime.intern_property_key("inheritedReadOnly").unwrap();
     assert!(
@@ -115,11 +111,9 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
         Value::Int(6)
     );
     assert_eq!(context.eval("inheritedReadOnly").unwrap(), Value::Int(5));
-    assert!(matches!(
-        context.eval("'use strict'; inheritedReadOnly = 6"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(exception) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(exception))) =
+        context.eval("'use strict'; inheritedReadOnly = 6")
+    else {
         panic!("strict inherited read-only assignment did not throw an object");
     };
     assert_eq!(
@@ -144,11 +138,9 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
             .unwrap()
     );
     assert_eq!(context.eval("noSetter = 8").unwrap(), Value::Int(8));
-    assert!(matches!(
-        context.eval("'use strict'; noSetter = 8"),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(exception) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(exception))) =
+        context.eval("'use strict'; noSetter = 8")
+    else {
         panic!("strict setter-less assignment did not throw an object");
     };
     assert_eq!(
@@ -158,9 +150,8 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
     assert_eq!(context.eval("noSetter ||= 8").unwrap(), Value::Int(8));
     assert!(matches!(
         context.eval("'use strict'; noSetter ||= 8"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(
         context.eval("'use strict'; noSetter &&= 8").unwrap(),
         Value::Undefined
@@ -168,9 +159,8 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
 
     assert!(matches!(
         context.eval("'use strict'; trulyMissing = 1"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     let truly_missing = runtime.intern_property_key("trulyMissing").unwrap();
     assert!(!runtime.has_own_property(&global, &truly_missing).unwrap());
 
@@ -257,24 +247,21 @@ fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
             )
             .unwrap()
     );
-    assert!(matches!(
-        context.eval("typeof throwingGetter"),
-        Err(RuntimeError::Exception)
-    ));
-    assert_eq!(context.take_exception().unwrap(), Some(Value::Int(17)));
+    assert_eq!(
+        context.eval("typeof throwingGetter").err(),
+        Some(RuntimeError::Exception(Value::Int(17)))
+    );
 
     assert_eq!(context.eval("compoundSide = 0").unwrap(), Value::Int(0));
     assert!(matches!(
         context.eval("missingCompound += (compoundSide = 1)"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("compoundSide").unwrap(), Value::Int(0));
     assert!(matches!(
         context.eval("missingLogical ||= (compoundSide = 2)"),
-        Err(RuntimeError::Exception)
+        Err(RuntimeError::Exception(_))
     ));
-    drop(context.take_exception().unwrap().unwrap());
     assert_eq!(context.eval("compoundSide").unwrap(), Value::Int(0));
 }
 
@@ -359,11 +346,9 @@ fn late_global_property_delete_reconnect_and_cross_realm_use_the_defining_realm(
 
     assert!(runtime.delete_property(&defining_global, &key).unwrap());
     runtime.run_gc().unwrap();
-    assert!(matches!(
-        caller.call(&reader, Value::Undefined, &[]),
-        Err(RuntimeError::Exception)
-    ));
-    let Value::Object(exception) = caller.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(exception))) =
+        caller.call(&reader, Value::Undefined, &[])
+    else {
         panic!("missing defining-realm global did not throw an object");
     };
     let reference_error = runtime.intern_property_key("ReferenceError").unwrap();

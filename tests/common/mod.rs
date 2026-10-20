@@ -4,17 +4,12 @@ use quickjs_oxide::engine::api::core::{Runtime, RuntimeError, Value};
 pub fn compile_syntax_error(source: &str) -> String {
     let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
     let mut context = runtime.new_context().expect("create context");
-    assert_eq!(
-        context.compile(source).unwrap_err(),
-        RuntimeError::Exception,
-        "source did not fail with a JavaScript exception: {source:?}",
-    );
-    let Value::Object(error) = context
-        .take_exception()
-        .unwrap()
-        .unwrap_or_else(|| panic!("compile exception was missing: {source:?}"))
-    else {
-        panic!("compile exception was not an Error object: {source:?}");
+    let error = match context.compile(source) {
+        Err(RuntimeError::Exception(Value::Object(error))) => error,
+        Err(RuntimeError::Exception(_)) => {
+            panic!("compile exception was not an Error object: {source:?}")
+        }
+        _ => panic!("source did not fail with a JavaScript exception: {source:?}"),
     };
     assert!(runtime.is_error_object(&error).unwrap());
 

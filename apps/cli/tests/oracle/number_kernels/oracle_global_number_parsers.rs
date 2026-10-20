@@ -1,5 +1,5 @@
 use crate::runtime_observation::host_runtime_context;
-use quickjs_oxide::engine::api::core::{EvalOptions, Value};
+use quickjs_oxide::engine::api::core::{EvalOptions, RuntimeError, Value};
 use std::ffi::OsStr;
 use std::process::Command;
 
@@ -69,12 +69,9 @@ fn parser_function_names_are_stable_in_native_error_stacks() {
     let oracle = require_qjs_oracle!("numeric parser stack differential");
     let source = "parseInt('10', 1n)";
     let (runtime, mut context) = host_runtime_context();
-    assert!(
-        context
-            .eval_with_options(source, &EvalOptions::new("<cmdline>"))
-            .is_err()
-    );
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) =
+        context.eval_with_options(source, &EvalOptions::new("<cmdline>"))
+    else {
         panic!("parseInt BigInt radix did not throw an Error object");
     };
     let name_key = runtime.intern_property_key("name").unwrap();

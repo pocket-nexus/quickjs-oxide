@@ -16,8 +16,10 @@ fn compiler_call_capacity_matches_quickjs_error_classes() {
     let source = format!("(function() {{}})({arguments})");
 
     let (runtime, mut context) = host_runtime_context();
-    assert_eq!(context.compile(&source), Err(RuntimeError::Exception));
-    let rust_observation = take_rust_error_observation(&runtime, &mut context);
+    let Err(RuntimeError::Exception(exception)) = context.compile(&source) else {
+        panic!("expected a JavaScript exception");
+    };
+    let rust_observation = rust_error_observation(&runtime, &mut context, exception);
     assert_eq!(rust_observation, "InternalError|stack overflow");
 
     let oracle_observation = run_oracle_error(&oracle, &source, "65,535 call arguments");
@@ -31,9 +33,11 @@ fn compiler_call_capacity_matches_quickjs_error_classes() {
         .rfind(')')
         .expect("generated call expression has a closing parenthesis");
     too_many.insert_str(closing_parenthesis, ",0");
-    assert_eq!(context.compile(&too_many), Err(RuntimeError::Exception));
+    let Err(RuntimeError::Exception(exception)) = context.compile(&too_many) else {
+        panic!("expected a JavaScript exception");
+    };
     assert_eq!(
-        take_rust_error_observation(&runtime, &mut context),
+        rust_error_observation(&runtime, &mut context, exception),
         "SyntaxError|Too many call arguments"
     );
     assert_eq!(
@@ -84,11 +88,12 @@ fn run_oracle_error(oracle: &OsStr, source: &str, description: &str) -> String {
         .to_owned()
 }
 
-fn take_rust_error_observation(
+fn rust_error_observation(
     runtime: &Runtime,
     context: &mut quickjs_oxide::engine::api::core::Context,
+    exception: Value,
 ) -> String {
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Value::Object(error) = exception else {
         panic!("Rust did not materialize a native Error object");
     };
     let name_key = runtime.intern_property_key("name").unwrap();

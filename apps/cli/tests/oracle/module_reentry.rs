@@ -141,7 +141,6 @@ fn dynamic_import_accepts_modules_compiled_through_the_loader_scope() {
     assert_eq!(snapshot.state(), PromiseState::Fulfilled);
     assert_eq!(snapshot.result(), &Value::Int(42));
     assert!(!runtime.is_job_pending().expect("runtime state"));
-    assert_eq!(context.take_exception().unwrap(), None);
 }
 
 #[test]

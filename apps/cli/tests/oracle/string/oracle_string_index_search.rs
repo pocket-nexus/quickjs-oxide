@@ -4,7 +4,7 @@ use crate::object_graph_observation::{
     define_named_builtin_data as define_data, define_to_primitive,
     eval_source_callable as eval_callable, intrinsic_prototype,
 };
-use crate::runtime_observation::{property_callable, take_error_object as take_exception_object};
+use crate::runtime_observation::{pending_exception_object as exception_object, property_callable};
 use quickjs_oxide::engine::api::core::{
     Context, JsString, ObjectRef, Runtime, RuntimeError, Value,
 };
@@ -35,11 +35,8 @@ fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
     );
 
     let defining_type_error = intrinsic_prototype(&runtime, &mut defining, "TypeError");
-    assert_eq!(
-        caller.call(&index_of, Value::Null, &[Value::String(js_string("x"))],),
-        Err(RuntimeError::Exception),
-    );
-    let framework_error = take_exception_object(&mut caller);
+    let framework_error =
+        exception_object(caller.call(&index_of, Value::Null, &[Value::String(js_string("x"))]));
     assert_eq!(
         runtime.get_prototype_of(&framework_error).unwrap(),
         Some(defining_type_error),
@@ -55,15 +52,11 @@ fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
         "toString",
         "(function(){throw new RangeError('search')})",
     );
-    assert_eq!(
-        caller.call(
-            &index_of,
-            Value::String(js_string("abc")),
-            &[Value::Object(throwing_search)],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    let user_error = take_exception_object(&mut caller);
+    let user_error = exception_object(caller.call(
+        &index_of,
+        Value::String(js_string("abc")),
+        &[Value::Object(throwing_search)],
+    ));
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_range_error),
@@ -86,19 +79,17 @@ fn string_index_search_cross_realm_errors_and_user_throws_are_exact() {
     );
     define_to_primitive(&runtime, &throwing_position, position_conversion);
     assert_eq!(
-        caller.call(
-            &last_index_of,
-            Value::String(js_string("abc")),
-            &[
-                Value::String(js_string("a")),
-                Value::Object(throwing_position),
-            ],
-        ),
-        Err(RuntimeError::Exception),
-    );
-    assert_eq!(
-        caller.take_exception().unwrap(),
-        Some(Value::Object(sentinel)),
+        caller
+            .call(
+                &last_index_of,
+                Value::String(js_string("abc")),
+                &[
+                    Value::String(js_string("a")),
+                    Value::Object(throwing_position),
+                ],
+            )
+            .err(),
+        Some(RuntimeError::Exception(Value::Object(sentinel))),
         "user position conversion throw identity changed",
     );
 }

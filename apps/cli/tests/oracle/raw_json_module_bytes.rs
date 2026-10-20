@@ -371,15 +371,22 @@ fn oxide_observation(case: &Case) -> RawModuleObservation {
                 "raw JSON module observer could not read its result: {error}"
             )),
         },
-        Err(RuntimeError::Exception) => oxide_exception(&runtime, &mut context, case),
+        Err(RuntimeError::Exception(exception)) => {
+            oxide_exception(&runtime, &mut context, case, exception)
+        }
         Err(error) => RawModuleObservation::EngineFailure(error.to_string()),
     };
     drop(registration);
     observation
 }
 
-fn oxide_exception(runtime: &Runtime, context: &mut Context, case: &Case) -> RawModuleObservation {
-    let Some(Value::Object(error)) = context.take_exception().unwrap() else {
+fn oxide_exception(
+    runtime: &Runtime,
+    context: &mut Context,
+    case: &Case,
+    exception: Value,
+) -> RawModuleObservation {
+    let Value::Object(error) = exception else {
         return RawModuleObservation::EngineFailure(
             "raw JSON module exception was not an object".to_owned(),
         );

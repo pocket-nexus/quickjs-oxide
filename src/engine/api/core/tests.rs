@@ -30,11 +30,9 @@ fn run_api(source: &str) -> String {
     }
     let mut text = output.borrow().clone();
     if let Err(error) = result {
-        assert_eq!(error, RuntimeError::Exception);
-        let exception = context
-            .take_exception()
-            .unwrap()
-            .unwrap_or(Value::Undefined);
+        let RuntimeError::Exception(exception) = error else {
+            panic!("not an exception: {error}");
+        };
         let shown = context
             .to_js_string(&exception)
             .map_or_else(|_| "<unprintable>".to_owned(), |text| text.to_utf8_lossy());

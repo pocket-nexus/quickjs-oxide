@@ -1,6 +1,6 @@
 use js_sys::{Object, Reflect};
 use quickjs_oxide::engine::api::core::{
-    CompleteOrdinaryPropertyDescriptor, Context, Runtime, RuntimeError, RuntimeOptions, Value,
+    CompleteOrdinaryPropertyDescriptor, Runtime, RuntimeError, RuntimeOptions, Value,
 };
 use quickjs_oxide::engine::api::number_to_string;
 use quickjs_oxide::{QUICKJS_COMPAT_VERSION, QUICKJS_OXIDE_VERSION};
@@ -47,19 +47,11 @@ impl EvalResult {
         }
     }
 
-    fn exception(runtime: &Runtime, context: &mut Context) -> Self {
-        match context.take_exception() {
-            Ok(Some(value)) => Self {
-                ok: false,
-                kind: "exception",
-                text: exception_text(runtime, &value),
-            },
-            Ok(None) => Self {
-                ok: false,
-                kind: "exception",
-                text: "JavaScript exception".to_owned(),
-            },
-            Err(error) => Self::engine_error(&error),
+    fn exception(runtime: &Runtime, value: &Value) -> Self {
+        Self {
+            ok: false,
+            kind: "exception",
+            text: exception_text(runtime, value),
         }
     }
 
@@ -116,7 +108,9 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
     let mut context = runtime.context();
     let value = match context.eval_with_filename(source, PLAYGROUND_FILENAME) {
         Ok(value) => value,
-        Err(RuntimeError::Exception) => return EvalResult::exception(&runtime, &mut context),
+        Err(RuntimeError::Exception(exception)) => {
+            return EvalResult::exception(&runtime, &exception);
+        }
         Err(error) => return EvalResult::engine_error(&error),
     };
 
@@ -124,8 +118,8 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
         match runtime.run_pending_job() {
             Ok(outcome) if outcome.executed() => {}
             Ok(_) => break,
-            Err(RuntimeError::Exception) => {
-                return EvalResult::exception(&runtime, &mut context);
+            Err(RuntimeError::Exception(exception)) => {
+                return EvalResult::exception(&runtime, &exception);
             }
             Err(error) => return EvalResult::engine_error(&error),
         }

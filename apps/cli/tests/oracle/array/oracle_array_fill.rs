@@ -2,7 +2,7 @@ use super::support::*;
 use crate::runtime_observation::host_runtime;
 
 use crate::object_graph_observation::int_property;
-use quickjs_oxide::engine::api::core::{RuntimeError, Value};
+use quickjs_oxide::engine::api::core::Value;
 
 // This target pins QuickJS 2026-06-04 `Array.prototype.fill` as one complete
 // generic mutation slice. The probes emphasize QuickJS's exact conversion and
@@ -67,11 +67,10 @@ fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
         })()"#,
         "caller read-only receiver",
     );
-    assert!(matches!(
-        caller.call(&method, Value::Object(readonly), &[Value::Int(9)],),
-        Err(RuntimeError::Exception),
-    ));
-    let native_error = take_exception_object(&mut caller, "Array.fill native TypeError");
+    let native_error = exception_object(
+        caller.call(&method, Value::Object(readonly), &[Value::Int(9)]),
+        "Array.fill native TypeError",
+    );
     assert_eq!(
         runtime.get_prototype_of(&native_error).unwrap(),
         Some(defining_type_error),
@@ -87,11 +86,10 @@ fn array_fill_boxing_native_errors_and_user_throws_use_pinned_realms() {
         })()"#,
         "caller throwing receiver",
     );
-    assert!(matches!(
-        caller.call(&method, Value::Object(throwing_receiver), &[Value::Int(9)],),
-        Err(RuntimeError::Exception),
-    ));
-    let user_error = take_exception_object(&mut caller, "Array.fill user setter error");
+    let user_error = exception_object(
+        caller.call(&method, Value::Object(throwing_receiver), &[Value::Int(9)]),
+        "Array.fill user setter error",
+    );
     assert_eq!(
         runtime.get_prototype_of(&user_error).unwrap(),
         Some(caller_type_error),

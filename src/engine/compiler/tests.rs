@@ -66,12 +66,7 @@ fn evaluate_in_context(source: &str) -> Value {
 }
 
 fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (JsString, JsString) {
-    assert_eq!(
-        context.eval(source),
-        Err(RuntimeError::Exception),
-        "{source}"
-    );
-    let Value::Object(error) = context.take_exception().unwrap().unwrap() else {
+    let Err(RuntimeError::Exception(Value::Object(error))) = context.eval(source) else {
         panic!("source did not throw an Error object: {source}");
     };
     let name = runtime.intern_property_key("name").unwrap();

@@ -219,17 +219,12 @@ fn assert_eval_source_boundary(
 }
 
 fn take_compile_exception_label(context: &mut Context, source: &str) -> String {
-    assert_eq!(
-        context.compile(source).unwrap_err(),
-        RuntimeError::Exception,
-        "direct source did not fail with a JavaScript exception: {source:?}"
-    );
-    let Value::Object(error) = context
-        .take_exception()
-        .unwrap()
-        .expect("direct compile exception was missing")
-    else {
-        panic!("direct compile exception was not an Error object");
+    let error = match context.compile(source) {
+        Err(RuntimeError::Exception(Value::Object(error))) => error,
+        Err(RuntimeError::Exception(_)) => {
+            panic!("direct compile exception was not an Error object")
+        }
+        _ => panic!("direct source did not fail with a JavaScript exception: {source:?}"),
     };
     let name_key = context.runtime().intern_property_key("name").unwrap();
     let message_key = context.runtime().intern_property_key("message").unwrap();

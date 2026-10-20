@@ -112,11 +112,9 @@ fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
         .map(|units| JsString::try_from_utf16(units.iter().copied()).unwrap())
         .collect::<Vec<_>>();
     let observe = |context: &mut quickjs_oxide::engine::api::core::Context| {
-        assert_eq!(
-            context.eval("\nnew Number.isFinite"),
-            Err(RuntimeError::Exception)
-        );
-        let Some(Value::Object(error)) = context.take_exception().unwrap() else {
+        let Err(RuntimeError::Exception(Value::Object(error))) =
+            context.eval("\nnew Number.isFinite")
+        else {
             panic!("native constructor failure did not install an Error object");
         };
         let Value::String(name) = context.get_property(&error, &name_key).unwrap() else {
