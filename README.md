@@ -125,7 +125,7 @@ surface.
 ## Documentation
 
 - [Compatibility with QuickJS 2026-06-04](docs/compatibility.md)
-- [Architecture](docs/architecture.md) and [implementation status](docs/status.md)
+- [Architecture](docs/architecture.md), [embedding internals](docs/embedding.md) and [implementation status](docs/status.md)
 - [Test262 baseline and metrics](docs/test262.md)
 - [Execution](docs/performance/execution.md), [the heap](docs/heap.md), [performance](docs/performance/README.md) and [profiling](docs/profiling.md)
 - [Browser playground](docs/playground.md), [releases](docs/release.md) and the [changelog](CHANGELOG.md)
