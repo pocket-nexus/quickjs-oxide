@@ -179,9 +179,11 @@ context.define_function(&global, "add", 2, |_: &mut Scope<'_>, a: f64, b: f64| O
 
 A missing argument converts `undefined`, so `Option<T>` is how a function
 takes an optional one; extra arguments are ignored; the receiver and
-`new.target` stay on the `Scope`. Reading a string argument copies its
-units: a 1 KiB string costs about 36,000 instructions to lift and as much
-again to convert to a `String`, against about 560 for the call itself.
+`new.target` stay on the `Scope`. A string argument is copied once: a
+1 KiB argument costs about 430 instructions as a `JsString` and about 1,300
+as an ASCII `String`, against about 560 for the call itself; converting
+UTF-16 text to a `String` transcodes it, about 55 instructions per code
+unit.
 
 ## Buffers
 
