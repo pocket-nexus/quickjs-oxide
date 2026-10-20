@@ -62,7 +62,7 @@ edition = "2024"
 rust-version = "1.99"
 license = "MIT"
 repository = "https://github.com/pocket-nexus/quickjs-oxide"
-homepage = "https://pocket-nexus.github.io/quickjs-oxide/"
+homepage = "https://quickjs-oxide.pocket.nexus/"
 # The release workflow publishes every member except the web packages and
 # the Test262 runner to crates.io.
 publish = true

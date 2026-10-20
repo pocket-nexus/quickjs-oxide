@@ -1,0 +1,14 @@
+// The site's Worker: static assets only, served at the custom domain.
+// .github/workflows/site.yml deploys it with `wrangler deploy` after
+// scripts/web/build-site.sh has built target/pages.
+{
+  "name": "quickjs-oxide",
+  "account_id": "5e97b4b91f8abaf2de54de9f866bfcae",
+  "compatibility_date": "2026-10-01",
+  "assets": {
+    "directory": "../../target/pages"
+  },
+  "routes": [
+    { "pattern": "quickjs-oxide.pocket.nexus", "custom_domain": true }
+  ]
+}

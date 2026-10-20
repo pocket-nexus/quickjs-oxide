@@ -37,10 +37,10 @@ pass rate is 79.815%.
 - **Runs where you need it.** A `qjs` command line, a Rust embedding API and a
   WebAssembly build.
 
-**[Try it in the browser →](https://pocket-nexus.github.io/quickjs-oxide/)**
+**[Try it in the browser →](https://quickjs-oxide.pocket.nexus/)**
 The homepage computes a Mandelbrot set with the engine compiled to WebAssembly;
-the [docs](https://pocket-nexus.github.io/quickjs-oxide/docs/) cover embedding,
-host services, modules, limits and performance.
+the [docs](https://quickjs-oxide.pocket.nexus/docs/) cover embedding, Rust
+functions, host services, modules, limits and performance.
 
 ## Install
 

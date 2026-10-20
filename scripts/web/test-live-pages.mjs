@@ -1,9 +1,10 @@
 #!/usr/bin/env node
-// Verifies the live GitHub Pages deployment serves this build: the homepage,
+// Verifies the live Cloudflare deployment serves this build: the homepage,
 // the WebAssembly glue and module byte for byte, and the docs built from this
-// commit. Pages propagates through a CDN, so each check retries with backoff.
+// commit. The deployment propagates through a CDN, so each check retries with
+// backoff.
 //
-// Environment (set by .github/workflows/pages.yml):
+// Environment (set by .github/workflows/site.yml):
 //   QUICKJS_OXIDE_PAGES_URL        the deployed site's base URL
 //   QUICKJS_OXIDE_COMMIT           the commit the site was built from
 //   QUICKJS_OXIDE_INDEX_SHA256     index.html

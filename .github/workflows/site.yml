@@ -1,4 +1,4 @@
-name: Deploy the site to GitHub Pages
+name: Deploy the site to Cloudflare
 
 on:
   push:
@@ -13,21 +13,23 @@ concurrency:
 
 env:
   WASM_BINDGEN_VERSION: "0.2.126"
+  WRANGLER_VERSION: "4.147.0"
+  # The custom domain of the Worker apps/web/wrangler.jsonc configures.
+  SITE_URL: https://quickjs-oxide.pocket.nexus/
+  # The former GitHub Pages address, which now redirects to SITE_URL.
+  OLD_SITE_PATH: /quickjs-oxide
 
 jobs:
   build:
     runs-on: ubuntu-latest
     outputs:
-      artifact_id: ${{ steps.pages_artifact.outputs.artifact_id }}
       glue_sha256: ${{ steps.pages_hashes.outputs.glue_sha256 }}
       index_sha256: ${{ steps.pages_hashes.outputs.index_sha256 }}
-      page_url: ${{ steps.pages.outputs.base_url }}
       wasm_sha256: ${{ steps.pages_hashes.outputs.wasm_sha256 }}
     env:
       QUICKJS_OXIDE_COMMIT: ${{ github.sha }}
     permissions:
       contents: read
-      pages: read
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -68,11 +70,7 @@ jobs:
       - name: Test the non-cancelling Pages deploy client
         run: node scripts/web/test-deploy-pages.mjs
 
-      - name: Configure GitHub Pages
-        id: pages
-        uses: actions/configure-pages@v6
-
-      - name: Authenticate final Pages asset bytes
+      - name: Hash the deployed assets
         id: pages_hashes
         run: |
           set -euo pipefail
@@ -83,36 +81,43 @@ jobs:
           echo "glue_sha256=${glue_sha256}" >> "$GITHUB_OUTPUT"
           echo "wasm_sha256=${wasm_sha256}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload GitHub Pages artifact
-        id: pages_artifact
-        uses: actions/upload-pages-artifact@v5
+      - name: Upload the site
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
+          name: site
           path: target/pages
+          if-no-files-found: error
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 20
     permissions:
       contents: read
-      pages: write
-      id-token: write
     environment:
-      name: github-pages
-      url: ${{ needs.build.outputs.page_url }}
+      name: cloudflare
+      url: ${{ env.SITE_URL }}
     steps:
-      - name: Check out non-cancelling deployment client
+      - name: Check out the Worker configuration
         uses: actions/checkout@v6
         with:
           persist-credentials: false
 
-      - name: Create and observe GitHub Pages deployment
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          QUICKJS_OXIDE_PAGES_ARTIFACT_ID: ${{ needs.build.outputs.artifact_id }}
-          QUICKJS_OXIDE_PAGES_POLL_INTERVAL_MS: "5000"
-          QUICKJS_OXIDE_PAGES_POLL_TIMEOUT_MS: "1500000"
-        run: node scripts/web/deploy-pages.mjs
+      - name: Download the site
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: site
+          path: target/pages
+
+      # The Worker serves target/pages as static assets at its custom domain.
+      - name: Deploy the Worker
+        uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          wranglerVersion: ${{ env.WRANGLER_VERSION }}
+          command: >-
+            deploy --config apps/web/wrangler.jsonc
+            --message "${{ github.sha }}"
 
   verify:
     needs: [build, deploy]
@@ -135,6 +140,41 @@ jobs:
           QUICKJS_OXIDE_LIVE_RETRY_MAX_MS: "15000"
           QUICKJS_OXIDE_LIVE_RETRY_MS: "5000"
           QUICKJS_OXIDE_LIVE_TIMEOUT_MS: "10000"
-          QUICKJS_OXIDE_PAGES_URL: ${{ needs.build.outputs.page_url }}
+          QUICKJS_OXIDE_PAGES_URL: ${{ env.SITE_URL }}
           QUICKJS_OXIDE_WASM_SHA256: ${{ needs.build.outputs.wasm_sha256 }}
         run: node scripts/web/test-live-pages.mjs
+
+  # GitHub Pages serves only a page that sends every path under the old
+  # address to the same path on the new domain.
+  redirect:
+    needs: deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+    steps:
+      - name: Check out non-cancelling deployment client
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Write the redirect page
+        run: node scripts/web/build-redirect.mjs target/redirect "${SITE_URL}" "${OLD_SITE_PATH}"
+
+      - name: Upload the redirect page
+        id: redirect_artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: target/redirect
+
+      - name: Create and observe the GitHub Pages deployment
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          QUICKJS_OXIDE_PAGES_ARTIFACT_ID: ${{ steps.redirect_artifact.outputs.artifact_id }}
+          QUICKJS_OXIDE_PAGES_POLL_INTERVAL_MS: "5000"
+          QUICKJS_OXIDE_PAGES_POLL_TIMEOUT_MS: "1500000"
+        run: node scripts/web/deploy-pages.mjs
