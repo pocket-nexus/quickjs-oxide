@@ -15,9 +15,10 @@ options and report types.
 | Item | Content |
 | --- | --- |
 | `Runtime` | an `Rc` of the shared state (`oxide_core::Runtime` in a `RefCell`, the module loader, the preloaded modules); cloning shares it. `new()`, `with_options(RuntimeOptions)`, `with_host(impl Host, RuntimeOptions)`; jobs (`run_pending_job`, `run_jobs`, `with_execution_turn`), rejection tracking, collection (`run_gc`, `gc_stats`, `GcPolicy`, `set_gc_stress`), the reports (`memory_report`, `gc_report`, `ic_report`, `disassemble`), property keys, symbols, prototypes and own-property operations, `type_of` and the printer |
-| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, promises (`new_promise`, `promise_then`), `define_module`, the `qjs` helpers; each method takes `&self` and is one engine entry |
+| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, promises (`new_promise`, `promise_then`), buffers, `define_module`, the `qjs` helpers; each method takes `&self` and is one engine entry |
 | `InterruptHandle` | interrupts the runtime's scripts from any thread |
 | `PromiseCapability` | a promise and its resolving functions, settled from Rust |
+| `TypedArrayKind`, `TypedArrayView` | a typed array's element type and its window on its buffer |
 | `Js`, `JsResult` | the operations `Context` and `Scope` share, as a sealed trait for code generic over either; both also have each as an inherent method |
 | `Scope`, `FunctionOptions`, `HostFunction`, `Raw` | host functions: the function's view of its call and of the engine, how it is made, what `new_function` takes |
 | `Value` | `Undefined`, `Null`, `Bool`, `Int`, `Float`, `BigInt(JsBigInt)` and `String(JsString)` as Rust data copied out of the core; `Symbol(SymbolRef)` and `Object(ObjectRef)` as handles |
@@ -152,6 +153,22 @@ embedder's state; when the event arrives, the embedder calls `resolve` or
 reactions (an `await` continues there). `is_job_pending` tells it whether
 a drain has work. A capability dropped unsettled leaves its promise
 pending, and both are collected once unreachable.
+
+## Buffers
+
+`new_array_buffer(bytes)` makes an `ArrayBuffer` holding a copy of
+`bytes`; `array_buffer_len` reads a buffer's length (`None` for a detached
+buffer or another object); `array_buffer_to_vec` copies its bytes out and
+`write_array_buffer(buffer, offset, data)` writes into it.
+`with_array_buffer_bytes(buffer, f)` lends an `ArrayBuffer`'s bytes to `f`
+in place, inside the engine's borrow so `f` cannot call the engine; a
+`SharedArrayBuffer`'s bytes, which are atomics, are copied first. A detached
+buffer throws `TypeError: ArrayBuffer is detached`, an offset past the end
+a `RangeError`, and any other object a `TypeError`. `typed_array_view`
+reads a typed array's kind, buffer, byte offset and current length (`None`
+when it is out of bounds of a resized buffer); `new_typed_array(kind,
+buffer, byte_offset, length)` constructs one, length-tracking without a
+`length`.
 
 ## Interrupts
 

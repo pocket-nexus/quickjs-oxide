@@ -1379,6 +1379,7 @@ pub(crate) fn detach_array_buffer(cx: &mut Cx<'_>, site: CallSite) -> Result<Val
 
 pub(crate) use bigint::to_bigint;
 pub(crate) use buffer::detach as detach_buffer;
+pub(crate) use buffer::new_array_buffer;
 pub(crate) use date::iso_string as date_iso_string;
 pub(crate) use generator::async_from_sync_iterator;
 pub(crate) use json::json_module_text;

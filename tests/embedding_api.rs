@@ -1439,3 +1439,128 @@ fn a_loader_returns_a_synthetic_module() {
         string("name,sevenfunction")
     );
 }
+
+// ---- buffers ----
+
+use quickjs_oxide::engine::api::core::TypedArrayKind;
+
+fn global(context: &Context, name: &str, value: Value) {
+    let global = context.global_object().unwrap();
+    let key = context.runtime().intern_property_key(name).unwrap();
+    context.set_property(&global, &key, value).unwrap();
+}
+
+#[test]
+fn buffer_bytes_round_trip() {
+    let (_, context) = runtime();
+    let bytes: Vec<u8> = (0..1 << 20).map(|index| (index * 7) as u8).collect();
+    let buffer = context.new_array_buffer(&bytes).unwrap();
+    assert_eq!(context.array_buffer_len(&buffer).unwrap(), Some(1 << 20));
+    assert_eq!(context.array_buffer_to_vec(&buffer).unwrap(), bytes);
+    let sum = context
+        .with_array_buffer_bytes(&buffer, |bytes| {
+            bytes.iter().map(|&b| u64::from(b)).sum::<u64>()
+        })
+        .unwrap();
+    assert_eq!(sum, bytes.iter().map(|&b| u64::from(b)).sum::<u64>());
+    // A write is seen by a script's view.
+    context.write_array_buffer(&buffer, 3, &[200, 201]).unwrap();
+    global(&context, "buffer", Value::Object(buffer.clone()));
+    assert_eq!(
+        context
+            .eval("var u = new Uint8Array(buffer); [u[2], u[3], u[4], u[5]].join()")
+            .unwrap(),
+        string("14,200,201,35")
+    );
+    // Offsets at and past the end.
+    context.write_array_buffer(&buffer, 1 << 20, &[]).unwrap();
+    let past = context.write_array_buffer(&buffer, (1 << 20) - 1, &[1, 2]);
+    assert!(thrown(&context, past).starts_with("RangeError"));
+    // Not a buffer.
+    let object = context.new_object().unwrap();
+    assert_eq!(context.array_buffer_len(&object).unwrap(), None);
+    let not = context.array_buffer_to_vec(&object);
+    assert!(thrown(&context, not).starts_with("TypeError"));
+}
+
+#[test]
+fn a_detached_buffer_throws_quickjs_s_type_error() {
+    let (_, context) = runtime();
+    let buffer = context.new_array_buffer(&[1, 2, 3]).unwrap();
+    context
+        .detach_array_buffer(&Value::Object(buffer.clone()))
+        .unwrap();
+    assert_eq!(context.array_buffer_len(&buffer).unwrap(), None);
+    let read = context.array_buffer_to_vec(&buffer);
+    assert!(thrown(&context, read).starts_with("TypeError: ArrayBuffer is detached"),);
+    let write = context.write_array_buffer(&buffer, 0, &[1]);
+    assert!(thrown(&context, write).starts_with("TypeError: ArrayBuffer is detached"));
+}
+
+#[test]
+fn typed_array_views_report_their_window() {
+    let (_, context) = runtime();
+    let Value::Object(array) = context
+        .eval("new Float64Array(new ArrayBuffer(64), 16, 3)")
+        .unwrap()
+    else {
+        panic!("a typed array");
+    };
+    let view = context.typed_array_view(&array).unwrap().unwrap();
+    assert_eq!(view.kind, TypedArrayKind::Float64);
+    assert_eq!((view.byte_offset, view.length), (16, Some(3)));
+    assert_eq!(context.array_buffer_len(&view.buffer).unwrap(), Some(64));
+    // A length-tracking view on a resizable buffer follows it.
+    let Value::Object(tracking) = context
+        .eval("var rb = new ArrayBuffer(8, { maxByteLength: 32 }); new Uint16Array(rb, 2)")
+        .unwrap()
+    else {
+        panic!("a typed array");
+    };
+    assert_eq!(
+        context.typed_array_view(&tracking).unwrap().unwrap().length,
+        Some(3)
+    );
+    context.eval("rb.resize(32)").unwrap();
+    assert_eq!(
+        context.typed_array_view(&tracking).unwrap().unwrap().length,
+        Some(15)
+    );
+    context.eval("rb.resize(1)").unwrap();
+    assert_eq!(
+        context.typed_array_view(&tracking).unwrap().unwrap().length,
+        None
+    );
+    // A DataView is not a typed array.
+    let Value::Object(data_view) = context.eval("new DataView(new ArrayBuffer(4))").unwrap() else {
+        panic!("a DataView");
+    };
+    assert!(context.typed_array_view(&data_view).unwrap().is_none());
+    // Made from Rust.
+    let buffer = context.new_array_buffer(&[1, 0, 2, 0, 3, 0]).unwrap();
+    let made = context
+        .new_typed_array(TypedArrayKind::Uint16, &buffer, 2, Some(2))
+        .unwrap();
+    global(&context, "made", Value::Object(made));
+    assert_eq!(context.eval("[...made].join()").unwrap(), string("2,3"));
+}
+
+#[test]
+fn a_shared_buffer_round_trips() {
+    let (_, context) = runtime();
+    let Value::Object(shared) = context
+        .eval("var s = new SharedArrayBuffer(4); new Uint8Array(s).set([9, 8, 7, 6]); s")
+        .unwrap()
+    else {
+        panic!("a SharedArrayBuffer");
+    };
+    assert_eq!(context.array_buffer_to_vec(&shared).unwrap(), [9, 8, 7, 6]);
+    context.write_array_buffer(&shared, 1, &[1]).unwrap();
+    assert_eq!(
+        context
+            .with_array_buffer_bytes(&shared, <[u8]>::to_vec)
+            .unwrap(),
+        [9, 1, 7, 6]
+    );
+    assert_eq!(context.eval("new Uint8Array(s)[1]").unwrap(), Value::Int(1));
+}

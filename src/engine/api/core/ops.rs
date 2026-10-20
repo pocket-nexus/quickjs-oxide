@@ -8,6 +8,7 @@ use std::rc::Rc;
 use oxide_core::{Intrinsic, NativeCx, RootMark};
 
 use super::RuntimeError;
+use super::buffer::{TypedArrayKind, TypedArrayView};
 use super::compile::{ScriptCompileError, compile_script, syntax_location};
 use super::context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
 use super::function::{FunctionOptions, HostFunction, Raw, Scope, host_body};
@@ -892,6 +893,93 @@ impl View<'_> {
         }
     }
 
+    // ---- buffers ----
+
+    pub(crate) fn new_array_buffer(&mut self, bytes: &[u8]) -> JsResult<ObjectRef> {
+        let result = self.core.new_array_buffer(bytes.len());
+        let id = self.complete_with(result)?;
+        let buffer = self.lift_object(id);
+        let result = self.core.array_buffer_write(id, 0, bytes);
+        self.complete_with(result)?;
+        Ok(buffer)
+    }
+
+    pub(crate) fn array_buffer_len(&mut self, buffer: &ObjectRef) -> JsResult<Option<usize>> {
+        let id = self.object(buffer)?;
+        Ok(self.core.array_buffer_len(id))
+    }
+
+    pub(crate) fn array_buffer_to_vec(&mut self, buffer: &ObjectRef) -> JsResult<Vec<u8>> {
+        let id = self.object(buffer)?;
+        let mut bytes = vec![0; self.core.array_buffer_len(id).unwrap_or(0)];
+        let result = self.core.array_buffer_read(id, 0, &mut bytes);
+        self.complete_with(result)?;
+        Ok(bytes)
+    }
+
+    pub(crate) fn with_array_buffer_bytes<R>(
+        &mut self,
+        buffer: &ObjectRef,
+        f: impl FnOnce(&[u8]) -> R,
+    ) -> JsResult<R> {
+        let id = self.object(buffer)?;
+        if let Some(bytes) = self.core.array_buffer_bytes(id) {
+            return Ok(f(bytes));
+        }
+        // A shared buffer's bytes are atomics: they are copied first. A
+        // detached buffer or another object throws.
+        let bytes = self.array_buffer_to_vec(buffer)?;
+        Ok(f(&bytes))
+    }
+
+    pub(crate) fn write_array_buffer(
+        &mut self,
+        buffer: &ObjectRef,
+        offset: usize,
+        data: &[u8],
+    ) -> JsResult<()> {
+        let id = self.object(buffer)?;
+        let result = self.core.array_buffer_write(id, offset, data);
+        self.complete_with(result)
+    }
+
+    pub(crate) fn typed_array_view(
+        &mut self,
+        array: &ObjectRef,
+    ) -> JsResult<Option<TypedArrayView>> {
+        let id = self.object(array)?;
+        let Some((kind, buffer, byte_offset, length)) = self.core.typed_array_view(id) else {
+            return Ok(None);
+        };
+        Ok(Some(TypedArrayView {
+            kind,
+            buffer: self.lift_object(buffer),
+            byte_offset,
+            length,
+        }))
+    }
+
+    pub(crate) fn new_typed_array(
+        &mut self,
+        kind: TypedArrayKind,
+        buffer: &ObjectRef,
+        byte_offset: usize,
+        length: Option<usize>,
+    ) -> JsResult<ObjectRef> {
+        let constructor = CallableRef(self.intrinsic(typed_array_constructor(kind))?);
+        let mut arguments = vec![
+            Value::Object(buffer.clone()),
+            Value::number(byte_offset as f64),
+        ];
+        if let Some(length) = length {
+            arguments.push(Value::number(length as f64));
+        }
+        match self.construct(&constructor, &arguments)? {
+            Value::Object(array) => Ok(array),
+            _ => Err(RuntimeError::Invariant("a typed array")),
+        }
+    }
+
     // ---- intrinsics ----
 
     fn intrinsic(&mut self, intrinsic: Intrinsic) -> JsResult<ObjectRef> {
@@ -1034,6 +1122,23 @@ impl View<'_> {
             .core
             .host_data(id)
             .and_then(|data: Rc<dyn Any>| data.downcast::<T>().ok()))
+    }
+}
+
+fn typed_array_constructor(kind: TypedArrayKind) -> Intrinsic {
+    match kind {
+        TypedArrayKind::Int8 => Intrinsic::Int8Array,
+        TypedArrayKind::Uint8 => Intrinsic::Uint8Array,
+        TypedArrayKind::Uint8Clamped => Intrinsic::Uint8ClampedArray,
+        TypedArrayKind::Int16 => Intrinsic::Int16Array,
+        TypedArrayKind::Uint16 => Intrinsic::Uint16Array,
+        TypedArrayKind::Int32 => Intrinsic::Int32Array,
+        TypedArrayKind::Uint32 => Intrinsic::Uint32Array,
+        TypedArrayKind::Float16 => Intrinsic::Float16Array,
+        TypedArrayKind::Float32 => Intrinsic::Float32Array,
+        TypedArrayKind::Float64 => Intrinsic::Float64Array,
+        TypedArrayKind::BigInt64 => Intrinsic::BigInt64Array,
+        TypedArrayKind::BigUint64 => Intrinsic::BigUint64Array,
     }
 }
 
@@ -1250,6 +1355,30 @@ js_ops! {
     /// `promise.then(on_fulfilled, on_rejected)` with host functions; the
     /// promise `then` returns.
     fn promise_then(&mut self, promise: &ObjectRef, on_fulfilled: impl HostFunction<Raw>, on_rejected: impl HostFunction<Raw>) -> JsResult<ObjectRef>;
+
+    // ---- buffers ----
+
+    /// A new `ArrayBuffer` holding a copy of `bytes`.
+    fn new_array_buffer(&mut self, bytes: &[u8]) -> JsResult<ObjectRef>;
+    /// A buffer's length in bytes; `None` for a detached buffer or another
+    /// object.
+    fn array_buffer_len(&mut self, buffer: &ObjectRef) -> JsResult<Option<usize>>;
+    /// A copy of a buffer's bytes (`ArrayBuffer` or `SharedArrayBuffer`);
+    /// a detached buffer or another object throws a `TypeError`.
+    fn array_buffer_to_vec(&mut self, buffer: &ObjectRef) -> JsResult<Vec<u8>>;
+    /// Calls `f` with a buffer's bytes, borrowed in place for an
+    /// `ArrayBuffer` and copied first for a `SharedArrayBuffer`. `f` runs
+    /// inside the engine's borrow, so it cannot call the engine.
+    fn with_array_buffer_bytes[R](&mut self, buffer: &ObjectRef, f: impl FnOnce(&[u8]) -> R) -> JsResult<R>;
+    /// Writes `data` into a buffer at `offset`: a `TypeError` for a
+    /// detached buffer or another object, a `RangeError` past its end.
+    fn write_array_buffer(&mut self, buffer: &ObjectRef, offset: usize, data: &[u8]) -> JsResult<()>;
+    /// A typed array's kind, buffer, byte offset and current length; `None`
+    /// for anything but a typed array (a `DataView` included).
+    fn typed_array_view(&mut self, array: &ObjectRef) -> JsResult<Option<TypedArrayView>>;
+    /// `new <Kind>Array(buffer, byte_offset, length)`; without `length` the
+    /// view tracks a resizable buffer's length.
+    fn new_typed_array(&mut self, kind: TypedArrayKind, buffer: &ObjectRef, byte_offset: usize, length: Option<usize>) -> JsResult<ObjectRef>;
 
     // ---- intrinsics ----
 

@@ -2,6 +2,7 @@
 //! Rust data or handles, the host as one trait, host functions with a
 //! [`Scope`], module loaders with a [`ModuleScope`].
 
+mod buffer;
 pub(crate) mod compile;
 mod context;
 mod error;
@@ -15,6 +16,7 @@ mod runtime;
 pub mod test262;
 mod value;
 
+pub use buffer::{TypedArrayKind, TypedArrayView};
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
 pub use error::RuntimeError;
 pub use function::{FunctionOptions, HostFunction, Raw, Scope};

@@ -617,6 +617,117 @@ impl NativeCx<'_> {
         crate::vm::jobs::new_promise(&mut self.cx(), prototype)
     }
 
+    // ---- buffers ----
+
+    /// A new `ArrayBuffer` of `len` zero bytes; a `RangeError` past
+    /// [`MAX_BUFFER_LENGTH`](crate::heap::buffer::MAX_BUFFER_LENGTH).
+    pub fn new_array_buffer(&mut self, len: usize) -> Result<ObjectId, Throw> {
+        let mut cx = self.cx();
+        let mark = cx.heap.roots().mark();
+        let buffer = crate::builtins::new_array_buffer(&mut cx, len);
+        cx.heap.roots().truncate(mark);
+        buffer
+    }
+
+    /// The buffer record of an `ArrayBuffer` or `SharedArrayBuffer`.
+    fn buffer(&self, object: ObjectId) -> Option<&crate::heap::buffer::Buffer> {
+        match self.heap.internal_tag(object) {
+            InternalTag::ArrayBuffer | InternalTag::SharedArrayBuffer => {
+                Some(crate::vm::typed::buffer(self.heap, object))
+            }
+            _ => None,
+        }
+    }
+
+    /// A buffer's length in bytes; `None` when `object` is not a buffer or
+    /// is detached.
+    pub fn array_buffer_len(&self, object: ObjectId) -> Option<usize> {
+        self.buffer(object)
+            .filter(|buffer| !buffer.detached)
+            .map(crate::heap::buffer::Buffer::len)
+    }
+
+    /// Checks that `offset..offset + len` is in an attached buffer: a
+    /// `TypeError` for anything else, a `RangeError` past its end.
+    fn buffer_range(&mut self, object: ObjectId, offset: usize, len: usize) -> Result<(), Throw> {
+        let Some(buffer) = self.buffer(object) else {
+            return Err(crate::vm::error::type_error(
+                &mut self.cx(),
+                "not an ArrayBuffer",
+            ));
+        };
+        if buffer.detached {
+            return Err(crate::vm::error::type_error(
+                &mut self.cx(),
+                "ArrayBuffer is detached",
+            ));
+        }
+        if offset.checked_add(len).is_none_or(|end| end > buffer.len()) {
+            return Err(crate::vm::error::range_error(
+                &mut self.cx(),
+                "out of bound",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Copies `out.len()` bytes of the buffer from `offset` (a shared
+    /// buffer's byte by byte through its atomics).
+    pub fn array_buffer_read(
+        &mut self,
+        object: ObjectId,
+        offset: usize,
+        out: &mut [u8],
+    ) -> Result<(), Throw> {
+        self.buffer_range(object, offset, out.len())?;
+        crate::vm::typed::buffer(self.heap, object).read(offset, out);
+        Ok(())
+    }
+
+    /// Writes `data` into the buffer at `offset`.
+    pub fn array_buffer_write(
+        &mut self,
+        object: ObjectId,
+        offset: usize,
+        data: &[u8],
+    ) -> Result<(), Throw> {
+        self.buffer_range(object, offset, data.len())?;
+        crate::vm::typed::buffer_mut(self.heap, object).write(offset, data);
+        Ok(())
+    }
+
+    /// The bytes of an attached `ArrayBuffer`; `None` for anything else,
+    /// a `SharedArrayBuffer` included (its bytes are atomics).
+    pub fn array_buffer_bytes(&self, object: ObjectId) -> Option<&[u8]> {
+        self.buffer(object)
+            .filter(|buffer| !buffer.detached)
+            .and_then(crate::heap::buffer::Buffer::owned_slice)
+    }
+
+    /// A typed array's element kind, buffer, byte offset and current
+    /// length (`None` when it is out of bounds of its buffer or the buffer
+    /// is detached); `None` for anything but a typed array.
+    pub fn typed_array_view(
+        &self,
+        object: ObjectId,
+    ) -> Option<(
+        crate::heap::buffer::ElementKind,
+        ObjectId,
+        usize,
+        Option<usize>,
+    )> {
+        if self.heap.internal_tag(object) != InternalTag::TypedArray {
+            return None;
+        }
+        let (view, buffer) = crate::vm::typed::view(self.heap, object);
+        Some((
+            view.kind,
+            buffer,
+            view.byte_offset,
+            crate::vm::typed::length(self.heap, object),
+        ))
+    }
+
     /// QuickJS's `JS_DetachArrayBuffer`: detaches an ArrayBuffer; anything
     /// else is ignored.
     pub fn detach_array_buffer(&mut self, value: Value) -> Result<(), Throw> {
