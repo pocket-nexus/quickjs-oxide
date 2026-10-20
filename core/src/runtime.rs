@@ -586,8 +586,7 @@ impl Runtime {
     /// Runs a script function (from [`Runtime::instantiate`]) with the
     /// global object as `this`. The result is unrooted.
     pub fn run_script(&mut self, script: ObjectId) -> Result<Value, Throw> {
-        let global = Value::object(self.realm.global);
-        self.call(Value::object(script), global, &[])
+        self.native_cx().run_script(script)
     }
 
     /// Runs pending jobs until the queue is empty; the host calls it at its
@@ -615,7 +614,7 @@ impl Runtime {
     /// Calls `function`; the result or the thrown value is unrooted. The
     /// caller keeps `function` alive (a handle or a rooted object).
     pub fn call(&mut self, function: Value, this: Value, args: &[Value]) -> Result<Value, Throw> {
-        crate::vm::call(&mut self.cx(), function, this, args)
+        self.native_cx().call(function, this, args)
     }
 
     /// `ToString(value)` as Rust text, for hosts printing a result or an
@@ -819,9 +818,7 @@ impl Runtime {
 
     /// An ordinary object inheriting from `%Object.prototype%`.
     pub fn new_object(&mut self) -> Result<ObjectId, HeapError> {
-        let prototype = self.intrinsic(Intrinsic::ObjectPrototype);
-        self.heap
-            .alloc_object(ObjectKind::Ordinary, Some(prototype), 4)
+        self.native_cx().new_object()
     }
 
     pub fn new_array(&mut self, capacity: u32) -> Result<ObjectId, HeapError> {
@@ -915,7 +912,7 @@ impl Runtime {
 
     /// Holds `value` for the embedder until [`Runtime::release`].
     pub fn hold(&mut self, value: Value) -> Handle {
-        self.heap.handles().create(value)
+        self.native_cx().hold(value)
     }
 
     pub fn held(&self, handle: Handle) -> Value {
@@ -923,6 +920,6 @@ impl Runtime {
     }
 
     pub fn release(&mut self, handle: Handle) {
-        self.heap.handles().release(handle);
+        self.native_cx().release(handle);
     }
 }

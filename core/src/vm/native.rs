@@ -5,8 +5,12 @@
 //! call on the root stack, which is cut back when it returns. The natives
 //! themselves are the realm's builtins (`crate::builtins`).
 
+use std::rc::Rc;
+
 use super::{Cx, Throw};
 use crate::builtins::Native;
+use crate::embed::NativeCx;
+use crate::heap::object::InternalData;
 use crate::value::Value;
 
 /// Where a native finds its receiver (register `this`) and its arguments
@@ -77,5 +81,108 @@ pub(crate) fn call(cx: &mut Cx<'_>, native: Native, site: CallSite) -> Result<Va
     let mark = cx.heap.roots().mark();
     let result = (native.function())(cx, site);
     cx.heap.roots().truncate(mark);
+    result
+}
+
+/// A host function's body: the embedder's Rust code, called with the
+/// engine's view and the call.
+pub type HostFn = dyn Fn(&mut NativeCx<'_>, NativeCall) -> Result<Value, Throw>;
+
+/// `Rc<HostFn>` with a `Debug` that names the kind and not the closure.
+#[derive(Clone)]
+pub struct HostBody(pub Rc<HostFn>);
+
+impl std::fmt::Debug for HostBody {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("HostBody")
+    }
+}
+
+/// Where a host function finds its receiver, arguments, `new.target` and
+/// captured values, read through a [`NativeCx`]. The arguments stay in the
+/// register file, rooted, while the body runs.
+#[derive(Clone, Copy, Debug)]
+pub struct NativeCall(CallSite);
+
+impl NativeCall {
+    pub fn this(&self, cx: &NativeCx<'_>) -> Value {
+        cx.heap.vm.registers[self.0.this]
+    }
+
+    /// Argument `index`; `undefined` past [`NativeCall::argc`].
+    pub fn arg(&self, cx: &NativeCx<'_>, index: usize) -> Value {
+        if index < self.0.argc {
+            cx.heap.vm.registers[self.0.args + index]
+        } else {
+            Value::UNDEFINED
+        }
+    }
+
+    pub fn argc(&self) -> usize {
+        self.0.argc
+    }
+
+    pub fn args<'a>(&self, cx: &'a NativeCx<'_>) -> &'a [Value] {
+        &cx.heap.vm.registers[self.0.args..self.0.args + self.0.argc]
+    }
+
+    /// `new.target`; `undefined` for a call.
+    pub fn new_target(&self) -> Value {
+        self.0.new_target
+    }
+
+    pub fn is_construct(&self) -> bool {
+        self.0.construct
+    }
+
+    /// The function object called.
+    pub fn callee(&self) -> Value {
+        self.0.function
+    }
+
+    /// Captured value `slot`.
+    pub fn data(&self, cx: &NativeCx<'_>, slot: usize) -> Value {
+        cx.heap.internal_slot(self.record(cx).object(), slot)
+    }
+
+    pub fn set_data(&self, cx: &mut NativeCx<'_>, slot: usize, value: Value) {
+        let record = self.record(cx);
+        cx.heap.set_internal_slot(record.object(), slot, value);
+    }
+
+    /// The number of captured values.
+    pub fn data_len(&self, cx: &NativeCx<'_>) -> usize {
+        cx.heap.internal(self.record(cx).object()).slots.len()
+    }
+
+    fn record(&self, cx: &NativeCx<'_>) -> crate::ScopeId {
+        let function = self.0.function.as_object().expect("a host function");
+        cx.heap
+            .function_scope(function)
+            .expect("a host closure's data")
+    }
+}
+
+/// The native of [`Native::HostFunction`] and [`Native::HostConstructor`]:
+/// calls the body in the function's data record through a clone of its
+/// `Rc`, so the body may re-enter the function.
+pub(crate) fn host_call(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
+    let function = site.function.as_object().expect("a host function");
+    let data = cx
+        .heap
+        .function_scope(function)
+        .expect("a host closure's data");
+    let InternalData::HostFn(body) = &cx.heap.internal(data.object()).data else {
+        unreachable!("a host function's data holds its body");
+    };
+    let body = Rc::clone(&body.0);
+    // The body may call back in (and so recurse through itself): it counts
+    // as a re-entry against the native-stack budget, as a C function's call
+    // does in QuickJS.
+    if !cx.heap.vm.enter_native() {
+        return Err(super::error::stack_overflow(cx));
+    }
+    let result = body(&mut NativeCx::from_cx(cx), NativeCall(site));
+    cx.heap.vm.leave_native();
     result
 }

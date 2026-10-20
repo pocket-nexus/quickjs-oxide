@@ -329,6 +329,8 @@ pub enum InternalTag {
     /// An object the `Iterator` constructor made for a subclass: QuickJS's
     /// `JS_CLASS_ITERATOR`, which its printer names.
     Iterator,
+    /// An embedder's host object: its datum is `InternalData::HostData`.
+    HostData,
 }
 
 /// Non-value state of an internal record.
@@ -352,6 +354,12 @@ pub enum InternalData {
     Module(Box<crate::vm::module::ModuleData>),
     /// A module namespace's export names, sorted.
     Exports(Box<[super::atom::PropertyKey]>),
+    /// A host function's body (`InternalTag::NativeData` of a host
+    /// closure); the record's slots are the values it captured.
+    HostFn(crate::vm::native::HostBody),
+    /// An embedder's value attached to a host object
+    /// (`InternalTag::HostData`).
+    HostData(std::rc::Rc<dyn std::any::Any>),
 }
 
 /// The internal slots of a suspended activation before its registers: the
@@ -394,7 +402,9 @@ impl Internal {
                 | InternalData::Frame(_)
                 | InternalData::Cursor(_)
                 | InternalData::View(_)
-                | InternalData::Module(_) => 0,
+                | InternalData::Module(_)
+                | InternalData::HostFn(_)
+                | InternalData::HostData(_) => 0,
                 InternalData::Exports(keys) => keys.len() * 8,
                 InternalData::Buffer(buffer) => buffer.owned_bytes(),
                 InternalData::Bytes(bytes) => bytes.capacity(),

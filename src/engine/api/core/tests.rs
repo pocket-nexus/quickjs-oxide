@@ -102,3 +102,110 @@ fn transient_code_is_freed_once_nothing_names_it() {
         before.static_units + 2
     );
 }
+
+/// Defines a core host function as the global `name`, as the API's host
+/// functions will be.
+fn define_core_host(
+    runtime: &Runtime,
+    name: &str,
+    constructor: bool,
+    body: impl Fn(
+        &mut oxide_core::NativeCx<'_>,
+        oxide_core::vm::native::NativeCall,
+    ) -> Result<oxide_core::Value, oxide_core::Throw>
+    + 'static,
+) {
+    let mut inner = runtime.shared.inner.borrow_mut();
+    let core = &mut inner.core;
+    let body: Rc<oxide_core::vm::native::HostFn> = Rc::new(body);
+    let function = core
+        .native_cx()
+        .new_host_function(name, 0, constructor, &[], body)
+        .unwrap();
+    let handle = core.hold(oxide_core::Value::object(function));
+    let units: Vec<u16> = name.encode_utf16().collect();
+    let key = core.key_from_units(&units).unwrap();
+    let global = core.global_object();
+    let value = oxide_core::Value::object(function);
+    core.set(global, key, value, oxide_core::Value::object(global))
+        .unwrap();
+    core.release(handle);
+}
+
+#[test]
+fn a_script_calls_a_host_function_and_catches_its_throw() {
+    let runtime = Runtime::new();
+    let mut context = runtime.context();
+    define_core_host(&runtime, "twice", false, |cx, call| {
+        let n = cx.to_number(call.arg(cx, 0))?;
+        Ok(oxide_core::Value::number(n * 2.0))
+    });
+    define_core_host(&runtime, "fail", false, |cx, _| {
+        let error = cx
+            .new_error(oxide_core::ErrorKind::Type, "x is required")
+            .unwrap();
+        Err(oxide_core::Throw(error))
+    });
+    assert_eq!(context.eval("twice(21) === 42").unwrap(), Value::Bool(true));
+    assert_eq!(
+        context
+            .eval("try { fail(); } catch (e) { e instanceof TypeError && e.message }")
+            .unwrap(),
+        Value::String(crate::engine::value::JsString::from_static("x is required"))
+    );
+    assert_eq!(
+        context
+            .eval("typeof twice + twice.name + twice.length")
+            .unwrap(),
+        Value::String(crate::engine::value::JsString::from_static(
+            "functiontwice0"
+        ))
+    );
+    assert!(matches!(
+        context.eval("new twice()"),
+        Err(RuntimeError::Exception(_))
+    ));
+}
+
+#[test]
+fn a_host_function_is_listed_in_a_backtrace() {
+    let runtime = Runtime::new();
+    let mut context = runtime.context();
+    define_core_host(&runtime, "h", false, |cx, call| {
+        cx.call(call.arg(cx, 0), oxide_core::Value::UNDEFINED, &[])
+    });
+    let stack = context
+        .eval("try { h(function inner() { throw new Error('x'); }); } catch (e) { e.stack }")
+        .unwrap();
+    let Value::String(stack) = stack else {
+        panic!("no stack");
+    };
+    let stack = stack.to_utf8_lossy();
+    let lines: Vec<&str> = stack.lines().collect();
+    assert!(lines[0].contains("at inner (<input>"), "{stack}");
+    assert_eq!(lines[1].trim(), "at h (native)", "{stack}");
+    assert!(lines[2].contains("at <eval> (<input>"), "{stack}");
+}
+
+#[test]
+fn a_host_object_prints_as_an_object() {
+    let runtime = Runtime::new();
+    let mut context = runtime.context();
+    define_core_host(&runtime, "make", false, |cx, _| {
+        let prototype = cx.intrinsic(oxide_core::Intrinsic::ObjectPrototype);
+        let object = cx.new_host_object(Some(prototype), Rc::new(7_u8)).unwrap();
+        Ok(oxide_core::Value::object(object))
+    });
+    assert_eq!(
+        context
+            .eval("var o = make(); o.x = 1; typeof o + Object.prototype.toString.call(o) + o.x")
+            .unwrap(),
+        Value::String(crate::engine::value::JsString::from_static(
+            "object[object Object]1"
+        ))
+    );
+    let o = context.eval("o").unwrap();
+    // The printer names the class `Object`, as it names every internal
+    // record without a class of its own.
+    assert_eq!(runtime.print_value(&o).unwrap(), "Object { x: 1 }");
+}

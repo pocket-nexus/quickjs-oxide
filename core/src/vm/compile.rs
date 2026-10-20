@@ -98,6 +98,27 @@ impl<'a> Compiler<'a> {
         }
     }
 
+    /// [`NativeCx::new_host_function`](crate::NativeCx::new_host_function).
+    pub fn new_host_function(
+        &mut self,
+        name: &str,
+        length: u32,
+        constructor: bool,
+        data: &[Value],
+        body: std::rc::Rc<super::native::HostFn>,
+    ) -> Result<ObjectId, HeapError> {
+        crate::embed::host_function(self.heap, self.realm, name, length, constructor, data, body)
+    }
+
+    /// [`NativeCx::new_host_object`](crate::NativeCx::new_host_object).
+    pub fn new_host_object(
+        &mut self,
+        prototype: Option<ObjectId>,
+        data: std::rc::Rc<dyn std::any::Any>,
+    ) -> Result<ObjectId, HeapError> {
+        crate::embed::host_object(self.heap, prototype, data)
+    }
+
     /// Holds `value` for the embedder until released (the heap's handle
     /// table).
     pub fn hold(&mut self, value: Value) -> crate::Handle {

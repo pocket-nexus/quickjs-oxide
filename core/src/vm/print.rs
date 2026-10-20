@@ -103,10 +103,22 @@ impl Runtime {
     /// surrogate in a raw C string shows as U+FFFD; [`Self::print_value_bytes`]
     /// keeps it.
     pub fn print_value(&mut self, value: Value) -> String {
-        String::from_utf8_lossy(&print_value(&mut self.cx(), value)).into_owned()
+        self.native_cx().print_value(value)
     }
 
     /// [`Self::print_value`] as the bytes QuickJS writes (WTF-8).
+    pub fn print_value_bytes(&mut self, value: Value) -> Vec<u8> {
+        self.native_cx().print_value_bytes(value)
+    }
+}
+
+impl crate::NativeCx<'_> {
+    /// [`Runtime::print_value`].
+    pub fn print_value(&mut self, value: Value) -> String {
+        String::from_utf8_lossy(&print_value(&mut self.cx(), value)).into_owned()
+    }
+
+    /// [`Runtime::print_value_bytes`].
     pub fn print_value_bytes(&mut self, value: Value) -> Vec<u8> {
         print_value(&mut self.cx(), value)
     }

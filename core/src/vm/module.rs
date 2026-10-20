@@ -1300,6 +1300,13 @@ impl crate::Runtime {
     /// The state of a promise (0 pending, 1 fulfilled, 2 rejected) and its
     /// result.
     pub fn promise_state(&mut self, promise: Value) -> Option<(i32, Value)> {
+        self.native_cx().promise_state(promise)
+    }
+}
+
+impl crate::NativeCx<'_> {
+    /// [`Runtime::promise_state`](crate::Runtime::promise_state).
+    pub fn promise_state(&mut self, promise: Value) -> Option<(i32, Value)> {
         let cx = self.cx();
         let object = promise.as_object()?;
         if !super::jobs::is_promise(&cx, promise) {

@@ -18,7 +18,7 @@ pub mod vm;
 
 pub use builtins::agent::ScriptRunner;
 pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, UnitRef, Units};
-pub use embed::{KeyName, PropertyDescriptor};
+pub use embed::{KeyName, NativeCx, PropertyDescriptor};
 pub use heap::atom::{KeyKind, PropertyKey};
 pub use heap::gc::{Handle, HeapLimits, RootMark};
 pub use heap::object::ObjectKind;

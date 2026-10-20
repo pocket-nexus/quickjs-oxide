@@ -723,6 +723,12 @@ natives! {
     Read => crate::vm::compile::read, "read", 1;
     LoadScript => crate::vm::compile::load_script, "__loadScript", 1;
     PerformanceNow => global::performance_now, "now", 0;
+
+    /// An embedder's function (`NativeCx::new_host_function`); its name
+    /// and length are its own properties.
+    HostFunction => crate::vm::native::host_call, "", 0;
+    /// An embedder's function that `new` may call.
+    HostConstructor => crate::vm::native::host_call, "", 0, constructor;
 }
 
 impl Native {

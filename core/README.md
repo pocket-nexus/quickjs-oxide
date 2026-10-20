@@ -32,7 +32,7 @@ crate depends on it; it does not depend on the root crate.
 | `vm` | the register file and frame table, the main loop (`interp`), conversions and operators (`ops`, `number`, `bigint`), property access (`property`), the inline caches (`ic`), regular-expression objects (`regexp`), the value printer (`print`) and the internal methods by kind (`object`, `proxy`, `typed`, `arguments`), iteration (`iter`), suspension (`suspend`, `async_generator`), jobs and promises (`jobs`), classes (`class`), modules (`module`), the compile host (`compile`), errors and the native ABI (`error`, `native`) |
 | `builtins` | the realm's constructors, prototypes and globals as natives over the re-entrant `call`, one file per builtin object, plus `$262` (`test262`, `agent`) |
 | `host` | the `Host` trait: output, clock, time zone, random seed, promise-rejection events and files |
-| `embed` | the embedder's entries the root crate's API calls: objects, properties, conversions, value construction |
+| `embed` | the embedder's entries the root crate's API calls, on `NativeCx`, which a `Runtime` lends between entries and the loop lends to a host function: objects, properties, conversions, value construction, host functions and host objects |
 | `clock` | the monotonic clock the collector times its pauses with |
 | `runtime` | `Runtime`: the heap, the static code store beside it, the single realm and the host services |
 
@@ -290,6 +290,19 @@ check nothing.
   `vm::native` holds `CallSite` (receiver, arguments, and whether `new`
   called) and the dispatch, which cuts the root stack back after every
   native so natives root intermediate values on it freely.
+- An embedder's function is a native closure of `Native::HostFunction` or
+  `Native::HostConstructor` (`NativeCx::new_host_function`). Its data
+  record's slots are the JavaScript values it captured and its
+  `InternalData::HostFn` is the Rust body, an `Rc` the trampoline
+  (`vm::native::host_call`) clones before calling, so a body may call its
+  own function again. The body runs with a `NativeCx` (the heap, the realm,
+  the services and the loop's code store, shared) and a `NativeCall` (its
+  receiver, arguments, `new.target` and captured values); each call counts
+  as a re-entry against the native-stack budget, and the function is listed
+  in a backtrace as `at name (native)`. The body and the captured values
+  drop with the function object. A host object is a `Builtin` object tagged
+  `InternalTag::HostData` whose `InternalData::HostData` is the embedder's
+  `Rc<dyn Any>`.
 - `Number.prototype.toString(radix)`, `parseInt` and `parseFloat` use exact
   algorithms on the core's own `Big` (`vm::radix`); radix-10 formatting of
   non-integers uses them too, since Rust's shortest formatting differs from
