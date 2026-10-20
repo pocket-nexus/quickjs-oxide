@@ -18,6 +18,7 @@ options and report types.
 | `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, promises (`new_promise`, `promise_then`), buffers, `define_module`, the `qjs` helpers; each method takes `&self` and is one engine entry |
 | `InterruptHandle` | interrupts the runtime's scripts from any thread |
 | `PromiseCapability` | a promise and its resolving functions, settled from Rust |
+| `FromJs`, `IntoJs` | conversions between JavaScript values and Rust types, and the typed host functions over them |
 | `TypedArrayKind`, `TypedArrayView` | a typed array's element type and its window on its buffer |
 | `Js`, `JsResult` | the operations `Context` and `Scope` share, as a sealed trait for code generic over either; both also have each as an inherent method |
 | `Scope`, `FunctionOptions`, `HostFunction`, `Raw` | host functions: the function's view of its call and of the engine, how it is made, what `new_function` takes |
@@ -153,6 +154,34 @@ embedder's state; when the event arrives, the embedder calls `resolve` or
 reactions (an `await` continues there). `is_job_pending` tells it whether
 a drain has work. A capability dropped unsettled leaves its promise
 pending, and both are collected once unreachable.
+
+## Conversions
+
+`FromJs::from_js(js, value)` makes a Rust value as the specification's
+conversions do: `bool` (`ToBoolean`), `i32` (`ToInt32`), `u32`
+(`ToUint32`), `f64` (`ToNumber`), `JsString` and `String` (`ToString`, a
+lone surrogate becoming U+FFFD in a `String`), `Option<T>` (`undefined` and
+`null` are `None`), `Vec<T>` (an array-like read by `length` and index; a
+non-object is a `TypeError`), `ObjectRef` and `CallableRef` (anything else
+is a `TypeError`), `Rc<T>` of a host object's value (another value is a
+`TypeError`), and `Value` itself. `IntoJs::into_js(self, js)` goes the other
+way for the same types, `()` (`undefined`), `&str`, `Vec<T>` (an array)
+and `Result<T, RuntimeError>` (the error is thrown). A conversion that runs
+JavaScript (`valueOf`, a getter) runs it through `js`, and its throw is the
+error.
+
+A host function's closure may take up to eight arguments after the
+`Scope`, each converted by `FromJs`, and return any `IntoJs`:
+
+```rust
+context.define_function(&global, "add", 2, |_: &mut Scope<'_>, a: f64, b: f64| Ok(a + b))?;
+```
+
+A missing argument converts `undefined`, so `Option<T>` is how a function
+takes an optional one; extra arguments are ignored; the receiver and
+`new.target` stay on the `Scope`. Reading a string argument copies its
+units: a 1 KiB string costs about 36,000 instructions to lift and as much
+again to convert to a `String`, against about 560 for the call itself.
 
 ## Buffers
 

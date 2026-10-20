@@ -1564,3 +1564,165 @@ fn a_shared_buffer_round_trips() {
     );
     assert_eq!(context.eval("new Uint8Array(s)[1]").unwrap(), Value::Int(1));
 }
+
+// ---- conversions ----
+
+use quickjs_oxide::engine::api::core::{CallableRef, FromJs, IntoJs, ObjectRef};
+
+#[test]
+fn typed_host_functions_convert_their_arguments_and_result() {
+    let (_, context) = runtime();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "add", 2, |_: &mut Scope<'_>, a: f64, b: f64| {
+            Ok(a + b)
+        })
+        .unwrap();
+    assert_eq!(context.eval("add(2, '3')").unwrap(), Value::Int(5));
+    // A missing argument converts `undefined`.
+    assert_eq!(
+        context.eval("Number.isNaN(add(1))").unwrap(),
+        Value::Bool(true)
+    );
+    context
+        .define_function(
+            &global,
+            "eight",
+            8,
+            |_: &mut Scope<'_>,
+             a: i32,
+             b: u32,
+             c: f64,
+             d: bool,
+             e: String,
+             f: Option<i32>,
+             g: Vec<i32>,
+             h: JsString| {
+                Ok(format!(
+                    "{a}|{b}|{c}|{d}|{e}|{f:?}|{g:?}|{}",
+                    h.to_utf8_lossy()
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        text(
+            &context
+                .eval("eight(-1.9, -1, '2.5', 0, 7, undefined, [1, '2', 3.7], {})")
+                .unwrap()
+        ),
+        "-1|4294967295|2.5|false|7|None|[1, 2, 3]|[object Object]"
+    );
+    // A conversion that throws is the script's error.
+    assert_eq!(
+        text(
+            &context
+                .eval("try { add(Symbol()) } catch (e) { e.message }")
+                .unwrap()
+        ),
+        "cannot convert symbol to number"
+    );
+    assert_eq!(
+        text(
+            &context
+                .eval("try { eight(0, 0, 0, 0, Symbol()) } catch (e) { e.message }")
+                .unwrap()
+        ),
+        "cannot convert symbol to string"
+    );
+    assert_eq!(
+        text(
+            &context
+                .eval("try { eight(0, 0, 0, 0, '', 0, 5) } catch (e) { e.name + ': ' + e.message }")
+                .unwrap()
+        ),
+        "TypeError: not an object"
+    );
+}
+
+#[test]
+fn from_js_follows_the_specification_s_conversions() {
+    let (_, mut context) = runtime();
+    let js = &mut context;
+    assert_eq!(i32::from_js(js, Value::Float(f64::NAN)).unwrap(), 0);
+    assert_eq!(i32::from_js(js, Value::Float(4294967297.5)).unwrap(), 1);
+    assert_eq!(
+        i32::from_js(js, Value::Float(2147483648.0)).unwrap(),
+        i32::MIN
+    );
+    assert_eq!(u32::from_js(js, Value::Int(-2)).unwrap(), u32::MAX - 1);
+    assert_eq!(u32::from_js(js, Value::Float(f64::INFINITY)).unwrap(), 0);
+    assert!(f64::from_js(js, string("x")).unwrap().is_nan());
+    assert!(!bool::from_js(js, string("")).unwrap());
+    assert!(bool::from_js(js, Value::Float(-1.0)).unwrap());
+    // A lone surrogate becomes U+FFFD in a Rust string, and stays in a
+    // JsString.
+    let lone = js.eval("'a\\uD800b'").unwrap();
+    assert_eq!(String::from_js(js, lone.clone()).unwrap(), "a\u{fffd}b");
+    assert_eq!(
+        JsString::from_js(js, lone).unwrap().utf16_units().count(),
+        3
+    );
+    // A sparse array's holes read as undefined.
+    let sparse = js.eval("[1, , 3]").unwrap();
+    assert_eq!(
+        Vec::<Option<i32>>::from_js(js, sparse).unwrap(),
+        [Some(1), None, Some(3)]
+    );
+    let array_like = js.eval("({ length: 2, 0: 'a', 1: 'b' })").unwrap();
+    assert_eq!(Vec::<String>::from_js(js, array_like).unwrap(), ["a", "b"]);
+    assert_eq!(Option::<f64>::from_js(js, Value::Null).unwrap(), None);
+    assert_eq!(
+        Option::<f64>::from_js(js, Value::Int(0)).unwrap(),
+        Some(0.0)
+    );
+    // Objects and callables.
+    let object = js.eval("({})").unwrap();
+    assert!(ObjectRef::from_js(js, object.clone()).is_ok());
+    assert!(matches!(
+        CallableRef::from_js(js, object),
+        Err(RuntimeError::Exception(_))
+    ));
+    let function = js.eval("(function () {})").unwrap();
+    assert!(CallableRef::from_js(js, function).is_ok());
+    assert!(matches!(
+        ObjectRef::from_js(js, Value::Int(1)),
+        Err(RuntimeError::Exception(_))
+    ));
+    // A host datum, and a value of another type.
+    let host = js
+        .new_host_object(Counter(std::cell::Cell::new(3)), None)
+        .unwrap();
+    let counter = Rc::<Counter>::from_js(js, Value::Object(host.clone())).unwrap();
+    assert_eq!(counter.0.get(), 3);
+    let Err(RuntimeError::Exception(error)) = Rc::<String>::from_js(js, Value::Object(host)) else {
+        panic!("a wrong host type converted");
+    };
+    let message = js.runtime().print_value(&error).unwrap();
+    assert!(
+        message.starts_with("TypeError: String object expected"),
+        "{message}"
+    );
+}
+
+#[test]
+fn into_js_makes_javascript_values() {
+    let (_, mut context) = runtime();
+    let js = &mut context;
+    assert_eq!(().into_js(js).unwrap(), Value::Undefined);
+    assert_eq!(true.into_js(js).unwrap(), Value::Bool(true));
+    assert_eq!(7_i32.into_js(js).unwrap(), Value::Int(7));
+    assert_eq!(u32::MAX.into_js(js).unwrap(), Value::Float(4294967295.0));
+    assert_eq!(2.0_f64.into_js(js).unwrap(), Value::Int(2));
+    assert_eq!("s".into_js(js).unwrap(), string("s"));
+    assert_eq!(String::from("t").into_js(js).unwrap(), string("t"));
+    assert_eq!(None::<i32>.into_js(js).unwrap(), Value::Undefined);
+    assert_eq!(Some(1).into_js(js).unwrap(), Value::Int(1));
+    let array = vec![Some(1), None].into_js(js).unwrap();
+    assert_eq!(
+        js.runtime().print_value(&array).unwrap(),
+        "[ 1, undefined ]"
+    );
+    let failed: Result<i32, RuntimeError> = Err(RuntimeError::Invariant("x"));
+    assert_eq!(failed.into_js(js), Err(RuntimeError::Invariant("x")));
+}

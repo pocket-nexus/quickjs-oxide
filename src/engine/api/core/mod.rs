@@ -5,6 +5,7 @@
 mod buffer;
 pub(crate) mod compile;
 mod context;
+mod convert;
 mod error;
 mod function;
 mod module;
@@ -18,6 +19,7 @@ mod value;
 
 pub use buffer::{TypedArrayKind, TypedArrayView};
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
+pub use convert::{FromJs, IntoJs};
 pub use error::RuntimeError;
 pub use function::{FunctionOptions, HostFunction, Raw, Scope};
 pub use module::{CompiledModule, ModuleLoader, ModuleScope, ModuleSource};
