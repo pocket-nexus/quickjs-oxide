@@ -7,6 +7,8 @@
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use oxide_core::Handle;
 use oxide_core::host::Host;
@@ -23,6 +25,30 @@ use super::property::{
 use super::value::{CallableRef, ObjectRef, Slot, SymbolRef, Value};
 use crate::engine::code::debug::DebugInfoMode;
 use crate::engine::value::JsString;
+
+/// Interrupts a runtime's running script from any thread: the script stops
+/// at its next poll (about every thousand loop back-edges and calls)
+/// with [`RuntimeError::Interrupted`], uncatchable by the script. The flag
+/// stays set until [`InterruptHandle::clear`], so every script after it is
+/// interrupted too.
+#[derive(Clone, Debug)]
+pub struct InterruptHandle {
+    flag: Arc<AtomicBool>,
+}
+
+impl InterruptHandle {
+    pub fn interrupt(&self) {
+        self.flag.store(true, Ordering::Relaxed);
+    }
+
+    pub fn clear(&self) {
+        self.flag.store(false, Ordering::Relaxed);
+    }
+
+    pub fn is_set(&self) -> bool {
+        self.flag.load(Ordering::Relaxed)
+    }
+}
 
 /// A runtime: one heap, one realm, one job queue. Cloning shares it.
 #[derive(Clone)]
@@ -45,6 +71,8 @@ pub(crate) struct Shared {
     released: RefCell<Vec<Handle>>,
     /// A host function panicked: every later entry fails.
     pub(crate) poisoned: Cell<bool>,
+    /// The core's interrupt flag, which `InterruptHandle`s share.
+    interrupt: Arc<AtomicBool>,
     pub(crate) loader: RefCell<Option<Box<dyn ModuleLoader>>>,
     pub(crate) modules: RefCell<HashMap<String, Preloaded>>,
     pub(crate) debug_info: Cell<DebugInfoMode>,
@@ -232,8 +260,10 @@ impl Runtime {
             normalize: super::module::normalize_shim,
             load: super::module::load_shim,
         });
+        let interrupt = core.native_cx().interrupt_flag();
         Runtime {
             shared: Rc::new(Shared {
+                interrupt,
                 inner: RefCell::new(Inner { core }),
                 released: RefCell::new(Vec::new()),
                 poisoned: Cell::new(false),
@@ -263,6 +293,7 @@ impl Runtime {
             .map_err(|_| RuntimeError::Reentered)?;
         self.shared.drain_released(&mut inner.core.native_cx());
         if CURRENT.with(|current| current.borrow().is_empty()) {
+            inner.core.native_cx().clear_interrupted();
             // The loop's re-entries may use the thread's stack past what this
             // entry needs to unwind an error: QuickJS's one-MiB budget, which
             // its frames reach at the depths its nesting tests pin, takes
@@ -303,6 +334,13 @@ impl Runtime {
     /// Whether `self` and `other` are the same runtime.
     pub fn is_same_runtime(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.shared, &other.shared)
+    }
+
+    /// The handle another thread interrupts this runtime's scripts with.
+    pub fn interrupt_handle(&self) -> InterruptHandle {
+        InterruptHandle {
+            flag: Arc::clone(&self.shared.interrupt),
+        }
     }
 
     /// Whether `Atomics.wait` may block.

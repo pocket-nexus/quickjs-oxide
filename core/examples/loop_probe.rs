@@ -26,7 +26,7 @@ fn main() {
             b.a_int(Opcode::LoadInt, 2, 0);
             b.ab_jump(Opcode::JNlt, 2, 1, 4);
             b.ab(Opcode::Inc, 2, 2);
-            b.jump(Opcode::Jmp, 1);
+            b.jump(Opcode::JmpBack, 1);
             b.a(Opcode::Return, 1);
         }
         // var sum = 0; while (n > 0) { sum = sum + 1; n = n - 1; } return sum;
@@ -35,7 +35,7 @@ fn main() {
             b.a_short_jump(Opcode::JNgtI, 1, 0, 5);
             b.ab_int(Opcode::AddI, 2, 2, 1);
             b.ab_int(Opcode::SubI, 1, 1, 1);
-            b.jump(Opcode::Jmp, 1);
+            b.jump(Opcode::JmpBack, 1);
             b.a(Opcode::Return, 2);
         }
         other => panic!("unknown probe {other}"),

@@ -556,6 +556,32 @@ pub(crate) fn stack_overflow(cx: &mut Cx<'_>) -> Throw {
     throw(cx, ErrorKind::Internal, "stack overflow")
 }
 
+/// The poll the loop runs when its countdown reaches zero: the embedder's
+/// flag, then its hook. An interrupt sets `vm.interrupted`, which makes the
+/// throw uncatchable, and polls again at every later back-edge and call so
+/// any JavaScript a native runs on the way out stops too.
+#[cold]
+#[inline(never)]
+pub(crate) fn poll_interrupts(cx: &mut Cx<'_>) -> Result<(), Throw> {
+    let interrupt = cx.heap.vm.interrupted
+        || cx.host.interrupt.load(std::sync::atomic::Ordering::Relaxed)
+        || cx.host.hooks.interrupt();
+    if !interrupt {
+        cx.heap.vm.poll = super::INTERRUPT_INTERVAL;
+        return Ok(());
+    }
+    cx.heap.vm.interrupted = true;
+    cx.heap.vm.poll = 1;
+    Err(throw(cx, ErrorKind::Internal, "interrupted"))
+}
+
+/// Whether a throw may be caught or turned into a completion (a rejection,
+/// a reported job result): not while an interrupt unwinds.
+#[inline]
+pub(crate) fn catchable(cx: &Cx<'_>) -> bool {
+    !cx.heap.vm.interrupted
+}
+
 /// QuickJS's `JS_ThrowTypeErrorNotAConstructor`: a callable `value` whose
 /// `name` (an own string data property, else its prototype's) reads without
 /// running code is named, `" is not a constructor"` for an empty name.

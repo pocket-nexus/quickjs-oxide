@@ -3398,6 +3398,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 }
             });
         let positions = self.positions(self.builder.pc() as usize);
+        self.builder.mark_back_edges();
         let mut unit = self.builder.finish(UnitLayout {
             register_count,
             parameter_count: metadata.argument_count,

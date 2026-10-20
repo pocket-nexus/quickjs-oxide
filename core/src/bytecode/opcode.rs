@@ -498,6 +498,9 @@ opcodes! {
     /// whose string concatenations join once; past the first two, the
     /// operands are primitive constants.
     ConcatN: ABRange,
+    /// `Jmp` to a target at or before itself: a loop's back-edge, which
+    /// counts down to the next interrupt poll.
+    JmpBack: Jump,
 }
 
 /// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in
@@ -528,6 +531,7 @@ impl Opcode {
         matches!(
             self,
             Opcode::Jmp
+                | Opcode::JmpBack
                 | Opcode::Ret
                 | Opcode::TailCall
                 | Opcode::TailCallMethod

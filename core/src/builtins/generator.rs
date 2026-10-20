@@ -317,6 +317,9 @@ fn reject_with(
     capability: [Value; 3],
     Throw(reason): Throw,
 ) -> Result<Value, Throw> {
+    if !crate::vm::error::catchable(cx) {
+        return Err(Throw(reason));
+    }
     root(cx, reason);
     crate::vm::call(cx, capability[2], Value::UNDEFINED, &[reason])?;
     Ok(capability[0])

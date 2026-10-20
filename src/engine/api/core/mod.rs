@@ -24,7 +24,8 @@ pub use property::{
     PropertyKey, WellKnownSymbol,
 };
 pub use runtime::{
-    GcPolicy, GcStats, PendingJobOutcome, PromiseSnapshot, PromiseState, Runtime, SystemHost,
+    GcPolicy, GcStats, InterruptHandle, PendingJobOutcome, PromiseSnapshot, PromiseState, Runtime,
+    SystemHost,
 };
 pub use value::{CallableRef, ObjectRef, SymbolRef, Value};
 

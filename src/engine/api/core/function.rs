@@ -214,6 +214,12 @@ pub(crate) fn host_body<Args>(
 fn error_throw(view: &mut View<'_>, error: RuntimeError) -> oxide_core::Throw {
     let thrown = match error {
         RuntimeError::Exception(value) => view.lower(&value),
+        // A nested call was interrupted: the interrupt keeps unwinding, the
+        // flag still set.
+        RuntimeError::Interrupted => view
+            .core
+            .new_error(oxide_core::ErrorKind::Internal, "interrupted")
+            .map_err(RuntimeError::from),
         other => Err(other),
     };
     match thrown {

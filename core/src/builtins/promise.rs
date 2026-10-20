@@ -86,6 +86,9 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
         Value::UNDEFINED,
         &[Value::object(resolve), Value::object(reject)],
     ) {
+        if !error::catchable(cx) {
+            return Err(Throw(thrown));
+        }
         root(cx, thrown);
         crate::vm::call(cx, Value::object(reject), Value::UNDEFINED, &[thrown])?;
     }
@@ -249,10 +252,11 @@ pub(super) fn try_(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             root(cx, value);
             crate::vm::call(cx, resolve, Value::UNDEFINED, &[value])?;
         }
-        Err(Throw(reason)) => {
+        Err(Throw(reason)) if error::catchable(cx) => {
             root(cx, reason);
             crate::vm::call(cx, reject, Value::UNDEFINED, &[reason])?;
         }
+        Err(throw) => return Err(throw),
     }
     Ok(promise)
 }
@@ -289,11 +293,12 @@ fn combinator(cx: &mut Cx<'_>, site: CallSite, kind: Combinator) -> Result<Value
     })();
     match outcome {
         Ok(value) => Ok(value),
-        Err(Throw(reason)) => {
+        Err(Throw(reason)) if error::catchable(cx) => {
             root(cx, reason);
             crate::vm::call(cx, capability[2], Value::UNDEFINED, &[reason])?;
             Ok(capability[0])
         }
+        Err(throw) => Err(throw),
     }
 }
 

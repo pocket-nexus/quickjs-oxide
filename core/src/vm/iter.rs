@@ -167,6 +167,10 @@ pub(crate) fn close(
     let Iter::Protocol { iterator, .. } = *iter else {
         return completion;
     };
+    // An interrupt runs no `return`.
+    if completion.is_err() && !super::error::catchable(cx) {
+        return completion;
+    }
     let mark = cx.heap.roots().mark();
     if let Err(Throw(thrown)) = completion {
         cx.heap.roots().push(thrown);

@@ -194,8 +194,15 @@ impl View<'_> {
         })
     }
 
-    /// The error a throw returns: the thrown value, lifted.
+    /// The error a throw returns: the thrown value, lifted. An interrupt is
+    /// `Interrupted`, and the outermost entry ends its unwinding.
     pub(crate) fn thrown(&mut self, thrown: oxide_core::Throw) -> RuntimeError {
+        if self.core.is_interrupted() {
+            if self.core.owns_code() {
+                self.core.clear_interrupted();
+            }
+            return RuntimeError::Interrupted;
+        }
         let out_of_memory = self.core.intrinsic(Intrinsic::OutOfMemoryError);
         if thrown.0.as_object() == Some(out_of_memory) {
             return RuntimeError::OutOfMemory;

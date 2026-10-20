@@ -82,10 +82,11 @@ fn complete_step(
             root(cx, result);
             super::call(cx, request[3], Value::UNDEFINED, &[result])?;
         }
-        Err(Throw(reason)) => {
+        Err(Throw(reason)) if super::error::catchable(cx) => {
             root(cx, reason);
             super::call(cx, request[4], Value::UNDEFINED, &[reason])?;
         }
+        Err(throw) => return Err(throw),
     }
     Ok(())
 }
@@ -169,10 +170,11 @@ fn await_return(cx: &mut Cx<'_>, generator: ObjectId, value: Value) -> Result<()
                 Value::object(generator),
             )
         }
-        Err(throw) => {
+        Err(throw) if super::error::catchable(cx) => {
             complete_step(cx, generator, Err(throw), true)?;
             drain(cx, generator)
         }
+        Err(throw) => Err(throw),
     }
 }
 

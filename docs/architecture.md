@@ -56,6 +56,7 @@ The core asks its embedder for one trait, `oxide_core::host::Host`, which the AP
 | `random_seed()` | the initial `Math.random` state | derived from the clock |
 | `promise_rejection(event, promise)` | `HostPromiseRejectionTracker` (`Rejected`, `Handled`) | ignored |
 | `read_file(path)` | `load` and `read` under `qjs --std` | the process's file system |
+| `interrupt()` | the loop's interrupt poll, about every thousand back-edges and calls | never interrupts |
 
 The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output, which the playground captures itself.
 

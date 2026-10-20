@@ -248,6 +248,23 @@ impl<'a> NativeCx<'a> {
         self.realm
     }
 
+    /// The flag another thread sets to interrupt the running script.
+    pub fn interrupt_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+        std::sync::Arc::clone(&self.host.interrupt)
+    }
+
+    /// Whether an interrupt is unwinding (the last throw was one).
+    pub fn is_interrupted(&self) -> bool {
+        self.heap.vm.interrupted
+    }
+
+    /// Ends an interrupt's unwinding, at the outermost entry: the runtime
+    /// runs scripts again.
+    pub fn clear_interrupted(&mut self) {
+        self.heap.vm.interrupted = false;
+        self.heap.vm.poll = crate::vm::INTERRUPT_INTERVAL;
+    }
+
     /// Runs `install` with the atoms it interns pinned, as the builtins'
     /// are.
     pub(crate) fn installing<T>(&mut self, install: impl FnOnce(&mut Cx<'_>) -> T) -> T {

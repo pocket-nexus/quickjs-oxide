@@ -203,6 +203,17 @@ check nothing.
   `js_check_stack_overflow` does.
 - `TailCall` reuses no frame: the callee's frame is marked so its result is
   also its caller's.
+- The lowering emits `JmpBack` for a `Jmp` whose target is at or before it
+  (a loop's back-edge). `JmpBack` and every frame entry count down
+  `VmStack::poll`; at zero the cold `error::poll_interrupts` reads the
+  embedder's flag (`Services::interrupt`, an `AtomicBool` another thread
+  sets) and `Host::interrupt`, every `INTERRUPT_INTERVAL` (1,000) steps.
+  An interrupt sets `vm.interrupted` and throws `InternalError:
+  interrupted`; while the flag is set the unwinder pops every frame of the
+  run without a handler search (`unwind_uncatchable`), the natives that turn
+  a throw into a completion (a promise executor's, a thenable's or an async
+  body's rejection, iterator close, a module's evaluation) pass it on
+  (`error::catchable`), and every later back-edge and call throws again.
 - A thrown value travels as an unrooted `Throw`; the unwinder stores it in
   the handler's register (or returns it to the embedder) before anything
   allocates.
@@ -316,8 +327,8 @@ check nothing.
 ## The host boundary
 
 - `Host` holds the hooks a port supplies: `write`, `now_ms`,
-  `local_tz_offset_minutes`, `random_seed`, `promise_rejection` and
-  `read_file`. Compilation, module loading and the agents' script runner are
+  `local_tz_offset_minutes`, `random_seed`, `promise_rejection`,
+  `read_file` and `interrupt`. Compilation, module loading and the agents' script runner are
   function pointers on `Services` (`set_compiler`, `set_module_host`,
   `set_script_runner`) that receive the runtime's `Compiler`: the host
   object lives inside the runtime it would have to borrow. The front end is

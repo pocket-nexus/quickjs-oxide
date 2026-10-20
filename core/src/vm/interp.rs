@@ -76,7 +76,7 @@ fn entry_failed(
     throw: Throw,
     tail: bool,
 ) -> Result<Value, Throw> {
-    if tail || !unit.has(flags::ASYNC) || unit.has(flags::GENERATOR) {
+    if tail || !unit.has(flags::ASYNC) || unit.has(flags::GENERATOR) || !error::catchable(cx) {
         return Err(throw);
     }
     let mark = cx.heap.roots().mark();
@@ -92,6 +92,11 @@ fn entry_failed(
 /// [`enter`], inlined into the loop's call.
 #[inline(always)]
 fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
+    let poll = &mut cx.heap.vm.poll;
+    *poll -= 1;
+    if *poll == 0 {
+        error::poll_interrupts(cx)?;
+    }
     let base = frame.base as usize;
     let argc = frame.argc as usize;
     let parameters = unit.parameter_count as usize;
@@ -1660,6 +1665,7 @@ pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<
         .handlers
         .iter()
         .find(|handler| handler.start as usize <= at && at < handler.end as usize)
+        .filter(|_| error::catchable(cx))
     {
         cx.heap.vm.registers[frame.base as usize + handler.register as usize] = thrown;
         return run_at(cx, handler.target as usize);
@@ -1990,6 +1996,18 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
 
                 // ---- control ----
                 Opcode::Jmp => {
+                    pc = insn.imm as usize;
+                    continue 'dispatch;
+                }
+                Opcode::JmpBack => {
+                    let poll = &mut cx.heap.vm.poll;
+                    *poll -= 1;
+                    if *poll == 0 {
+                        if let Err(throw) = error::poll_interrupts(cx) {
+                            break 'op Err(throw);
+                        }
+                        regs = window!();
+                    }
                     pc = insn.imm as usize;
                     continue 'dispatch;
                 }
@@ -2564,6 +2582,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
         // Unconditional: a test of `unpositioned` here costs the loop's code
         // about 4%.
         error::place_frame(cx, thrown, unit, at as u32);
+        // An interrupt is caught by no handler (QuickJS's uncatchable error).
+        if cx.heap.vm.interrupted {
+            return Err(unwind_uncatchable(cx, thrown));
+        }
         loop {
             if let Some(handler) = unit
                 .handlers
@@ -2584,6 +2606,20 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
         }
         regs = window!();
     }
+}
+
+/// The unwinding of an uncatchable throw (an interrupt): every frame of
+/// this run, up to and including its entry frame, is popped without a
+/// handler search.
+#[cold]
+#[inline(never)]
+fn unwind_uncatchable(cx: &mut Cx<'_>, thrown: Value) -> Throw {
+    while let Some(done) = cx.heap.vm.frames.pop() {
+        if done.flags & frame_flags::ENTRY != 0 {
+            break;
+        }
+    }
+    Throw(thrown)
 }
 
 /// `NewArray a, b, imm`: an array of the `imm` registers from `b`.

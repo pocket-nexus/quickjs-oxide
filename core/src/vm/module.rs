@@ -832,6 +832,7 @@ fn evaluate(cx: &mut Cx<'_>, module: ObjectId) -> Result<ObjectId, Throw> {
     set_slot(cx, module, CAPABILITY, Value::object(promise));
     let mut stack = Vec::new();
     match inner_evaluate(cx, module, &mut stack, 0) {
+        Err(throw) if !super::error::catchable(cx) => return Err(throw),
         Err(Throw(thrown)) => {
             for member in stack {
                 data_mut(cx, member).status = Status::Evaluated;
@@ -1007,6 +1008,7 @@ fn async_fulfilled(cx: &mut Cx<'_>, module: ObjectId) -> Result<(), Throw> {
             execute_async(cx, member)?;
         } else {
             match execute(cx, member) {
+                Err(throw) if !super::error::catchable(cx) => return Err(throw),
                 Err(Throw(thrown)) => async_rejected(cx, member, thrown),
                 Ok(_) => {
                     let record = data_mut(cx, member);
@@ -1158,6 +1160,10 @@ pub(crate) fn import(
         Ok(())
     })();
     if let Err(Throw(thrown)) = outcome {
+        if !super::error::catchable(cx) {
+            cx.heap.roots().truncate(mark);
+            return Err(Throw(thrown));
+        }
         super::jobs::reject_promise(cx, promise, thrown);
     }
     cx.heap.roots().truncate(mark);
@@ -1212,6 +1218,9 @@ pub(crate) fn module_import_job(cx: &mut Cx<'_>, site: CallSite) -> Result<Value
         )
     })();
     if let Err(Throw(thrown)) = outcome {
+        if !super::error::catchable(cx) {
+            return Err(Throw(thrown));
+        }
         super::jobs::reject_promise(cx, promise, thrown);
     }
     Ok(Value::UNDEFINED)

@@ -192,10 +192,11 @@ pub(crate) fn resolve_promise(
     root(cx, resolution);
     let then = object::get_property(cx, object, Names::key(cx.realm.names.then));
     let result = match then {
-        Err(Throw(thrown)) => {
+        Err(Throw(thrown)) if error::catchable(cx) => {
             reject_promise(cx, promise, thrown);
             Ok(())
         }
+        Err(throw) => Err(throw),
         Ok(then) if ops::is_callable(cx.heap, then) => {
             cx.heap.jobs.push_back(Job::Thenable {
                 promise,
@@ -416,6 +417,9 @@ fn run_job(cx: &mut Cx<'_>, job: Job) -> Result<(), Throw> {
                 thenable,
                 &[Value::object(resolve), Value::object(reject)],
             ) {
+                if !error::catchable(cx) {
+                    return Err(Throw(thrown));
+                }
                 super::call(cx, Value::object(reject), Value::UNDEFINED, &[thrown])?;
             }
             Ok(())
@@ -463,10 +467,11 @@ fn reaction_job(
             root(cx, value);
             super::call(cx, slots[CAPABILITY_RESOLVE], Value::UNDEFINED, &[value])?;
         }
-        Err(Throw(reason)) => {
+        Err(Throw(reason)) if error::catchable(cx) => {
             root(cx, reason);
             super::call(cx, slots[CAPABILITY_REJECT], Value::UNDEFINED, &[reason])?;
         }
+        Err(throw) => return Err(throw),
     }
     Ok(())
 }

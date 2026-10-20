@@ -14,6 +14,10 @@ pub enum RuntimeError {
     /// An API call was made through a `Context` or `Runtime` from inside a
     /// host function or callback, which has its own scope.
     Reentered,
+    /// The script was interrupted ([`InterruptHandle`](super::InterruptHandle)
+    /// or [`Host::interrupt`](super::Host::interrupt)); no `catch` or
+    /// `finally` of it ran.
+    Interrupted,
     /// A host function panicked while the runtime ran it; the runtime's
     /// state is unknown and every later call fails.
     Poisoned,
@@ -36,6 +40,7 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Reentered => {
                 f.write_str("the runtime was re-entered from a host callback")
             }
+            RuntimeError::Interrupted => f.write_str("interrupted"),
             RuntimeError::Poisoned => {
                 f.write_str("the runtime is poisoned: a host function panicked")
             }

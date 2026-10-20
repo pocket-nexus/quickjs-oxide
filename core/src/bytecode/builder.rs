@@ -170,6 +170,17 @@ impl CodeBuilder {
         &self.code
     }
 
+    /// Turns every `Jmp` whose target is at or before it into `JmpBack`,
+    /// once the targets are final: the loop polls for interrupts on
+    /// back-edges only.
+    pub fn mark_back_edges(&mut self) {
+        for (pc, insn) in self.code.iter_mut().enumerate() {
+            if insn.op == Opcode::Jmp && insn.imm as usize <= pc {
+                insn.op = Opcode::JmpBack;
+            }
+        }
+    }
+
     /// The unit, with the layout and counts the lowering decided, and its cache
     /// sites numbered: the named-property sites first, in instruction order,
     /// then the global and `new` sites.

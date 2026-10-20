@@ -77,6 +77,13 @@ pub trait Host {
     fn read_file(&mut self, path: &str) -> Option<String> {
         std::fs::read_to_string(path).ok()
     }
+
+    /// Polled about every thousand loop back-edges and calls while a
+    /// script runs: `true` stops the script with an uncatchable
+    /// `InternalError: interrupted`. The default never interrupts.
+    fn interrupt(&mut self) -> bool {
+        false
+    }
 }
 
 /// The default host: the process's streams, the system clock, UTC.

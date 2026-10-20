@@ -1034,3 +1034,158 @@ fn a_module_loader_makes_host_functions() {
     runtime.run_jobs().unwrap();
     assert_eq!(context.eval("one").unwrap(), Value::Int(1));
 }
+
+// ---- interrupts ----
+
+/// Interrupts `runtime` from another thread after `after`.
+fn interrupt_later(runtime: &Runtime, after: std::time::Duration) -> std::thread::JoinHandle<()> {
+    let handle = runtime.interrupt_handle();
+    std::thread::spawn(move || {
+        std::thread::sleep(after);
+        handle.interrupt();
+    })
+}
+
+#[test]
+fn a_thread_interrupts_an_endless_loop() {
+    let (runtime, context) = runtime();
+    let started = std::time::Instant::now();
+    let thread = interrupt_later(&runtime, std::time::Duration::from_millis(50));
+    assert_eq!(
+        context.eval("while (true) {}"),
+        Err(RuntimeError::Interrupted)
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(1));
+    thread.join().unwrap();
+    // The flag stays set until cleared.
+    assert_eq!(context.eval("for (;;) {}"), Err(RuntimeError::Interrupted));
+    runtime.interrupt_handle().clear();
+    assert_eq!(context.eval("1 + 1").unwrap(), Value::Int(2));
+}
+
+#[test]
+fn neither_catch_nor_finally_runs_for_an_interrupt() {
+    let (runtime, context) = runtime();
+    runtime.interrupt_handle().interrupt();
+    assert_eq!(
+        context.eval("try { while (true) {} } catch (e) { globalThis.caught = true }"),
+        Err(RuntimeError::Interrupted)
+    );
+    assert_eq!(
+        context.eval("try { do {} while (true) } finally { globalThis.ran = true }"),
+        Err(RuntimeError::Interrupted)
+    );
+    // An async function's body is not turned into a rejection.
+    assert_eq!(
+        context.eval("var q = (async () => { while (true) {} })()"),
+        Err(RuntimeError::Interrupted)
+    );
+    // A recursion without loops is interrupted at its calls.
+    assert_eq!(
+        context.eval("function f() { f(); } try { f() } catch (e) { globalThis.caught = true }"),
+        Err(RuntimeError::Interrupted)
+    );
+    runtime.interrupt_handle().clear();
+    assert_eq!(
+        context
+            .eval("[typeof caught, typeof ran, typeof q].join()")
+            .unwrap(),
+        string("undefined,undefined,undefined")
+    );
+    assert!(!runtime.is_job_pending().unwrap());
+}
+
+#[test]
+fn an_interrupted_executor_leaves_no_rejected_promise() {
+    let (runtime, context) = runtime();
+    runtime.set_track_rejections(true).unwrap();
+    runtime.interrupt_handle().interrupt();
+    assert_eq!(
+        context.eval("var p = new Promise(() => { while (true) {} })"),
+        Err(RuntimeError::Interrupted)
+    );
+    runtime.interrupt_handle().clear();
+    assert!(!runtime.is_job_pending().unwrap());
+    assert!(runtime.take_unhandled_rejections().unwrap().is_empty());
+    assert_eq!(context.eval("typeof p").unwrap(), string("undefined"));
+}
+
+#[test]
+fn an_interrupted_job_leaves_the_next_runnable() {
+    let (runtime, context) = runtime();
+    context
+        .eval(
+            "Promise.resolve().then(() => { while (true) {} }); \
+             Promise.resolve().then(() => { globalThis.second = 2 });",
+        )
+        .unwrap();
+    runtime.interrupt_handle().interrupt();
+    assert_eq!(runtime.run_jobs(), Err(RuntimeError::Interrupted));
+    runtime.interrupt_handle().clear();
+    assert!(runtime.is_job_pending().unwrap());
+    runtime.run_jobs().unwrap();
+    assert_eq!(context.eval("second").unwrap(), Value::Int(2));
+}
+
+#[test]
+fn a_host_hook_sets_a_deadline() {
+    struct Deadline(std::time::Instant);
+    impl Host for Deadline {
+        fn interrupt(&mut self) -> bool {
+            std::time::Instant::now() >= self.0
+        }
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(30);
+    let runtime = Runtime::with_host(Deadline(deadline), RuntimeOptions::default());
+    let context = runtime.context();
+    assert_eq!(
+        context.eval("var n = 0; while (true) { n++; }"),
+        Err(RuntimeError::Interrupted)
+    );
+    assert!(std::time::Instant::now() >= deadline);
+}
+
+#[test]
+fn an_interrupt_unwinds_through_a_host_function() {
+    let (runtime, context) = runtime();
+    let global = context.global_object().unwrap();
+    let seen = Rc::new(RefCell::new(None));
+    let record = Rc::clone(&seen);
+    context
+        .define_function(&global, "spin", 1, move |scope: &mut Scope<'_>| {
+            let Value::Object(function) = scope.arg(0) else {
+                panic!("a function");
+            };
+            let function = scope.as_callable(&function)?.expect("callable");
+            let result = scope.call(&function, Value::Undefined, &[]);
+            *record.borrow_mut() = Some(result.clone());
+            result
+        })
+        .unwrap();
+    runtime.interrupt_handle().interrupt();
+    assert_eq!(
+        context.eval("try { spin(() => { while (true) {} }) } catch (e) { globalThis.caught = 1 }"),
+        Err(RuntimeError::Interrupted)
+    );
+    assert_eq!(*seen.borrow(), Some(Err(RuntimeError::Interrupted)));
+    runtime.interrupt_handle().clear();
+    assert_eq!(context.eval("typeof caught").unwrap(), string("undefined"));
+}
+
+#[test]
+fn only_back_edges_poll() {
+    let (runtime, _) = runtime();
+    let text = runtime
+        .disassemble(
+            b"var i = 0; while (i < 3) { if (i) break; i++; }",
+            "loop.js",
+        )
+        .unwrap();
+    let jumps: Vec<&str> = text
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(1))
+        .filter(|op| op.starts_with("Jmp"))
+        .collect();
+    // The `break` jumps forward; the loop's end jumps back.
+    assert_eq!(jumps, ["Jmp", "JmpBack"], "{text}");
+}

@@ -254,10 +254,11 @@ fn finish_async(
             cx.heap.roots().push(value);
             jobs::resolve_promise(cx, promise, value)
         }
-        Err(Throw(reason)) => {
+        Err(Throw(reason)) if error::catchable(cx) => {
             jobs::reject_promise(cx, promise, reason);
             Ok(())
         }
+        Err(throw) => Err(throw),
     }
 }
 

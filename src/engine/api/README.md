@@ -16,12 +16,13 @@ options and report types.
 | --- | --- |
 | `Runtime` | an `Rc` of the shared state (`oxide_core::Runtime` in a `RefCell`, the module loader, the preloaded modules); cloning shares it. `new()`, `with_options(RuntimeOptions)`, `with_host(impl Host, RuntimeOptions)`; jobs (`run_pending_job`, `run_jobs`, `with_execution_turn`), rejection tracking, collection (`run_gc`, `gc_stats`, `GcPolicy`, `set_gc_stress`), the reports (`memory_report`, `gc_report`, `ic_report`, `disassemble`), property keys, symbols, prototypes and own-property operations, `type_of` and the printer |
 | `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, the `qjs` helpers; each method takes `&self` and is one engine entry |
+| `InterruptHandle` | interrupts the runtime's scripts from any thread |
 | `Js`, `JsResult` | the operations `Context` and `Scope` share, as a sealed trait for code generic over either; both also have each as an inherent method |
 | `Scope`, `FunctionOptions`, `HostFunction`, `Raw` | host functions: the function's view of its call and of the engine, how it is made, what `new_function` takes |
 | `Value` | `Undefined`, `Null`, `Bool`, `Int`, `Float`, `BigInt(JsBigInt)` and `String(JsString)` as Rust data copied out of the core; `Symbol(SymbolRef)` and `Object(ObjectRef)` as handles |
 | `ObjectRef`, `SymbolRef`, `CallableRef` | a handle in the core's handle table, released on the last drop |
 | `PropertyKey`, `OrdinaryPropertyDescriptor`, `CompleteOrdinaryPropertyDescriptor`, `DescriptorField`, `AccessorValue`, `WellKnownSymbol` | keys and descriptors |
-| `RuntimeError` | `Exception(Value)` (the thrown value), `Reentered`, `Poisoned`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
+| `RuntimeError` | `Exception(Value)` (the thrown value), `Interrupted`, `Reentered`, `Poisoned`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
 | `Host`, `Stream`, `RejectionEvent`, `SystemHost` | the core's host trait and its default, re-exported |
 | `ModuleLoader`, `ModuleSource`, `CompiledModule`, `ModuleScope` | module loading |
 | `RuntimeOptions`, `HeapLimits`, `MemoryReport`, `GcStats` | the core's configuration and reports, re-exported |
@@ -72,8 +73,8 @@ describes how dynamic units are reached and freed.
 ## Host
 
 `Host` is `oxide_core::host::Host`: `write`, `now_ms`,
-`local_tz_offset_minutes`, `random_seed`, `promise_rejection` and
-`read_file`, each with a default over the process. `Runtime::new` uses the
+`local_tz_offset_minutes`, `random_seed`, `promise_rejection`, `read_file`
+and `interrupt`, each with a default over the process. `Runtime::new` uses the
 core's `SystemHost`; the adapters supply `quickjs-oxide-host`'s `SystemHost`
 (the host's time-zone rules) and `quickjs-oxide-web-host`'s `WebHost`. The
 application owns input, module-loading policy, output and when the job
@@ -132,6 +133,22 @@ goes through a `Cell` or `RefCell` inside it. It drops when the object is
 collected. A host object prints as `Object` and is `[object Object]` to
 `Object.prototype.toString` unless its prototype defines
 `Symbol.toStringTag`.
+
+## Interrupts
+
+A running script stops with `RuntimeError::Interrupted` when the embedder
+asks: from another thread through `Runtime::interrupt_handle()` (an
+`InterruptHandle`, `Send + Sync` and `Clone`, with `interrupt` and
+`clear`), or from the host through `Host::interrupt`, which returns `true`
+to stop (a deadline is `Instant::now() >= deadline` there). The loop polls
+both about every thousand loop back-edges and calls, so a loop or a
+recursion stops within that many steps. The interrupt is uncatchable: no
+`catch` and no `finally` runs, no promise is rejected with it and no
+iterator is closed. A job interrupted in `run_jobs` leaves the queue, and
+the jobs after it stay queued. A host function whose nested call is
+interrupted gets `Interrupted` from it and returns it, which keeps the
+interrupt unwinding. The handle's flag stays set until `clear`, so a script
+started while it is set is interrupted at its first poll.
 
 ## Modules and `ModuleScope`
 

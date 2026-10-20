@@ -164,7 +164,18 @@ pub struct VmStack {
     /// The bookkeeping of rewritten `call`s and `apply`s, boxed to keep the
     /// loop's hot fields where they were.
     pub(crate) via: Box<via::ViaCalls>,
+    /// Back-edges and calls left before the next interrupt poll.
+    pub(crate) poll: u32,
+    /// An interrupt is unwinding: no handler catches it, and no native turns
+    /// it into a completion.
+    pub(crate) interrupted: bool,
 }
+
+/// Back-edges and calls between two interrupt polls. QuickJS's
+/// `JS_INTERRUPT_COUNTER_INIT` is 10,000; a tenth of it costs the loop
+/// nothing measurable (the poll is cold), and stops a script ten times
+/// sooner.
+pub const INTERRUPT_INTERVAL: u32 = 1_000;
 
 impl Default for VmStack {
     fn default() -> Self {
@@ -184,6 +195,8 @@ impl Default for VmStack {
             unpositioned: None,
             active: Vec::new(),
             proxy_refused: false,
+            poll: INTERRUPT_INTERVAL,
+            interrupted: false,
         }
     }
 }
@@ -292,6 +305,9 @@ pub struct Services {
     /// Whether unhandled rejected promises are kept in
     /// `Heap::rejections` for the embedder.
     pub(crate) track_rejections: bool,
+    /// Set from any thread to interrupt the running script at the next
+    /// poll; it stays set until cleared.
+    pub(crate) interrupt: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl std::fmt::Debug for Services {
@@ -320,6 +336,7 @@ impl Default for Services {
             agent_hub: None,
             agent: None,
             track_rejections: false,
+            interrupt: Default::default(),
         }
     }
 }
