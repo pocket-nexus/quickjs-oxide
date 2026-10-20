@@ -293,6 +293,7 @@ function replaceIn(file, pairs) {
 
 writeFileSync(path.join(OUT, "docs", "index.html"), `<!doctype html>
 <meta charset="utf-8"><title>quickjs-oxide docs</title>
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
 <meta http-equiv="refresh" content="0; url=${pages[0].slug}/">
 <link rel="canonical" href="${pages[0].slug}/">
 <a href="${pages[0].slug}/">Docs</a>
