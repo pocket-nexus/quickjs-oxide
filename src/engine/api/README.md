@@ -15,8 +15,9 @@ options and report types.
 | Item | Content |
 | --- | --- |
 | `Runtime` | an `Rc` of the shared state (`oxide_core::Runtime` in a `RefCell`, the module loader, the preloaded modules); cloning shares it. `new()`, `with_options(RuntimeOptions)`, `with_host(impl Host, RuntimeOptions)`; jobs (`run_pending_job`, `run_jobs`, `with_execution_turn`), rejection tracking, collection (`run_gc`, `gc_stats`, `GcPolicy`, `set_gc_stress`), the reports (`memory_report`, `gc_report`, `ic_report`, `disassemble`), property keys, symbols, prototypes and own-property operations, `type_of` and the printer |
-| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, the `qjs` helpers; each method takes `&self` and is one engine entry |
+| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, promises (`new_promise`, `promise_then`), `define_module`, the `qjs` helpers; each method takes `&self` and is one engine entry |
 | `InterruptHandle` | interrupts the runtime's scripts from any thread |
+| `PromiseCapability` | a promise and its resolving functions, settled from Rust |
 | `Js`, `JsResult` | the operations `Context` and `Scope` share, as a sealed trait for code generic over either; both also have each as an inherent method |
 | `Scope`, `FunctionOptions`, `HostFunction`, `Raw` | host functions: the function's view of its call and of the engine, how it is made, what `new_function` takes |
 | `Value` | `Undefined`, `Null`, `Bool`, `Int`, `Float`, `BigInt(JsBigInt)` and `String(JsString)` as Rust data copied out of the core; `Symbol(SymbolRef)` and `Object(ObjectRef)` as handles |
@@ -134,6 +135,24 @@ collected. A host object prints as `Object` and is `[object Object]` to
 `Object.prototype.toString` unless its prototype defines
 `Symbol.toStringTag`.
 
+## Promises and the event loop
+
+`new_promise()` returns a `PromiseCapability`: a pending promise and its
+`resolve` and `reject` functions, called through
+`capability.resolve(&mut js, value)` and `capability.reject(&mut js,
+reason)`. Resolving with a thenable follows it, and settling twice does
+nothing. `promise_then(promise, on_fulfilled, on_rejected)` attaches host
+functions as `promise.then` does and returns its promise.
+
+The job queue is drained only by the embedder, at the top level. The
+pattern for a host operation that completes later: the host function
+returns `capability.promise` at once and keeps the capability in the
+embedder's state; when the event arrives, the embedder calls `resolve` or
+`reject` through its `Context` and then `run_jobs()`, which runs the
+reactions (an `await` continues there). `is_job_pending` tells it whether
+a drain has work. A capability dropped unsettled leaves its promise
+pending, and both are collected once unreachable.
+
 ## Interrupts
 
 A running script stops with `RuntimeError::Interrupted` when the embedder
@@ -162,6 +181,16 @@ loader returns a `ModuleSource`: source text with the properties its
 scope. Both callbacks receive the import attributes; checking them is the
 loader's (`load` rejects what it does not accept). Values made through a
 `ModuleScope` are handles like any other and outlive the callback.
+
+A native module is a module whose exports the embedder supplies as values:
+the loader returns `ModuleSource::Synthetic { exports }`, a list of names
+and values (`default` is the default export, the names distinct), or,
+without a loader, `Context::define_module(name, exports)` makes the module
+an `import` of `name` finds, as `compile_module` makes a compiled one. A
+second definition of the name replaces the first for later imports. Each
+export is a binding of its own, so `import { add } from "host:math"`,
+`import m from` and `import * as m from` read it as they read a compiled
+module's, and a missing name is the usual `SyntaxError` at link.
 
 ## Configuration and reports
 

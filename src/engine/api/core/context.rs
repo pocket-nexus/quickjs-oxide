@@ -6,7 +6,6 @@ use super::RuntimeError;
 use super::property::PropertyKey;
 use super::runtime::Runtime;
 use super::value::ObjectRef;
-#[cfg(feature = "test262-host")]
 use super::value::Value;
 
 /// Options of `Context::eval_with_options`.
@@ -164,6 +163,35 @@ impl Context {
 
     pub fn runtime(&self) -> &Runtime {
         &self.runtime
+    }
+
+    /// Makes `exports` the module `name`: an `import` of the name sees each
+    /// value under its name (`default` is the default export), as the
+    /// module a [`ModuleLoader`](super::ModuleLoader) returns as
+    /// `ModuleSource::Synthetic`. A second definition of the name replaces
+    /// the first for later imports.
+    pub fn define_module(
+        &self,
+        name: &str,
+        exports: Vec<(String, Value)>,
+    ) -> Result<(), RuntimeError> {
+        let mut entry = self.runtime.enter()?;
+        {
+            let view = entry.view();
+            for (_, value) in &exports {
+                if let Value::Object(ObjectRef { slot })
+                | Value::Symbol(super::value::SymbolRef { slot }) = value
+                {
+                    view.own(slot)?;
+                }
+            }
+        }
+        entry.inner.core.forget_module(name);
+        self.runtime.shared.modules.borrow_mut().insert(
+            name.to_owned(),
+            super::runtime::Preloaded::Synthetic(exports),
+        );
+        Ok(())
     }
 
     /// Defines the Test262 host object `$262`; returns it.

@@ -10,7 +10,8 @@ use oxide_core::{Intrinsic, NativeCx, RootMark};
 use super::RuntimeError;
 use super::compile::{ScriptCompileError, compile_script, syntax_location};
 use super::context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
-use super::function::{FunctionOptions, HostFunction, Scope, host_body};
+use super::function::{FunctionOptions, HostFunction, Raw, Scope, host_body};
+use super::promise::PromiseCapability;
 use super::property::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, Key,
     OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
@@ -516,7 +517,7 @@ impl View<'_> {
                 self.core.forget_module(filename);
                 self.shared.modules.borrow_mut().insert(
                     filename.to_owned(),
-                    Preloaded {
+                    Preloaded::Compiled {
                         function,
                         tables,
                         import_meta,
@@ -852,6 +853,43 @@ impl View<'_> {
             self.lift(result)?
         };
         Ok(Some(PromiseSnapshot::new(state, result)))
+    }
+
+    pub(crate) fn new_promise(&mut self) -> JsResult<PromiseCapability> {
+        let result = self.core.new_promise_capability();
+        let (promise, resolve, reject) = self.complete_with(result)?;
+        Ok(PromiseCapability {
+            promise: self.lift_object(promise),
+            resolve: CallableRef(self.lift_object(resolve)),
+            reject: CallableRef(self.lift_object(reject)),
+        })
+    }
+
+    pub(crate) fn promise_then(
+        &mut self,
+        promise: &ObjectRef,
+        on_fulfilled: impl HostFunction<Raw>,
+        on_rejected: impl HostFunction<Raw>,
+    ) -> JsResult<ObjectRef> {
+        let fulfilled = self.new_function(FunctionOptions::new("").length(1), on_fulfilled)?;
+        let rejected = self.new_function(FunctionOptions::new("").length(1), on_rejected)?;
+        let key = PropertyKey::from_js_string(JsString::from_static("then"));
+        let then = match self.get_property(promise, &key)? {
+            Value::Object(then) => self.as_callable(&then)?,
+            _ => None,
+        };
+        let Some(then) = then else {
+            return Err(self.throw_error(NativeErrorKind::Type, "not a function"));
+        };
+        let result = self.call(
+            &then,
+            Value::Object(promise.clone()),
+            &[Value::from(fulfilled), Value::from(rejected)],
+        )?;
+        match result {
+            Value::Object(promise) => Ok(promise),
+            _ => Err(RuntimeError::Invariant("then returned a promise")),
+        }
     }
 
     // ---- intrinsics ----
@@ -1206,6 +1244,12 @@ js_ops! {
 
     /// A promise's state and result; `None` when `promise` is not one.
     fn promise_snapshot(&mut self, promise: &ObjectRef) -> JsResult<Option<PromiseSnapshot>>;
+    /// `NewPromiseCapability(%Promise%)`: a pending promise and its
+    /// resolving functions.
+    fn new_promise(&mut self) -> JsResult<PromiseCapability>;
+    /// `promise.then(on_fulfilled, on_rejected)` with host functions; the
+    /// promise `then` returns.
+    fn promise_then(&mut self, promise: &ObjectRef, on_fulfilled: impl HostFunction<Raw>, on_rejected: impl HostFunction<Raw>) -> JsResult<ObjectRef>;
 
     // ---- intrinsics ----
 

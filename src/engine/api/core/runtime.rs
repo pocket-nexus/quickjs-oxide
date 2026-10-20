@@ -56,12 +56,15 @@ pub struct Runtime {
     pub(crate) shared: Rc<Shared>,
 }
 
-/// A module compiled by `Context::compile_module*`, waiting for the core to
-/// load it by name.
-pub(crate) struct Preloaded {
-    pub(crate) function: ObjectRef,
-    pub(crate) tables: ModuleTables,
-    pub(crate) import_meta: Vec<(String, Value)>,
+/// A module compiled by `Context::compile_module*` or defined by
+/// `Context::define_module`, waiting for the core to load it by name.
+pub(crate) enum Preloaded {
+    Compiled {
+        function: ObjectRef,
+        tables: ModuleTables,
+        import_meta: Vec<(String, Value)>,
+    },
+    Synthetic(Vec<(String, Value)>),
 }
 
 pub(crate) struct Shared {

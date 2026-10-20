@@ -1189,3 +1189,253 @@ fn only_back_edges_poll() {
     // The `break` jumps forward; the loop's end jumps back.
     assert_eq!(jumps, ["Jmp", "JmpBack"], "{text}");
 }
+
+// ---- promises from Rust ----
+
+use quickjs_oxide::engine::api::core::PromiseCapability;
+
+#[test]
+fn a_host_function_returns_a_promise_the_embedder_settles() {
+    let (runtime, context) = runtime();
+    let pending: Rc<RefCell<Vec<PromiseCapability>>> = Rc::default();
+    let keep = Rc::clone(&pending);
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "later", 0, move |scope: &mut Scope<'_>| {
+            let capability = scope.new_promise()?;
+            let promise = capability.promise.clone();
+            keep.borrow_mut().push(capability);
+            Ok(Value::Object(promise))
+        })
+        .unwrap();
+    context
+        .eval(
+            "(async () => { globalThis.got = await later(); })(); \
+             later().catch(e => { globalThis.caught = e; }); \
+             later().then(v => { globalThis.followed = v; });",
+        )
+        .unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(context.eval("typeof got").unwrap(), string("undefined"));
+    let mut context = context;
+    let capabilities = pending.borrow().clone();
+    assert_eq!(
+        runtime
+            .promise_snapshot(&capabilities[0].promise)
+            .unwrap()
+            .unwrap()
+            .state(),
+        PromiseState::Pending
+    );
+    capabilities[0]
+        .resolve(&mut context, Value::Int(5))
+        .unwrap();
+    // Settling twice is a no-op.
+    capabilities[0]
+        .resolve(&mut context, Value::Int(6))
+        .unwrap();
+    capabilities[1].reject(&mut context, string("no")).unwrap();
+    let thenable = context
+        .eval("({ then(resolve) { resolve('via then'); } })")
+        .unwrap();
+    capabilities[2].resolve(&mut context, thenable).unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(context.eval("got").unwrap(), Value::Int(5));
+    assert_eq!(context.eval("caught").unwrap(), string("no"));
+    assert_eq!(context.eval("followed").unwrap(), string("via then"));
+    let fulfilled = runtime
+        .promise_snapshot(&capabilities[0].promise)
+        .unwrap()
+        .unwrap();
+    assert_eq!(fulfilled.state(), PromiseState::Fulfilled);
+    assert_eq!(fulfilled.result(), &Value::Int(5));
+    assert_eq!(
+        runtime
+            .promise_snapshot(&capabilities[1].promise)
+            .unwrap()
+            .unwrap()
+            .state(),
+        PromiseState::Rejected
+    );
+}
+
+#[test]
+fn promise_then_runs_host_handlers() {
+    let (runtime, context) = runtime();
+    let seen: Rc<RefCell<Vec<String>>> = Rc::default();
+    let (on_value, on_error) = (Rc::clone(&seen), Rc::clone(&seen));
+    let Value::Object(resolved) = context.eval("Promise.resolve(42)").unwrap() else {
+        panic!("a promise");
+    };
+    let chained = context
+        .promise_then(
+            &resolved,
+            move |scope: &mut Scope<'_>| {
+                let value = scope.arg(0);
+                on_value.borrow_mut().push(format!("value {value:?}"));
+                Ok(Value::Int(1))
+            },
+            move |scope: &mut Scope<'_>| {
+                let reason = scope.arg(0);
+                on_error.borrow_mut().push(format!("reason {reason:?}"));
+                Ok(Value::Undefined)
+            },
+        )
+        .unwrap();
+    let Value::Object(rejected) = context.eval("Promise.reject('bad')").unwrap() else {
+        panic!("a promise");
+    };
+    let record = Rc::clone(&seen);
+    context
+        .promise_then(
+            &rejected,
+            |_: &mut Scope<'_>| Ok(Value::Undefined),
+            move |scope: &mut Scope<'_>| {
+                let reason = scope.arg(0);
+                record.borrow_mut().push(format!("reason {reason:?}"));
+                Ok(Value::Undefined)
+            },
+        )
+        .unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(*seen.borrow(), ["value Int(42)", "reason String(\"bad\")"]);
+    let chained = runtime.promise_snapshot(&chained).unwrap().unwrap();
+    assert_eq!(chained.result(), &Value::Int(1));
+}
+
+#[test]
+fn an_unsettled_capability_leaks_nothing() {
+    let (runtime, context) = runtime();
+    let capability = context.new_promise().unwrap();
+    assert_eq!(
+        runtime
+            .promise_snapshot(&capability.promise)
+            .unwrap()
+            .unwrap()
+            .state(),
+        PromiseState::Pending
+    );
+    runtime.run_gc().unwrap();
+    let before = runtime.memory_report().unwrap().objects.live;
+    for _ in 0..100 {
+        drop(context.new_promise().unwrap());
+    }
+    runtime.run_gc().unwrap();
+    assert_eq!(runtime.memory_report().unwrap().objects.live, before);
+}
+
+// ---- native modules ----
+
+#[test]
+fn a_defined_module_is_imported_by_name() {
+    let (runtime, context) = runtime();
+    let add = context
+        .new_function(
+            FunctionOptions::new("add").length(2),
+            |scope: &mut Scope<'_>| {
+                let (a, b) = (scope.arg(0), scope.arg(1));
+                Ok(Value::number(scope.to_number(&a)? + scope.to_number(&b)?))
+            },
+        )
+        .unwrap();
+    context
+        .define_module(
+            "host:math",
+            vec![
+                ("add".into(), Value::from(add)),
+                ("pi".into(), Value::Float(3.5)),
+                ("default".into(), string("the default")),
+            ],
+        )
+        .unwrap();
+    let module = context
+        .compile_module(
+            "import { add, pi } from 'host:math'; import d from 'host:math'; \
+             import * as m from 'host:math'; \
+             globalThis.result = [add(2, 3), pi, d, Object.keys(m).join()].join('|');",
+        )
+        .unwrap();
+    context.execute_module(&module).unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        context.eval("result").unwrap(),
+        string("5|3.5|the default|add,default,pi")
+    );
+    // A missing name is the usual link-time SyntaxError.
+    let module = context
+        .compile_module("import { nope } from 'host:math';")
+        .unwrap();
+    let thrown = match context.execute_module(&module) {
+        Err(RuntimeError::Exception(error)) => runtime.print_value(&error).unwrap(),
+        Ok(Value::Object(promise)) => {
+            runtime.run_jobs().unwrap();
+            let snapshot = runtime.promise_snapshot(&promise).unwrap().unwrap();
+            runtime.print_value(snapshot.result()).unwrap()
+        }
+        other => panic!("{other:?}"),
+    };
+    assert!(thrown.starts_with("SyntaxError"), "{thrown}");
+}
+
+#[test]
+fn a_loader_returns_a_synthetic_module() {
+    struct Loader;
+    impl ModuleLoader for Loader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            name: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let name_value = Value::String(JsString::try_from_utf8(name).unwrap());
+            let seven = scope
+                .new_function(FunctionOptions::new("seven"), |_: &mut Scope<'_>| {
+                    Ok(Value::Int(7))
+                })
+                .map_err(|_| Value::Undefined)?;
+            Ok(ModuleSource::Synthetic {
+                exports: vec![
+                    ("name".into(), name_value),
+                    ("seven".into(), Value::from(seven)),
+                ],
+            })
+        }
+    }
+    let (runtime, context) = runtime();
+    runtime.set_module_loader(Loader).unwrap();
+    let module = context
+        .compile_module("import { name, seven } from 'native:x'; globalThis.r = name + seven();")
+        .unwrap();
+    context.execute_module(&module).unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(context.eval("r").unwrap(), string("native:x7"));
+    // Its namespace prints like a compiled module's.
+    let module = context
+        .compile_module("import * as ns from 'native:y'; globalThis.ns = ns;")
+        .unwrap();
+    context.execute_module(&module).unwrap();
+    runtime.run_jobs().unwrap();
+    context
+        .compile_module_with_filename(
+            "export const name = 'native:y'; export function seven() { return 7; }",
+            "compiled:y",
+        )
+        .unwrap();
+    let module = context
+        .compile_module("import * as ns from 'compiled:y'; globalThis.compiled = ns;")
+        .unwrap();
+    context.execute_module(&module).unwrap();
+    runtime.run_jobs().unwrap();
+    let ns = context.eval("ns").unwrap();
+    let compiled = context.eval("compiled").unwrap();
+    assert_eq!(
+        runtime.print_value(&ns).unwrap(),
+        runtime.print_value(&compiled).unwrap()
+    );
+    assert_eq!(
+        context
+            .eval("Object.keys(ns).join() + typeof ns.seven")
+            .unwrap(),
+        string("name,sevenfunction")
+    );
+}

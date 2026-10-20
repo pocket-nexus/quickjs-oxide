@@ -8,6 +8,7 @@ mod error;
 mod function;
 mod module;
 mod ops;
+mod promise;
 mod property;
 mod runtime;
 #[cfg(feature = "test262-host")]
@@ -19,6 +20,7 @@ pub use error::RuntimeError;
 pub use function::{FunctionOptions, HostFunction, Raw, Scope};
 pub use module::{CompiledModule, ModuleLoader, ModuleScope, ModuleSource};
 pub use ops::{Js, JsResult};
+pub use promise::PromiseCapability;
 pub use property::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor,
     PropertyKey, WellKnownSymbol,

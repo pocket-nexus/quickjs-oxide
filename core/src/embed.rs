@@ -597,6 +597,20 @@ impl NativeCx<'_> {
         )
     }
 
+    /// `NewPromiseCapability(%Promise%)`: the promise and its resolving
+    /// functions, unrooted.
+    pub fn new_promise_capability(&mut self) -> Result<(ObjectId, ObjectId, ObjectId), Throw> {
+        let mut cx = self.cx();
+        let prototype = cx.realm.intrinsic(crate::Intrinsic::PromisePrototype);
+        let promise = crate::vm::jobs::new_promise(&mut cx, prototype)?;
+        let mark = cx.heap.roots().mark();
+        cx.heap.roots().push(Value::object(promise));
+        let functions = crate::vm::jobs::resolving_functions(&mut cx, promise);
+        cx.heap.roots().truncate(mark);
+        let (resolve, reject) = functions?;
+        Ok((promise, resolve, reject))
+    }
+
     /// A pending promise of `%Promise.prototype%`.
     pub fn new_promise(&mut self) -> Result<ObjectId, Throw> {
         let prototype = self.realm.intrinsic(crate::Intrinsic::PromisePrototype);

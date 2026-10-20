@@ -31,6 +31,9 @@ pub enum ModuleSource {
     Json5(Vec<u8>),
     /// A module compiled through [`ModuleScope::compile_module`].
     Compiled(CompiledModule),
+    /// A module whose exports are these values, each under its name;
+    /// `default` is the default export.
+    Synthetic { exports: Vec<(String, Value)> },
 }
 
 impl ModuleSource {
@@ -331,17 +334,19 @@ pub(crate) fn load_shim(
         ));
     };
     let preloaded = shared.modules.borrow_mut().remove(name);
-    if let Some(Preloaded {
-        function,
-        tables,
-        import_meta,
-    }) = preloaded
-    {
+    if let Some(preloaded) = preloaded {
         let mut scope = ModuleScope {
             compiler: compiler.reborrow(),
             shared: &shared,
         };
-        return Ok(compiled_source(&mut scope, function, tables, &import_meta));
+        return Ok(match preloaded {
+            Preloaded::Compiled {
+                function,
+                tables,
+                import_meta,
+            } => compiled_source(&mut scope, function, tables, &import_meta),
+            Preloaded::Synthetic(exports) => synthetic_source(&mut scope, &exports),
+        });
     }
     let Ok(mut loader) = shared.loader.try_borrow_mut() else {
         return Err(CompileError::new(
@@ -380,12 +385,27 @@ pub(crate) fn load_shim(
             module.tables,
             &module.import_meta,
         )),
+        ModuleSource::Synthetic { exports } => Ok(synthetic_source(&mut scope, &exports)),
         ModuleSource::Json(text) => {
             Ok(oxide_core::vm::module::ModuleSource::Json(json_text(&text)))
         }
         ModuleSource::Json5(text) => Ok(oxide_core::vm::module::ModuleSource::Json5(json_text(
             &text,
         ))),
+    }
+}
+
+/// The core's form of a synthetic module: its values, rooted until the next
+/// entry.
+fn synthetic_source(
+    scope: &mut ModuleScope<'_>,
+    exports: &[(String, Value)],
+) -> oxide_core::vm::module::ModuleSource {
+    oxide_core::vm::module::ModuleSource::Synthetic {
+        exports: exports
+            .iter()
+            .map(|(name, value)| (name.clone(), scope.lower(value)))
+            .collect(),
     }
 }
 

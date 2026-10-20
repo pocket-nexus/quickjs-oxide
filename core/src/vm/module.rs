@@ -106,6 +106,12 @@ pub enum ModuleSource {
     Json(JsonText),
     /// A JSON5 module (QuickJS's extended JSON, `type: "json5"`).
     Json5(JsonText),
+    /// A module whose exports the embedder supplies, each a binding of
+    /// its own (`default` is the default export); the values must be
+    /// rooted by the loader.
+    Synthetic {
+        exports: Vec<(String, Value)>,
+    },
 }
 
 /// A JSON module's text: UTF-16 units, and the units that stand for bytes
@@ -314,6 +320,7 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
         }
         ModuleSource::Json(text) => json_module(cx, name, &text, false),
         ModuleSource::Json5(text) => json_module(cx, name, &text, true),
+        ModuleSource::Synthetic { exports } => synthetic_module(cx, name, &exports),
     };
     cx.heap.roots().truncate(mark);
     let module = result?;
@@ -346,18 +353,44 @@ fn json_module(
 ) -> Result<ObjectId, Throw> {
     let value = crate::builtins::json_module_text(cx, text, name, extended)?;
     cx.heap.roots().push(value);
+    synthetic_module(cx, name, &[("default".into(), value)])
+}
+
+/// A module of the given exports: one non-lexical binding per name, set to
+/// its value, and nothing to evaluate.
+fn synthetic_module(
+    cx: &mut Cx<'_>,
+    name: &str,
+    exports: &[(String, Value)],
+) -> Result<ObjectId, Throw> {
+    if exports.len() > usize::from(u16::MAX) {
+        return Err(error::throw(
+            cx,
+            ErrorKind::Range,
+            "too many module exports",
+        ));
+    }
+    for (_, value) in exports {
+        cx.heap.roots().push(*value);
+    }
     let tables = ModuleTables {
-        bindings: vec![ModuleBinding::Declaration { lexical: false }],
-        exports: vec![ModuleExport {
-            name: "default".into(),
-            target: ExportTarget::Local(0),
-        }],
+        bindings: vec![ModuleBinding::Declaration { lexical: false }; exports.len()],
+        exports: exports
+            .iter()
+            .enumerate()
+            .map(|(index, (name, _))| ModuleExport {
+                name: name.as_str().into(),
+                target: ExportTarget::Local(index as u16),
+            })
+            .collect(),
         ..ModuleTables::default()
     };
     let module = create(cx, name, None, tables, &[])?;
-    let holder = cell(cx, module, 0);
-    cx.heap
-        .scope_set(ScopeId(holder.as_object().unwrap().index()), 0, 0, value);
+    for (index, (_, value)) in exports.iter().enumerate() {
+        let holder = cell(cx, module, index as u16);
+        cx.heap
+            .scope_set(ScopeId(holder.as_object().unwrap().index()), 0, 0, *value);
+    }
     Ok(module)
 }
 
