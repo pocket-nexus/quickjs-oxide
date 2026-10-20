@@ -151,7 +151,7 @@ fn source_members_preserve_quickjs_reads_keys_references_and_method_receivers() 
 
 #[test]
 fn member_assignment_and_delete_lower_through_quickjs_lvalue_shapes() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     let fixed = context.compile("Function.fixed = 1").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -392,7 +392,7 @@ fn direct_identifier_delete_uses_quickjs_scope_resolution() {
 
 #[test]
 fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     let fixed = context.compile("Function.bits &= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -567,7 +567,7 @@ fn bitwise_compound_assignment_reuses_quickjs_lvalue_shapes() {
 
 #[test]
 fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     let fixed = context.compile("Function.shift <<= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -672,7 +672,7 @@ fn shift_compound_assignment_reuses_quickjs_lvalue_shapes() {
 
 #[test]
 fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     let fixed = context.compile("Function.power **= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -797,7 +797,7 @@ fn exponent_compound_assignment_reuses_quickjs_lvalue_shapes() {
 
 #[test]
 fn logical_member_assignment_uses_quickjs_branch_cleanup_shapes() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     let fixed = context.compile("Function.fixed &&= 3").unwrap();
     let fixed_code = runtime.test_function_code(&fixed).unwrap();
@@ -964,7 +964,7 @@ fn logical_member_assignment_uses_quickjs_branch_cleanup_shapes() {
 
 #[test]
 fn identifier_compound_assignment_uses_resolved_get_set_paths() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     let argument_root = context
         .compile("(function(value){ value += 2; return value; })")
@@ -1282,8 +1282,8 @@ fn discarded_field_assignments_lower_to_a_single_put_field() {
 
 #[test]
 fn discarded_binding_assignments_lower_to_a_single_put() {
-    let (runtime, mut context) = test_context();
-    let mut code = |source: &str, child: Option<usize>| {
+    let (runtime, context) = test_context();
+    let code = |source: &str, child: Option<usize>| {
         let root = context.compile(source).unwrap();
         let mut function = runtime.test_child_function_bytecode(&root, 0).unwrap();
         if let Some(child) = child {
@@ -1397,7 +1397,7 @@ fn discarded_binding_assignments_lower_to_a_single_put() {
 
 #[test]
 fn discarded_binding_assignments_keep_their_semantics() {
-    let (_, mut context) = test_context();
+    let (_, context) = test_context();
     let source = r#"
         (function () {
             var out = [];

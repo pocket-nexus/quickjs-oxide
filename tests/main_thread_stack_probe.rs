@@ -82,7 +82,7 @@ fn run_child(mut arguments: impl Iterator<Item = String>) -> ExitCode {
         .unwrap_or(PARSE_DEPTH);
 
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
 
     match mode.as_str() {
         "shallow" => {

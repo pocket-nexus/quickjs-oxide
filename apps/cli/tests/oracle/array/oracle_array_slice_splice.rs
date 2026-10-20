@@ -7,7 +7,7 @@ use quickjs_oxide::engine::api::core::{JsString, Value};
 
 #[test]
 fn array_slice_splice_basic_rust_smoke() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     assert_eq!(
         context
             .eval(
@@ -25,7 +25,7 @@ fn array_slice_splice_basic_rust_smoke() {
 
 #[test]
 fn array_slice_recursive_getter_stack_overflow_is_catchable_without_oracle() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     assert_eq!(
         context
             .eval(

@@ -9,7 +9,7 @@ quickjs-oxide is a Rust JavaScript engine available through its command-line app
 - The heap holds NaN-boxed values, typed arenas, a value heap, shapes with validity cells and a mark-sweep collector that runs on heap growth. `RuntimeOptions` sets the collection threshold, its growth factor, a heap cap and the register file's limit; `MemoryReport` reports what every part of the runtime holds.
 - The core implements objects, strings, numbers, BigInts, regular expressions (through `oxide-regexp`), binary data, collections, weak references, Promises, jobs, modules, `SharedArrayBuffer`/`Atomics` and the corresponding builtins.
 - A runtime has one realm. `with` is an early `SyntaxError`, direct `eval` runs as indirect eval, and nothing reads `Symbol.species` or `Symbol.unscopables`; the [deviation ledger](deviations.md) records each.
-- The embedding API (`quickjs_oxide::engine::api::core`) exposes `Runtime`, `Context`, `Value`, the `Host` trait, module loaders that receive a `Scope`, `RuntimeOptions` and the collector, memory and inline-cache reports.
+- The embedding API (`quickjs_oxide::engine::api::core`) exposes `Runtime`, `Context`, `Value`, the `Host` trait, host functions that receive a `Scope`, host objects, module loaders that receive a `ModuleScope`, `RuntimeOptions` and the collector, memory and inline-cache reports.
 - Host adapters supply environment capabilities: `SystemHost` (`adapters/native`) and `WebHost` (`adapters/web`). Applications own file loading, output, diagnostics and job driving.
 - `qjs` and the browser playground run the engine through the embedding API. Exact source bytes, malformed string data and diagnostic positions travel through the embedding and loader APIs.
 

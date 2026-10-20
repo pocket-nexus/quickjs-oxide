@@ -21,7 +21,7 @@ fn detached_date_and_native_method_keep_their_defining_realm_collectable() {
     runtime.run_gc().unwrap();
 
     {
-        let mut caller = runtime.new_context().expect("create context");
+        let caller = runtime.new_context().expect("create context");
         assert_eq!(
             caller
                 .call(

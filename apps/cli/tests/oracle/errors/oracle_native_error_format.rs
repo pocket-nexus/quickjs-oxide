@@ -51,7 +51,7 @@ fn native_error_format_matches_pinned_quickjs() {
 
 #[test]
 fn explicit_error_constructor_message_bypasses_the_native_throw_buffer() {
-    let (runtime, mut context) = host_runtime_context();
+    let (runtime, context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let error_key = runtime.intern_property_key("Error").unwrap();
     let Value::Object(error_constructor) = context.get_property(&global, &error_key).unwrap()

@@ -50,7 +50,7 @@ fn detached_vm_rejects_runtime_global_execution_explicitly() {
 
 #[test]
 fn global_put_matches_strict_sloppy_readonly_and_setter_semantics() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let global = context.global_object().unwrap();
     let descriptor = |value, writable| OrdinaryPropertyDescriptor {
         value: DescriptorField::Present(value),
@@ -310,8 +310,8 @@ fn unresolved_name_compiles_to_one_global_then_parent_global_relays() {
 #[test]
 fn late_global_property_delete_reconnect_and_cross_realm_use_the_defining_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
+    let defining = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let Value::Object(reader) = defining
         .eval("(function() { return lateRealmValue; })")
         .unwrap()

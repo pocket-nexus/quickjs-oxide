@@ -6,7 +6,7 @@ use quickjs_oxide::engine::api::core::{CallableRef, Context, JsString, Runtime, 
 fn foreign_realm_eval_callable_preserves_non_string_identity() {
     let runtime = host_runtime();
     let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let eval = global_eval(&runtime, &mut defining);
 
     assert_eq!(
@@ -101,11 +101,11 @@ fn syntactic_eval_replacements_take_the_complete_ordinary_call_path() {
             string_value("AB|x|7"),
         ),
     ] {
-        let (_runtime, mut context) = host_runtime_context();
+        let (_runtime, context) = host_runtime_context();
         assert_eq!(context.eval(source).unwrap(), expected, "source: {source}");
     }
 
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     assert_eq!(
         context
             .eval(
@@ -176,7 +176,7 @@ fn eval_lexicals_are_ephemeral_but_returned_closures_retain_them() {
             "#,
         ),
     ] {
-        let (_runtime, mut context) = host_runtime_context();
+        let (_runtime, context) = host_runtime_context();
         assert_eq!(
             context.eval(source).unwrap(),
             string_value("42|undefined|undefined"),
@@ -187,7 +187,7 @@ fn eval_lexicals_are_ephemeral_but_returned_closures_retain_them() {
 
 #[test]
 fn eval_syntax_errors_are_catchable() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
 
     assert_eq!(
         context

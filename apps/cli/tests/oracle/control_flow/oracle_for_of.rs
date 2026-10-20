@@ -20,8 +20,8 @@ fn top_level_for_await_uses_pinned_quickjs_syntax_diagnostic() {
 #[test]
 fn for_of_cross_realm_regression() {
     let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
+    let defining = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let bytecode = defining
         .compile("(function(){var result='';for(var value of 'ab')result+=value;return result})()")
         .unwrap();

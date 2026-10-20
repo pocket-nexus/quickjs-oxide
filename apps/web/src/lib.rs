@@ -105,7 +105,7 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
     if let Err(error) = runtime.set_can_block(WEB_CAN_BLOCK) {
         return EvalResult::engine_error(&error);
     }
-    let mut context = runtime.context();
+    let context = runtime.context();
     let value = match context.eval_with_filename(source, PLAYGROUND_FILENAME) {
         Ok(value) => value,
         Err(RuntimeError::Exception(exception)) => {

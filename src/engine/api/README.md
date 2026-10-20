@@ -15,21 +15,26 @@ options and report types.
 | Item | Content |
 | --- | --- |
 | `Runtime` | an `Rc` of the shared state (`oxide_core::Runtime` in a `RefCell`, the module loader, the preloaded modules); cloning shares it. `new()`, `with_options(RuntimeOptions)`, `with_host(impl Host, RuntimeOptions)`; jobs (`run_pending_job`, `run_jobs`, `with_execution_turn`), rejection tracking, collection (`run_gc`, `gc_stats`, `GcPolicy`, `set_gc_stress`), the reports (`memory_report`, `gc_report`, `ic_report`, `disassemble`), property keys, symbols, prototypes and own-property operations, `type_of` and the printer |
-| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, the `qjs` helpers |
+| `Context` | the handle of the runtime's one realm: `eval*`, `compile*`, `execute`, `compile_module*`, `execute_module`, `call`, `construct`, objects, arrays and properties, the intrinsics, `new_native_error`, `throw_error`, host functions and host objects, the `qjs` helpers; each method takes `&self` and is one engine entry |
+| `Js`, `JsResult` | the operations `Context` and `Scope` share, as a sealed trait for code generic over either; both also have each as an inherent method |
+| `Scope`, `FunctionOptions`, `HostFunction`, `Raw` | host functions: the function's view of its call and of the engine, how it is made, what `new_function` takes |
 | `Value` | `Undefined`, `Null`, `Bool`, `Int`, `Float`, `BigInt(JsBigInt)` and `String(JsString)` as Rust data copied out of the core; `Symbol(SymbolRef)` and `Object(ObjectRef)` as handles |
 | `ObjectRef`, `SymbolRef`, `CallableRef` | a handle in the core's handle table, released on the last drop |
 | `PropertyKey`, `OrdinaryPropertyDescriptor`, `CompleteOrdinaryPropertyDescriptor`, `DescriptorField`, `AccessorValue`, `WellKnownSymbol` | keys and descriptors |
-| `RuntimeError` | `Exception(Value)` (the thrown value), `Reentered`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
+| `RuntimeError` | `Exception(Value)` (the thrown value), `Reentered`, `Poisoned`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
 | `Host`, `Stream`, `RejectionEvent`, `SystemHost` | the core's host trait and its default, re-exported |
-| `ModuleLoader`, `ModuleSource`, `CompiledModule`, `Scope` | module loading |
+| `ModuleLoader`, `ModuleSource`, `CompiledModule`, `ModuleScope` | module loading |
 | `RuntimeOptions`, `HeapLimits`, `MemoryReport`, `GcStats` | the core's configuration and reports, re-exported |
 | `api::core::test262` | the Test262 runner's worker, behind the `test262-host` feature |
 
 Every `Runtime` and `Context` method borrows the cell for one engine entry.
-A host callback that calls the API without its `Scope` finds the cell
-borrowed and gets `RuntimeError::Reentered`. A value dropped
-while the cell is borrowed releases its handle at the next entry, so `Drop`
-always succeeds.
+A host function or callback that calls the API through a `Context` or
+`Runtime` instead of its own scope finds the cell borrowed and gets
+`RuntimeError::Reentered`. A value dropped while the cell is borrowed
+releases its handle when the entry or the host function ends, so `Drop`
+always succeeds. A handle does not keep its runtime alive: used after the
+last `Runtime` and `Context` dropped, it gets `RuntimeError::Invariant("a
+value of a dropped runtime")`.
 
 ## Realm
 
@@ -74,18 +79,72 @@ core's `SystemHost`; the adapters supply `quickjs-oxide-host`'s `SystemHost`
 application owns input, module-loading policy, output and when the job
 queue drains.
 
-## Modules and `Scope`
+## Host functions
+
+`new_function(options, f)` makes a JavaScript function whose body is the
+Rust closure `f`, and `define_function(target, name, length, f)` defines one
+on an object, writable and configurable but not enumerable, as QuickJS's
+`JS_SetPropertyFunctionList` defines a method:
+
+```rust
+let global = context.global_object()?;
+context.define_function(&global, "add", 2, |scope: &mut Scope<'_>| {
+    let (a, b) = (scope.arg(0), scope.arg(1));
+    Ok(Value::number(scope.to_number(&a)? + scope.to_number(&b)?))
+})?;
+```
+
+The closure writes its parameter type (`|scope: &mut Scope<'_>|`): the bound
+is reached through the `HostFunction` trait, so the compiler does not infer
+the higher-ranked signature. The `Scope` reads the call (`this`, `arg`,
+`argc`, `args`, `new_target`, `is_construct`, `callee`, `data`,
+`this_host_data`) and has every operation of `Js`. The rules:
+
+- A value the collector should see goes in `FunctionOptions::data` and is
+  read with `Scope::data`: a handle the closure captures is a root for as
+  long as the function lives, and a cycle through it is never collected.
+  The closure reaches the engine through its `Scope`; one that captures a
+  `Runtime` or a `Context` keeps the runtime alive.
+- A `Context` method inside a host function returns `Reentered`. Inside a
+  host function `eval` and `compile` make transient code, and
+  `compile_module*` and `execute_module` return
+  `Unsupported("modules inside a host function")`.
+- Values the closure takes from its call are handles like any other and
+  outlive the call. Handles it drops are released when it returns.
+- `Err(Exception(value))` throws `value`; `scope.throw_error(kind,
+  message)` builds an error with a `stack` from the running frames, so
+  `return Err(scope.throw_error(NativeErrorKind::Type, "x is required"))`
+  throws a `TypeError`. `OutOfMemory` throws the out-of-memory error, and any
+  other error throws an `InternalError` with its message.
+- `FunctionOptions::constructor` lets `new` call the function; it has no
+  `prototype` property until the embedder defines one. A function made
+  without it throws `TypeError: not a constructor` under `new`.
+- Calls nested through a host function count against the native-stack
+  budget as a builtin's do, and the function is listed in a backtrace as
+  `at name (native)`.
+- A panic in a host function unwinds to the embedder's call. The runtime is
+  then poisoned: every later call returns `RuntimeError::Poisoned`.
+
+`new_host_object(value, prototype)` attaches a Rust value to a new object;
+`host_data::<T>(&object)` returns it as an `Rc<T>`, or `None` for an
+ordinary object or a value of another type. The value is shared: mutation
+goes through a `Cell` or `RefCell` inside it. It drops when the object is
+collected. A host object prints as `Object` and is `[object Object]` to
+`Object.prototype.toString` unless its prototype defines
+`Symbol.toStringTag`.
+
+## Modules and `ModuleScope`
 
 `Runtime::set_module_loader` installs a `ModuleLoader`. Its `normalize`
 (defaulting to QuickJS's relative resolution) and `load` callbacks receive a
-`&mut Scope<'_>`, a reborrow of the runtime for the callback's duration: it
-creates objects and native errors and compiles a module source
-(`Scope::compile_module`). A callback throws by returning `Err(Value)`. A
+`&mut ModuleScope<'_>`, a reborrow of the runtime for the callback's
+duration: it creates objects, native errors, host functions and host
+objects, and compiles a module source (`ModuleScope::compile_module`). A callback throws by returning `Err(Value)`. A
 loader returns a `ModuleSource`: source text with the properties its
 `import.meta` starts with, JSON, JSON5, or a module compiled through the
 scope. Both callbacks receive the import attributes; checking them is the
 loader's (`load` rejects what it does not accept). Values made through a
-`Scope` are handles like any other and outlive the callback.
+`ModuleScope` are handles like any other and outlive the callback.
 
 ## Configuration and reports
 

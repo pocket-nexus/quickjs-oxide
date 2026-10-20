@@ -35,7 +35,7 @@ fn global_number_parsers_match_pinned_quickjs_through_source_execution() {
     let oracle = require_qjs_oracle!("global numeric parser differential");
 
     let expression = format!("'' + {}", EXPRESSIONS.join(" + '|' + "));
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     let Value::String(rust) = context.eval(&expression).unwrap() else {
         panic!("Rust numeric parser probe did not return a string");
     };
@@ -68,7 +68,7 @@ fn oracle_observation(oracle: &OsStr, expression: &str) -> String {
 fn parser_function_names_are_stable_in_native_error_stacks() {
     let oracle = require_qjs_oracle!("numeric parser stack differential");
     let source = "parseInt('10', 1n)";
-    let (runtime, mut context) = host_runtime_context();
+    let (runtime, context) = host_runtime_context();
     let Err(RuntimeError::Exception(Value::Object(error))) =
         context.eval_with_options(source, &EvalOptions::new("<cmdline>"))
     else {

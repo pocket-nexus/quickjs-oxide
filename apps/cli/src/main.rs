@@ -4,8 +4,8 @@
 use quickjs_oxide::QUICKJS_COMPAT_VERSION;
 use quickjs_oxide::engine::api::core::{
     Context, DebugInfoMode, HeapLimits, JsString, ModuleImportAttributes, ModuleLoader,
-    ModuleSource, NativeErrorKind, PromiseState, QjsHelpers, Runtime, RuntimeError, RuntimeOptions,
-    Scope, Value, declare_thread_stack, number_to_string, quickjs_detect_module_bytes,
+    ModuleScope, ModuleSource, NativeErrorKind, PromiseState, QjsHelpers, Runtime, RuntimeError,
+    RuntimeOptions, Value, declare_thread_stack, number_to_string, quickjs_detect_module_bytes,
 };
 use quickjs_oxide_host::SystemHost;
 use std::io::Write as _;
@@ -326,11 +326,11 @@ struct FileModuleLoader;
 impl ModuleLoader for FileModuleLoader {
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {
-        let throw = |scope: &mut Scope<'_>, kind: NativeErrorKind, message: String| {
+        let throw = |scope: &mut ModuleScope<'_>, kind: NativeErrorKind, message: String| {
             scope
                 .new_native_error(kind, &message)
                 .unwrap_or(Value::Undefined)
@@ -672,7 +672,7 @@ mod tests {
     #[test]
     fn error_dump_uses_raw_shadowing_and_never_executes_getters() {
         let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-        let mut context = runtime.context();
+        let context = runtime.context();
         let Value::Object(error) = context.eval("new Error(\"boom\")").unwrap() else {
             panic!("Error constructor did not return an object");
         };
@@ -729,7 +729,7 @@ mod tests {
     #[test]
     fn error_dump_reads_exactly_one_raw_prototype_level() {
         let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-        let mut context = runtime.context();
+        let context = runtime.context();
         let Value::Object(error) = context.eval("new Error()").unwrap() else {
             panic!("Error constructor did not return an object");
         };

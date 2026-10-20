@@ -1277,13 +1277,13 @@ impl crate::Runtime {
     /// Drops the module named `name` from the name map: a later import of
     /// the name loads it again. Modules that imported it keep the record.
     pub fn forget_module(&mut self, name: &str) {
-        self.host.modules.remove(name);
+        self.native_cx().forget_module(name);
     }
 
     /// Loads, links and evaluates the module named `name` (already
     /// normalized); returns the promise of its evaluation, unrooted.
     pub fn run_module(&mut self, name: &str) -> Result<Value, Throw> {
-        run(&mut self.cx(), name).map(Value::object)
+        self.native_cx().run_module(name)
     }
 
     /// [`Runtime::run_module`](crate::Runtime::run_module) with the step
@@ -1305,6 +1305,16 @@ impl crate::Runtime {
 }
 
 impl crate::NativeCx<'_> {
+    /// [`Runtime::forget_module`](crate::Runtime::forget_module).
+    pub fn forget_module(&mut self, name: &str) {
+        self.host.modules.remove(name);
+    }
+
+    /// [`Runtime::run_module`](crate::Runtime::run_module).
+    pub fn run_module(&mut self, name: &str) -> Result<Value, Throw> {
+        run(&mut self.cx(), name).map(Value::object)
+    }
+
     /// [`Runtime::promise_state`](crate::Runtime::promise_state).
     pub fn promise_state(&mut self, promise: Value) -> Option<(i32, Value)> {
         let cx = self.cx();

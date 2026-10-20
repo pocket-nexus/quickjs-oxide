@@ -1,7 +1,7 @@
 use crate::runtime_observation::host_runtime;
 use quickjs_oxide::engine::api::core::{
-    JsString, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind, PromiseState,
-    Scope, Value,
+    JsString, ModuleImportAttributes, ModuleLoader, ModuleScope, ModuleSource, NativeErrorKind,
+    PromiseState, Value,
 };
 use std::cell::RefCell;
 use std::ffi::OsStr;
@@ -18,7 +18,7 @@ struct CallbackEvent {
     subject: String,
 }
 
-/// A loader that compiles every module through its `Scope`, for `import()`
+/// A loader that compiles every module through its `ModuleScope`, for `import()`
 /// of a two-module graph.
 #[derive(Debug)]
 struct DynamicReentryLoader {
@@ -28,7 +28,7 @@ struct DynamicReentryLoader {
 impl ModuleLoader for DynamicReentryLoader {
     fn normalize(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         base_name: &str,
         specifier: &str,
         _attributes: &ModuleImportAttributes,
@@ -48,7 +48,7 @@ impl ModuleLoader for DynamicReentryLoader {
 
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         _attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {
@@ -86,7 +86,7 @@ fn dynamic_import_accepts_modules_compiled_through_the_loader_scope() {
             events: events.clone(),
         })
         .unwrap();
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
 
     let Value::Object(promise) = context
         .eval_with_filename(

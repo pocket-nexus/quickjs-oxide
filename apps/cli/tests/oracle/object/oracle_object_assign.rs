@@ -130,7 +130,7 @@ fn object_assign_cross_realm_targets_and_error_realms_are_exact() {
 
 #[test]
 fn object_assign_exotic_source_families_are_published() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     assert_eq!(
         context
             .eval("typeof Proxy+'|'+typeof ArrayBuffer+'|'+typeof Uint8Array")

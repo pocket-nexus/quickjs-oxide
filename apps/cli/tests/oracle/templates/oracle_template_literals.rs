@@ -408,7 +408,7 @@ fn template_stack_limit_uses_reachable_bytecode_like_pinned_quickjs() {
 
 #[test]
 fn tagged_templates_publish_realm_local_template_objects() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     assert_eq!(
         context
             .eval(

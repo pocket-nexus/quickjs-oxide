@@ -893,7 +893,7 @@ fn parameter_expression_binding_arguments_and_duplicate_order_match_quickjs() {
 
 #[test]
 fn parameter_expression_binding_cells_and_body_copies_survive_gc_independently() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     drop(context
         .eval(
             "var initializerRead,bodyRead;bodyRead=(function([a],f=(initializerRead=()=>a)){var read=()=>a;a=2;return read})([1])",
@@ -1152,8 +1152,8 @@ fn identifier_default_parameters_run_before_body_hoists_and_use_unmapped_argumen
 #[test]
 fn identifier_rest_array_is_allocated_in_the_callee_realm() {
     let runtime = Runtime::new();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
+    let defining = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let Value::Object(function) = defining
         .eval("(function(...rest){return Object.getPrototypeOf(rest)===Array.prototype})")
         .unwrap()

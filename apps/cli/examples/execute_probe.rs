@@ -65,7 +65,7 @@ fn main() {
         _ => panic!("unknown case: {case}"),
     };
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
     let compiled = context.compile(source).expect("compile fixed workload");
     for _ in 0..3 {
         assert_eq!(context.execute(&compiled).expect("warmup"), expected);

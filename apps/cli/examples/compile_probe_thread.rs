@@ -19,7 +19,7 @@ fn main() {
         .spawn(move || {
             declare_thread_stack(STACK_SIZE);
             let runtime = Runtime::new_with_host_services(SystemHost::default());
-            let mut context = runtime.new_context().expect("create context");
+            let context = runtime.new_context().expect("create context");
             let started = Instant::now();
             let function = context
                 .compile_with_filename(&source, &path)

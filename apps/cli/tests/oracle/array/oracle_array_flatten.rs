@@ -6,7 +6,7 @@ use crate::runtime_observation::host_runtime_context;
 
 #[test]
 fn array_flatten_basic_rust_smoke() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     let value = context
         .eval(r#"[[1,2],[3,[4]],,5].flat().join("|")"#)
         .expect("evaluate basic Array.flat smoke");
@@ -19,7 +19,7 @@ fn array_flatten_basic_rust_smoke() {
 
 #[test]
 fn array_flatten_recursive_mapper_stack_overflow_is_catchable_without_oracle() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     // A finite chain of callbacks runs to completion; an unbounded one throws
     // a catchable stack overflow.
 

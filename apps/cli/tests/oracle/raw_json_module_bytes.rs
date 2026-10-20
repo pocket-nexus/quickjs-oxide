@@ -5,8 +5,8 @@ use crate::quickjs_raw_source_oracle::{
 use crate::runtime_observation::hex_bytes;
 use crate::runtime_observation::host_runtime;
 use quickjs_oxide::engine::api::core::{
-    Context, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind, Runtime,
-    RuntimeError, Scope, Value,
+    Context, ModuleImportAttributes, ModuleLoader, ModuleScope, ModuleSource, NativeErrorKind,
+    Runtime, RuntimeError, Value,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -287,7 +287,7 @@ struct RawJsonModuleLoader {
 impl ModuleLoader for RawJsonModuleLoader {
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         normalized_name: &str,
         _attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {

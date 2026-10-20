@@ -88,7 +88,7 @@ fn exponentiation_follows_quickjs_precedence_associativity_and_unary_rules() {
 
 #[test]
 fn update_expressions_follow_quickjs_lvalue_and_power_shapes() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     assert_eq!(
         context
@@ -253,7 +253,7 @@ fn nullish_coalescing_uses_one_quickjs_short_circuit_join() {
     assert_eq!(evaluate("(null ?? 0) || 7"), Value::Int(7));
     assert_eq!(evaluate("false || (null ?? 8)"), Value::Int(8));
 
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let call = context
         .compile(
             "Function.coalesce = function(){ return this === Function; }; \
@@ -433,7 +433,7 @@ fn untagged_templates_follow_quickjs_concat_lowering() {
         "tagged template objects require runtime publication; use Context::compile or Context::eval"
     );
 
-    let (_, mut context) = test_context();
+    let (_, context) = test_context();
     context
         .compile("(function tag(strings) { return strings[0]; })`x`")
         .expect("runtime publication should materialize tagged-template objects");

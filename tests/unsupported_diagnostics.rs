@@ -1,6 +1,6 @@
 use quickjs_oxide::engine::api::core::{
-    JsString, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind, PromiseState,
-    Runtime, Scope, Value,
+    JsString, ModuleImportAttributes, ModuleLoader, ModuleScope, ModuleSource, NativeErrorKind,
+    PromiseState, Runtime, Value,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -19,7 +19,7 @@ struct RecordingModuleLoader {
 impl ModuleLoader for RecordingModuleLoader {
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         _attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {
@@ -116,7 +116,7 @@ fn assert_dynamic_import_jobs(source: &str, install_test262_host: bool) {
 #[test]
 fn public_entrypoints_execute_dynamic_import_promise_jobs() {
     let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
 
     context
         .compile(IMPORT_SOURCE)
@@ -152,7 +152,7 @@ fn public_module_entrypoint_executes_top_level_await_jobs() {
         "for await (const value of [42]) { globalThis.__tlaPublic = value; }",
     ] {
         let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-        let mut context = runtime.new_context().expect("create context");
+        let context = runtime.new_context().expect("create context");
         let module = context
             .compile_module(source)
             .expect("Context::compile_module rejected top-level await");
@@ -193,7 +193,7 @@ fn conformance_eval_script_executes_dynamic_import_promise_jobs() {
 #[test]
 fn context_compiles_and_executes_catch_destructuring_bindings() {
     let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
     let bytecode = context
         .compile("try { throw {value: 42}; } catch ({value}) { value }")
         .unwrap();

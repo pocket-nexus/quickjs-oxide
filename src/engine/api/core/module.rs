@@ -1,5 +1,5 @@
 //! Module loading: the embedder's
-//! [`ModuleLoader`], the [`Scope`] a host callback receives, and the shims
+//! [`ModuleLoader`], the [`ModuleScope`] a host callback receives, and the shims
 //! the core's module host calls.
 
 use std::rc::Rc;
@@ -10,8 +10,9 @@ use super::RuntimeError;
 use super::compile::{
     ModuleCompileError, compile_module, front_compile_error, normalize_module_name,
 };
+use super::function::{FunctionOptions, HostFunction, host_body};
 use super::runtime::{Preloaded, Shared, current, slot};
-use super::value::{ObjectRef, SymbolRef, Value};
+use super::value::{CallableRef, ObjectRef, SymbolRef, Value};
 use crate::engine::api::error::NativeErrorKind;
 use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
 use crate::engine::value::JsString;
@@ -28,7 +29,7 @@ pub enum ModuleSource {
     Json(Vec<u8>),
     /// A JSON5 module (`type: "json5"`).
     Json5(Vec<u8>),
-    /// A module compiled through [`Scope::compile_module`].
+    /// A module compiled through [`ModuleScope::compile_module`].
     Compiled(CompiledModule),
 }
 
@@ -42,7 +43,7 @@ impl ModuleSource {
     }
 }
 
-/// A module compiled through a [`Scope`], to return from the loader.
+/// A module compiled through a [`ModuleScope`], to return from the loader.
 pub struct CompiledModule {
     function: ObjectRef,
     tables: oxide_core::vm::module::ModuleTables,
@@ -50,14 +51,14 @@ pub struct CompiledModule {
 }
 
 /// The embedder's module loader. Errors are values to throw, made through
-/// the [`Scope`].
+/// the [`ModuleScope`].
 pub trait ModuleLoader {
     /// The normalized name of `specifier` imported by the module or script
     /// named `referrer`. The default is QuickJS's: a specifier starting with
     /// `.` resolves against the referrer's directory.
     fn normalize(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         referrer: &str,
         specifier: &str,
         attributes: &ModuleImportAttributes,
@@ -69,21 +70,23 @@ pub trait ModuleLoader {
     /// The module named `name` (normalized).
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value>;
 }
 
-/// A host callback's view of the runtime: creating strings,
-/// objects and errors, compiling a module source. Values made through it are
+/// A module loader's view of the runtime: creating objects, errors, host
+/// functions and host objects, compiling a module source. It is the
+/// compile-time view (no job queue, no running script), so it has these
+/// operations and not those of [`Js`](super::Js). Values made through it are
 /// handles like any other and outlive the callback.
-pub struct Scope<'a> {
+pub struct ModuleScope<'a> {
     compiler: Compiler<'a>,
     shared: &'a Rc<Shared>,
 }
 
-impl Scope<'_> {
+impl ModuleScope<'_> {
     fn hold(&mut self, value: oxide_core::Value) -> Value {
         use oxide_core::value::Kind;
         match value.kind() {
@@ -124,6 +127,48 @@ impl Scope<'_> {
         match self.hold(oxide_core::Value::object(object)) {
             Value::Object(object) => Ok(object),
             _ => Err(RuntimeError::Invariant("a new object")),
+        }
+    }
+
+    /// A host function, as [`Js::new_function`](super::Js::new_function)
+    /// makes one.
+    pub fn new_function<Args>(
+        &mut self,
+        options: FunctionOptions,
+        function: impl HostFunction<Args>,
+    ) -> Result<CallableRef, RuntimeError> {
+        let mut data = Vec::with_capacity(options.data.len());
+        for value in &options.data {
+            data.push(self.lower(value));
+        }
+        let body = host_body(self.shared, function);
+        let object = self.compiler.new_host_function(
+            &options.name,
+            options.length,
+            options.constructor,
+            &data,
+            body,
+        )?;
+        match self.hold(oxide_core::Value::object(object)) {
+            Value::Object(object) => Ok(CallableRef(object)),
+            _ => Err(RuntimeError::Invariant("a new function")),
+        }
+    }
+
+    /// A host object, as [`Js::new_host_object`](super::Js::new_host_object)
+    /// makes one.
+    pub fn new_host_object<T: 'static>(
+        &mut self,
+        value: T,
+        prototype: Option<&ObjectRef>,
+    ) -> Result<ObjectRef, RuntimeError> {
+        let prototype = prototype.and_then(|prototype| prototype.core_value().as_object());
+        let object = self
+            .compiler
+            .new_host_object(prototype, std::rc::Rc::new(value))?;
+        match self.hold(oxide_core::Value::object(object)) {
+            Value::Object(object) => Ok(object),
+            _ => Err(RuntimeError::Invariant("a new host object")),
         }
     }
 
@@ -263,7 +308,7 @@ pub(crate) fn normalize_shim(
     let Some(loader) = loader.as_mut() else {
         return Ok(normalize_module_name(referrer, specifier));
     };
-    let mut scope = Scope {
+    let mut scope = ModuleScope {
         compiler: compiler.reborrow(),
         shared: &shared,
     };
@@ -292,7 +337,7 @@ pub(crate) fn load_shim(
         import_meta,
     }) = preloaded
     {
-        let mut scope = Scope {
+        let mut scope = ModuleScope {
             compiler: compiler.reborrow(),
             shared: &shared,
         };
@@ -310,7 +355,7 @@ pub(crate) fn load_shim(
             format!("could not load module filename '{name}'"),
         ));
     };
-    let mut scope = Scope {
+    let mut scope = ModuleScope {
         compiler: compiler.reborrow(),
         shared: &shared,
     };
@@ -350,7 +395,7 @@ fn json_text(bytes: &[u8]) -> oxide_core::vm::module::JsonText {
 }
 
 fn compiled_source(
-    scope: &mut Scope<'_>,
+    scope: &mut ModuleScope<'_>,
     function: ObjectRef,
     tables: oxide_core::vm::module::ModuleTables,
     import_meta: &[(String, Value)],

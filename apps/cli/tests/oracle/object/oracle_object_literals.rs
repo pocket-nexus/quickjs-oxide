@@ -4,8 +4,8 @@ use quickjs_oxide::engine::api::core::Value;
 #[test]
 fn object_literal_result_uses_the_defining_realm() {
     let runtime = host_runtime();
-    let mut defining = runtime.new_context().expect("create context");
-    let mut caller = runtime.new_context().expect("create context");
+    let defining = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     let function = defining
         .eval("(function(){return {marker:1}})")
         .expect("object-literal factory compilation failed");

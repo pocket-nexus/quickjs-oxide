@@ -100,7 +100,7 @@ const THROW_CASES: &[SpreadCase] = &[
 
 fn eval_json(operand: &str) -> String {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
     match context.eval(&format!("JSON.stringify([...{operand}])")) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),
         Ok(other) => panic!("expected a string completion, got {other:?} for {operand}"),
@@ -110,7 +110,7 @@ fn eval_json(operand: &str) -> String {
 
 fn eval_throw_label(operand: &str) -> String {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
     let program = format!("try{{[...{operand}];\"OK\"}}catch(e){{e.name+\":\"+e.message}}");
     match context.eval(&program) {
         Ok(Value::String(value)) => value.to_utf8_lossy(),

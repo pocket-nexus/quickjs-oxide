@@ -34,7 +34,7 @@ fn runtime_compiler_executes_anonymous_iife_parameters_and_direct_call() {
 
 #[test]
 fn compiler_lowers_spread_calls_to_quickjs_apply_abis() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let root = context
         .compile("f(1,...xs,3); obj.m(...xs); eval(...xs); new C(...xs)")
         .unwrap();

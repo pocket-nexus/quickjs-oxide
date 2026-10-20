@@ -3,7 +3,7 @@ use quickjs_oxide::engine::api::core::Value;
 
 #[test]
 fn context_detach_array_buffer_uses_the_same_idempotent_core() {
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     let buffer = context
         .eval("globalThis.__buffer=new ArrayBuffer(4,{maxByteLength:8});__buffer")
         .unwrap();

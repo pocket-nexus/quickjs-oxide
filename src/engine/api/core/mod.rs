@@ -1,11 +1,13 @@
 //! The embedding API over `oxide-core`: one realm per runtime, values as
-//! Rust data or handles, the host as one trait, module loaders with a
-//! [`Scope`].
+//! Rust data or handles, the host as one trait, host functions with a
+//! [`Scope`], module loaders with a [`ModuleScope`].
 
 pub(crate) mod compile;
 mod context;
 mod error;
+mod function;
 mod module;
+mod ops;
 mod property;
 mod runtime;
 #[cfg(feature = "test262-host")]
@@ -14,7 +16,9 @@ mod value;
 
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
 pub use error::RuntimeError;
-pub use module::{CompiledModule, ModuleLoader, ModuleSource, Scope};
+pub use function::{FunctionOptions, HostFunction, Raw, Scope};
+pub use module::{CompiledModule, ModuleLoader, ModuleScope, ModuleSource};
+pub use ops::{Js, JsResult};
 pub use property::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, DescriptorField, OrdinaryPropertyDescriptor,
     PropertyKey, WellKnownSymbol,

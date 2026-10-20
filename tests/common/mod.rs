@@ -3,7 +3,7 @@ use quickjs_oxide::engine::api::core::{Runtime, RuntimeError, Value};
 #[allow(dead_code)]
 pub fn compile_syntax_error(source: &str) -> String {
     let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
     let error = match context.compile(source) {
         Err(RuntimeError::Exception(Value::Object(error))) => error,
         Err(RuntimeError::Exception(_)) => {

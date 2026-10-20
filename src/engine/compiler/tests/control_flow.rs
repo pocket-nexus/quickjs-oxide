@@ -516,7 +516,7 @@ fn switch_uses_quickjs_case_fallthrough_and_abrupt_cleanup() {
         Value::Int(4)
     );
 
-    let (_, mut context) = test_context();
+    let (_, context) = test_context();
     assert_eq!(
         context.eval("switch(1){case 1:throw 4;}").err(),
         Some(RuntimeError::Exception(Value::Int(4)))

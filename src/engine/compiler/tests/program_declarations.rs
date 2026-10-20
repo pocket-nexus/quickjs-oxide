@@ -357,7 +357,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
         })
     );
 
-    let mut inherited = runtime.new_context().expect("create context");
+    let inherited = runtime.new_context().expect("create context");
     let inherited_key = runtime.intern_property_key("inheritedVar").unwrap();
     let prototype = inherited.object_prototype().unwrap();
     assert!(
@@ -392,7 +392,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
         })
     );
 
-    let mut auto_init = runtime.new_context().expect("create context");
+    let auto_init = runtime.new_context().expect("create context");
     assert_eq!(
         auto_init.eval("var Number;typeof Number").unwrap(),
         Value::String(JsString::from_static("function"))
@@ -418,7 +418,7 @@ fn program_vars_instantiate_persist_and_preserve_existing_properties() {
 
 #[test]
 fn program_var_preflight_conflicts_and_parser_scope() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     assert_eq!(
         context.eval("let existingLexical=1").unwrap(),
         Value::Undefined
@@ -454,7 +454,7 @@ fn program_var_preflight_conflicts_and_parser_scope() {
     );
 
     let sealed_runtime = Runtime::new();
-    let mut sealed = sealed_runtime.new_context().expect("create context");
+    let sealed = sealed_runtime.new_context().expect("create context");
     assert_eq!(
         sealed.eval("let sealedLexical=1").unwrap(),
         Value::Undefined
@@ -477,7 +477,7 @@ fn program_var_preflight_conflicts_and_parser_scope() {
     );
 
     let atomic_runtime = Runtime::new();
-    let mut atomic = atomic_runtime.new_context().expect("create context");
+    let atomic = atomic_runtime.new_context().expect("create context");
     assert_eq!(
         atomic
             .eval("globalThis.atomicExisting=5;globalThis.atomicMarker=0")
@@ -532,7 +532,7 @@ fn program_var_preflight_conflicts_and_parser_scope() {
 
 #[test]
 fn program_global_lexical_preflight_and_failed_initializers() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let name = runtime.intern_property_key("name").unwrap();
     let message = runtime.intern_property_key("message").unwrap();
 

@@ -11,9 +11,12 @@ use crate::engine::value::JsStringError;
 pub enum RuntimeError {
     /// JavaScript threw this value.
     Exception(Value),
-    /// An API call was made from inside a host callback without its
-    /// [`Scope`](super::Scope).
+    /// An API call was made through a `Context` or `Runtime` from inside a
+    /// host function or callback, which has its own scope.
     Reentered,
+    /// A host function panicked while the runtime ran it; the runtime's
+    /// state is unknown and every later call fails.
+    Poisoned,
     /// The engine does not have this (`"realms"`).
     Unsupported(&'static str),
     /// The front end rejected the source.
@@ -32,6 +35,9 @@ impl fmt::Display for RuntimeError {
             RuntimeError::Exception(_) => f.write_str("JavaScript exception"),
             RuntimeError::Reentered => {
                 f.write_str("the runtime was re-entered from a host callback")
+            }
+            RuntimeError::Poisoned => {
+                f.write_str("the runtime is poisoned: a host function panicked")
             }
             RuntimeError::Unsupported(what) => write!(f, "{what} are not supported"),
             RuntimeError::Compile(error) => write!(f, "{error}"),

@@ -2,7 +2,7 @@
 //! core, objects and symbols as handles in the core's handle table.
 
 use std::fmt;
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use oxide_core::Handle;
 
@@ -197,9 +197,11 @@ impl From<CallableRef> for Value {
 }
 
 /// One handle in the core's handle table, released when the last reference
-/// drops (deferred to the next entry when the runtime is borrowed).
+/// drops (deferred when the runtime is borrowed). The runtime is held weakly:
+/// a handle a host function captures lives inside the runtime it names, and
+/// a handle that outlives its runtime releases nothing.
 pub(crate) struct Slot {
-    pub(crate) shared: Rc<Shared>,
+    pub(crate) shared: Weak<Shared>,
     pub(crate) handle: Handle,
     /// The held value; it never changes, and objects do not move.
     pub(crate) value: oxide_core::Value,
@@ -207,7 +209,16 @@ pub(crate) struct Slot {
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        self.shared.release(self.handle);
+        if let Some(shared) = self.shared.upgrade() {
+            shared.release(self.handle);
+        }
+    }
+}
+
+impl Slot {
+    /// Whether the slot is a handle of `shared`.
+    pub(crate) fn of(&self, shared: &Rc<Shared>) -> bool {
+        std::ptr::eq(self.shared.as_ptr(), Rc::as_ptr(shared))
     }
 }
 
@@ -236,7 +247,7 @@ macro_rules! reference {
 
             /// Whether this reference belongs to `runtime`.
             pub fn belongs_to(&self, runtime: &super::Runtime) -> bool {
-                Rc::ptr_eq(&self.slot.shared, &runtime.shared)
+                self.slot.of(&runtime.shared)
             }
 
             pub(crate) fn core_value(&self) -> oxide_core::Value {
@@ -246,7 +257,7 @@ macro_rules! reference {
 
         impl PartialEq for $name {
             fn eq(&self, other: &Self) -> bool {
-                Rc::ptr_eq(&self.slot.shared, &other.slot.shared)
+                Weak::ptr_eq(&self.slot.shared, &other.slot.shared)
                     && self.slot.value == other.slot.value
             }
         }

@@ -24,7 +24,7 @@ fn number_power_matrix_matches_pinned_quickjs() {
     );
     let oracle_observations = run_oracle_batch(&oracle, &cases);
 
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     for (index, (case, oracle_observation)) in cases.iter().zip(&oracle_observations).enumerate() {
         let rust_value = context.eval(&case.source).unwrap_or_else(|error| {
             panic!(

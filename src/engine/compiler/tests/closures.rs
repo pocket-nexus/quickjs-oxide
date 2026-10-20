@@ -129,7 +129,7 @@ fn named_function_self_assignment_matches_quickjs_strict_and_sloppy_rules() {
         Value::Bool(true)
     );
 
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let Err(RuntimeError::Exception(Value::Object(error))) =
         context.eval("(function named() { 'use strict'; named = 1; })()")
     else {

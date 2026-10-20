@@ -17,7 +17,7 @@ fn mixed_string_and_regexp_match_recursion_guard_is_catchable_and_recovers() {
         .stack_size(STACK)
         .spawn(|| {
             declare_thread_stack(STACK);
-            let (_runtime, mut context) = host_runtime_context();
+            let (_runtime, context) = host_runtime_context();
             drop(
                 context
                     .eval(

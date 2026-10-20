@@ -232,7 +232,7 @@ fn scoped_function_conflicts_and_global_annex_order_match_quickjs() {
         );
     }
 
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let Err(RuntimeError::Exception(Value::Object(error))) =
         context.eval("{function lateGlobalLexical(){}}let lateGlobalLexical;")
     else {

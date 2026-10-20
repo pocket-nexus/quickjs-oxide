@@ -84,7 +84,7 @@ impl Runtime {
     }
 
     pub(crate) fn prevent_extensions(&self, object: &ObjectRef) -> Result<(), RuntimeError> {
-        let mut context = self.context();
+        let context = self.context();
         let Value::Object(prevent) = context.eval("Object.preventExtensions")? else {
             unreachable!("Object.preventExtensions is a function");
         };

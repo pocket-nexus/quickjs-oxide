@@ -6,8 +6,8 @@ use std::rc::Rc;
 use quickjs_oxide::engine::api::core::{
     AccessorValue, CompleteOrdinaryPropertyDescriptor, Context, CoreValue, DescriptorField,
     GcPolicy, HeapLimits, Host, JsBigInt, JsString, ModuleImportAttributes, ModuleLoader,
-    ModuleSource, NativeErrorKind, OrdinaryPropertyDescriptor, PendingJobOutcome, PromiseState,
-    QjsHelpers, RejectionEvent, Runtime, RuntimeError, RuntimeOptions, Scope, Stream, Value,
+    ModuleScope, ModuleSource, NativeErrorKind, OrdinaryPropertyDescriptor, PendingJobOutcome,
+    PromiseState, QjsHelpers, RejectionEvent, Runtime, RuntimeError, RuntimeOptions, Stream, Value,
     WellKnownSymbol,
 };
 
@@ -29,7 +29,7 @@ fn thrown<T: std::fmt::Debug>(context: &Context, result: Result<T, RuntimeError>
 
 #[test]
 fn eval_returns_completion_values_of_every_kind() {
-    let (_, mut context) = runtime();
+    let (_, context) = runtime();
     assert_eq!(context.eval("1 + 2").unwrap(), Value::Int(3));
     assert_eq!(context.eval("0.5").unwrap(), Value::Float(0.5));
     assert_eq!(
@@ -55,7 +55,7 @@ fn eval_returns_completion_values_of_every_kind() {
 
 #[test]
 fn errors_carry_the_thrown_value() {
-    let (_, mut context) = runtime();
+    let (_, context) = runtime();
     let result = context.eval("null.x");
     assert!(
         thrown(&context, result)
@@ -80,8 +80,8 @@ fn errors_carry_the_thrown_value() {
 #[test]
 fn one_realm_per_runtime() {
     let runtime = Runtime::new();
-    let mut first = runtime.new_context().unwrap();
-    let mut second = Context::new(&runtime);
+    let first = runtime.new_context().unwrap();
+    let second = Context::new(&runtime);
     first.eval("var shared = 7").unwrap();
     assert_eq!(second.eval("shared").unwrap(), Value::Int(7));
     assert_eq!(
@@ -89,7 +89,7 @@ fn one_realm_per_runtime() {
         second.global_object().unwrap()
     );
     // Separate runtimes are isolated.
-    let mut other = Runtime::new().context();
+    let other = Runtime::new().context();
     assert_eq!(
         other.eval("typeof shared").unwrap(),
         Value::String(JsString::from_static("undefined"))
@@ -98,7 +98,7 @@ fn one_realm_per_runtime() {
 
 #[test]
 fn calls_construct_and_properties() {
-    let (runtime, mut context) = runtime();
+    let (runtime, context) = runtime();
     let Value::Object(add) = context
         .eval("(function (a, b) { return this.base + a + b; })")
         .unwrap()
@@ -232,7 +232,7 @@ fn calls_construct_and_properties() {
 
 #[test]
 fn symbols_and_conversions() {
-    let (runtime, mut context) = runtime();
+    let (runtime, context) = runtime();
     let symbol = runtime
         .new_symbol(Some(JsString::from_static("tag")))
         .unwrap();
@@ -292,7 +292,7 @@ fn symbols_and_conversions() {
 
 #[test]
 fn jobs_promises_and_rejections() {
-    let (runtime, mut context) = runtime();
+    let (runtime, context) = runtime();
     runtime.set_track_rejections(true).unwrap();
     let Value::Object(promise) = context.eval("var log = []; Promise.resolve(1).then(v => log.push(v)); Promise.reject(new Error('lost')); Promise.resolve(2)").unwrap() else {
         panic!("a promise");
@@ -364,7 +364,7 @@ fn the_host_receives_output_time_and_rejections() {
     let output = Rc::clone(&host.output);
     let events = Rc::clone(&host.events);
     let runtime = Runtime::with_host(host, RuntimeOptions::default());
-    let mut context = runtime.context();
+    let context = runtime.context();
     context.install_qjs_helpers(&QjsHelpers::default()).unwrap();
     context
         .eval("print('hi', {a: 1}); console.log(Date.now())")
@@ -394,7 +394,7 @@ struct Files;
 impl ModuleLoader for Files {
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {
@@ -484,7 +484,7 @@ struct Reentrant(Runtime);
 impl ModuleLoader for Reentrant {
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         _: &str,
         _: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {
@@ -518,7 +518,7 @@ fn a_heap_cap_surfaces_as_out_of_memory() {
         heap: HeapLimits { max_bytes: 8 << 20 },
         ..RuntimeOptions::default()
     });
-    let mut context = runtime.context();
+    let context = runtime.context();
     assert_eq!(
         context.eval("var keep = []; for (;;) keep.push({ a: keep.length });"),
         Err(RuntimeError::OutOfMemory)
@@ -527,7 +527,7 @@ fn a_heap_cap_surfaces_as_out_of_memory() {
 
 #[test]
 fn memory_report_counts_a_known_graph() {
-    let (runtime, mut context) = runtime();
+    let (runtime, context) = runtime();
     runtime.run_gc().unwrap();
     let before = runtime.memory_report().unwrap();
     context
@@ -549,7 +549,7 @@ fn memory_report_counts_a_known_graph() {
 
 #[test]
 fn execution_turns_and_the_stats_entries() {
-    let (runtime, mut context) = runtime();
+    let (runtime, context) = runtime();
     context.eval("Promise.resolve().then(() => {})").unwrap();
     let inside = runtime.with_execution_turn(|| runtime.run_pending_job());
     assert!(matches!(inside, Err(RuntimeError::Invariant(_))));
@@ -579,4 +579,458 @@ fn execution_turns_and_the_stats_entries() {
         .eval("for (var i = 0; i < 200000; i++) ({ i });")
         .unwrap();
     assert!(runtime.gc_stats().unwrap().collections > before);
+}
+
+// ---- host functions ----
+
+use quickjs_oxide::engine::api::core::{FunctionOptions, Js, JsResult, Scope};
+
+fn text(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.to_utf8_lossy(),
+        other => panic!("not a string: {other:?}"),
+    }
+}
+
+fn string(text: &str) -> Value {
+    Value::String(JsString::try_from_utf8(text).unwrap())
+}
+
+#[test]
+fn a_host_function_on_the_global_object_reads_its_call() {
+    let (runtime, context) = runtime();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "describe", 2, |scope: &mut Scope<'_>| {
+            let mut parts = vec![scope.argc().to_string()];
+            for value in scope.args() {
+                parts.push(scope.type_of(&value)?);
+            }
+            Ok(string(&parts.join(",")))
+        })
+        .unwrap();
+    assert_eq!(
+        text(
+            &context
+                .eval("describe(undefined, null, true, 1, 1.5, 2n, 's', Symbol(), {}, () => 0)")
+                .unwrap()
+        ),
+        "10,undefined,object,boolean,number,number,bigint,string,symbol,object,function"
+    );
+    // Fewer arguments than `length`, and the property's attributes.
+    assert_eq!(text(&context.eval("describe()").unwrap()), "0");
+    assert_eq!(
+        text(
+            &context
+                .eval(
+                    "var d = Object.getOwnPropertyDescriptor(globalThis, 'describe'); \
+                     [d.writable, d.enumerable, d.configurable, describe.name, describe.length].join()"
+                )
+                .unwrap()
+        ),
+        "true,false,true,describe,2"
+    );
+    let _ = runtime;
+}
+
+#[test]
+fn a_method_reads_its_receiver_and_captured_values() {
+    let (_, context) = runtime();
+    let counter = context
+        .new_function(
+            FunctionOptions::new("next").data(vec![Value::Int(0)]),
+            |scope: &mut Scope<'_>| {
+                let Value::Int(n) = scope.data(0) else {
+                    panic!("the captured count");
+                };
+                scope.set_data(0, Value::Int(n + 1))?;
+                let this = scope.this();
+                let key = PropertyKeyText::key(scope, "base")?;
+                let base = match this {
+                    Value::Object(object) => scope.get_property(&object, &key)?,
+                    _ => Value::Undefined,
+                };
+                let base = scope.to_number(&base)?;
+                Ok(Value::number(base + f64::from(n + 1)))
+            },
+        )
+        .unwrap();
+    let object = context.new_object().unwrap();
+    let key = context.runtime().intern_property_key("next").unwrap();
+    context
+        .set_property(&object, &key, Value::from(counter))
+        .unwrap();
+    let global = context.global_object().unwrap();
+    let key = context.runtime().intern_property_key("o").unwrap();
+    context
+        .set_property(&global, &key, Value::Object(object))
+        .unwrap();
+    assert_eq!(
+        text(
+            &context
+                .eval("o.base = 10; [o.next(), o.next(), o.next()].join()")
+                .unwrap()
+        ),
+        "11,12,13"
+    );
+}
+
+/// A helper that reads a key through either handle.
+struct PropertyKeyText;
+
+impl PropertyKeyText {
+    fn key(
+        js: &mut impl Js,
+        name: &str,
+    ) -> JsResult<quickjs_oxide::engine::api::core::PropertyKey> {
+        let _ = js.global_object()?;
+        Ok(
+            quickjs_oxide::engine::api::core::PropertyKey::from_js_string(JsString::try_from_utf8(
+                name,
+            )?),
+        )
+    }
+}
+
+/// Code generic over where it runs: a `Context` or a host function's
+/// `Scope`.
+fn make_point(js: &mut impl Js, x: f64) -> JsResult<quickjs_oxide::engine::api::core::ObjectRef> {
+    let point = js.new_object()?;
+    let key = PropertyKeyText::key(js, "x")?;
+    js.set_property(&point, &key, Value::number(x))?;
+    Ok(point)
+}
+
+#[test]
+fn code_generic_over_js_runs_on_both_handles() {
+    let (_, mut context) = runtime();
+    let point = make_point(&mut context, 1.0).unwrap();
+    let global = context.global_object().unwrap();
+    let key = context.runtime().intern_property_key("p").unwrap();
+    context
+        .set_property(&global, &key, Value::Object(point))
+        .unwrap();
+    context
+        .define_function(&global, "point", 1, |scope: &mut Scope<'_>| {
+            let x = scope.arg(0);
+            let x = scope.to_number(&x)?;
+            Ok(Value::Object(make_point(scope, x)?))
+        })
+        .unwrap();
+    assert_eq!(context.eval("p.x + point(2).x").unwrap(), Value::Int(3));
+}
+
+#[test]
+fn errors_cross_the_boundary_with_their_values() {
+    let (_, context) = runtime();
+    let global = context.global_object().unwrap();
+    // A script closure's throw propagates through `?` to the script's catch.
+    context
+        .define_function(&global, "invoke", 1, |scope: &mut Scope<'_>| {
+            let Value::Object(function) = scope.arg(0) else {
+                return Err(scope.throw_error(NativeErrorKind::Type, "not a function"));
+            };
+            let function = scope.as_callable(&function)?.expect("callable");
+            scope.call(&function, Value::Undefined, &[])
+        })
+        .unwrap();
+    assert_eq!(
+        context
+            .eval(
+                "var thrown = {}; \
+                 try { invoke(function () { throw thrown; }); } catch (e) { e === thrown }"
+            )
+            .unwrap(),
+        Value::Bool(true)
+    );
+    // An error thrown from Rust, with a stack naming the calling line.
+    context
+        .define_function(&global, "require_x", 1, |scope: &mut Scope<'_>| {
+            Err(scope.throw_error(NativeErrorKind::Type, "x is required"))
+        })
+        .unwrap();
+    let result = context
+        .eval_with_filename(
+            "\n\ntry { require_x(); } catch (e) { [e instanceof TypeError, e.message, e.stack].join('|') }",
+            "caller.js",
+        )
+        .unwrap();
+    let result = text(&result);
+    assert!(
+        result.starts_with(
+            "true|x is required|    at require_x (native)\n    at <eval> (caller.js:3"
+        ),
+        "{result}"
+    );
+    // Engine errors become InternalErrors the script can catch.
+    context
+        .define_function(&global, "broken", 0, |_: &mut Scope<'_>| {
+            Err(RuntimeError::Invariant("a broken host"))
+        })
+        .unwrap();
+    assert_eq!(
+        text(
+            &context
+                .eval("try { broken() } catch (e) { e.name + ': ' + e.message }")
+                .unwrap()
+        ),
+        "InternalError: invariant violated: a broken host"
+    );
+}
+
+/// Each level is a host call and a script call nested on the native stack,
+/// as deep as a builtin's re-entry: the test declares a stack that holds a
+/// thousand of them in a debug build.
+#[test]
+fn rust_and_javascript_recurse_through_each_other() {
+    const STACK: usize = 256 << 20;
+    let depth = std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(|| {
+            quickjs_oxide::engine::api::declare_thread_stack(STACK);
+            let (_, context) = runtime();
+            let global = context.global_object().unwrap();
+            context
+                .define_function(&global, "down", 1, |scope: &mut Scope<'_>| {
+                    let n = scope.arg(0);
+                    let n = scope.to_number(&n)?;
+                    if n == 0.0 {
+                        return Ok(Value::Int(0));
+                    }
+                    let global = scope.global_object()?;
+                    let key = PropertyKeyText::key(scope, "viaScript")?;
+                    let Value::Object(next) = scope.get_property(&global, &key)? else {
+                        panic!("viaScript");
+                    };
+                    let next = scope.as_callable(&next)?.expect("callable");
+                    let depth = scope.call(&next, Value::Undefined, &[Value::number(n - 1.0)])?;
+                    let depth = scope.to_number(&depth)?;
+                    Ok(Value::number(depth + 1.0))
+                })
+                .unwrap();
+            context
+                .eval("function viaScript(n) { return down(n); } down(1000)")
+                .unwrap()
+                .as_number()
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+    assert_eq!(depth, Some(1000.0));
+}
+
+#[test]
+fn values_a_host_function_keeps_outlive_its_call() {
+    let (_, context) = runtime();
+    let kept: Rc<RefCell<Vec<Value>>> = Rc::default();
+    let store = Rc::clone(&kept);
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "keep", 1, move |scope: &mut Scope<'_>| {
+            store.borrow_mut().push(scope.arg(0));
+            Ok(Value::Undefined)
+        })
+        .unwrap();
+    context
+        .eval("keep({ tag: 'a' }); keep('text'); keep([1, 2])")
+        .unwrap();
+    context.runtime().run_gc().unwrap();
+    let kept = kept.borrow();
+    let Value::Object(first) = &kept[0] else {
+        panic!("an object");
+    };
+    let key = context.runtime().intern_property_key("tag").unwrap();
+    assert_eq!(text(&context.get_property(first, &key).unwrap()), "a");
+    assert_eq!(text(&kept[1]), "text");
+    assert_eq!(context.runtime().print_value(&kept[2]).unwrap(), "[ 1, 2 ]");
+}
+
+#[test]
+fn a_runtime_whose_function_captured_a_handle_drops() {
+    let watch = Rc::new(());
+    {
+        let (_, context) = runtime();
+        let object = context.new_object().unwrap();
+        let watched = Rc::clone(&watch);
+        let global = context.global_object().unwrap();
+        context
+            .define_function(&global, "f", 0, move |_: &mut Scope<'_>| {
+                let _ = (&object, &watched);
+                Ok(Value::Undefined)
+            })
+            .unwrap();
+        assert_eq!(Rc::strong_count(&watch), 2);
+    }
+    assert_eq!(Rc::strong_count(&watch), 1, "the runtime leaked");
+}
+
+#[test]
+fn a_handle_used_after_its_runtime_dropped_is_an_error() {
+    let (_, context) = runtime();
+    let object = context.new_object().unwrap();
+    drop(context);
+    let (_, other) = runtime();
+    assert_eq!(
+        other.get_prototype_of(&object),
+        Err(RuntimeError::Invariant("a value of a dropped runtime"))
+    );
+}
+
+#[test]
+fn a_panic_in_a_host_function_poisons_the_runtime() {
+    let (runtime, context) = runtime();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "boom", 0, |_: &mut Scope<'_>| -> JsResult<Value> {
+            panic!("host bug")
+        })
+        .unwrap();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| context.eval("boom()")));
+    assert!(outcome.is_err());
+    assert_eq!(context.eval("1"), Err(RuntimeError::Poisoned));
+    assert_eq!(runtime.run_gc().map(drop), Err(RuntimeError::Poisoned));
+    assert_eq!(
+        RuntimeError::Poisoned.to_string(),
+        "the runtime is poisoned: a host function panicked"
+    );
+}
+
+#[test]
+fn a_host_function_uses_its_scope_not_the_context() {
+    let (_, context) = runtime();
+    let outer = context.clone();
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "nested", 0, move |scope: &mut Scope<'_>| {
+            assert_eq!(outer.eval("1"), Err(RuntimeError::Reentered));
+            assert_eq!(
+                scope.compile_module("export default 1").map(drop),
+                Err(RuntimeError::Unsupported("modules inside a host function"))
+            );
+            scope.eval("6 * 7")
+        })
+        .unwrap();
+    assert_eq!(context.eval("nested()").unwrap(), Value::Int(42));
+}
+
+#[test]
+fn a_constructor_sees_new_and_new_target() {
+    let (_, context) = runtime();
+    let point = context
+        .new_function(
+            FunctionOptions::new("Point").length(1).constructor(),
+            |scope: &mut Scope<'_>| {
+                if !scope.is_construct() {
+                    return Err(scope.throw_error(NativeErrorKind::Type, "use new"));
+                }
+                let target = scope.new_target();
+                let callee = scope.callee();
+                assert_eq!(target, Value::from(callee));
+                let x = scope.arg(0);
+                Ok(Value::Object(make_point(scope, scope_number(x))?))
+            },
+        )
+        .unwrap();
+    let global = context.global_object().unwrap();
+    let key = context.runtime().intern_property_key("Point").unwrap();
+    context
+        .set_property(&global, &key, Value::from(point))
+        .unwrap();
+    assert_eq!(context.eval("new Point(5).x").unwrap(), Value::Int(5));
+    assert_eq!(
+        text(
+            &context
+                .eval("try { Point(1) } catch (e) { e.message }")
+                .unwrap()
+        ),
+        "use new"
+    );
+    let plain = context
+        .new_function(FunctionOptions::new("plain"), |_: &mut Scope<'_>| {
+            Ok(Value::Undefined)
+        })
+        .unwrap();
+    assert!(matches!(
+        context.construct(&plain, &[]),
+        Err(RuntimeError::Exception(_))
+    ));
+}
+
+fn scope_number(value: Value) -> f64 {
+    value.as_number().unwrap_or(f64::NAN)
+}
+
+#[derive(Debug)]
+struct Counter(std::cell::Cell<i32>);
+
+#[test]
+fn host_objects_carry_the_embedders_value() {
+    let (_, context) = runtime();
+    let prototype = context.new_object().unwrap();
+    context
+        .define_function(&prototype, "bump", 0, |scope: &mut Scope<'_>| {
+            let Some(counter) = scope.this_host_data::<Counter>()? else {
+                return Err(scope.throw_error(NativeErrorKind::Type, "not a Counter"));
+            };
+            counter.0.set(counter.0.get() + 1);
+            Ok(Value::Int(counter.0.get()))
+        })
+        .unwrap();
+    let counter = context
+        .new_host_object(Counter(std::cell::Cell::new(40)), Some(&prototype))
+        .unwrap();
+    assert!(context.host_data::<String>(&counter).unwrap().is_none());
+    let global = context.global_object().unwrap();
+    let key = context.runtime().intern_property_key("counter").unwrap();
+    context
+        .set_property(&global, &key, Value::Object(counter.clone()))
+        .unwrap();
+    assert_eq!(
+        context.eval("counter.bump(); counter.bump()").unwrap(),
+        Value::Int(42)
+    );
+    assert_eq!(
+        text(
+            &context
+                .eval("try { counter.bump.call({}) } catch (e) { e.message }")
+                .unwrap()
+        ),
+        "not a Counter"
+    );
+    let datum = context.host_data::<Counter>(&counter).unwrap().unwrap();
+    assert_eq!(datum.0.get(), 42);
+    assert!(context.host_data::<Counter>(&prototype).unwrap().is_none());
+}
+
+#[test]
+fn a_module_loader_makes_host_functions() {
+    struct Loader;
+    impl ModuleLoader for Loader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            _: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let function = scope
+                .new_function(FunctionOptions::new("seven"), |_: &mut Scope<'_>| {
+                    Ok(Value::Int(7))
+                })
+                .map_err(|_| Value::Undefined)?;
+            let holder = scope
+                .new_host_object(5_u8, None)
+                .map_err(|_| Value::Undefined)?;
+            drop(holder);
+            let _ = function;
+            Ok(ModuleSource::source("export default 1;"))
+        }
+    }
+    let (runtime, context) = runtime();
+    runtime.set_module_loader(Loader).unwrap();
+    let module = context
+        .compile_module("import one from 'x'; globalThis.one = one;")
+        .unwrap();
+    context.execute_module(&module).unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(context.eval("one").unwrap(), Value::Int(1));
 }

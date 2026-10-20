@@ -11,7 +11,7 @@ fn script_for_capture_survives_a_following_eval_like_pinned_quickjs() {
     let setup = "Function.saved=undefined;for(let value=0;value<1;value++){Function.saved=function(){return value};}";
     let observation = "Function.saved()+'|'+typeof value";
 
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     drop(
         context
             .eval(setup)

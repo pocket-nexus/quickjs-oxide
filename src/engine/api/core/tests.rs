@@ -22,7 +22,7 @@ impl oxide_core::host::Host for Capture {
 fn run_api(source: &str) -> String {
     let output = Rc::default();
     let runtime = Runtime::with_host(Capture(Rc::clone(&output)), RuntimeOptions::default());
-    let mut context = runtime.context();
+    let context = runtime.context();
     context.install_qjs_helpers(&QjsHelpers::default()).unwrap();
     let mut result = context.eval(source).map(drop);
     if result.is_ok() {
@@ -61,7 +61,7 @@ fn the_corpus_prints_through_the_api_what_the_driver_prints() {
 #[test]
 fn transient_code_is_freed_once_nothing_names_it() {
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     runtime.run_gc().unwrap();
     let before = runtime.memory_report().unwrap().code;
     let transient = EvalOptions::default().transient();
@@ -135,7 +135,7 @@ fn define_core_host(
 #[test]
 fn a_script_calls_a_host_function_and_catches_its_throw() {
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     define_core_host(&runtime, "twice", false, |cx, call| {
         let n = cx.to_number(call.arg(cx, 0))?;
         Ok(oxide_core::Value::number(n * 2.0))
@@ -170,7 +170,7 @@ fn a_script_calls_a_host_function_and_catches_its_throw() {
 #[test]
 fn a_host_function_is_listed_in_a_backtrace() {
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     define_core_host(&runtime, "h", false, |cx, call| {
         cx.call(call.arg(cx, 0), oxide_core::Value::UNDEFINED, &[])
     });
@@ -190,7 +190,7 @@ fn a_host_function_is_listed_in_a_backtrace() {
 #[test]
 fn a_host_object_prints_as_an_object() {
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     define_core_host(&runtime, "make", false, |cx, _| {
         let prototype = cx.intrinsic(oxide_core::Intrinsic::ObjectPrototype);
         let object = cx.new_host_object(Some(prototype), Rc::new(7_u8)).unwrap();
@@ -208,4 +208,28 @@ fn a_host_object_prints_as_an_object() {
     // The printer names the class `Object`, as it names every internal
     // record without a class of its own.
     assert_eq!(runtime.print_value(&o).unwrap(), "Object { x: 1 }");
+}
+
+#[test]
+fn handles_a_host_function_drops_are_released_after_each_call() {
+    use super::Scope;
+    let runtime = Runtime::new();
+    let context = runtime.context();
+    let highest = Rc::new(std::cell::Cell::new(0usize));
+    let seen = Rc::clone(&highest);
+    let global = context.global_object().unwrap();
+    context
+        .define_function(&global, "touch", 1, move |scope: &mut Scope<'_>| {
+            let argument = scope.arg(0);
+            let live = scope.core.heap().handles_ref().live_count();
+            seen.set(seen.get().max(live));
+            drop(argument);
+            Ok(Value::Undefined)
+        })
+        .unwrap();
+    drop(global);
+    context
+        .eval("var o = {}; for (var i = 0; i < 10000000; i++) touch(o);")
+        .unwrap();
+    assert!(highest.get() < 16, "{} live handles", highest.get());
 }

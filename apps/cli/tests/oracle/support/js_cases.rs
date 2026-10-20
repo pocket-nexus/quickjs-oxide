@@ -245,7 +245,7 @@ const SCRIPT_SEPARATOR: &str = "\n// ---\n";
 
 /// Evaluate the case in a fresh runtime and format its completion(s) in JS.
 fn observe_oxide_completion(case: &Case, arrays: bool) -> String {
-    let (runtime, mut context) = host_runtime_context();
+    let (runtime, context) = host_runtime_context();
     let Ok(Value::Object(formatter)) = context.eval(OXIDE_FORMATTER) else {
         panic!("{}: formatter did not evaluate", case.name);
     };
@@ -276,7 +276,7 @@ fn observe_oxide_completion(case: &Case, arrays: bool) -> String {
 /// Like [`observe_oxide_completion`], but returned values and thrown
 /// primitives are rendered by `normalize_rust_value_units`.
 fn observe_oxide_units(case: &Case) -> String {
-    let (runtime, mut context) = host_runtime_context();
+    let (runtime, context) = host_runtime_context();
     match context.eval(&case.source) {
         Ok(value) => normalize_rust_value_units(&value),
         Err(RuntimeError::Exception(Value::Object(object)))

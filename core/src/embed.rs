@@ -248,6 +248,25 @@ impl<'a> NativeCx<'a> {
         self.realm
     }
 
+    /// Runs `install` with the atoms it interns pinned, as the builtins'
+    /// are.
+    pub(crate) fn installing<T>(&mut self, install: impl FnOnce(&mut Cx<'_>) -> T) -> T {
+        let mode = self.heap.set_atom_mode(crate::heap::AtomMode::Pin);
+        let result = install(&mut self.cx());
+        self.heap.set_atom_mode(mode);
+        result
+    }
+
+    /// [`Runtime::install_std`].
+    pub fn install_std(&mut self) -> Result<(), HeapError> {
+        self.installing(crate::builtins::install_std)
+    }
+
+    /// [`Runtime::install_qjs_helpers`].
+    pub fn install_qjs_helpers(&mut self, script_args: Option<&[String]>) -> Result<(), HeapError> {
+        self.installing(|cx| crate::builtins::install_qjs_helpers(cx, script_args))
+    }
+
     /// The bytes of host stack nested re-entries into the loop may use.
     pub fn set_native_stack_budget(&mut self, bytes: usize) {
         self.heap.vm.native_budget = bytes;

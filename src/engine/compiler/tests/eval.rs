@@ -3,7 +3,7 @@ use crate::engine::test_support::{assert_script_true, test_context};
 
 #[test]
 fn compiler_marks_only_syntactic_eval_identifier_calls() {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
 
     for source in ["eval(0)", "(eval)(0)", "((eval))(0)", r"\u0065val(0)"] {
         let root = context.compile(source).unwrap();

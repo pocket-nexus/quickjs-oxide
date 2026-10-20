@@ -81,7 +81,7 @@ fn evaluate_error(runtime: &Runtime, context: &mut Context, source: &str) -> (Js
 }
 
 fn evaluate_function_name(source: &str) -> (JsString, bool, bool, bool) {
-    let (runtime, mut context) = test_context();
+    let (runtime, context) = test_context();
     let Value::Object(function) = context.eval(source).unwrap() else {
         panic!("source did not evaluate to a function object");
     };

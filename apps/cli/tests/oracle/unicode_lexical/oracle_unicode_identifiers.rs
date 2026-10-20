@@ -69,7 +69,7 @@ fn unicode_identifier_execution_matches_pinned_quickjs() {
         ),
     ];
 
-    let (_runtime, mut context) = host_runtime_context();
+    let (_runtime, context) = host_runtime_context();
     for (description, source) in cases {
         assert_eq!(
             context.eval(&source).unwrap_or_else(|error| {
@@ -366,7 +366,7 @@ fn oracle_number_observation(oracle: &OsStr, source: &str, description: &str) ->
 }
 
 fn rust_error_observation(source: &str) -> String {
-    let (runtime, mut context) = host_runtime_context();
+    let (runtime, context) = host_runtime_context();
     let Err(RuntimeError::Exception(Value::Object(error))) = context.eval(source) else {
         panic!("Rust parser did not materialize an Error object for {source:?}");
     };

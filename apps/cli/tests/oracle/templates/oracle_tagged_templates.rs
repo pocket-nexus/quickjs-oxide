@@ -7,7 +7,7 @@ fn tagged_template_site_identity_survives_gc_in_strip_debug_mode() {
     runtime
         .set_debug_info_mode(DebugInfoMode::StripDebug)
         .expect("set runtime configuration");
-    let mut context = runtime.new_context().expect("create context");
+    let context = runtime.new_context().expect("create context");
     drop(
         context
             .eval(

@@ -66,7 +66,7 @@ fn atom_cases() -> Vec<Vec<u16>> {
 }
 
 fn rust_observations(cases: &[Vec<u16>]) -> Vec<Observation> {
-    let (runtime, mut context) = host_runtime_context();
+    let (runtime, context) = host_runtime_context();
     let global = context.global_object().unwrap();
     let function_key = runtime.intern_property_key("Function").unwrap();
     let Value::Object(function) = context.get_property(&global, &function_key).unwrap() else {

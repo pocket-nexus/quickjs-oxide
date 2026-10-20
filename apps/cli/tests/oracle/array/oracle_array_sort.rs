@@ -12,7 +12,7 @@ fn array_sort_atom_literal_identity_matches_quickjs() {
     // API copies strings across its boundary, so
     // only the identities JavaScript itself makes are observable.
     let runtime = host_runtime();
-    let mut caller = runtime.new_context().expect("create context");
+    let caller = runtime.new_context().expect("create context");
     assert_eq!(
         caller
             .eval(

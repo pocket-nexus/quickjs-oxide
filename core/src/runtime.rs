@@ -476,10 +476,7 @@ impl Runtime {
     /// Runs `install` with the atoms it interns pinned, as the builtins'
     /// are.
     fn installing<T>(&mut self, install: impl FnOnce(&mut Cx<'_>) -> T) -> T {
-        let mode = self.heap.set_atom_mode(crate::heap::AtomMode::Pin);
-        let result = install(&mut self.cx());
-        self.heap.set_atom_mode(mode);
-        result
+        self.native_cx().installing(install)
     }
 
     /// The loop's view of the runtime.
@@ -569,13 +566,13 @@ impl Runtime {
     /// Defines qjs's `--std` globals, `load` and `read`, over the host's
     /// [`read_file`](crate::host::Host::read_file).
     pub fn install_std(&mut self) -> Result<(), HeapError> {
-        self.installing(crate::builtins::install_std)
+        self.native_cx().install_std()
     }
 
     /// Defines `qjs`'s helpers as QuickJS's `js_std_add_helpers` does:
     /// `console`, `scriptArgs` when given, `print`.
     pub fn install_qjs_helpers(&mut self, script_args: Option<&[String]>) -> Result<(), HeapError> {
-        self.installing(|cx| crate::builtins::install_qjs_helpers(cx, script_args))
+        self.native_cx().install_qjs_helpers(script_args)
     }
 
     /// Defines qjs's `scriptArgs`.
