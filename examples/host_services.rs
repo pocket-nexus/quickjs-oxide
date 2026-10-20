@@ -32,7 +32,7 @@ fn capture_output() {
     let host = CaptureHost::default();
     let output = Rc::clone(&host.output);
     let runtime = Runtime::new_with_host_services(host);
-    let mut context = runtime.context();
+    let context = runtime.context();
     let before = context.eval("typeof print + ' ' + typeof console").unwrap();
     assert_eq!(
         before,
@@ -72,7 +72,7 @@ fn fixed_clock() {
                    new Date().getHours(), Math.random()].join(' ')";
     let run = || {
         let runtime = Runtime::with_host(FixedHost, RuntimeOptions::default());
-        let mut context = runtime.context();
+        let context = runtime.context();
         let Value::String(text) = context.eval(script).unwrap() else {
             panic!("expected a string");
         };
@@ -103,7 +103,7 @@ fn read_file() {
         ("data.txt".to_owned(), "line one".to_owned()),
     ]);
     let runtime = Runtime::new_with_host_services(MemoryFiles { files });
-    let mut context = runtime.context();
+    let context = runtime.context();
     context
         .install_qjs_helpers(&QjsHelpers {
             std: true,
@@ -147,7 +147,7 @@ fn rejection_events() {
     let host = RejectionLog::default();
     let events = Rc::clone(&host.events);
     let runtime = Runtime::new_with_host_services(host);
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     context
         .eval("globalThis.p = Promise.reject(new Error('late'))")
@@ -165,7 +165,7 @@ fn rejection_events() {
 fn native_system_host() {
     // docs:start system-host
     let runtime = Runtime::new_with_host_services(quickjs_oxide_host::SystemHost::default());
-    let mut context = runtime.context();
+    let context = runtime.context();
     let offset = context.eval("new Date(0).getTimezoneOffset()").unwrap();
     // docs:end system-host
     assert!(matches!(offset, Value::Int(_)));

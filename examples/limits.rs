@@ -20,17 +20,13 @@ fn text(value: &Value) -> String {
 fn exceptions() {
     // docs:start exceptions
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     let result = context.eval("function f() { throw new TypeError('bad input') }\nf()");
-    assert_eq!(result, Err(RuntimeError::Exception));
-    assert!(context.has_exception().unwrap());
-
-    // Taking the exception clears it.
-    let Some(Value::Object(error)) = context.take_exception().unwrap() else {
+    // The error carries the thrown value.
+    let Err(RuntimeError::Exception(Value::Object(error))) = result else {
         panic!("expected an error object");
     };
-    assert!(!context.has_exception().unwrap());
     assert!(runtime.is_error_object(&error).unwrap());
 
     // print_value formats it as QuickJS's print does: the error, then its stack.
@@ -39,8 +35,10 @@ fn exceptions() {
     // docs:end exceptions
 
     // A thrown non-error value comes back as is.
-    assert_eq!(context.eval("throw 7"), Err(RuntimeError::Exception));
-    assert_eq!(context.take_exception().unwrap(), Some(Value::Int(7)));
+    assert_eq!(
+        context.eval("throw 7"),
+        Err(RuntimeError::Exception(Value::Int(7)))
+    );
 }
 
 fn invariants() {
@@ -62,14 +60,13 @@ fn invariants() {
 fn syntax_errors() {
     // docs:start syntax-errors
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     // A syntax error is thrown, as QuickJS's JS_Eval throws it.
-    assert_eq!(
-        context.eval_with_filename("let x = ;", "app.js"),
-        Err(RuntimeError::Exception)
-    );
-    let exception = context.take_exception().unwrap().unwrap();
+    let Err(RuntimeError::Exception(exception)) = context.eval_with_filename("let x = ;", "app.js")
+    else {
+        panic!("expected a SyntaxError");
+    };
     let printed = runtime.print_value(&exception).unwrap();
     assert!(printed.starts_with("SyntaxError: unexpected token in expression: ';'"));
     assert!(printed.contains("at app.js:1:9"));
@@ -94,7 +91,7 @@ fn native_errors() {
 fn stack_limits() {
     // docs:start stack-overflow
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     let caught = context
         .eval("function down(n) { return down(n + 1) + 1 }\ntry { down(0) } catch (e) { `${e.name}: ${e.message}` }")
         .unwrap();
@@ -104,7 +101,7 @@ fn stack_limits() {
     // docs:start stack-limit
     let depth = |options: RuntimeOptions| {
         let runtime = Runtime::with_options(options);
-        let mut context = runtime.context();
+        let context = runtime.context();
         let reached = context
             .eval(
                 "let depth = 0; function down() { depth++; down() }\ntry { down() } catch {} depth",
@@ -131,7 +128,7 @@ fn stack_limits() {
         native_depth_limit: 64,
         ..RuntimeOptions::default()
     });
-    let mut context = runtime.context();
+    let context = runtime.context();
     let caught = context
         .eval(
             "function nest(n) { return n === 0 ? 0 : [n].map((m) => nest(m - 1))[0] + 1 }
@@ -153,14 +150,15 @@ fn evaluation_thread() {
             // their stack checks from this.
             declare_thread_stack(STACK);
             let runtime = Runtime::new();
-            let mut context = runtime.context();
+            let context = runtime.context();
             let nested = |depth: usize| format!("{}1{}", "[".repeat(depth), "]".repeat(depth));
 
             assert!(context.eval(&nested(500)).is_ok());
 
             // Nesting past the parser's budget is a catchable SyntaxError.
-            assert_eq!(context.eval(&nested(5_000)), Err(RuntimeError::Exception));
-            let exception = context.take_exception().unwrap().unwrap();
+            let Err(RuntimeError::Exception(exception)) = context.eval(&nested(5_000)) else {
+                panic!("expected a SyntaxError");
+            };
             let printed = runtime.print_value(&exception).unwrap();
             assert!(printed.starts_with("SyntaxError: stack overflow"));
         })
@@ -174,7 +172,7 @@ fn heap_cap() {
     let runtime = Runtime::with_options(RuntimeOptions::from(HeapLimits {
         max_bytes: 16 << 20,
     }));
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     // Reaching the cap throws a catchable InternalError.
     let caught = context
@@ -194,7 +192,6 @@ fn heap_cap() {
         context.eval("const kept = []; for (;;) kept.push(new Array(1024).fill(0));"),
         Err(RuntimeError::OutOfMemory)
     );
-    assert!(!context.has_exception().unwrap());
     assert!(runtime.memory_report().unwrap().reserved_bytes() <= 16 << 20);
     // docs:end heap-cap
 }
@@ -207,7 +204,7 @@ fn collector() {
         ..RuntimeOptions::default()
     });
     runtime.set_gc_policy(GcPolicy::Manual).unwrap();
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     context
         .eval("let garbage = []; for (let i = 0; i < 10000; i++) garbage.push({ i }); garbage = null;")

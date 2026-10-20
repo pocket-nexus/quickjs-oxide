@@ -9,15 +9,15 @@ This page follows a script from source text to a running program and names the c
 | Crate | Path | Content |
 | --- | --- | --- |
 | `quickjs-oxide` | `src/` | The front end (lexer, parser, scopes, stack-code emission), the register lowering and the embedding API |
-| `oxide-core` | `core/` | Values, the heap and its collector, shapes, register bytecode, the loop that runs it, the builtins, the `Host` trait and `Runtime` |
-| `oxide-regexp` | `regexp/` | Regular-expression compilation and matching over UTF-16 code units, and the Unicode 17 tables |
+| `quickjs-oxide-core` | `core/` | Values, the heap and its collector, shapes, register bytecode, the loop that runs it, the builtins, the `Host` trait and `Runtime` |
+| `quickjs-oxide-regexp` | `regexp/` | Regular-expression compilation and matching over UTF-16 code units, and the Unicode 17 tables |
 | `quickjs-oxide-host` | `adapters/native` | `SystemHost`: the system clock and the time-zone rules from TZif files and `TZ` |
 | `quickjs-oxide-web-host` | `adapters/web` | `WebHost`: the browser's clock, time zone and random source |
 | `quickjs-oxide-cli` | `apps/cli` | The `qjs` command line |
 | `quickjs-oxide-web` | `apps/web` | The WebAssembly bindings and the browser demo |
 | `quickjs-oxide-test262` | `conformance/test262` | The Test262 runner, `run-test262` |
 
-Dependencies point one way. `oxide-regexp` depends on nothing. `oxide-core` depends only on `oxide-regexp`. The root crate `quickjs-oxide` depends on both, plus `num-bigint` and `num-traits` for BigInt literals and BigInt values in the API. The command line, the WebAssembly bindings, the host adapters and the Test262 runner use the engine only through the root crate's API, `quickjs_oxide::engine::api::core`.
+Dependencies point one way. `quickjs-oxide-regexp` depends on nothing. `quickjs-oxide-core` depends only on `quickjs-oxide-regexp`. The root crate `quickjs-oxide` depends on both, plus `num-bigint` and `num-traits` for BigInt literals and BigInt values in the API. The command line, the WebAssembly bindings, the host adapters and the Test262 runner use the engine only through the root crate's API, `quickjs_oxide::engine::api::core`.
 
 ## From source to result
 
@@ -30,11 +30,11 @@ source text
 QuickJS-shaped stack code, one unit per function
   │  register lowering (quickjs-oxide)
   ▼
-oxide-core register code
+quickjs-oxide-core register code
   │  publication: validated once
   ▼
 function objects in the heap
-  │  the loop (oxide-core)
+  │  the loop (quickjs-oxide-core)
   ▼
 completion value or exception
 ```
@@ -45,13 +45,13 @@ The front end in `src/engine/compiler` parses Script or Module source and emits 
 
 ### Register lowering
 
-The lowering in `src/engine/compiler/register` turns each function's stack code into register code for `oxide-core`. Register 0 is `this`, followed by the parameters, the locals and one temporary per stack depth, so the stack depth chooses the register. Variables captured by closures become cells. A function with more locals and temporaries than its 256-register window keeps the rest in a spill area.
+The lowering in `src/engine/compiler/register` turns each function's stack code into register code for `quickjs-oxide-core`. Register 0 is `this`, followed by the parameters, the locals and one temporary per stack depth, so the stack depth chooses the register. Variables captured by closures become cells. A function with more locals and temporaries than its 256-register window keeps the rest in a spill area.
 
 Each instruction is 8 bytes: an opcode, three byte operands and a 32-bit immediate.
 
 ### Publication
 
-`oxide-core` validates each code unit once, when it is published. Code compiled for the program and its modules lives as long as the runtime. Code compiled while the program runs (`eval`, `new Function`) lives in the heap and is freed once nothing reaches it. Instantiation then creates one bytecode record per unit and the function objects that share it.
+`quickjs-oxide-core` validates each code unit once, when it is published. Code compiled for the program and its modules lives as long as the runtime. Code compiled while the program runs (`eval`, `new Function`) lives in the heap and is freed once nothing reaches it. Instantiation then creates one bytecode record per unit and the function objects that share it.
 
 ### The loop
 
@@ -63,7 +63,7 @@ Builtins are Rust functions that read their arguments from the register file. Wh
 
 ## The heap and the collector
 
-`oxide-core` owns every heap record. Values are 8-byte NaN-boxed words. Objects, strings, symbols, BigInts, shapes, closures and the engine's internal records each live in a typed arena, and property values, array elements and scope variables live in one shared value heap. Objects with the same properties in the same order share a shape, and the inline caches test shapes.
+`quickjs-oxide-core` owns every heap record. Values are 8-byte NaN-boxed words. Objects, strings, symbols, BigInts, shapes, closures and the engine's internal records each live in a typed arena, and property values, array elements and scope variables live in one shared value heap. Objects with the same properties in the same order share a shape, and the inline caches test shapes.
 
 The collector is a non-moving mark-and-sweep collector. It runs only inside a call that allocates, or when the embedder asks for a collection with `Runtime::run_gc`. It runs when allocation would take memory past a budget: by default the live bytes times three, and at least 1 MiB. `RuntimeOptions` sets the minimum heap, the growth factor and an optional heap cap; past the cap an allocation fails with an out-of-memory error. `Runtime::memory_report` reports what every part of the runtime holds. [Optimizations](./optimizations.md) describes the arenas, shapes and the collector in detail.
 

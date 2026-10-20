@@ -197,11 +197,9 @@ fn call_functions(runtime: &Runtime, context: &mut Context) -> Result {
     let thrower = runtime
         .as_callable(thrower.as_object().expect("an object"))?
         .expect("a function");
-    assert_eq!(
-        context.call(&thrower, Value::Undefined, &[]),
-        Err(RuntimeError::Exception)
-    );
-    let error = context.take_exception()?.expect("the thrown error");
+    let Err(RuntimeError::Exception(error)) = context.call(&thrower, Value::Undefined, &[]) else {
+        panic!("expected the thrown error");
+    };
     assert_eq!(
         context.to_js_string(&error)?.to_utf8_lossy(),
         "RangeError: too far"

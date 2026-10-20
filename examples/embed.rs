@@ -22,7 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn first_eval() -> Result<(), Box<dyn std::error::Error>> {
     // docs:start first-eval
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context()?;
+    let context = runtime.new_context()?;
 
     let value = context.eval("[1, 2, 3].map((x) => x * 2).join()")?;
 
@@ -36,7 +36,7 @@ fn first_eval() -> Result<(), Box<dyn std::error::Error>> {
 
 fn read_result() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context()?;
+    let context = runtime.new_context()?;
     // docs:start read-result
     assert_eq!(context.eval("6 * 7")?, Value::Int(42));
     assert_eq!(context.eval("0.5 + 0.25")?, Value::Float(0.75));
@@ -58,7 +58,7 @@ fn read_result() -> Result<(), Box<dyn std::error::Error>> {
 
 fn call_function() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context()?;
+    let context = runtime.new_context()?;
     // docs:start call-function
     // Define a function in JavaScript.
     context.eval(
@@ -84,12 +84,11 @@ fn call_function() -> Result<(), Box<dyn std::error::Error>> {
 
 fn catch_exception() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context()?;
+    let context = runtime.new_context()?;
     // docs:start exception
     match context.eval("null.length") {
-        Err(RuntimeError::Exception) => {
-            // The thrown value waits on the context until it is taken.
-            let thrown = context.take_exception()?.expect("a pending exception");
+        Err(RuntimeError::Exception(thrown)) => {
+            // The error carries the thrown value.
             let message = context.to_js_string(&thrown)?;
             assert_eq!(
                 message.to_utf8_lossy(),
@@ -104,7 +103,7 @@ fn catch_exception() -> Result<(), Box<dyn std::error::Error>> {
 
 fn console() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context()?;
+    let context = runtime.new_context()?;
     // docs:start console
     // A fresh realm has the standard built-ins only.
     assert_eq!(

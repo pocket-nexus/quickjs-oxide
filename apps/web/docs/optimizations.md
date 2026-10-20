@@ -1,6 +1,6 @@
 # Optimizations
 
-quickjs-oxide is an interpreter: it compiles JavaScript to bytecode and runs that bytecode in a loop. Its speed and its memory use come from how the bytecode is shaped, how values and objects are laid out, how property access is cached and how the heap is managed. This page walks through each technique, where it lives in the source and what it buys. The engine's core is the crate `oxide-core` in [`core/`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/core/README.md); the compiler is in the root crate under [`src/engine/compiler`](https://github.com/pocket-nexus/quickjs-oxide/tree/main/src/engine/compiler). Both have no unsafe code.
+quickjs-oxide is an interpreter: it compiles JavaScript to bytecode and runs that bytecode in a loop. Its speed and its memory use come from how the bytecode is shaped, how values and objects are laid out, how property access is cached and how the heap is managed. This page walks through each technique, where it lives in the source and what it buys. The engine's core is the crate `quickjs-oxide-core` in [`core/`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/core/README.md); the compiler is in the root crate under [`src/engine/compiler`](https://github.com/pocket-nexus/quickjs-oxide/tree/main/src/engine/compiler). Both have no unsafe code.
 
 | Technique | Where | Effect |
 | --- | --- | --- |

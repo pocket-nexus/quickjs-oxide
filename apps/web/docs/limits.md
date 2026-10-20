@@ -1,13 +1,15 @@
 # Errors and limits
 
-Every fallible API call returns `Result<_, RuntimeError>`. Most failures are JavaScript exceptions, which stay pending on the context until the embedder takes them. This page covers exceptions, the other `RuntimeError` variants, and the limits a runtime enforces on call depth, host stack and heap memory, plus the collector settings and the memory report.
+Every fallible API call returns `Result<_, RuntimeError>`. Most failures are JavaScript exceptions, and the error carries the thrown value. This page covers exceptions, the other `RuntimeError` variants, and the limits a runtime enforces on call depth, host stack and heap memory, plus the collector settings and the memory report.
 
 ## RuntimeError
 
 | Variant | Meaning |
 | --- | --- |
-| `Exception` | JavaScript threw. The thrown value is the context's pending exception. |
-| `Reentered` | An API call was made from inside a module loader callback instead of through its `Scope`. |
+| `Exception(value)` | JavaScript threw `value`. |
+| `Reentered` | An API call was made through the `Runtime` or a `Context` from inside a host function or a module loader callback, instead of through its scope. |
+| `Interrupted` | An interrupt stopped the script ([Rust functions](./functions.md#interrupts)). |
+| `Poisoned` | A host function panicked earlier; the runtime refuses every call. |
 | `Unsupported(what)` | The source uses a construct the engine does not compile. |
 | `Compile(Error)` | The front end failed with an internal or I/O error, not a JavaScript error. |
 | `OutOfMemory` | The heap cap was reached: JavaScript did not catch its out-of-memory error, or an API call could not allocate. |
@@ -18,29 +20,25 @@ Every fallible API call returns `Result<_, RuntimeError>`. Most failures are Jav
 
 ## Exceptions
 
-When JavaScript throws, the call returns `Err(RuntimeError::Exception)` and the context keeps the thrown value:
+When JavaScript throws, the call returns `Err(RuntimeError::Exception(value))` with the thrown value:
 
-- `Context::has_exception()` tells whether one is pending.
-- `Context::take_exception()` returns it as `Option<Value>` and clears it.
 - `Runtime::is_error_object(&object)` tells whether an object is an `Error` instance.
 - `Runtime::print_value(&value)` formats any value as QuickJS's `JS_PrintValue` does, the output of `print` and of the `qjs` command's uncaught-exception report. For an error that is `Name: message` followed by its stack. It runs no JavaScript: no getters, proxy traps or `toString` calls.
 - `Runtime::qjs_print_value_bytes(&value)` returns the same text as bytes, with a lone surrogate encoded as WTF-8 instead of U+FFFD.
 
 <!-- include: examples/limits.rs#exceptions -->
 
-A thrown value does not have to be an error object. `throw 7` leaves `Value::Int(7)` pending.
-
-Take the exception before the next call that might throw. Each new exception replaces the pending one.
+A thrown value does not have to be an error object. `throw 7` returns `Exception(Value::Int(7))`.
 
 ### Syntax errors
 
-Compiling a script or module with a syntax error does not return `RuntimeError::Compile`. As with QuickJS's `JS_Eval`, the error is thrown: the call returns `Err(RuntimeError::Exception)` and a `SyntaxError` with the file, line and column in its stack is pending.
+Compiling a script or module with a syntax error does not return `RuntimeError::Compile`. As with QuickJS's `JS_Eval`, the error is thrown: the call returns `Err(RuntimeError::Exception(error))` with a `SyntaxError` whose stack gives the file, line and column.
 
 <!-- include: examples/limits.rs#syntax-errors -->
 
 ### Creating errors
 
-`Context::new_native_error(kind, message)` creates an error object without throwing it. A module loader creates one through its scope with `Scope::new_native_error` ([Modules](./modules.md#the-scope)). `NativeErrorKind` lists QuickJS's native error types in their QuickJS order: `Eval`, `Range`, `Reference`, `Syntax`, `Type`, `Uri`, `Internal` and `Aggregate`. `NativeErrorKind::name()` gives the constructor name, such as `"RangeError"`.
+`Context::new_native_error(kind, message)` creates an error object without throwing it. A module loader creates one through its scope with `ModuleScope::new_native_error` ([Modules](./modules.md#the-modulescope)); a host function throws one with `Scope::throw_error` ([Rust functions](./functions.md)). `NativeErrorKind` lists QuickJS's native error types in their QuickJS order: `Eval`, `Range`, `Reference`, `Syntax`, `Type`, `Uri`, `Internal` and `Aggregate`. `NativeErrorKind::name()` gives the constructor name, such as `"RangeError"`.
 
 <!-- include: examples/limits.rs#native-error -->
 
@@ -84,7 +82,7 @@ To give scripts more room, run the runtime on a thread with a large stack and ca
 
 The cap applies to the bytes the heap reserves: the arenas holding objects, strings, shapes and the other records, the value heap, the tables beside them, code compiled at run time and regular-expression programs. Scripts compiled through `Context::eval*` and `Context::compile*` without the `transient` option keep their code in a separate code store that the cap does not count. `MemoryReport::reserved_bytes()` is the figure the cap is compared against.
 
-When an allocation would cross the cap, the runtime collects first. If the heap would still cross it, JavaScript gets a catchable `InternalError: out of memory`, which the runtime creates up front so throwing it needs no memory. If the script does not catch it, the API call returns `RuntimeError::OutOfMemory` with no pending exception. An API call from Rust that cannot allocate returns `RuntimeError::OutOfMemory` too.
+When an allocation would cross the cap, the runtime collects first. If the heap would still cross it, JavaScript gets a catchable `InternalError: out of memory`, which the runtime creates up front so throwing it needs no memory. If the script does not catch it, the API call returns `RuntimeError::OutOfMemory`. An API call from Rust that cannot allocate returns `RuntimeError::OutOfMemory` too.
 
 <!-- include: examples/limits.rs#heap-cap -->
 

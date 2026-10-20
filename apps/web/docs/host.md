@@ -14,6 +14,7 @@ The engine reaches the outside world through one trait, `Host`. A runtime owns o
 | `random_seed(&mut self) -> u64` | the initial state of `Math.random` | derived from the system clock |
 | `promise_rejection(&mut self, event: RejectionEvent, promise: CoreValue)` | the promise rejection tracker | ignores the event |
 | `read_file(&mut self, path: &str) -> Option<String>` | `load` and `read` | reads the process's file system |
+| `interrupt(&mut self) -> bool` | the interrupt poll, about every thousand loop back-edges and calls ([Rust functions](./functions.md#interrupts)) | never interrupts |
 
 `local_tz_offset_minutes` returns UTC minus local time at the instant `utc_ms`, with the sign `Date.prototype.getTimezoneOffset` uses: a zone east of UTC gives a negative number. The engine asks for every instant it converts, so a host can apply daylight-saving rules.
 

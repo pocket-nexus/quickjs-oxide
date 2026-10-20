@@ -27,8 +27,8 @@ A module has no completion value. To get results out, have the module store them
 
 A module fails in one of three places:
 
-- A syntax error makes the compile call return `Err(RuntimeError::Exception)`, with a `SyntaxError` pending on the context.
-- An import that cannot be loaded or linked makes `execute_module` return `Err(RuntimeError::Exception)`, with the loader's error pending.
+- A syntax error makes the compile call return `Err(RuntimeError::Exception(error))` with the `SyntaxError`.
+- An import that cannot be loaded or linked makes `execute_module` return `Err(RuntimeError::Exception(error))` with the loader's error.
 - An error thrown while the module runs rejects the evaluation promise.
 
 <!-- include: examples/modules.rs#failures -->
@@ -53,9 +53,10 @@ Each normalized name is loaded and evaluated once per runtime. Later imports of 
 | `Source { text, import_meta }` | JavaScript source, with initial `import.meta` properties |
 | `Json(bytes)` | a JSON module: its default export is the parsed value |
 | `Json5(bytes)` | a JSON5 module |
-| `Compiled(module)` | a `CompiledModule` that `Scope::compile_module` already compiled |
+| `Compiled(module)` | a `CompiledModule` that `ModuleScope::compile_module` already compiled |
+| `Synthetic { exports }` | a module whose exports are the given `(name, value)` pairs; `default` is the default export |
 
-`ModuleSource::source(text)` builds `Source` with an empty `import.meta`.
+`ModuleSource::source(text)` builds `Source` with an empty `import.meta`. Without a loader, `Context::define_module(name, exports)` makes a synthetic module importable by `name` ([Rust functions](./functions.md#native-modules)).
 
 This loader serves modules from a map and treats `.json` names and `with { type: "json" }` imports as JSON:
 
@@ -67,17 +68,18 @@ Installing it and importing through it:
 
 Modules compiled through `Context::compile_module*` or returned by a loader stay alive as long as the runtime.
 
-### The Scope
+### The ModuleScope
 
-Both loader methods receive a `&mut Scope<'_>`, which gives access to the runtime while the callback runs. With it a loader can:
+Both loader methods receive a `&mut ModuleScope<'_>`, which gives access to the runtime while the callback runs. With it a loader can:
 
-- create an error to throw with `Scope::new_native_error(kind, message)`;
-- create an object with `Scope::new_object()`;
-- compile module source itself with `Scope::compile_module(name, text, import_meta)`, which returns a `CompiledModule` or the `SyntaxError` to throw.
+- create an error to throw with `ModuleScope::new_native_error(kind, message)`;
+- create an object with `ModuleScope::new_object()`;
+- create Rust functions and host objects with `ModuleScope::new_function` and `ModuleScope::new_host_object`, for a synthetic module's exports;
+- compile module source itself with `ModuleScope::compile_module(name, text, import_meta)`, which returns a `CompiledModule` or the `SyntaxError` to throw.
 
 A loader throws by returning `Err(value)`. The value becomes the exception of the `import` that triggered the load, or the rejection reason of the `import()` promise.
 
-During a callback the runtime is already in use. Calling any `Runtime` or `Context` method from inside the callback returns `Err(RuntimeError::Reentered)`; the `Scope` is the only way in. Values made through the scope are ordinary handles and outlive the callback.
+During a callback the runtime is already in use. Calling any `Runtime` or `Context` method from inside the callback returns `Err(RuntimeError::Reentered)`; the `ModuleScope` is the only way in. Values made through the scope are ordinary handles and outlive the callback.
 
 This loader overrides `normalize` to accept only `std:` specifiers and compiles each module through the scope:
 
@@ -94,7 +96,7 @@ This loader overrides `normalize` to accept only `std:` specifiers and compiles 
 
 ## import.meta
 
-A module's `import.meta` object starts with the properties its source supplies: `import_meta` in `ModuleSource::Source`, in `Scope::compile_module`, or in `Context::compile_module_bytes_with_import_meta`. Each property is a `(String, Value)` pair. The `qjs` command sets `url` to the module's `file://` URL and `main` to `true` for the main module and `false` for imported ones.
+A module's `import.meta` object starts with the properties its source supplies: `import_meta` in `ModuleSource::Source`, in `ModuleScope::compile_module`, or in `Context::compile_module_bytes_with_import_meta`. Each property is a `(String, Value)` pair. The `qjs` command sets `url` to the module's `file://` URL and `main` to `true` for the main module and `false` for imported ones.
 
 <!-- include: examples/modules.rs#import-meta -->
 

@@ -12,6 +12,7 @@ export const DOC_NAV = [
     title: "Guides",
     items: [
       { slug: "values", title: "Values and calls" },
+      { slug: "functions", title: "Rust functions" },
       { slug: "host", title: "Host services" },
       { slug: "modules", title: "Modules" },
       { slug: "jobs", title: "Promises and jobs" },

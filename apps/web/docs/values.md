@@ -99,7 +99,7 @@ A property name is a `PropertyKey`: a string, an array index or a symbol. `Runti
 
 `Context::call(&callable, this, &arguments)` calls a function as `callable.call(this, ...arguments)` does. Pass `Value::Undefined` as `this` for a plain function call, or the object for a method call.
 
-When the function throws, `call` returns `Err(RuntimeError::Exception)`; `Context::take_exception` returns the thrown value and clears it.
+When the function throws, `call` returns `Err(RuntimeError::Exception(value))` with the thrown value.
 
 <!-- include: examples/values.rs#call -->
 

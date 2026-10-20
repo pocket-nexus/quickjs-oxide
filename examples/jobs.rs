@@ -13,7 +13,7 @@ use quickjs_oxide::engine::api::core::{
 fn queue() {
     // docs:start queue
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     context
         .eval("globalThis.log = []; Promise.resolve().then(() => log.push('job')); log.push('script');")
@@ -55,7 +55,7 @@ fn settle(runtime: &Runtime, promise: &ObjectRef) -> Result<(PromiseState, Value
 fn drive() {
     // docs:start drive-call
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     let Value::Object(function) = context
         .eval("(async function (n) { let sum = 0; for (let i = 1; i <= n; i++) sum += await i; return sum; })")
         .unwrap()
@@ -88,7 +88,7 @@ fn drive() {
 fn throwing_job() {
     // docs:start throwing-job
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     // A FinalizationRegistry callback runs as a job after a collection.
     context
         .eval(
@@ -106,8 +106,7 @@ fn throwing_job() {
         match runtime.run_pending_job() {
             Ok(PendingJobOutcome::Executed) => {}
             Ok(PendingJobOutcome::NoJob) => break,
-            Err(RuntimeError::Exception) => {
-                let exception = context.take_exception().unwrap().unwrap();
+            Err(RuntimeError::Exception(exception)) => {
                 thrown.push(runtime.print_value(&exception).unwrap());
             }
             Err(other) => panic!("{other}"),
@@ -123,7 +122,7 @@ fn rejections() {
     // docs:start rejections
     let runtime = Runtime::new();
     runtime.set_track_rejections(true).unwrap();
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     context
         .eval(

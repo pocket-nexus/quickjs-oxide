@@ -21,7 +21,7 @@ A runtime has one first-in, first-out queue of jobs.
 
 Most JavaScript errors inside jobs do not reach the queue. A promise handler that throws rejects the promise its `then` returned, and an `async` function that throws rejects its own promise. A job throws to the queue only when nothing turns the error into a rejection, as with a `FinalizationRegistry` cleanup callback.
 
-When that happens, `run_pending_job` returns `Err(RuntimeError::Exception)` and leaves the thrown value as the context's pending exception. The jobs after it stay queued. `run_jobs` stops at the first throw, so a loop that should keep going calls `run_pending_job` itself:
+When that happens, `run_pending_job` returns `Err(RuntimeError::Exception(value))` with the thrown value. The jobs after it stay queued. `run_jobs` stops at the first throw, so a loop that should keep going calls `run_pending_job` itself:
 
 <!-- include: examples/jobs.rs#throwing-job -->
 

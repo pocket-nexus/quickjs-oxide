@@ -9,8 +9,8 @@
 use std::collections::HashMap;
 
 use quickjs_oxide::engine::api::core::{
-    Context, JsString, ModuleImportAttributes, ModuleLoader, ModuleSource, NativeErrorKind,
-    PromiseState, Runtime, RuntimeError, Scope, Value,
+    Context, JsString, ModuleImportAttributes, ModuleLoader, ModuleScope, ModuleSource,
+    NativeErrorKind, PromiseState, Runtime, RuntimeError, Value,
 };
 
 /// The value of `globalThis[name]`.
@@ -28,7 +28,7 @@ fn text(value: &Value) -> String {
 fn run_module() {
     // docs:start run-module
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
 
     let module = context
         .compile_module_with_filename(
@@ -62,7 +62,7 @@ impl ModuleLoader for MemoryLoader {
 
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {
@@ -132,17 +132,15 @@ fn missing_import() {
             files: HashMap::new(),
         })
         .unwrap();
-    let mut context = runtime.context();
+    let context = runtime.context();
     // docs:start missing-import
     // A module that cannot be loaded fails execute_module itself.
     let module = context
         .compile_module_with_filename("import './gone.mjs';", "main.mjs")
         .unwrap();
-    assert!(matches!(
-        context.execute_module(&module),
-        Err(RuntimeError::Exception)
-    ));
-    let exception = context.take_exception().unwrap().unwrap();
+    let Err(RuntimeError::Exception(exception)) = context.execute_module(&module) else {
+        panic!("expected a ReferenceError");
+    };
     assert!(
         runtime
             .print_value(&exception)
@@ -203,12 +201,14 @@ fn import_meta() {
 
 fn failures() {
     let runtime = Runtime::new();
-    let mut context = runtime.context();
+    let context = runtime.context();
     // docs:start failures
     // A syntax error is thrown by the compile call.
-    let error = context.compile_module_with_filename("export {", "bad.mjs");
-    assert!(error.is_err());
-    let exception = context.take_exception().unwrap().unwrap();
+    let Err(RuntimeError::Exception(exception)) =
+        context.compile_module_with_filename("export {", "bad.mjs")
+    else {
+        panic!("expected a SyntaxError");
+    };
     assert!(
         runtime
             .print_value(&exception)
@@ -239,7 +239,7 @@ struct StdLoader;
 impl ModuleLoader for StdLoader {
     fn normalize(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         _referrer: &str,
         specifier: &str,
         _attributes: &ModuleImportAttributes,
@@ -254,7 +254,7 @@ impl ModuleLoader for StdLoader {
 
     fn load(
         &mut self,
-        scope: &mut Scope<'_>,
+        scope: &mut ModuleScope<'_>,
         name: &str,
         _attributes: &ModuleImportAttributes,
     ) -> Result<ModuleSource, Value> {

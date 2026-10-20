@@ -61,7 +61,7 @@ A fresh realm has the ECMAScript built-ins and nothing else. The `qjs` helpers a
 
 A property name is a `PropertyKey`. `Runtime::intern_property_key` makes one from a Rust string, and `PropertyKey::index` makes an array index. [Values and calls](./values.md) covers every variant and conversion.
 
-When the script throws, `eval` returns `Err(RuntimeError::Exception)` and the thrown value waits on the context. `take_exception` returns it and clears it.
+When the script throws, `eval` returns `Err(RuntimeError::Exception(value))` with the thrown value.
 
 <!-- include: examples/embed.rs#exception -->
 
