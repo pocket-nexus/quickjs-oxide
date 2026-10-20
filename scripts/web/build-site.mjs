@@ -291,6 +291,9 @@ function replaceIn(file, pairs) {
   writeFileSync(target, text);
 }
 
+// /docs/ is the first page. Hosts that read `_redirects` (Cloudflare) answer
+// with a redirect; the page below is the fallback for those that do not.
+writeFileSync(path.join(OUT, "_redirects"), `/docs /docs/${pages[0].slug}/ 302\n/docs/ /docs/${pages[0].slug}/ 302\n`);
 writeFileSync(path.join(OUT, "docs", "index.html"), `<!doctype html>
 <meta charset="utf-8"><title>quickjs-oxide docs</title>
 <link rel="icon" href="../favicon.svg" type="image/svg+xml">
