@@ -49,9 +49,9 @@ carry prebuilt `qjs` binaries for Linux, macOS and Windows and WebAssembly
 packages.
 
 ```sh
-cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
+cargo binstall quickjs-oxide-cli
 # or build from source with Rust 1.99 or newer
-cargo install --locked --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
+cargo install --locked quickjs-oxide-cli
 ```
 
 ## Command line
@@ -70,8 +70,8 @@ The file loader follows QuickJS: `.json` imports are strict JSON, and
 
 ```toml
 [dependencies]
-quickjs-oxide = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
-quickjs-oxide-host = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
+quickjs-oxide = "0.4"
+quickjs-oxide-host = "0.4"
 ```
 
 ```rust
@@ -80,7 +80,7 @@ use quickjs_oxide_host::SystemHost;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime = Runtime::new_with_host_services(SystemHost::default());
-    let mut context = runtime.new_context()?;
+    let context = runtime.new_context()?;
     let value = context.eval("[1, 2, 3].map((x) => x * 2).join()")?;
     if let Value::String(text) = value {
         println!("{}", text.to_utf8_lossy()); // 2,4,6

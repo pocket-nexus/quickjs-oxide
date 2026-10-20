@@ -4,16 +4,16 @@
 
 ## Install
 
-Prebuilt binaries for Linux, macOS and Windows are attached to every [GitHub release](https://github.com/pocket-nexus/quickjs-oxide/releases). With Rust installed, build it from the repository or fetch the prebuilt binary through cargo-binstall:
+Prebuilt binaries for Linux, macOS and Windows are attached to every [GitHub release](https://github.com/pocket-nexus/quickjs-oxide/releases). With Rust installed, build it from crates.io or fetch the prebuilt binary through cargo-binstall:
 
 ```sh
-cargo install --locked --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
-cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
+cargo install --locked quickjs-oxide-cli
+cargo binstall quickjs-oxide-cli
 ```
 
 ```sh
 qjs --version
-# quickjs-oxide 0.3.1 (QuickJS 2026-06-04 compatibility target)
+# quickjs-oxide 0.4.0 (QuickJS 2026-06-04 compatibility target)
 ```
 
 ## Run a script

@@ -27,12 +27,12 @@ An application creates a `Runtime`, evaluates JavaScript through its `Context`, 
 
 ## 1. Add the crates
 
-The crates are published from the GitHub repository. They need Rust 1.99 or newer.
+The crates are on [crates.io](https://crates.io/crates/quickjs-oxide), with their API documentation on [docs.rs](https://docs.rs/quickjs-oxide). They need Rust 1.99 or newer.
 
 ```toml
 [dependencies]
-quickjs-oxide = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
-quickjs-oxide-host = { git = "https://github.com/pocket-nexus/quickjs-oxide" }
+quickjs-oxide = "0.4"
+quickjs-oxide-host = "0.4"
 ```
 
 Everything an embedder uses lives in one module:
@@ -75,10 +75,10 @@ JavaScript reaches the application only through the `Host` trait, described in [
 
 ## 5. Run the same script with qjs
 
-The `qjs` command line runs files and expressions with the same engine, so a script can be tried before it is embedded. Install it from the repository, or download a prebuilt binary from the [GitHub releases](https://github.com/pocket-nexus/quickjs-oxide/releases):
+The `qjs` command line runs files and expressions with the same engine, so a script can be tried before it is embedded. Install it from crates.io, or download a prebuilt binary from the [GitHub releases](https://github.com/pocket-nexus/quickjs-oxide/releases):
 
 ```sh
-cargo install --locked --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
+cargo install --locked quickjs-oxide-cli
 ```
 
 Save a script as `double.js`:

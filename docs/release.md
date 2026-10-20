@@ -82,8 +82,7 @@ repository.
 
 ```sh
 # Prebuilt binary (archive names match apps/cli's cargo-binstall metadata)
-cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
-# From source at a release tag
-cargo install --locked --git https://github.com/pocket-nexus/quickjs-oxide \
-  --tag v0.1.1 quickjs-oxide-cli
+cargo binstall quickjs-oxide-cli
+# From source, from crates.io
+cargo install --locked quickjs-oxide-cli
 ```
