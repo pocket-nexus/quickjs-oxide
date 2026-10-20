@@ -3,7 +3,10 @@
 export const DOC_NAV = [
   {
     title: "Start",
-    items: [{ slug: "embed", title: "Embed quickjs-oxide" }],
+    items: [
+      { slug: "embed", title: "Embed quickjs-oxide" },
+      { slug: "cli", title: "Use the qjs command line" },
+    ],
   },
   {
     title: "Guides",
@@ -19,7 +22,6 @@ export const DOC_NAV = [
   {
     title: "Reference",
     items: [
-      { slug: "api", title: "API and commands" },
       { slug: "compatibility", title: "JavaScript support" },
       { slug: "performance", title: "Performance" },
       { slug: "optimizations", title: "Optimizations" },

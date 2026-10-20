@@ -13,7 +13,7 @@ An application creates a `Runtime`, evaluates JavaScript through its `Context`, 
 | Drive promises and `async` code | [Promises and jobs](./jobs.md) |
 | Handle exceptions, cap memory and stack | [Errors and limits](./limits.md) |
 | Run the engine in a browser | [WebAssembly](./webassembly.md) |
-| Look up a method, option or `qjs` flag | [API and commands](./api.md) |
+| Run scripts and modules from the command line | [Use the qjs command line](./cli.md) |
 | Check which JavaScript features are supported | [JavaScript support](./compatibility.md) |
 
 ## The crates
@@ -95,7 +95,7 @@ qjs -e 'null.length'               # prints the TypeError, exits with status 1
 qjs module.mjs                     # .mjs files run as ES modules
 ```
 
-`qjs` installs the same helpers as `install_qjs_helpers`, a file module loader and promise-rejection tracking, then drains the job queue before it exits. [API and commands](./api.md#the-qjs-command) lists every flag.
+`qjs` installs the same helpers as `install_qjs_helpers`, a file module loader and promise-rejection tracking, then drains the job queue before it exits. [Use the qjs command line](./cli.md) covers its options and how it follows QuickJS's `qjs`.
 
 ## Where to go next
 
@@ -104,5 +104,5 @@ qjs module.mjs                     # .mjs files run as ES modules
 - [Modules](./modules.md): install a `ModuleLoader` and run ES modules.
 - [Promises and jobs](./jobs.md): run the job queue and read promise results.
 - [Errors and limits](./limits.md): `RuntimeError`, heap caps and stack limits.
-- [API and commands](./api.md): the reference tables for `Runtime`, `Context`, the options and `qjs`.
+- [Use the qjs command line](./cli.md): run scripts and modules with `qjs`, which follows QuickJS's `qjs`.
 - [`examples/embed.rs`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/examples/embed.rs): this page's code as one runnable file (`cargo run --example embed`).

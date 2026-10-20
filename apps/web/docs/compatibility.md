@@ -46,7 +46,7 @@ Strings are sequences of UTF-16 code units, and unpaired surrogates are preserve
 | --- | --- |
 | `qjs` command line | `-e`, `-m`/`--module`, `--script`, `-s`, `--strip-source`, `--no-unhandled-rejection`, `--print-result`, `-q`; `print`, `console.log`, `scriptArgs`; `--std` defines `load` and `read` |
 | `qjs` memory and diagnostics | `--heap-cap-mib`, `--min-heap-mib`, `--gc-growth`, `--stack-limit`, `--gc-stats`, `--memory-report`, `--disassemble`; `--ic-stats` in a build with the `ic-stats` feature |
-| Rust embedding API | `Runtime`, `Context`, `Value`, `Host`, module loaders, `RuntimeOptions`, `MemoryReport` ([API and commands](./api.md)) |
+| Rust embedding API | `Runtime`, `Context`, `Value`, `Host`, module loaders, `RuntimeOptions`, `MemoryReport` ([Embed quickjs-oxide](./embed.md)) |
 | WebAssembly | The `quickjs-oxide-web` bindings ([WebAssembly](./webassembly.md)) |
 
 The QuickJS `std` and `os` modules, the interactive REPL, `Worker`, `bjson`, compiled bytecode files, `qjsc` and the C API are not part of quickjs-oxide.

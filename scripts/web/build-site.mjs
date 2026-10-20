@@ -23,7 +23,7 @@
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Marked, Renderer } from "marked";
@@ -75,7 +75,7 @@ function escapeHtml(text) {
 }
 
 function slugify(text) {
-  return text.toLowerCase().replace(/<[^>]+>/g, "").replace(/&[a-z]+;/g, "")
+  return text.toLowerCase().replace(/<[^>]+>/g, "").replace(/&#?\w+;/g, "")
     .replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
@@ -181,7 +181,6 @@ function sidebar(active) {
   return `${sections}
       <div class="side-extra">
         <a class="try" href="../../">Try the demo <span aria-hidden="true">→</span></a>
-        <a href="https://docs.rs/quickjs-oxide" rel="noreferrer">API on docs.rs <span aria-hidden="true">↗</span></a>
       </div>`;
 }
 
@@ -238,6 +237,7 @@ wide.addEventListener("change", sync); sync();
 // ---- build ----
 
 mkdirSync(OUT, { recursive: true });
+rmSync(path.join(OUT, "docs"), { recursive: true, force: true });
 cpSync(SITE, OUT, { recursive: true });
 
 for (const [index, page] of pages.entries()) {
@@ -262,8 +262,7 @@ replaceIn("index.html", [
 
 // ---- content digests ----
 
-const docPages = readdirSync(path.join(OUT, "docs"), { withFileTypes: true })
-  .filter((entry) => entry.isDirectory()).map((entry) => `docs/${entry.name}/index.html`);
+const docPages = pages.map((page) => `docs/${page.slug}/index.html`);
 const VERSIONED = [
   ["pkg/quickjs_oxide_web.js", { "worker.js": ['"./pkg/quickjs_oxide_web.js"'] }],
   ["pkg/quickjs_oxide_web_bg.wasm", { "worker.js": ['"./pkg/quickjs_oxide_web_bg.wasm"'] }],

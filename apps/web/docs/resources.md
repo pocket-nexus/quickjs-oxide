@@ -47,4 +47,4 @@ The engine's own diagnostics (`qjs --gc-stats`, `--memory-report`, `--ic-stats` 
 
 - [quickjs-oxide on GitHub](https://github.com/pocket-nexus/quickjs-oxide): the source, the design notes under `docs/` and the release history.
 - [Issue tracker](https://github.com/pocket-nexus/quickjs-oxide/issues): bug reports and feature requests.
-- [Architecture](./architecture.md) and [API and commands](./api.md): how the engine is built and how to use it.
+- [Architecture](./architecture.md) and [Embed quickjs-oxide](./embed.md): how the engine is built and how to use it.
