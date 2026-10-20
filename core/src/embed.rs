@@ -16,6 +16,7 @@ use std::rc::Rc;
 use crate::bytecode::CodeStore;
 use crate::heap::atom::{KeyKind, PropertyKey};
 use crate::heap::object::{InternalData, InternalTag, flags};
+use crate::heap::string::StringRepr;
 use crate::runtime::{Realm, Runtime, WellKnown};
 use crate::value::{Kind, ObjectId, Value};
 use crate::vm::native::{HostBody, HostFn};
@@ -750,11 +751,15 @@ impl NativeCx<'_> {
         self.heap.alloc_string_units(units).map(Value::string)
     }
 
-    /// A string value's code units; `None` for any other value.
-    pub fn string_units(&self, value: Value) -> Option<Vec<u16>> {
-        value
-            .as_string()
-            .map(|id| self.heap.string(id).repr().units().collect())
+    /// A string of `repr`, which the caller made canonical (`OneByte`
+    /// whenever every unit fits in a byte).
+    pub fn new_string_repr(&mut self, repr: StringRepr) -> Result<Value, HeapError> {
+        self.heap.alloc_string_repr(repr).map(Value::string)
+    }
+
+    /// A string value's code units, flattened; `None` for any other value.
+    pub fn string_repr(&self, value: Value) -> Option<&StringRepr> {
+        value.as_string().map(|id| self.heap.string(id).repr())
     }
 
     /// A string value as Rust text (lone surrogates replaced).
@@ -1087,11 +1092,14 @@ impl Runtime {
         self.native_cx().new_string_units(units)
     }
 
-    /// A string value's code units; `None` for any other value.
-    pub fn string_units(&self, value: Value) -> Option<Vec<u16>> {
-        value
-            .as_string()
-            .map(|id| self.heap.string(id).repr().units().collect())
+    /// [`NativeCx::new_string_repr`].
+    pub fn new_string_repr(&mut self, repr: StringRepr) -> Result<Value, HeapError> {
+        self.native_cx().new_string_repr(repr)
+    }
+
+    /// A string value's code units, flattened; `None` for any other value.
+    pub fn string_repr(&self, value: Value) -> Option<&StringRepr> {
+        value.as_string().map(|id| self.heap.string(id).repr())
     }
 
     /// A string value as Rust text (lone surrogates replaced).

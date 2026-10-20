@@ -1582,6 +1582,60 @@ fn a_shared_buffer_round_trips() {
 use quickjs_oxide::engine::api::core::{CallableRef, FromJs, IntoJs, ObjectRef};
 
 #[test]
+fn strings_cross_the_boundary_in_every_representation() {
+    let (_, context) = runtime();
+    let global = context.global_object().unwrap();
+    // Each string comes in as a `JsString` and goes back out unchanged.
+    context
+        .define_function(&global, "echo", 1, |_: &mut Scope<'_>, s: JsString| Ok(s))
+        .unwrap();
+    context
+        .define_function(&global, "lossy", 1, |_: &mut Scope<'_>, s: String| Ok(s))
+        .unwrap();
+    let cases = [
+        ("ASCII", "'plain'", "plain"),
+        ("Latin-1", "'caf\\u00e9'", "caf\u{e9}"),
+        ("wide", "'\\u4e2d\\u6587'", "\u{4e2d}\u{6587}"),
+        ("a pair", "'\\ud83d\\ude00'", "\u{1f600}"),
+        ("a lone surrogate", "'a\\ud800b'", "a\u{fffd}b"),
+        ("a rope", "'x'.repeat(600) + 'y'.repeat(600)", ""),
+        ("empty", "''", ""),
+    ];
+    for (name, source, utf8) in cases {
+        assert_eq!(
+            context
+                .eval(&format!("var s = {source}; echo(s) === s"))
+                .unwrap(),
+            Value::Bool(true),
+            "{name}"
+        );
+        if name == "a rope" {
+            assert_eq!(
+                text(&context.eval("lossy(s)").unwrap()),
+                "x".repeat(600) + &"y".repeat(600)
+            );
+        } else {
+            assert_eq!(text(&context.eval("lossy(s)").unwrap()), utf8, "{name}");
+        }
+    }
+    // A string the embedder made, in each representation, read by a script.
+    let long = JsString::try_from_utf8(&"x".repeat(600)).unwrap();
+    for (string, length) in [
+        (long.try_concat(&long).unwrap(), 1200),
+        (JsString::from_static("plain"), 5),
+        (JsString::try_from_utf8("caf\u{e9}").unwrap(), 4),
+        (JsString::try_from_utf16([0x4e2d, 0xd800]).unwrap(), 2),
+    ] {
+        let key = context.runtime().intern_property_key("given").unwrap();
+        context
+            .set_property(&global, &key, Value::String(string.clone()))
+            .unwrap();
+        assert_eq!(context.eval("given.length").unwrap(), Value::Int(length));
+        assert_eq!(context.eval("given").unwrap(), Value::String(string));
+    }
+}
+
+#[test]
 fn typed_host_functions_convert_their_arguments_and_result() {
     let (_, context) = runtime();
     let global = context.global_object().unwrap();

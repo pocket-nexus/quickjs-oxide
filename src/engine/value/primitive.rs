@@ -628,6 +628,34 @@ impl JsString {
         Self(StringRepr::allocate(StringData::Latin1(digits)))
     }
 
+    /// A copy of Latin-1 code units.
+    ///
+    /// # Errors
+    /// Returns [`JsStringError::TooLong`] past [`Self::MAX_LEN`].
+    pub fn try_from_latin1(units: &[u8]) -> Result<Self, JsStringError> {
+        if units.len() > Self::MAX_LEN {
+            return Err(JsStringError::TooLong);
+        }
+        Ok(Self::from_owned_latin1(units.to_vec()))
+    }
+
+    /// A copy of UTF-16 code units, stored narrow when every unit fits in a
+    /// byte.
+    ///
+    /// # Errors
+    /// Returns [`JsStringError::TooLong`] past [`Self::MAX_LEN`].
+    pub fn try_from_utf16_slice(units: &[u16]) -> Result<Self, JsStringError> {
+        if units.len() > Self::MAX_LEN {
+            return Err(JsStringError::TooLong);
+        }
+        if units.iter().all(|&unit| unit <= 0xff) {
+            return Ok(Self::from_owned_latin1(
+                units.iter().map(|&unit| unit as u8).collect(),
+            ));
+        }
+        Ok(Self::from_owned_utf16(units.to_vec()))
+    }
+
     /// Adopt a checked wide result buffer without collecting its contents a
     /// second time. Callers must have enforced [`Self::MAX_LEN`].
     pub fn from_owned_utf16(units: Vec<u16>) -> Self {
@@ -1497,9 +1525,16 @@ impl JsString {
     /// used for language-level string comparison or indexing.
     #[must_use]
     pub fn to_utf8_lossy(&self) -> String {
-        char::decode_utf16(self.utf16_units())
-            .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
-            .collect()
+        match self.0.data() {
+            StringData::Latin1(units) if units.is_ascii() => {
+                String::from_utf8(units.clone()).expect("ASCII is UTF-8")
+            }
+            StringData::Latin1(units) => units.iter().map(|&unit| char::from(unit)).collect(),
+            StringData::Utf16(units) => String::from_utf16_lossy(units),
+            StringData::Rope(_) => char::decode_utf16(self.utf16_units())
+                .map(|result| result.unwrap_or(char::REPLACEMENT_CHARACTER))
+                .collect(),
+        }
     }
 }
 

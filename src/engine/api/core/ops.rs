@@ -5,6 +5,7 @@
 use std::any::Any;
 use std::rc::Rc;
 
+use oxide_core::heap::string::StringRepr;
 use oxide_core::{Intrinsic, NativeCx, RootMark};
 
 use super::RuntimeError;
@@ -62,10 +63,11 @@ impl View<'_> {
             Kind::Bool => Value::Bool(value.as_bool().unwrap_or(false)),
             Kind::Int32 => Value::Int(value.as_int32().unwrap_or(0)),
             Kind::Number => Value::Float(value.as_f64().unwrap_or(f64::NAN)),
-            Kind::String => {
-                let units = self.core.string_units(value).unwrap_or_default();
-                Value::String(JsString::try_from_utf16(units)?)
-            }
+            Kind::String => Value::String(match self.core.string_repr(value) {
+                Some(StringRepr::OneByte(units)) => JsString::try_from_latin1(units)?,
+                Some(StringRepr::TwoByte(units)) => JsString::try_from_utf16_slice(units)?,
+                None => JsString::from_static(""),
+            }),
             Kind::BigInt => {
                 let decimal = self.core.bigint_decimal(value).unwrap_or_default();
                 Value::BigInt(
@@ -99,8 +101,15 @@ impl View<'_> {
             Value::Int(value) => oxide_core::Value::int32(*value),
             Value::Float(value) => oxide_core::Value::number(*value),
             Value::String(text) => {
-                let units: Vec<u16> = text.utf16_units().collect();
-                let value = self.core.new_string_units(&units)?;
+                let value = match (text.flat_latin1(), text.flat_utf16()) {
+                    (Some(units), _) => {
+                        self.core.new_string_repr(StringRepr::OneByte(units.into()))
+                    }
+                    (_, Some(units)) => self.core.new_string_units(units),
+                    _ => self
+                        .core
+                        .new_string_units(&text.utf16_units().collect::<Vec<_>>()),
+                }?;
                 self.temp(value);
                 value
             }
