@@ -513,6 +513,10 @@ fn reentry_from_a_callback_is_an_error_and_values_drop_later() {
 }
 
 #[test]
+#[cfg_attr(
+    feature = "gc-stress",
+    ignore = "a collection at every allocation makes filling 8 MiB take minutes"
+)]
 fn a_heap_cap_surfaces_as_out_of_memory() {
     let runtime = Runtime::with_options(RuntimeOptions {
         heap: HeapLimits { max_bytes: 8 << 20 },
@@ -566,7 +570,15 @@ fn execution_turns_and_the_stats_entries() {
         runtime.run_gc().unwrap().collections,
         runtime.gc_stats().unwrap().collections
     );
-    // A manual policy collects only when asked.
+}
+
+#[test]
+#[cfg_attr(
+    feature = "gc-stress",
+    ignore = "gc-stress collects at every allocation"
+)]
+fn a_manual_gc_policy_collects_only_when_asked() {
+    let (runtime, context) = runtime();
     runtime.set_gc_policy(GcPolicy::Manual).unwrap();
     assert_eq!(runtime.gc_policy().unwrap(), GcPolicy::Manual);
     let before = runtime.gc_stats().unwrap().collections;
