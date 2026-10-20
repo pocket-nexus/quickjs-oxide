@@ -99,4 +99,7 @@ register file, the caches and the collector), read without a collection.
 these reports.
 
 See [workspace architecture](../../../docs/architecture.md) for how the API
-sits on the front end, the lowering and the core.
+sits on the front end, the lowering and the core. [The embedding
+plan](../../../docs/embedding-plan.md) extends this API with host functions,
+host objects, native modules, interrupts, promises settled from Rust and byte
+access to buffers.
