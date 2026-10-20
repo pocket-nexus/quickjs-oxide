@@ -15,6 +15,7 @@ startup are few.
 import argparse
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -77,12 +78,18 @@ def main():
                         help="the fixed-work bundles (octane/richards.js, octane/box2d.js)")
     parser.add_argument("--valgrind", default="valgrind")
     parser.add_argument("--output", type=Path, default=ROOT / "apps/cli/qjs.order")
+    parser.add_argument("--check-inputs", action="store_true",
+                        help="only check that valgrind and the bundles are present")
     args = parser.parse_args()
     richards = args.bundles / "octane/richards.js"
     compiled = args.bundles / "octane/box2d.js"
-    for path in (args.qjs, richards, compiled):
+    if shutil.which(args.valgrind) is None:
+        parser.error(f"missing: {args.valgrind}")
+    for path in ([] if args.check_inputs else [args.qjs]) + [richards, compiled]:
         if not path.exists():
             parser.error(f"missing: {path}")
+    if args.check_inputs:
+        return
     defined = defined_functions(args.qjs)
     order, seen = [], set()
     with tempfile.TemporaryDirectory() as directory:

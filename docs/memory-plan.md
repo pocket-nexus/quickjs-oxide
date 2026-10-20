@@ -112,12 +112,12 @@ The 37 programs on 2026-10-19 (one run; `collections`, `live` and `reserved` fro
 
 - `scripts/release/gen-symbol-order.py`: runs `valgrind --tool=callgrind --demangle=no` on the release `qjs` over an empty script, one small suite program (Richards) and the compile of one mid-sized source (`--compile-only` of item B once it exists, `--disassemble` to `/dev/null` until then), takes every mangled name from the `fn=` and `cfn=` lines in first-seen order, keeps the names the binary defines, and writes `apps/cli/qjs.order`. The file is committed.
 - `apps/cli/build.rs` emits `cargo:rustc-link-arg-bins=-Wl,--symbol-ordering-file=<CARGO_MANIFEST_DIR>/qjs.order` and `-Wl,--no-warn-symbol-ordering` on targets whose linker is lld (the toolchain's default on `x86_64-unknown-linux-gnu`), the equivalent `-order_file` form on macOS, and nothing elsewhere. A name the binary no longer defines is ignored by the linker, so a stale file degrades, never breaks.
-- `scripts/checks/check-symbol-order.py`: fails `fast` CI when fewer than 80% of the file's names are defined by the release binary, with the regeneration command in the message.
+- `scripts/release/cut-release.sh` regenerates the file in the release commit, since the crate hashes in the mangled names change with the version.
 - The web and native-adapter builds are unaffected (the argument is emitted for binaries of `quickjs-oxide-cli` only).
 
 **Also measured in this item,** and taken only if the instruction gate holds: `panic = "abort"` in the release profile (removes landing pads and most of `.eh_frame`, about 200 KiB of file pages).
 
-**Acceptance.** The empty script's peak RSS is at most 4.0 MiB; Richards (Octane) is at most 6.3 MiB; no V8 v7 program's instruction count moves by more than 2% (the order file changes code placement only); the check script passes on the committed file. Expected: −1.2 MiB on every program in the table.
+**Acceptance.** The empty script's peak RSS is at most 4.0 MiB; Richards (Octane) is at most 6.3 MiB; no V8 v7 program's instruction count moves by more than 2% (the order file changes code placement only); every name in the committed file is defined by the release binary. Expected: −1.2 MiB on every program in the table.
 
 ## 3. Item B: the compiler's transient peak
 

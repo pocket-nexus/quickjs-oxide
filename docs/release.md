@@ -25,8 +25,12 @@ Tag the release from `main`:
 git push --atomic origin main v0.1.0
 ```
 
-`cut-release.sh` sets the workspace version, refreshes `Cargo.lock`, commits
-`release: v0.1.0` and creates the annotated tag. The release workflow rejects a
+`cut-release.sh` sets the workspace version, refreshes `Cargo.lock`,
+regenerates `apps/cli/qjs.order` (the link order of `qjs`; its mangled names
+change with the version), commits `release: v0.1.0` and creates the annotated
+tag. Regenerating runs the release `qjs` under callgrind, so `valgrind` and the
+fixed-work bundles that `scripts/release/gen-symbol-order.py` reads must be
+present. The release workflow rejects a
 tag that does not match the workspace version, so `cargo install --tag` and the
 prebuilt binaries report the same version.
 
