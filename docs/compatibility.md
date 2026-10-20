@@ -93,7 +93,7 @@ the behavior open, and any difference from the specification, is a defect.
 | `qjs` CLI: `-e`, `-m`/`--module`, `--script`, `-s`, `--strip-source`, `--no-unhandled-rejection`, `--print-result`, `-q`; `print`, `console.log`, `scriptArgs`; `--std` defines `load` and `read` | Supported |
 | `qjs` memory and diagnostics: `--heap-cap-mib`, `--min-heap-mib`, `--gc-growth`, `--stack-limit`, `--gc-stats`, `--memory-report`, `--disassemble`, `--ic-stats` (feature `ic-stats`) | Supported |
 | Rust embedding API: `Runtime`, `Context`, `Host`, host functions and host objects, promises settled from Rust, native modules, interrupts, buffers, module loaders, `RuntimeOptions`, `MemoryReport` | Supported |
-| WebAssembly bindings and the [browser playground](playground.md) | Supported |
+| WebAssembly bindings | Supported |
 | `std` and `os` modules: files, processes, timers and the event loop | Not yet supported |
 | Interactive REPL (`-i`) | Not yet supported |
 | CLI options `--strict`, `-I`/`--include`, `--memory-limit`, `--stack-size` | Not yet supported |

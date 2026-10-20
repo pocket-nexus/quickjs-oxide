@@ -1,6 +1,6 @@
 # Workspace architecture
 
-The engine is three crates. `quickjs-oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `quickjs-oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into QuickJS-shaped stack code, the register lowering that turns that code into the core's register code, and the embedding API over the core. The command line, the web playground, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
+The engine is three crates. `quickjs-oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `quickjs-oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into QuickJS-shaped stack code, the register lowering that turns that code into the core's register code, and the embedding API over the core. The command line, the WebAssembly build, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
 
 ## Crates
 
@@ -12,7 +12,7 @@ The three engine crates and the workspace members that consume them:
 | `quickjs-oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
 | `quickjs-oxide` | `src/` | `quickjs-oxide-core`, `quickjs-oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
 | `quickjs-oxide-cli` | `apps/cli` | the root crate, `quickjs-oxide-host` | the `qjs` binary |
-| `quickjs-oxide-web` | `apps/web` | the root crate, `quickjs-oxide-web-host` | the browser playground (WebAssembly) |
+| `quickjs-oxide-web` | `apps/web` | the root crate, `quickjs-oxide-web-host` | the WebAssembly bindings the site runs |
 | `quickjs-oxide-host` | `adapters/native` | the root crate | `SystemHost`: the system clock and the TZif/POSIX time-zone rules |
 | `quickjs-oxide-web-host` | `adapters/web` | the root crate | `WebHost`: the browser's clock, time zone and random source |
 | `quickjs-oxide-test262` | `conformance/test262` | the root crate | the process-isolated `run-test262` runner |
@@ -60,7 +60,7 @@ The core asks its embedder for one trait, `oxide_core::host::Host`, which the AP
 | `read_file(path)` | `load` and `read` under `qjs --std` | the process's file system |
 | `interrupt()` | the loop's interrupt poll, about every thousand back-edges and calls | never interrupts |
 
-The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output, which the playground captures itself.
+The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output; the page that embeds it shows results itself.
 
 Compilation and module loading are function pointers on the core's services, because the host object lives inside the runtime they borrow. The API installs the front end as the core's compile function (`set_compiler`) and its module shims as the core's `ModuleHost`; an embedder supplies module-loading policy through the API's `ModuleLoader` trait (`normalize`, `load`), whose callbacks receive a `ModuleScope`. A host function, the embedder's Rust closure as a JavaScript function, is a core native closure whose body the API wraps: the core lends it a `NativeCx` while it runs, and the API turns that into the closure's `Scope`. Applications choose input, output, module policy and when the job queue drains. [`src/engine/api/README.md`](../src/engine/api/README.md) describes the API's types.
 

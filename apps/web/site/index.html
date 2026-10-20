@@ -1,377 +1,131 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#101312">
-    <meta
-      name="description"
-      content="Run the in-progress quickjs-oxide JavaScript engine in your browser, compiled from Rust to WebAssembly."
-    >
-    <link rel="canonical" href="https://pocket-nexus.github.io/quickjs-oxide/">
-    <meta property="og:type" content="website">
-    <meta property="og:site_name" content="quickjs-oxide">
-    <meta property="og:title" content="quickjs-oxide — JavaScript, rewritten in Rust">
-    <meta
-      property="og:description"
-      content="Run the pre-parity quickjs-oxide interpreter as real Rust WebAssembly in your browser."
-    >
-    <meta property="og:url" content="https://pocket-nexus.github.io/quickjs-oxide/">
-    <meta
-      property="og:image"
-      content="https://pocket-nexus.github.io/quickjs-oxide/og.png"
-    >
-    <meta property="og:image:width" content="1536">
-    <meta property="og:image:height" content="1024">
-    <meta property="og:image:alt" content="quickjs-oxide, JavaScript rewritten in Rust, targeting QuickJS 2026-06-04">
-    <meta name="twitter:card" content="summary_large_image">
-    <meta name="twitter:title" content="quickjs-oxide — JavaScript, rewritten in Rust">
-    <meta
-      name="twitter:description"
-      content="Run the pre-parity quickjs-oxide interpreter as real Rust WebAssembly in your browser."
-    >
-    <meta
-      name="twitter:image"
-      content="https://pocket-nexus.github.io/quickjs-oxide/og.png"
-    >
-    <title>quickjs-oxide — Rust JavaScript engine playground</title>
-    <link rel="stylesheet" href="./style.css">
-    <script type="module" src="./app.js"></script>
-  </head>
-  <body>
-    <a class="skip-link" href="#playground">Skip to playground</a>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>quickjs-oxide</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Press+Start+2P&family=Fredoka:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="site.css">
+<div id="top"></div>
 
-    <header class="site-header">
-      <a class="brand" href="./" aria-label="quickjs-oxide home">
-        <span class="brand-mark" aria-hidden="true">
-          <span>Q</span>
-        </span>
-        <span class="brand-name">quickjs<span>/</span>oxide</span>
-      </a>
+<nav class="top"><div class="wrap">
+  <a class="brand" href="./"><svg viewBox="0 0 330 330" aria-hidden="true"><polygon fill="#F7DF1E" points="174,17 255,113 271,161 117,92"/><polygon fill="#FEA94F" points="107,108 182,143 141,189 189,323 93,250 65,158"/><polygon fill="#D34516" points="161,197 202,152 276,185 200,305"/></svg><span>quickjs-oxide</span></a>
+  <a class="navlink hide-sm" href="docs/">Docs</a>
+  <details class="family"><summary>Family</summary><div class="menu">
+    <a href="https://pocket.nexus/"><img src="icons/pocket-nexus.svg" alt="" width="28" height="28"><b>Pocket Nexus</b><span>The lab behind these projects</span></a>
+    <a href="https://studio.pocket.nexus/"><img src="icons/pocket-studio.svg" alt="" width="28" height="28"><b>Pocket Studio</b><span>Make a game with your coding agent</span></a>
+    <a href="https://pocketjs.pocket.nexus/"><img src="icons/pocketjs.svg" alt="" width="28" height="28"><b>PocketJS</b><span>JavaScript runtime for small devices</span></a>
+    <a href="https://3d.pocket.nexus/"><img src="icons/pocket3d.svg" alt="" width="28" height="28"><b>Pocket3D</b><span>3D for the PocketJS family</span></a>
+    <a href="https://microts.pocket.nexus/"><img src="icons/microts.svg" alt="" width="28" height="28"><b>MicroTS</b><span>TypeScript compiled to native code</span></a>
+  </div></details>
+  <a class="gh" href="https://github.com/pocket-nexus/quickjs-oxide" aria-label="GitHub"><svg viewBox="0 0 16 16"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0z"/></svg></a>
+</div></nav>
+<div class="rainbow dots"></div>
+<main>
+<div class="wrap hero">
 
-      <nav class="site-nav" aria-label="Project links">
-        <span class="build-chip">
-          <span class="build-chip-dot" aria-hidden="true"></span>
-          Rust → WASM
-        </span>
-        <a
-          class="github-link"
-          href="https://github.com/pocket-nexus/quickjs-oxide"
-          rel="noreferrer"
-        >
-          View source
-          <span aria-hidden="true">↗</span>
-        </a>
-      </nav>
-    </header>
-
-    <main>
-      <section class="hero" aria-labelledby="hero-title">
-        <div class="hero-copy">
-          <p class="eyebrow">
-            <span>Live engine preview</span>
-            <span class="pre-parity">Pre-parity</span>
-          </p>
-          <h1 id="hero-title">
-            JavaScript,<br>
-            <span>rewritten in Rust.</span>
-          </h1>
-          <p class="hero-summary">
-            Start with a JavaScript function that returns 42, evaluated by the
-            real quickjs-oxide Rust interpreter compiled to WebAssembly. This
-            public workbench is not a claim of complete QuickJS compatibility.
-          </p>
+  <div>
+    <div class="eyebrow"><i></i>Safe Rust · JavaScript engine</div>
+    <h1 class="title px px-shadow"><span class="c-pink">QuickJS</span><span class="c-yellow">Oxide</span></h1>
+    <p class="lede">An embeddable JavaScript engine for Rust applications, written in safe Rust. <b>Zero lines of <code>unsafe</code></b>, from the parser to the garbage collector.</p>
+    <div class="ctas">
+      <a class="btn primary" href="docs/embed/">Get started</a>
+      <a class="btn secondary" href="https://github.com/pocket-nexus/quickjs-oxide"><svg viewBox="0 0 16 16"><path d="M8 0a8 8 0 0 0-2.53 15.59c.4.07.55-.17.55-.38v-1.33c-2.23.48-2.7-1.07-2.7-1.07-.36-.92-.89-1.17-.89-1.17-.73-.5.06-.49.06-.49.8.06 1.23.83 1.23.83.72 1.22 1.88.87 2.34.66.07-.52.28-.87.5-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48v2.2c0 .21.15.46.55.38A8 8 0 0 0 8 0z"/></svg>GitHub</a>
+    </div>
+  </div>
+  <div class="panel-wrap">
+    <span class="spark" style="--c:var(--yellow); left:-26px; top:-18px"></span>
+    <span class="spark" style="--c:var(--cyan); right:-22px; bottom:40px"></span>
+    <div class="console" data-panel>
+      <div class="head"><span class="label">OXIDE · FRACTAL LAB</span><span class="lights"><i style="--c:var(--pink)"></i><i style="--c:var(--yellow)"></i><i style="--c:var(--cyan)"></i></span></div>
+      <div class="bezel">
+        <div class="tabs" role="tablist"><button class="tab" role="tab" aria-selected="true" data-view="demo">Demo</button><button class="tab" role="tab" aria-selected="false" data-view="source">Source</button></div>
+        <div class="view"><canvas width="960" height="720" aria-label="Mandelbrot set computed by quickjs-oxide"></canvas><div class="source" hidden>
+        <div class="srcbar">
+          <select id="src-pick-index" aria-label="Source file"><option value="js">mandelbrot.js · JavaScript</option><option value="host">worker.js · browser host</option><option value="paint">paint.js · page draws</option></select>
+          <span class="sp"></span><button class="mini" data-copy type="button">Copy</button><a class="mini" href="https://github.com/pocket-nexus/quickjs-oxide/tree/main/apps/web">Full file</a>
         </div>
-
-        <dl class="hero-facts" aria-label="Playground facts">
-          <div>
-            <dt>Engine</dt>
-            <dd id="engine-version">loading metadata…</dd>
-          </div>
-          <div>
-            <dt>Compatibility target</dt>
-            <dd id="quickjs-target">loading metadata…</dd>
-          </div>
-          <div>
-            <dt>Host policy</dt>
-            <dd>
-              <code id="host-policy">loading metadata…</code>
-            </dd>
-          </div>
-          <div>
-            <dt>Build commit</dt>
-            <dd>
-              <a
-                id="build-commit"
-                href="https://github.com/pocket-nexus/quickjs-oxide"
-                rel="noreferrer"
-                data-commit=""
-                title="Build metadata is loading"
-              >loading metadata…</a>
-            </dd>
-          </div>
-          <div>
-            <dt>Execution</dt>
-            <dd>Dedicated worker · actual Rust WASM</dd>
-          </div>
-          <div>
-            <dt>Time budget</dt>
-            <dd>2 seconds</dd>
-          </div>
-        </dl>
-      </section>
-
-      <aside id="offline-notice" class="offline-notice" role="alert" hidden>
-        <span class="offline-icon" aria-hidden="true">!</span>
-        <span>
-          You are offline. The playground will keep working only if its WASM
-          files are already available in this browser.
-        </span>
-      </aside>
-
-      <section id="playground" class="playground"
-        aria-labelledby="playground-title">
-        <div class="playground-heading">
-          <div>
-            <p class="section-index">01 / Playground</p>
-            <h2 id="playground-title">Put the engine to work.</h2>
-          </div>
-
-          <div class="engine-status" aria-live="polite" aria-atomic="true">
-            <span id="status-light" class="status-light is-loading"
-              aria-hidden="true"></span>
-            <span id="engine-status">Loading engine…</span>
-          </div>
-        </div>
-
-        <div class="workbench">
-          <section class="panel editor-panel" aria-labelledby="editor-title">
-            <header class="panel-header">
-              <div class="panel-title-group">
-                <p class="panel-kicker">Input</p>
-                <h3 id="editor-title">script.js</h3>
-              </div>
-
-              <label class="example-picker">
-                <span>Example</span>
-                <select
-                  id="example-select"
-                  aria-label="Choose an example"
-                  aria-describedby="example-description example-expected"
-                >
-                </select>
-              </label>
-            </header>
-
-            <div
-              id="example-context"
-              class="example-context"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <p id="example-description"></p>
-              <dl>
-                <div>
-                  <dt>Expected result</dt>
-                  <dd id="example-expected"></dd>
-                </div>
-              </dl>
-            </div>
-
-            <div class="editor-shell">
-              <div class="editor-gutter" aria-hidden="true">
-                <span>JS</span>
-              </div>
-              <textarea
-                id="source-editor"
-                aria-label="JavaScript source"
-                aria-describedby="editor-help example-description example-expected"
-                autocomplete="off"
-                autocapitalize="off"
-                spellcheck="false"
-                wrap="off"
-              ></textarea>
-            </div>
-
-            <footer class="panel-footer editor-footer">
-              <p id="editor-help">
-                <kbd>⌘</kbd><span aria-hidden="true">/</span><kbd>Ctrl</kbd>
-                <span>+</span> <kbd>Enter</kbd> to run
-              </p>
-              <span id="source-stat" aria-live="polite">0 lines · 0 bytes</span>
-            </footer>
-          </section>
-
-          <section class="panel output-panel" aria-labelledby="output-title">
-            <header class="panel-header">
-              <div class="panel-title-group">
-                <p class="panel-kicker">Output</p>
-                <h3 id="output-title">Engine result</h3>
-              </div>
-
-              <span id="result-state"
-                class="result-state is-idle">Waiting</span>
-            </header>
-
-            <div
-              id="result-region"
-              class="result-region"
-              role="status"
-              aria-live="polite"
-              aria-atomic="true"
-            >
-              <div id="result-empty" class="result-empty">
-                <span class="prompt-glyph" aria-hidden="true">›_</span>
-                <p>Choose an example or write a script, then run it.</p>
-              </div>
-
-              <div id="result-content" class="result-content" hidden>
-                <p id="result-label" class="result-label">Result</p>
-                <pre id="result-value" class="result-value"></pre>
-
-                <dl class="result-meta">
-                  <div>
-                    <dt>Type</dt>
-                    <dd id="result-type">—</dd>
-                  </div>
-                  <div>
-                    <dt>Engine time</dt>
-                    <dd id="result-duration">—</dd>
-                  </div>
-                </dl>
-
-                <details id="result-details" class="result-details">
-                  <summary>Engine response</summary>
-                  <pre id="result-raw"></pre>
-                </details>
-              </div>
-            </div>
-
-            <footer class="panel-footer output-footer">
-              <span>Worker-isolated</span>
-              <span>2,000 ms limit</span>
-            </footer>
-          </section>
-        </div>
-
-        <div class="playground-actions">
-          <p>
-            Every run gets a fresh Rust runtime and realm. Reset also reloads
-            the worker and restores this example.
-          </p>
-          <div class="action-buttons">
-            <button id="reset-button" class="button button-secondary"
-              type="button">
-              Reset
-            </button>
-            <button id="run-button" class="button button-primary" type="button"
-              disabled>
-              <span id="run-button-label">Loading…</span>
-              <span class="button-key" aria-hidden="true">⌘↵</span>
-            </button>
-          </div>
-        </div>
-      </section>
-
-      <section class="project-note" aria-labelledby="project-note-title">
-        <p class="section-index">02 / What you are running</p>
-        <div class="project-note-grid">
-          <h2 id="project-note-title">No browser-native shortcut.</h2>
-          <div class="project-note-copy">
-            <p>
-              Your source is sent to a dedicated worker and evaluated by the
-              quickjs-oxide Rust engine. The playground does not pass it to the
-              page’s JavaScript evaluator.
-            </p>
-            <p>
-              Feature parity with pinned QuickJS remains the destination. Some
-              programs will fail today; those failures are useful, visible
-              checkpoints—not hidden fallbacks.
-            </p>
-            <p>
-              This editor currently exposes the Script goal. Static modules
-              and core <code>import.meta</code> run in the Rust engine, but the
-              browser UI does not yet expose its module-loader API.
-            </p>
-            <p>
-              The engine version, compatibility target, host policy, and build
-              commit shown above are reported by the loaded WASM package.
-            </p>
-          </div>
-        </div>
-      </section>
-    </main>
-
-    <footer class="site-footer">
-      <div class="footer-summary">
-        <p>
-          quickjs-oxide <span aria-hidden="true">·</span> an unsafe-free
-          QuickJS rewrite
-        </p>
-        <p id="frozen-global-vector" class="footer-vector">
-          Test262 within QuickJS 2026-06-04 scope
-          <strong id="test262-primary-metrics"
-            >@@QUICKJS_OXIDE_TEST262_PRIMARY@@</strong
-          >
-          <span id="test262-detail-metrics"
-            >@@QUICKJS_OXIDE_TEST262_DETAIL@@</span
-          >
-        </p>
+        <pre class="code"></pre>
+      </div></div>
       </div>
+      <div class="controls">
+        <div class="dpad" aria-hidden="true"></div>
+        <div class="readout" data-demo-only>
+          <span class="state"><i></i><span>Computing</span></span>
+          <div class="stats"><span><b data-progress>0%</b></span><span>engine <b data-time>0.00 s</b></span><span><b data-iters>0</b> iterations</span></div>
+          <div class="seg" role="group" aria-label="Detail"><button aria-pressed="false">Low</button><button aria-pressed="true">Mid</button><button aria-pressed="false">High</button></div>
+        </div>
+        <button class="abtn" data-run data-demo-only type="button">Run<br>again</button>
+      </div>
+      <div class="foot"><p class="note">Computed by quickjs-oxide WASM. The browser host draws.</p><details class="info"><summary>Build info</summary><dl>
+        <dt>engine</dt><dd data-meta="engine">loading…</dd><dt>commit</dt><dd data-meta="commit">…</dd>
+        <dt>engine load</dt><dd data-meta="load">…</dd>
+        <dt>view</dt><dd>whole set, −0.75 + 0i, width 3.3</dd><dt>image</dt><dd data-meta="size">…</dd><dt>host</dt><dd>Web Worker + canvas</dd></dl></details></div>
+    </div>
+  </div>
+</div>
 
-      <nav class="footer-links" aria-label="Project documentation">
-        <a
-          id="compatibility-link"
-          data-repository-path="docs/compatibility.md"
-          data-repository-ref="main"
-          href="https://github.com/pocket-nexus/quickjs-oxide/blob/main/docs/compatibility.md"
-          rel="noreferrer"
-        >
-          Compatibility <span aria-hidden="true">↗</span>
-        </a>
-        <a
-          id="test262-progress-link"
-          data-repository-path="docs/test262.md"
-          data-repository-ref="main"
-          href="https://github.com/pocket-nexus/quickjs-oxide/blob/main/docs/test262.md"
-          rel="noreferrer"
-        >
-          Test262 progress <span aria-hidden="true">↗</span>
-        </a>
-        <a href="https://github.com/pocket-nexus/quickjs-oxide#readme"
-          rel="noreferrer">
-          Project notes <span aria-hidden="true">→</span>
-        </a>
-      </nav>
-    </footer>
+<section class="block wrap">
+  <div class="sec-head"><h2 class="px px-shadow c-yellow">Why oxide</h2><div class="trail"></div></div>
+  <div class="cards">
+    <article class="card a-pink"><span class="chip">0 unsafe</span><h3>Safe Rust</h3>
+      <p>Every crate in the workspace sets <code>forbid(unsafe_code)</code>: the engine, the CLI and the WebAssembly bindings.</p></article>
+    <article class="card a-yellow"><span class="chip">≈1× QuickJS</span><h3>QuickJS-class speed</h3>
+      <p>Register bytecode, inline caches and NaN-boxed values keep run time level with QuickJS on the V8 v7, Octane and Are-We-Fast-Yet suites.</p></article>
+    <article class="card a-cyan"><span class="chip">Native + WASM</span><h3>Runs where you need it</h3>
+      <p>Embed it in a Rust application, use the native <code>qjs</code> command line, or ship the WebAssembly build to the browser, like the demo above.</p></article>
+  </div>
+</section>
 
-    <script>
-      (() => {
-        const commitNode = document.querySelector("#build-commit");
-        const documentationLinks = document.querySelectorAll(
-          ".footer-links [data-repository-path]",
-        );
-        const repository = "https://github.com/pocket-nexus/quickjs-oxide";
+<section class="block wrap">
+  <div class="sec-head"><h2 class="px px-shadow c-cyan">By the numbers</h2><div class="trail"></div></div>
+  <p class="sec-intro">Measured against QuickJS 2026-06-04, the engine quickjs-oxide follows. Method and raw results are in the docs.</p>
+  <div class="numbers">
+    <div class="stat"><div class="big c-yellow">@@TEST262_PERCENT@@%</div><div class="what">Test262 pass rate</div><p>@@TEST262_PASSES@@ of @@TEST262_SCOPE@@ variants in the scope QuickJS runs.</p></div>
+    <div class="stat"><div class="big c-cyan">≈1×</div><div class="what">QuickJS speed</div><p>Geometric mean of run time relative to QuickJS. Lower is faster.</p>
+      <div class="ratios"><span>V8 v7 0.94×</span><span>Octane 1.15×</span><span>AWFY 0.99×</span></div></div>
+    <div class="stat"><div class="big c-pink">0</div><div class="what">Lines of unsafe</div><p>The compiler rejects <code>unsafe</code> in every crate of the workspace.</p></div>
+    <div class="stat"><div class="big c-lilac">0</div><div class="what">Dependencies</div><p>No third-party crates, except num-bigint for BigInt. The native host adds tz-rs for time zones.</p></div>
+  </div>
+  <p class="numbers-foot">Release builds on one Linux machine. <a href="docs/performance/">See the method and every result →</a></p>
+</section>
 
-        const bindDocumentationLinks = () => {
-          const commit = commitNode.dataset.commit.trim();
-          const repositoryRef = /^[0-9a-f]{40}$/iu.test(commit)
-            ? commit
-            : "main";
+<section class="block wrap">
+  <div class="sec-head"><h2 class="px px-shadow c-pink">Start here</h2><div class="trail"></div></div>
+  <p class="sec-intro">Add the two crates, create a runtime, evaluate a script and read the result.</p>
+  <div class="start">
+    <div class="codecard">
+      <div class="bar"><i style="--c:var(--pink)"></i><i style="--c:var(--yellow)"></i><i style="--c:var(--cyan)"></i><span>Cargo.toml</span></div>
+      <pre data-hl>[dependencies]
+quickjs-oxide = { git = &quot;https://github.com/pocket-nexus/quickjs-oxide&quot; }
+quickjs-oxide-host = { git = &quot;https://github.com/pocket-nexus/quickjs-oxide&quot; }</pre>
+      <div class="bar"><i style="--c:var(--pink)"></i><i style="--c:var(--yellow)"></i><i style="--c:var(--cyan)"></i><span>src/main.rs</span></div>
+      <pre data-hl>use quickjs_oxide::engine::api::core::{Runtime, Value};
+use quickjs_oxide_host::SystemHost;
 
-          for (const link of documentationLinks) {
-            link.dataset.repositoryRef = repositoryRef;
-            link.href =
-              `${repository}/blob/${repositoryRef}/${link.dataset.repositoryPath}`;
-          }
-        };
+fn main() -&gt; Result&lt;(), Box&lt;dyn std::error::Error&gt;&gt; {
+    let runtime = Runtime::new_with_host_services(SystemHost::default());
+    let mut context = runtime.new_context()?;
+    let value = context.eval(&quot;[1, 2, 3].map((x) =&gt; x * 2).join()&quot;)?;
+    if let Value::String(text) = value {
+        println!(&quot;{}&quot;, text.to_utf8_lossy()); // 2,4,6
+    }
+    Ok(())
+}</pre>
+    </div>
+    <div class="docs">
+      <a class="doc a-yellow" href="docs/embed/"><b>Embedding guide</b><span>From your first <code>eval</code> to host services, module loading and error handling.</span></a>
+      <a class="doc a-cyan" href="docs/performance/"><b>Performance &amp; compatibility</b><span>Benchmark method and results, Test262 numbers, supported features and known differences from QuickJS.</span></a>
+      <a class="doc small a-lilac" href="https://github.com/pocket-nexus/quickjs-oxide/blob/main/examples/eval.rs"><b>Full example: examples/eval.rs</b></a>
+    </div>
+  </div>
+</section>
+</main>
 
-        new MutationObserver(bindDocumentationLinks).observe(commitNode, {
-          attributes: true,
-          attributeFilter: ["data-commit"],
-        });
-        bindDocumentationLinks();
-      })();
-    </script>
-  </body>
-</html>
+<footer class="site"><div class="rainbow"></div><div class="wrap">
+  <a class="brand" href="./"><svg viewBox="0 0 330 330" aria-hidden="true"><polygon fill="#F7DF1E" points="174,17 255,113 271,161 117,92"/><polygon fill="#FEA94F" points="107,108 182,143 141,189 189,323 93,250 65,158"/><polygon fill="#D34516" points="161,197 202,152 276,185 200,305"/></svg><span>quickjs-oxide</span></a>
+  <div class="links"><a href="docs/">Docs</a><a href="https://github.com/pocket-nexus/quickjs-oxide">GitHub</a></div>
+  <small>© 2026 Pocket Nexus · quickjs-oxide is a Pocket Nexus project · MIT License</small>
+</div></footer>
+<script src="paint.js"></script>
+<script src="home.js"></script>

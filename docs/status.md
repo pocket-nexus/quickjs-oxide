@@ -1,6 +1,6 @@
 # Implementation status
 
-quickjs-oxide is a Rust JavaScript engine available through its command-line application, embedding API, native adapter and browser playground. The crate layout and the host boundary are in the [architecture guide](architecture.md); [Execution](performance/execution.md) and [the heap](heap.md) describe the core's loop, caches, heap and collector, and [Execution and performance](performance/README.md) their measurement.
+quickjs-oxide is a Rust JavaScript engine available through its command-line application, embedding API, native adapter and WebAssembly build. The crate layout and the host boundary are in the [architecture guide](architecture.md); [Execution](performance/execution.md) and [the heap](heap.md) describe the core's loop, caches, heap and collector, and [Execution and performance](performance/README.md) their measurement.
 
 ## Engine
 
@@ -11,7 +11,7 @@ quickjs-oxide is a Rust JavaScript engine available through its command-line app
 - A runtime has one realm. `with` is an early `SyntaxError`, direct `eval` runs as indirect eval, and nothing reads `Symbol.species` or `Symbol.unscopables`; the [deviation ledger](deviations.md) records each.
 - The embedding API (`quickjs_oxide::engine::api::core`) exposes `Runtime`, `Context`, `Value`, the `Host` trait, host functions that receive a `Scope`, host objects, module loaders that receive a `ModuleScope`, `RuntimeOptions` and the collector, memory and inline-cache reports.
 - Host adapters supply environment capabilities: `SystemHost` (`adapters/native`) and `WebHost` (`adapters/web`). Applications own file loading, output, diagnostics and job driving.
-- `qjs` and the browser playground run the engine through the embedding API. Exact source bytes, malformed string data and diagnostic positions travel through the embedding and loader APIs.
+- `qjs` and the WebAssembly build run the engine through the embedding API. Exact source bytes, malformed string data and diagnostic positions travel through the embedding and loader APIs.
 
 ## Test262 baseline
 
@@ -42,7 +42,7 @@ python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 ./scripts/test262/test-test262.sh --check
 ./scripts/test262/test-test262.sh --focused
 TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
-./scripts/web/test-web-playground.sh
+./scripts/web/test-site.sh
 ```
 
 `check-gc-stress.py` runs the fixed probes and the core's corpus programs on `qjs --gc-stress=1`, collecting before every allocation, and compares their output with the normal run.

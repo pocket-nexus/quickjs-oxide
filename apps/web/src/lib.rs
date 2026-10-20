@@ -1,6 +1,6 @@
 use js_sys::{Object, Reflect};
 use quickjs_oxide::engine::api::core::{
-    CompleteOrdinaryPropertyDescriptor, Runtime, RuntimeError, RuntimeOptions, Value,
+    CompleteOrdinaryPropertyDescriptor, Context, Runtime, RuntimeError, RuntimeOptions, Value,
 };
 use quickjs_oxide::engine::api::number_to_string;
 use quickjs_oxide::{QUICKJS_COMPAT_VERSION, QUICKJS_OXIDE_VERSION};
@@ -8,11 +8,11 @@ use quickjs_oxide_web_host::WebHost;
 
 use wasm_bindgen::prelude::*;
 
-const PLAYGROUND_FILENAME: &str = "<playground>";
+const SCRIPT_FILENAME: &str = "<input>";
 const WEB_CAN_BLOCK: bool = false;
 /// Nested re-entries the engine may make. A WebAssembly host's machine stack
 /// is the JavaScript engine's, which the core's byte measure (of the
-/// linear-memory stack) cannot see, so the playground bounds the depth.
+/// linear-memory stack) cannot see, so the binding bounds the depth.
 const WEB_NATIVE_DEPTH_LIMIT: u32 = 600;
 /// Half of the linear-memory stack `wasm-ld` reserves (1 MiB), so a native
 /// frame never runs past it before the check trips.
@@ -94,6 +94,36 @@ pub fn engine_metadata() -> JsValue {
 }
 
 fn evaluate_with_engine(source: &str) -> EvalResult {
+    match web_context() {
+        Ok(mut context) => evaluate_in(&mut context, source),
+        Err(error) => EvalResult::engine_error(&error),
+    }
+}
+
+/// One runtime kept alive across evaluations, so a script can define
+/// functions once and the host can call them many times.
+#[wasm_bindgen]
+pub struct Session {
+    context: Context,
+}
+
+#[wasm_bindgen]
+impl Session {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> Result<Session, JsValue> {
+        web_context()
+            .map(|context| Self { context })
+            .map_err(|error| JsValue::from_str(&error.to_string()))
+    }
+
+    /// Evaluate a script in this session's realm; the completion has the same
+    /// `ok`, `kind`, and `text` fields as [`evaluate`].
+    pub fn eval(&mut self, source: &str) -> JsValue {
+        evaluate_in(&mut self.context, source).into_js()
+    }
+}
+
+fn web_context() -> Result<Context, RuntimeError> {
     let runtime = Runtime::with_host(
         WebHost,
         RuntimeOptions {
@@ -102,11 +132,13 @@ fn evaluate_with_engine(source: &str) -> EvalResult {
             ..RuntimeOptions::default()
         },
     );
-    if let Err(error) = runtime.set_can_block(WEB_CAN_BLOCK) {
-        return EvalResult::engine_error(&error);
-    }
-    let context = runtime.context();
-    let value = match context.eval_with_filename(source, PLAYGROUND_FILENAME) {
+    runtime.set_can_block(WEB_CAN_BLOCK)?;
+    Ok(runtime.context())
+}
+
+fn evaluate_in(context: &mut Context, source: &str) -> EvalResult {
+    let runtime = context.runtime().clone();
+    let value = match context.eval_with_filename(source, SCRIPT_FILENAME) {
         Ok(value) => value,
         Err(RuntimeError::Exception(exception)) => {
             return EvalResult::exception(&runtime, &exception);

@@ -298,6 +298,13 @@ function currentTest262DocumentBlocks(metrics) {
         `- ${formatInteger(metrics.eligibleFailures)} failures and ${timeoutText} among the ${fullRunnable} eligible variants`,
     ],
     [
+      "apps/web/docs/compatibility.md",
+      "| Measure | Passes | Variants | Rate |\n" +
+        "| --- | ---: | ---: | ---: |\n" +
+        `| In QuickJS 2026-06-04's scope | ${fullPasses} | ${quickJsScope} | ${metrics.quickJsScopePercent}% |\n` +
+        `| Whole Test262 corpus | ${fullPasses} | ${fullVariants} | ${metrics.fullPassPercent}% |`,
+    ],
+    [
       "docs/test262.md",
       "Metrics are reported in this order:\n\n" +
         `1. **QuickJS-scope pass:** ${fullPasses} / ${quickJsScope} (${metrics.quickJsScopePercent}%). The denominator is\n` +

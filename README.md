@@ -38,14 +38,15 @@ pass rate is 79.815%.
   WebAssembly build.
 
 **[Try it in the browser →](https://pocket-nexus.github.io/quickjs-oxide/)**
-The playground runs the engine compiled to WebAssembly and reports the exact
-build it runs.
+The homepage computes a Mandelbrot set with the engine compiled to WebAssembly;
+the [docs](https://pocket-nexus.github.io/quickjs-oxide/docs/) cover embedding,
+host services, modules, limits and performance.
 
 ## Install
 
 [GitHub Releases](https://github.com/pocket-nexus/quickjs-oxide/releases)
-carry prebuilt `qjs` binaries for Linux, macOS and Windows, WebAssembly
-packages and a versioned playground.
+carry prebuilt `qjs` binaries for Linux, macOS and Windows and WebAssembly
+packages.
 
 ```sh
 cargo binstall --git https://github.com/pocket-nexus/quickjs-oxide quickjs-oxide-cli
@@ -128,7 +129,7 @@ surface.
 - [Architecture](docs/architecture.md), [embedding internals](docs/embedding.md) and [implementation status](docs/status.md)
 - [Test262 baseline and metrics](docs/test262.md)
 - [Execution](docs/performance/execution.md), [the heap](docs/heap.md), [performance](docs/performance/README.md) and [profiling](docs/profiling.md)
-- [Browser playground](docs/playground.md), [releases](docs/release.md) and the [changelog](CHANGELOG.md)
+- [The site and its docs](apps/web/README.md), [releases](docs/release.md) and the [changelog](CHANGELOG.md)
 
 ## Development
 
@@ -140,8 +141,8 @@ cargo test --locked --workspace --all-targets
 ./scripts/test262/test-test262.sh --check
 ./scripts/test262/test-test262.sh --focused
 TEST262_WORKERS=2 ./scripts/test262/test-test262.sh --full
-./scripts/web/test-web-playground.sh
-npm ci && npx playwright install chromium && npm run test:browser
+npm ci && ./scripts/web/test-site.sh
+npx playwright install chromium && npm run test:browser
 ```
 
 `rust-toolchain.toml` pins the toolchain. The core (bytecode, heap, loop and

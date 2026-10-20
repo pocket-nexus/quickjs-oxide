@@ -134,10 +134,13 @@ jobs:
       - name: Install matching wasm-bindgen CLI
         run: cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
 
-      - name: Build the playground
-        run: ./scripts/web/build-web-playground.sh
+      - name: Install the docs renderer
+        run: npm ci --ignore-scripts
 
-      - name: Package the playground and WebAssembly bindings
+      - name: Build the WebAssembly module
+        run: ./scripts/web/build-site.sh
+
+      - name: Package the WebAssembly bindings
         run: ./scripts/release/package-web.sh "${VERSION}" target/dist
 
       - name: Upload web archives
@@ -153,7 +156,6 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
-      actions: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
@@ -191,12 +193,6 @@ jobs:
               "${channel[@]}"
           fi
 
-      # Releases created with GITHUB_TOKEN do not trigger other workflows, so
-      # redeploy Pages explicitly to serve this release's playground.
-      - name: Redeploy Pages with the release playground
-        env:
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        run: gh workflow run pages.yml --ref "${DEFAULT_BRANCH}"
 
   crates:
     needs: [version, publish]

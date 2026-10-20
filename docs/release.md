@@ -42,20 +42,14 @@ prebuilt binaries report the same version.
 | --- | --- |
 | `qjs-vX.Y.Z-<target>.tar.gz` / `.zip` | `qjs` plus README and licenses for `x86_64`/`aarch64-unknown-linux-musl` (static), `x86_64`/`aarch64-apple-darwin` and `x86_64-pc-windows-msvc` |
 | `quickjs-oxide-wasm-vX.Y.Z.tar.gz` | wasm-bindgen packages of `apps/web`: `web/` (ES module) and `nodejs/` |
-| `quickjs-oxide-playground-vX.Y.Z.tar.gz` | The static playground site built from the tag |
 | `SHA256SUMS` | Digests of every asset |
 
 Every build uses the Rust toolchain pinned in `rust-toolchain.toml`; the
-WebAssembly packages come from `scripts/web/build-web-playground.sh`, as the
-Pages playground does. Each native
+WebAssembly packages come from the module `scripts/web/build-site.sh` builds
+for the site. Each native
 binary except the cross-compiled `x86_64-apple-darwin` one evaluates a smoke
 expression before packaging. Re-running the workflow for an existing release
 replaces its assets.
-
-After publishing, the workflow dispatches `pages.yml` on the default branch.
-The Pages build unpacks every release's playground archive under
-`/releases/<tag>/` next to the main-branch playground and lists them at
-`/releases/`.
 
 ## crates.io
 

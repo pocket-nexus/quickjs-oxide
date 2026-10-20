@@ -1,135 +1,67 @@
+// worker.js: the browser host. It loads quickjs-oxide, runs mandelbrot.js
+// inside it, and hands each finished band to the page, which paints it.
 /* global wasm_bindgen */
-
 "use strict";
 
-const PACKAGE_SCRIPT = "./pkg/quickjs_oxide_web.js";
-const PACKAGE_WASM = "./pkg/quickjs_oxide_web_bg.wasm";
+importScripts("./pkg/quickjs_oxide_web.js");
 
-let initialized = false;
+const STEPS = [8, 4, 2, 1];
+const BAND_POINTS = 8000;   // about the same work per message in every pass
+let session = null;
+let currentJob = 0;
 
-function readEngineMetadata() {
-  if (typeof wasm_bindgen.engine_metadata !== "function") {
-    throw new TypeError(
-      "The WASM package did not expose the expected engine_metadata function.",
-    );
-  }
-
-  const metadata = wasm_bindgen.engine_metadata();
-  const validStrings = metadata &&
-    typeof metadata.engine === "string" &&
-    typeof metadata.crateVersion === "string" &&
-    typeof metadata.quickjsTarget === "string" &&
-    typeof metadata.buildCommit === "string";
-
-  if (!validStrings || metadata.canBlock !== false) {
-    throw new TypeError(
-      "The WASM package returned invalid engine metadata or an unsafe browser host policy.",
-    );
-  }
-
-  return metadata;
+async function boot() {
+  const start = performance.now();
+  await wasm_bindgen({ module_or_path: "./pkg/quickjs_oxide_web_bg.wasm" });
+  session = new wasm_bindgen.Session();          // one runtime, kept alive
+  const source = await (await fetch("./mandelbrot.js")).text();
+  check(session.eval(source));
+  const meta = wasm_bindgen.engine_metadata();
+  postMessage({ type: "ready", loadMs: performance.now() - start,
+                version: meta.crateVersion, commit: meta.buildCommit });
 }
 
-function serializeError(error, fallbackName = "Error") {
-  if (error && typeof error === "object") {
-    return {
-      name: typeof error.name === "string" && error.name.length > 0
-        ? error.name
-        : fallbackName,
-      message: typeof error.message === "string" && error.message.length > 0
-        ? error.message
-        : String(error),
-      stack: typeof error.stack === "string" ? error.stack : null,
-    };
-  }
-
-  return {
-    name: fallbackName,
-    message: String(error),
-    stack: null,
-  };
+function check(result) {
+  if (!result.ok) throw new Error(result.text);
+  return result.text;
 }
 
-async function initialize() {
-  try {
-    importScripts(PACKAGE_SCRIPT);
-
-    if (typeof wasm_bindgen !== "function") {
-      throw new TypeError(
-        "The wasm-bindgen loader did not expose the expected global function.",
-      );
+async function render(job) {
+  const { id, width, height, cx, cy, span, maxIter } = job;
+  check(session.eval(`setView(${width}, ${height}, ${cx}, ${cy}, ${span}, ${maxIter}, ${STEPS[0]})`));
+  let engineMs = 0, done = 0;
+  for (const step of STEPS) {
+    const rows = step * Math.max(1, Math.floor(BAND_POINTS / Math.ceil(width / step)));
+    for (let y0 = 0; y0 < height; y0 += rows) {
+      if (id !== currentJob) return;            // a newer run replaced this one
+      const start = performance.now();
+      const shades = check(session.eval(`renderBand(${step}, ${y0}, ${rows})`));
+      engineMs += performance.now() - start;   // time inside the engine only
+      const iterations = Number(check(session.eval("iterations")));
+      done += countNew(shades);
+      postMessage({ type: "band", id, step, y0, rows, shades, engineMs, iterations,
+                    progress: done / (width * height) });
+      await new Promise((resolve) => setTimeout(resolve, 0));  // let messages in
     }
-
-    await wasm_bindgen(PACKAGE_WASM);
-
-    if (typeof wasm_bindgen.evaluate !== "function") {
-      throw new TypeError(
-        "The WASM package did not expose the expected evaluate function.",
-      );
-    }
-
-    const metadata = readEngineMetadata();
-    initialized = true;
-    self.postMessage({ type: "ready", metadata });
-  } catch (error) {
-    self.postMessage({
-      type: "load-error",
-      error: serializeError(error, "EngineLoadError"),
-      online: self.navigator ? self.navigator.onLine : null,
-    });
   }
+  postMessage({ type: "done", id });
 }
 
-self.addEventListener("message", (event) => {
-  const message = event.data;
+function countNew(shades) {
+  let n = 0;
+  for (let i = 0; i < shades.length; i++) if (shades.charCodeAt(i) !== 256) n++;
+  return n;
+}
 
-  if (
-    !message ||
-    message.type !== "run" ||
-    typeof message.id !== "number" ||
-    typeof message.source !== "string"
-  ) {
-    return;
-  }
+const booted = boot().catch((error) => postMessage({ type: "error", message: String(error.message || error) }));
 
-  if (!initialized) {
-    self.postMessage({
-      type: "result",
-      id: message.id,
-      durationMs: 0,
-      result: {
-        ok: false,
-        error: {
-          name: "EngineNotReadyError",
-          message: "The quickjs-oxide engine is not ready.",
-          stack: null,
-        },
-      },
-    });
-    return;
-  }
-
-  const startedAt = performance.now();
-
+onmessage = async ({ data: job }) => {
+  currentJob = job.id;
+  await booted;
+  if (!session) return;
   try {
-    const result = wasm_bindgen.evaluate(message.source);
-    self.postMessage({
-      type: "result",
-      id: message.id,
-      durationMs: performance.now() - startedAt,
-      result,
-    });
+    await render(job);
   } catch (error) {
-    self.postMessage({
-      type: "result",
-      id: message.id,
-      durationMs: performance.now() - startedAt,
-      result: {
-        ok: false,
-        error: serializeError(error, "EvaluationError"),
-      },
-    });
+    postMessage({ type: "error", id: job.id, message: String(error.message || error) });
   }
-});
-
-void initialize();
+};

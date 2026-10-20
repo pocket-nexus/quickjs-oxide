@@ -9,7 +9,7 @@ Implementations have a single owner:
 | `benchmark/` | External workload runners, profiler experiments and build/result provenance |
 | `quickjs/` | Pinned reference builds, cache tests, differential fixtures and dynamic-import traces |
 | `unicode/` | Unicode table generation and source-fingerprint verification |
-| `web/` | Playground build, Node/browser checks and Pages deployment tooling |
+| `web/` | Site and docs build, Node/browser checks and Pages deployment tooling |
 | `release/` | Version tagging and GitHub Release packaging; see `docs/release.md` |
 
 Commands, CI and generated-file headers use these paths directly. `demo-42.sh`
@@ -17,7 +17,7 @@ is a small repository-level example. New tools belong in their owner directory.
 
 Shell scripts coordinate commands and temporary files. Python, Node and AWK
 analysis lives in separate source files, including Unicode extraction, Test262
-report validation, host metadata checks and playground assertions. Helpers stay
+report validation, host metadata checks and site assertions. Helpers stay
 with their owner. Admission generators share `test262/test262-admission-data.mjs`. Avoid a generic shared
 utilities directory until unrelated owners actually need the same contract.
 

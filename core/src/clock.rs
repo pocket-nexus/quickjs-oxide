@@ -1,5 +1,5 @@
 //! The monotonic clock the collector times its pauses with. A target
-//! without one (`wasm32-unknown-unknown`, the web playground's) reports
+//! without one (`wasm32-unknown-unknown`, the web build's) reports
 //! zero-length pauses instead of panicking.
 
 use std::time::Duration;

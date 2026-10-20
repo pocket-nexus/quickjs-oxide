@@ -4,8 +4,8 @@ use wasm_bindgen::JsValue;
 
 const TWO_TO_THE_32: f64 = 4_294_967_296.0;
 
-/// The core's host over the browser's clock and time zone. The
-/// playground captures output itself.
+/// The core's host over the browser's clock and time zone. The page that
+/// embeds the engine shows results itself.
 #[derive(Debug, Default)]
 pub struct WebHost;
 

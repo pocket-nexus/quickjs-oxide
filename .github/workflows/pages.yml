@@ -1,4 +1,4 @@
-name: Deploy playground to GitHub Pages
+name: Deploy the site to GitHub Pages
 
 on:
   push:
@@ -53,26 +53,20 @@ jobs:
           cargo test --locked --lib
           generator_delegation_reaches_the_portable_floor_and_recovers_after_overflow
 
-      - name: Build and test the real quickjs-oxide WebAssembly playground
-        run: ./scripts/web/test-web-playground.sh
-
-      - name: Install browser acceptance dependencies
+      - name: Install the docs renderer and browser test dependencies
         run: npm ci --ignore-scripts
+
+      - name: Build the site and test the WebAssembly build and docs examples
+        run: ./scripts/web/test-site.sh
 
       - name: Install the pinned Chromium browser
         run: ./node_modules/.bin/playwright install --with-deps chromium
 
-      - name: Test the final Pages artifact in a real browser
+      - name: Test the homepage demo and the docs in a real browser
         run: npm run test:browser
 
       - name: Test the non-cancelling Pages deploy client
         run: node scripts/web/test-deploy-pages.mjs
-
-      - name: Add the playground of every published release
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        run: ./scripts/release/assemble-release-playgrounds.sh target/pages
 
       - name: Configure GitHub Pages
         id: pages
@@ -132,7 +126,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify the live WASM deployment
+      - name: Verify the live deployment
         env:
           QUICKJS_OXIDE_COMMIT: ${{ github.sha }}
           QUICKJS_OXIDE_GLUE_SHA256: ${{ needs.build.outputs.glue_sha256 }}

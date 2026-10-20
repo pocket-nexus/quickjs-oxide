@@ -6,7 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 publish = false
-description = "WebAssembly bindings and browser playground for the quickjs-oxide JavaScript engine"
+description = "WebAssembly bindings and website for the quickjs-oxide JavaScript engine"
 
 [lints]
 workspace = true

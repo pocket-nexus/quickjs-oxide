@@ -9,12 +9,12 @@ if [[ "${cargo_target_dir}" != /* ]]; then
   cargo_target_dir="${repo_root}/${cargo_target_dir}"
 fi
 wasm_file="${cargo_target_dir}/${wasm_target}/web/${wasm_stem}.wasm"
-node_dir="${repo_root}/target/web-playground-node"
+node_dir="${repo_root}/target/web-site-node"
 
 cd "${repo_root}"
 
 if ! command -v rg >/dev/null 2>&1; then
-  echo "ripgrep (rg) is required for the playground anti-delegation gate" >&2
+  echo "ripgrep (rg) is required for the site anti-delegation gate" >&2
   exit 1
 fi
 
@@ -37,11 +37,11 @@ rust_host_pattern='js_sys::(eval|Function)|Function::new'
 browser_host_pattern='(^|[^.$[:alnum:]_])eval[[:space:]]*[(]|(globalThis|window|self)[.]eval[[:space:]]*[(]|new[[:space:]]+Function[[:space:]]*[(]|(^|[^.$[:alnum:]_])Function[[:space:]]*[(]'
 if rg -n "${rust_host_pattern}" apps/web adapters/web \
   || rg -n --glob '!pkg/**' "${browser_host_pattern}" apps/web/site; then
-  echo "playground source must not delegate evaluation to the browser host" >&2
+  echo "site source must not delegate evaluation to the browser host" >&2
   exit 1
 fi
 
-./scripts/web/build-web-playground.sh "$@"
+./scripts/web/build-site.sh "$@"
 
 rm -rf "${node_dir}"
 mkdir -p "${node_dir}"
@@ -52,4 +52,7 @@ wasm-bindgen \
   --target nodejs \
   --no-typescript
 
-node "${repo_root}/scripts/web/test-web-playground-node.mjs" "$@"
+node "${repo_root}/scripts/web/test-site-node.mjs" "$@"
+
+# Every example the docs include must run and pass its own assertions.
+./scripts/web/test-doc-examples.sh
