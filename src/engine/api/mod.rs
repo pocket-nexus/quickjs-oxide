@@ -1,4 +1,4 @@
-//! Rust embedding boundary: the API over `oxide-core` lives in [`core`].
+//! Rust embedding boundary: the API over `quickjs-oxide-core` lives in [`core`].
 pub mod core;
 pub mod error;
 

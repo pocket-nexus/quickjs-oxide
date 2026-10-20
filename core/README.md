@@ -1,4 +1,4 @@
-# oxide-core
+# quickjs-oxide-core
 
 The engine of quickjs-oxide: NaN-boxed values, typed arenas and a value
 heap under a non-moving mark-sweep collector, shapes, register bytecode and
@@ -11,7 +11,7 @@ layout, the rooting rule every heap user follows, and the design decisions
 behind the bytecode, the loop, the caches and the heap.
 
 The crate has `#![forbid(unsafe_code)]` and one dependency, the
-regular-expression crate `oxide-regexp` (`regexp/`), which has none. The root
+regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
 crate depends on it; it does not depend on the root crate.
 
 ## Layout
@@ -63,7 +63,7 @@ takes `&mut self` and returns `Result<_, HeapError>`), never elsewhere.
 Code that breaks the rule fails under the stress mode:
 
 ```sh
-cargo test -p oxide-core --features gc-stress
+cargo test -p quickjs-oxide-core --features gc-stress
 ```
 
 With `gc-stress` every allocating call collects first, sweep poisons freed

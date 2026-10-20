@@ -108,12 +108,26 @@ jobs:
             --test oracle test262_
           ./scripts/checks/check-oracle-registry.sh --compiled
           # The core's whole suite again with a collection at every allocation.
-          cargo test --locked -p oxide-core --features gc-stress
+          cargo test --locked -p quickjs-oxide-core --features gc-stress
           # The lowering and the corpus under stress.
           cargo test --locked -p quickjs-oxide --features gc-stress --lib compiler::register
           # The driver under stress: the fixed probes at smoke size and the corpus.
           cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
           python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
+
+      # The release workflow publishes these; each must build from its
+      # packaged sources alone.
+      - name: Package the published crates
+        run: |
+          # Each package carries copies of the license and notices.
+          for crate in core regexp adapters/native apps/cli; do
+            for file in LICENSE NOTICE LICENSES/QuickJS-MIT.txt LICENSES/Unicode-3.0.txt; do
+              cmp "${file}" "${crate}/${file}"
+            done
+          done
+          cargo package --locked \
+            -p quickjs-oxide-regexp -p quickjs-oxide-core -p quickjs-oxide \
+            -p quickjs-oxide-host -p quickjs-oxide-cli
 
       - name: Lint targets
         run: |

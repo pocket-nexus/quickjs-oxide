@@ -6,7 +6,7 @@
 //! runs every file (the worst case for a strong table), and for the largest
 //! single file with the harness prelude (one runtime per test).
 //!
-//! `cargo run --release -p oxide-core --example atom_census -- <test262>/harness <test262>/test`
+//! `cargo run --release -p quickjs-oxide-core --example atom_census -- <test262>/harness <test262>/test`
 
 use std::fs;
 use std::path::{Path, PathBuf};

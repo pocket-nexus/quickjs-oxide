@@ -2,7 +2,7 @@
 //! pinned upstream release.
 //!
 //! The front end compiles source to `QuickJS`-shaped stack bytecode, the
-//! register lowering turns it into `oxide-core`'s register bytecode, and the
+//! register lowering turns it into `quickjs-oxide-core`'s register bytecode, and the
 //! embedding API runs it on the core.
 
 /// Interpreter implementation; embedders use [`engine::api`].

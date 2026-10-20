@@ -65,17 +65,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
-name = "oxide-core"
-version = "0.3.1"
-dependencies = [
- "oxide-regexp",
-]
-
-[[package]]
-name = "oxide-regexp"
-version = "0.3.1"
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -90,18 +79,25 @@ version = "0.3.1"
 dependencies = [
  "num-bigint",
  "num-traits",
- "oxide-core",
- "oxide-regexp",
+ "quickjs-oxide-core",
  "quickjs-oxide-host",
+ "quickjs-oxide-regexp",
 ]
 
 [[package]]
 name = "quickjs-oxide-cli"
 version = "0.3.1"
 dependencies = [
- "oxide-regexp",
  "quickjs-oxide",
  "quickjs-oxide-host",
+ "quickjs-oxide-regexp",
+]
+
+[[package]]
+name = "quickjs-oxide-core"
+version = "0.3.1"
+dependencies = [
+ "quickjs-oxide-regexp",
 ]
 
 [[package]]
@@ -111,6 +107,10 @@ dependencies = [
  "quickjs-oxide",
  "tz-rs",
 ]
+
+[[package]]
+name = "quickjs-oxide-regexp"
+version = "0.3.1"
 
 [[package]]
 name = "quickjs-oxide-test262"

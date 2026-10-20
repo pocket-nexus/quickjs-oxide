@@ -1,8 +1,10 @@
 # Releases
 
 Every crate shares the `[workspace.package]` version. A `vX.Y.Z` tag on that
-version publishes a GitHub Release, which is the only distribution channel;
-every crate sets `publish = false`.
+version publishes a GitHub Release and the crates on crates.io:
+`quickjs-oxide-regexp`, `quickjs-oxide-core`, `quickjs-oxide`,
+`quickjs-oxide-host` and `quickjs-oxide-cli`. The web packages and the Test262
+runner set `publish = false`.
 
 ## Release notes come from pull-request titles
 
@@ -54,6 +56,33 @@ After publishing, the workflow dispatches `pages.yml` on the default branch.
 The Pages build unpacks every release's playground archive under
 `/releases/<tag>/` next to the main-branch playground and lists them at
 `/releases/`.
+
+## crates.io
+
+The `crates` job runs after the GitHub Release. It publishes the five crates
+in dependency order with `cargo publish --locked`, skipping a version crates.io
+already has, so re-running the workflow finishes a partial publish. It
+authenticates by [trusted publishing](https://crates.io/docs/trusted-publishing):
+crates.io trusts this repository's `release.yml` and hands the job a token that
+is revoked when the job ends; no token is stored in the repository.
+
+Trusted publishing is configured per crate, and a crate must exist before it
+can be configured, so the first version of each crate is published by hand:
+
+1. Run `cut-release.sh` as above, but do not push yet.
+2. With a crates.io token (`cargo login`), publish in dependency order:
+   `cargo publish --locked -p quickjs-oxide-regexp`, then
+   `quickjs-oxide-core`, `quickjs-oxide`, `quickjs-oxide-host`,
+   `quickjs-oxide-cli`.
+3. On crates.io, add a trusted publisher to each crate: repository
+   `pocket-nexus/quickjs-oxide`, workflow `release.yml`.
+4. Push the tag. The `crates` job finds every crate already published.
+
+`fast` CI runs `cargo package` on the five crates, which builds each from its
+packaged sources alone. Each package lists its files with `include`: sources,
+`README.md`, and `LICENSE`, `NOTICE` and `LICENSES/` (copies of the root's,
+which the same CI step compares); the tests, corpora and tooling stay in the
+repository.
 
 ## Installing
 

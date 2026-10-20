@@ -18,13 +18,13 @@ The items build on the current implementation: the embedding API described in [`
 
 | Module | Crate | Content |
 | --- | --- | --- |
-| `builtins` (`natives!`) | `oxide-core` | `Native::HostFunction`, `Native::HostConstructor` (2.1) |
-| `heap::object` | `oxide-core` | `InternalData::HostFn`, `InternalData::HostData`, `InternalTag::HostData` (2.2, 3.1) |
-| `vm::native` | `oxide-core` | `HostFn`, `NativeCall`, the trampoline `host_call` (2.3) |
-| `embed` | `oxide-core` | `NativeCx`, every embedder operation moved onto it, `Runtime` as one-line delegations; `new_host_function`, `new_host_object`, `host_data`, `new_promise_capability`, the buffer operations (2.4, 3.1, 7.1, 9.1) |
-| `vm::error`, `vm::interp`, `bytecode` | `oxide-core` | `vm.interrupted`, the uncatchable unwind, `Opcode::JmpBack`, the poll counter (6) |
-| `host` | `oxide-core` | `Host::interrupt` (6.2) |
-| `vm::module` | `oxide-core` | `ModuleSource::Synthetic` (8.1) |
+| `builtins` (`natives!`) | `quickjs-oxide-core` | `Native::HostFunction`, `Native::HostConstructor` (2.1) |
+| `heap::object` | `quickjs-oxide-core` | `InternalData::HostFn`, `InternalData::HostData`, `InternalTag::HostData` (2.2, 3.1) |
+| `vm::native` | `quickjs-oxide-core` | `HostFn`, `NativeCall`, the trampoline `host_call` (2.3) |
+| `embed` | `quickjs-oxide-core` | `NativeCx`, every embedder operation moved onto it, `Runtime` as one-line delegations; `new_host_function`, `new_host_object`, `host_data`, `new_promise_capability`, the buffer operations (2.4, 3.1, 7.1, 9.1) |
+| `vm::error`, `vm::interp`, `bytecode` | `quickjs-oxide-core` | `vm.interrupted`, the uncatchable unwind, `Opcode::JmpBack`, the poll counter (6) |
+| `host` | `quickjs-oxide-core` | `Host::interrupt` (6.2) |
+| `vm::module` | `quickjs-oxide-core` | `ModuleSource::Synthetic` (8.1) |
 | `api::core::ops` (new) | root crate | `View`, the `js_ops!` macro, the `Js` trait (4.1) |
 | `api::core::function` (new) | root crate | `Scope`, `FunctionOptions`, `HostFunction`, the body wrapper (4.2, 4.3) |
 | `api::core::value`, `api::core::runtime` | root crate | `Weak` slots, `Poisoned`, `InterruptHandle` (4.4, 4.6, 6.3) |
@@ -36,7 +36,7 @@ The items build on the current implementation: the embedding API described in [`
 | `apps/cli`, `apps/web`, `conformance/test262`, `tests` | apps | the `Exception(Value)` migration (5.3) |
 | `examples/host.rs` | root crate | the example of section 11 |
 
-Delivery: one pull request per item in the order of section 12, each with its acceptance check in the description and the gates of the [pull request template](../.github/pull_request_template.md): `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `cargo test --locked --workspace --all-targets`, `cargo test -p oxide-core --features gc-stress`, `core/tests/corpus` under `gc-stress`, `scripts/checks/check-gc-stress.py`, the loop-size check and the instruction gate for items 2 and 6, and the Test262 focused vector. Each pull request updates the documents that describe what it changes, so that the documentation describes the current implementation at every commit.
+Delivery: one pull request per item in the order of section 12, each with its acceptance check in the description and the gates of the [pull request template](../.github/pull_request_template.md): `cargo clippy --workspace --all-targets --all-features -- -D warnings`, `cargo fmt --check`, `cargo test --locked --workspace --all-targets`, `cargo test -p quickjs-oxide-core --features gc-stress`, `core/tests/corpus` under `gc-stress`, `scripts/checks/check-gc-stress.py`, the loop-size check and the instruction gate for items 2 and 6, and the Test262 focused vector. Each pull request updates the documents that describe what it changes, so that the documentation describes the current implementation at every commit.
 
 ## 2. Host functions in the core
 

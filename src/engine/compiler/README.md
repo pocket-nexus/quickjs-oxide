@@ -5,7 +5,7 @@ complete JavaScript source into an `UnlinkedFunction` tree (or an
 `UnlinkedModule`) of QuickJS-shaped stack code: lexing and parsing,
 declaration and scope handling, name resolution, closure capture and
 stack-instruction generation. The lowering in [`register`](register/mod.rs) turns
-that tree into `oxide-core` register code and publishes it into the
+that tree into `quickjs-oxide-core` register code and publishes it into the
 running runtime. Changes to syntax, binding rules or compile-time rewrites
 start in the front end; changes to the register code it produces start in
 the lowering.

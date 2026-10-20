@@ -8,7 +8,9 @@ repository.workspace = true
 publish.workspace = true
 description = "The qjs command-line interpreter for the quickjs-oxide JavaScript engine"
 homepage.workspace = true
+# The project README, which Cargo copies in as this package's README.md.
 readme = "../../README.md"
+include = ["/src", "/build.rs", "/qjs.order", "/LICENSE", "/NOTICE", "/LICENSES"]
 keywords = ["javascript", "quickjs", "interpreter", "runtime", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 

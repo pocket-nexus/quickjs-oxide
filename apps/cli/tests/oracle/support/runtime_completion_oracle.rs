@@ -345,7 +345,7 @@ function __completion(callback){
 }
 "#;
 
-/// Compiles `pattern` with `flags` on `oxide-regexp`, as a RegExp literal does.
+/// Compiles `pattern` with `flags` on `quickjs-oxide-regexp`, as a RegExp literal does.
 pub(crate) fn compile(
     pattern: &JsString,
     flags: &JsString,

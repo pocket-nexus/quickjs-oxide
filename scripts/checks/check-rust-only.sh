@@ -144,7 +144,7 @@ fi
 # QuickJS packages. All workspace source remains covered by the product-input
 # scans above.
 filter_status=0
-rg -v -F -e "($root)" -e "($root/adapters/native)" -e "($root/adapters/web)" -e "($root/apps/cli)" -e "($root/apps/web)" -e "($root/conformance/test262)" "$tmp_dir/cargo-tree" \
+rg -v -F -e "($root)" -e "($root/core)" -e "($root/regexp)" -e "($root/adapters/native)" -e "($root/adapters/web)" -e "($root/apps/cli)" -e "($root/apps/web)" -e "($root/conformance/test262)" "$tmp_dir/cargo-tree" \
     >"$tmp_dir/external-cargo-tree" || filter_status=$?
 if (( filter_status > 1 )); then
     echo "error: could not filter the repository's workspace crate" >&2

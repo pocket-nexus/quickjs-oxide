@@ -86,8 +86,8 @@ src = root / "src"
 errors = []
 # The front end (`compiler`, its stack instructions and unlinked records in
 # `code`, its primitive values in `value`) and the embedding API over
-# `oxide-core` (`api`); the engine itself is the `oxide-core` crate (`core/`)
-# and the regular-expression engine the `oxide-regexp` crate (`regexp/`).
+# `quickjs-oxide-core` (`api`); the engine itself is the `quickjs-oxide-core` crate (`core/`)
+# and the regular-expression engine the `quickjs-oxide-regexp` crate (`regexp/`).
 expected = {"compiler", "code", "value", "api"}
 if {p.name for p in src.glob("*.rs")} != {"lib.rs"}:
     errors.append("src must contain only lib.rs as a top-level Rust source")
@@ -106,7 +106,7 @@ if set(re.findall(r"\bpub\s+mod\s+(\w+)", engine_code)) != {"api"}:
     errors.append("engine::api must be the only public engine module")
 # The embedding API keeps its implementation
 # private: its items are its own, the API root's, the front end's (errors,
-# strings, compile options, import attributes) or `oxide-core`'s.
+# strings, compile options, import attributes) or `quickjs-oxide-core`'s.
 core_api = rust_code_only((src / "engine/api/core/mod.rs").read_text())
 if set(re.findall(r"\bpub\s+mod\s+(\w+)", core_api)) - {"test262"}:
     errors.append("engine::api::core must not expose its implementation modules")

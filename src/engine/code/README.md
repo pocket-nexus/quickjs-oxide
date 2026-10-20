@@ -2,7 +2,7 @@
 
 code holds what the front end produces and the register lowering reads:
 QuickJS-shaped stack instructions and the unlinked function and module
-records that carry them. The lowering (`compiler/register`) turns these records into `oxide-core` code units,
+records that carry them. The lowering (`compiler/register`) turns these records into `quickjs-oxide-core` code units,
 which the core's code store validates and owns.
 
 | File | Content |

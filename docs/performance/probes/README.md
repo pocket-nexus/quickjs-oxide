@@ -39,7 +39,7 @@ python3 docs/performance/probes/runtime/probes.py --qjs "$CANDIDATE_QJS" \
 [`slopes/heap_workloads.py`](slopes/heap_workloads.py) runs the Rust heap workloads (`core/examples/workloads.rs`) and their JavaScript counterparts on `qjs` at N and 2N under `perf stat -e instructions:u`, subtracts each side's empty loop and reports the per-iteration slope.
 
 ```sh
-cargo build --release -p oxide-core --example workloads
+cargo build --release -p quickjs-oxide-core --example workloads
 python3 docs/performance/probes/slopes/heap_workloads.py \
     --workloads target/release/examples/workloads --qjs "$CANDIDATE_QJS" --cpu 2 --repeat 5
 ```

@@ -16,8 +16,8 @@ expected_packages = {
     "quickjs-oxide-web", "quickjs-oxide-test262",
     # The engine (#122) and the regular-expression engine and Unicode
     # tables it uses.
-    "oxide-core",
-    "oxide-regexp",
+    "quickjs-oxide-core",
+    "quickjs-oxide-regexp",
 }
 if set(packages) != expected_packages:
     fail("workspace package set drifted from the reviewed engine/app split")
@@ -26,14 +26,14 @@ if set(packages) != expected_packages:
 # the core's single edge is to the regular-expression crate, which depends
 # on nothing.
 expected_dependencies = {
-    "quickjs-oxide": {"oxide-core", "oxide-regexp"},
+    "quickjs-oxide": {"quickjs-oxide-core", "quickjs-oxide-regexp"},
     "quickjs-oxide-host": {"quickjs-oxide"},
     "quickjs-oxide-web-host": {"quickjs-oxide"},
     "quickjs-oxide-cli": {"quickjs-oxide", "quickjs-oxide-host"},
     "quickjs-oxide-web": {"quickjs-oxide", "quickjs-oxide-web-host"},
     "quickjs-oxide-test262": {"quickjs-oxide", "quickjs-oxide-host"},
-    "oxide-core": {"oxide-regexp"},
-    "oxide-regexp": set(),
+    "quickjs-oxide-core": {"quickjs-oxide-regexp"},
+    "quickjs-oxide-regexp": set(),
 }
 for name, expected in expected_dependencies.items():
     actual = {

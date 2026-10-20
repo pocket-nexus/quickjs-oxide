@@ -1,5 +1,5 @@
 //! Release-assembly probe for the property-hit path.
-//! `cargo build --release -p oxide-core --example property_asm`, then
+//! `cargo build --release -p quickjs-oxide-core --example property_asm`, then
 //! disassemble the `probe_*` functions.
 //!
 //! - `probe_get_slot`: the load an inline cache performs after a shape hit,

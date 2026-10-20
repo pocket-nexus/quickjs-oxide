@@ -3,7 +3,7 @@
 source holds what the front end reads before it parses: the exact source
 bytes, byte offsets, ranges and QuickJS's line and column rules, and the
 Unicode identifier properties the lexer asks for. Parsing policy lives in
-the compiler; the engine's own strings and objects live in `oxide-core`.
+the compiler; the engine's own strings and objects live in `quickjs-oxide-core`.
 
 The front end compiles from a `SourceText` and records positions with these
 types; the register lowering turns the resulting pc-to-source tables into
@@ -15,7 +15,7 @@ UTF-16 text shares the `JsString` carrier in value.
 - [coordinates.rs](coordinates.rs): byte offsets and QuickJS source-coordinate mapping.
 - [mod.rs](mod.rs): module entry, `SourceLocation` and `SourceSpan`, and submodule declarations.
 - [text.rs](text.rs): byte-exact carrier text for dynamically supplied ECMAScript source.
-- [unicode.rs](unicode.rs): the Unicode tables of the `oxide-regexp` crate
+- [unicode.rs](unicode.rs): the Unicode tables of the `quickjs-oxide-regexp` crate
   (`regexp/src/unicode`), re-exported: the identifier properties
   the lexer uses, and `JsString` wrappers for case conversion and
   normalization.

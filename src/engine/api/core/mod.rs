@@ -1,4 +1,4 @@
-//! The embedding API over `oxide-core`: one realm per runtime, values as
+//! The embedding API over `quickjs-oxide-core`: one realm per runtime, values as
 //! Rust data or handles, the host as one trait, host functions with a
 //! [`Scope`], module loaders with a [`ModuleScope`].
 

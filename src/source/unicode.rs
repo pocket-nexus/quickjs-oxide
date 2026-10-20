@@ -1,4 +1,4 @@
-//! The checksum-pinned Unicode 17 tables of the `oxide-regexp` crate at their
+//! The checksum-pinned Unicode 17 tables of the `quickjs-oxide-regexp` crate at their
 //! historical path. Case conversion and normalization keep `JsString`
 //! wrappers here: they hand the crate the string's flat code units and wrap
 //! its result in the storage the crate chose.

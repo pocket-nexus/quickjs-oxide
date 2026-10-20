@@ -1,5 +1,5 @@
 [package]
-name = "oxide-core"
+name = "quickjs-oxide-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -8,6 +8,11 @@ repository.workspace = true
 publish.workspace = true
 description = "The new quickjs-oxide core: 8-byte values, typed arenas and a mark-sweep heap"
 homepage.workspace = true
+
+include = ["/src", "/README.md", "/LICENSE", "/NOTICE", "/LICENSES"]
+
+[lib]
+name = "oxide_core"
 
 [lints]
 workspace = true

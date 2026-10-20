@@ -3,7 +3,7 @@
 //! `vm::interp::run`.
 //!
 //! ```sh
-//! cargo build --release -p oxide-core --example loop_probe
+//! cargo build --release -p quickjs-oxide-core --example loop_probe
 //! perf stat -e instructions:u target/release/examples/loop_probe empty 1000000
 //! nm -C --size-sort -S target/release/examples/loop_probe | grep interp::run
 //! ```

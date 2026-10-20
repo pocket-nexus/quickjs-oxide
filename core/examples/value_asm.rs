@@ -1,5 +1,5 @@
 //! Release-assembly probe for `Value::kind` and `Value::as_object`. Build with
-//! `cargo build --release -p oxide-core --example value_asm` and disassemble
+//! `cargo build --release -p quickjs-oxide-core --example value_asm` and disassemble
 //! the `probe_*` symbols.
 
 use oxide_core::{Kind, ObjectId, Value};

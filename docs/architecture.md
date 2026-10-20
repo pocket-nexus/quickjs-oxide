@@ -1,6 +1,6 @@
 # Workspace architecture
 
-The engine is three crates. `oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into QuickJS-shaped stack code, the register lowering that turns that code into the core's register code, and the embedding API over the core. The command line, the web playground, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
+The engine is three crates. `quickjs-oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `quickjs-oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into QuickJS-shaped stack code, the register lowering that turns that code into the core's register code, and the embedding API over the core. The command line, the web playground, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
 
 ## Crates
 
@@ -8,16 +8,18 @@ The three engine crates and the workspace members that consume them:
 
 | Crate | Path | Depends on | Content |
 | --- | --- | --- | --- |
-| `oxide-core` | `core/` | `oxide-regexp` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
-| `oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
-| `quickjs-oxide` | `src/` | `oxide-core`, `oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
+| `quickjs-oxide-core` | `core/` | `quickjs-oxide-regexp` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
+| `quickjs-oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
+| `quickjs-oxide` | `src/` | `quickjs-oxide-core`, `quickjs-oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
 | `quickjs-oxide-cli` | `apps/cli` | the root crate, `quickjs-oxide-host` | the `qjs` binary |
 | `quickjs-oxide-web` | `apps/web` | the root crate, `quickjs-oxide-web-host` | the browser playground (WebAssembly) |
 | `quickjs-oxide-host` | `adapters/native` | the root crate | `SystemHost`: the system clock and the TZif/POSIX time-zone rules |
 | `quickjs-oxide-web-host` | `adapters/web` | the root crate | `WebHost`: the browser's clock, time zone and random source |
 | `quickjs-oxide-test262` | `conformance/test262` | the root crate | the process-isolated `run-test262` runner |
 
-Dependencies point one way: `oxide-core` depends only on `oxide-regexp`, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
+The core's and the regular-expression crate's libraries are named `oxide_core` and `oxide_regexp` in Rust code. Every crate but the two web packages and the Test262 runner is published to crates.io ([releases](release.md)).
+
+Dependencies point one way: `quickjs-oxide-core` depends only on `quickjs-oxide-regexp`, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
 
 ## Source owners
 
@@ -27,11 +29,11 @@ The core's modules are listed in the "Layout" table of [`core/README.md`](../cor
 src/
   lib.rs           the crate root: `engine`, `source`, the version constants
   source/          exact source bytes, offsets, QuickJS line/column mapping;
-                   `unicode` wraps oxide-regexp's tables for JsString
+                   `unicode` wraps quickjs-oxide-regexp's tables for JsString
   engine/
     compiler/      the front end: lexer, parser, scopes and name resolution,
                    closure capture, stack-code emission, local optimizations
-      register/    the lowering: stack code to oxide-core register code,
+      register/    the lowering: stack code to quickjs-oxide-core register code,
                    published into the core's code store
     code/          the front end's output: stack instructions, the opcode
                    table, stack-size computation, unlinked function and
@@ -39,7 +41,7 @@ src/
     value/         the front end's primitives: JsString, JsBigInt, constant
                    values and the Number-to-string conversion
     api/           the public embedding boundary; `api::core` is the API over
-                   oxide-core, `api::error` the front end's diagnostics
+                   quickjs-oxide-core, `api::error` the front end's diagnostics
 ```
 
 `engine::api` is the only public engine module; `compiler`, `code` and `value` are crate-private. `scripts/checks/check-source-layout.py` enforces this layout and the API's re-export boundary.
@@ -68,7 +70,7 @@ A source passes four stages:
 
 1. **Front end** (`src/engine/compiler`). The parser emits `IrOp`s into a recursive `FunctionIr` tree; identifier resolution runs child-first once every scope is known, as QuickJS's `resolve_scope_var` does; then `lowering` emits QuickJS-shaped stack `Instruction`s, `optimize` applies bounded local rewrites, and `compute_stack_size` (`code/bytecode.rs`) computes each function's maximum operand-stack depth and enforces QuickJS's stack bound. The result is an `UnlinkedFunction` tree (or an `UnlinkedModule` with its request, import and export tables) whose operand-stack depth is static at every instruction.
 2. **Register lowering** (`src/engine/compiler/register`). `analysis` records the stack depth, the active catch regions and the join points at every reachable instruction. The lowering then walks each function with a symbolic stack: register 0 is `this`, then the parameters, the locals and one temporary per stack depth, so the stack depth is the register allocator. Captured bindings become cells. A function whose locals or operand stack pass the 256-register window keeps the rest in the slots of a spill scope, reached through scratch registers at the top of the window. A `+` chain that starts with a string constant and continues with constants becomes one `ConcatN` over the operands' temporaries. The lowering builds each function as an `oxide_core::bytecode::CodeUnit` with the core's `CodeBuilder`, which numbers the inline-cache sites.
-3. **Publication** (`oxide-core`). `Compiler::publish` runs the core's validator over each unit once, children first, and assigns its inline-cache entries. A unit published through `Runtime::compiler()` (the program, its modules, and by default whatever the embedder compiles) goes into the `CodeStore` and lives as long as the runtime; code compiled at run time (`eval`, `new Function`, `$262.evalScript`) and code the embedder compiles through `Runtime::transient_compiler()` (the API's `transient` option) is published into the heap, which frees it once no function, frame or job reaches it ([The heap](heap.md#code-compiled-at-run-time), [code lifetime](../src/engine/api/README.md#code-lifetime)). The loop runs a published unit's instructions as they are.
+3. **Publication** (`quickjs-oxide-core`). `Compiler::publish` runs the core's validator over each unit once, children first, and assigns its inline-cache entries. A unit published through `Runtime::compiler()` (the program, its modules, and by default whatever the embedder compiles) goes into the `CodeStore` and lives as long as the runtime; code compiled at run time (`eval`, `new Function`, `$262.evalScript`) and code the embedder compiles through `Runtime::transient_compiler()` (the API's `transient` option) is published into the heap, which frees it once no function, frame or job reaches it ([The heap](heap.md#code-compiled-at-run-time), [code lifetime](../src/engine/api/README.md#code-lifetime)). The loop runs a published unit's instructions as they are.
 4. **Instantiation**. `instantiate` allocates one `FunctionBytecode` record per unit (its constant table and its children) under one safepoint and returns the script's function object, which the API runs with `Runtime::run_script`. A module's tree is described to the core's module records (environment cells, imports, exports) and linked and evaluated by the core.
 
 Debug positions follow the same path: the front end's pc-to-source table becomes the unit's sparse position table, from which errors take `stack`. `DebugInfoMode` (`Runtime::set_debug_info_mode`) chooses what a newly compiled function keeps: `Full`, `StripSource` (positions without source text) or `StripDebug` (neither). `Runtime::disassemble` (`qjs --disassemble`) prints the register code of a source.

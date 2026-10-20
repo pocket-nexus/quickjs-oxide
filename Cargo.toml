@@ -9,6 +9,9 @@ publish.workspace = true
 description = "A safe Rust JavaScript engine targeting semantic parity with QuickJS"
 homepage.workspace = true
 readme = "README.md"
+# The engine and its documentation; the tests, corpora and tooling stay in
+# the repository.
+include = ["/src", "/examples", "/README.md", "/LICENSE", "/NOTICE", "/LICENSES"]
 keywords = ["javascript", "ecmascript", "quickjs", "interpreter", "engine"]
 categories = ["compilers", "development-tools"]
 
@@ -37,7 +40,9 @@ ic-stats = ["oxide-core/ic-stats"]
 # paths.
 register-stress = []
 [dev-dependencies]
-quickjs-oxide-host = { workspace = true, features = ["engine-test-support"] }
+# A path without a version: the host depends on this crate, and Cargo drops
+# the dependency from the published manifest.
+quickjs-oxide-host = { path = "adapters/native", features = ["engine-test-support"] }
 oxide-regexp = { workspace = true, features = ["test-hooks"] }
 
 # Real-main-thread stack-guard matrix; its fn main is the test body so Cargo
@@ -58,15 +63,21 @@ rust-version = "1.99"
 license = "MIT"
 repository = "https://github.com/pocket-nexus/quickjs-oxide"
 homepage = "https://pocket-nexus.github.io/quickjs-oxide/"
-# Releases ship as GitHub Release assets, not crates.io packages.
-publish = false
+# The release workflow publishes every member except the web packages and
+# the Test262 runner to crates.io.
+publish = true
 
 [workspace.dependencies]
-quickjs-oxide-web-host = { path = "adapters/web" }
-quickjs-oxide-host = { path = "adapters/native" }
-quickjs-oxide = { path = ".", default-features = false }
-oxide-core = { path = "core" }
-oxide-regexp = { path = "regexp" }
+# Each published member carries the workspace version, which cut-release.sh
+# sets here too.
+quickjs-oxide-web-host = { path = "adapters/web", version = "0.3.1" }
+quickjs-oxide-host = { path = "adapters/native", version = "0.3.1" }
+quickjs-oxide = { path = ".", version = "0.3.1", default-features = false }
+# The core and regexp packages are named for the engine (`oxide-core` is
+# taken on crates.io); their libraries keep the names `oxide_core` and
+# `oxide_regexp`.
+oxide-core = { path = "core", version = "0.3.1", package = "quickjs-oxide-core" }
+oxide-regexp = { path = "regexp", version = "0.3.1", package = "quickjs-oxide-regexp" }
 num-bigint = "=0.5.1"
 num-traits = "=0.2.19"
 tz-rs = "=0.7.3"

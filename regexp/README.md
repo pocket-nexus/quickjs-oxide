@@ -1,8 +1,8 @@
-# oxide-regexp
+# quickjs-oxide-regexp
 
 The regular-expression engine of quickjs-oxide and the checksum-pinned
 Unicode 17 tables it and the String intrinsics use, as a workspace crate the
-root crate and `oxide-core` depend on.
+root crate and `quickjs-oxide-core` depend on.
 
 The crate has `#![forbid(unsafe_code)]` and no dependencies. Its API works on
 UTF-16 code units (`&[u16]`, or Latin-1 `&[u8]` where a function takes
@@ -10,7 +10,7 @@ UTF-16 code units (`&[u16]`, or Latin-1 `&[u8]` where a function takes
 front end validates regular-expression literals through `compile`;
 `crate::source::unicode` (`src/source/unicode.rs`) in the root crate
 re-exports the Unicode functions with thin `JsString` wrappers. RegExp
-objects are `oxide-core`'s (`core/src/builtins/regexp.rs`).
+objects are `quickjs-oxide-core`'s (`core/src/builtins/regexp.rs`).
 
 | Module | Content |
 | --- | --- |
@@ -24,7 +24,7 @@ The `test-hooks` feature exposes the thread-local allocation-failure hooks of
 the case and normalization buffers to the root crate's String tests.
 
 ```sh
-cargo test -p oxide-regexp
+cargo test -p quickjs-oxide-regexp
 ```
 
 Sources: [`src/`](src/README.md).

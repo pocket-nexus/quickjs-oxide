@@ -2,7 +2,7 @@
 
 A JavaScript engine written entirely in safe Rust, with zero `unsafe`, that
 targets the behavior of [QuickJS](https://bellard.org/quickjs/) 2026-06-04.
-Its core, `oxide-core`, compiles every function to register bytecode and runs
+Its core, `quickjs-oxide-core`, compiles every function to register bytecode and runs
 it in one loop with inline caches, over a NaN-boxed value heap and a
 mark-sweep collector.
 
@@ -145,9 +145,9 @@ npm ci && npx playwright install chromium && npm run test:browser
 ```
 
 `rust-toolchain.toml` pins the toolchain. The core (bytecode, heap, loop and
-builtins) lives in the `oxide-core` crate (`core/`), the front end, the
+builtins) lives in the `quickjs-oxide-core` crate (`core/`), the front end, the
 register lowering and the embedding API in the root crate (`src/`), the
-regular-expression engine and Unicode tables in the `oxide-regexp` crate
+regular-expression engine and Unicode tables in the `quickjs-oxide-regexp` crate
 (`regexp/`), host adapters in `adapters/`, the CLI and WebAssembly apps in
 `apps/`, and the Test262 runner in `conformance/test262`; the
 [architecture guide](docs/architecture.md) describes each crate's

@@ -9,10 +9,10 @@
 
 ### The core (`core/`, `src/engine/compiler/register`, `src/engine/api/core`)
 
-Only for a pull request that changes code `oxide-core` runs
+Only for a pull request that changes code `quickjs-oxide-core` runs
 (the gates in docs/performance/principles.md):
 
-- [ ] `cargo test -p oxide-core --features gc-stress`, the two-core corpus under
+- [ ] `cargo test -p quickjs-oxide-core --features gc-stress`, the two-core corpus under
       `gc-stress`, and `scripts/checks/check-gc-stress.py`
 - [ ] **Loop size:** `nm --size-sort` of `qjs`, symbol
       `oxide_core::vm::interp::run_at`: ____ bytes (gate: 16 KB)

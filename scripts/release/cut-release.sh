@@ -29,12 +29,18 @@ python3 scripts/release/gen-symbol-order.py --check-inputs
 
 current="$(./scripts/release/workspace-version.sh)"
 if [[ "${current}" != "${version}" ]]; then
-  # [workspace.package] holds the only line-leading `version =` key.
+  # [workspace.package] holds the only line-leading `version =` key; the
+  # members' entries in [workspace.dependencies] carry it as well.
   python3 - "${version}" <<'PY'
 import pathlib, re, sys
+version = sys.argv[1]
 manifest = pathlib.Path("Cargo.toml")
-text, count = re.subn(r'(?m)^version = "[^"]*"$', f'version = "{sys.argv[1]}"',
+text, count = re.subn(r'(?m)^version = "[^"]*"$', f'version = "{version}"',
                       manifest.read_text(), count=1)
+text, members = re.subn(r'(?m)^([\w-]+ = \{ path = "[^"]*", version = ")[^"]*"',
+                        rf'\g<1>{version}"', text)
+if count != 1 or members != 5:
+    sys.exit(f"expected 1 package version and 5 member versions, found {count} and {members}")
 manifest.write_text(text)
 PY
   [[ "$(./scripts/release/workspace-version.sh)" == "${version}" ]] || {

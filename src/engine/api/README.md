@@ -1,13 +1,13 @@
 # Rust embedding API
 
 api is the boundary through which Rust callers use quickjs-oxide. `api::core`
-is the API over `oxide-core`; `api::error` holds
+is the API over `quickjs-oxide-core`; `api::error` holds
 the front end's diagnostics (`Error`, `ErrorKind`, `NativeErrorKind`); the API
 root adds `declare_thread_stack`, `number_to_string` and
 `quickjs_detect_module_bytes`. The front end, the lowering and the core's
 internals stay private: `check-source-layout.py` checks that `api::core`
 re-exports only its own items, the API root's, the front end's errors,
-strings, compile options and import attributes, and `oxide-core`'s host,
+strings, compile options and import attributes, and `quickjs-oxide-core`'s host,
 options and report types.
 
 ## Shape

@@ -1,5 +1,5 @@
 //! Full Unicode case mapping for `toLowerCase` and `toUpperCase` past their
-//! ASCII pass, from the tables of `oxide-regexp`, including the final-sigma
+//! ASCII pass, from the tables of `quickjs-oxide-regexp`, including the final-sigma
 //! rule and the multi-unit expansions.
 
 use oxide_regexp::unicode::case::convert_case_with_limit;

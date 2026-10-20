@@ -1,4 +1,4 @@
-//! The host boundary: what the core asks of its embedder. `oxide-core` reaches
+//! The host boundary: what the core asks of its embedder. `quickjs-oxide-core` reaches
 //! the platform only through this trait, so it stays dependency-free and a port
 //! supplies its own implementation.
 

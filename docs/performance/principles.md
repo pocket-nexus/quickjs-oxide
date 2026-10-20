@@ -11,7 +11,7 @@ Collection happens only inside an allocating call: a `Heap` method that takes `&
 - An allocating call roots its own arguments for its own collection, so a value passed straight into one call needs no rooting. `vm::call` and `vm::construct` write their arguments into the register file before anything allocates.
 - The root stack is cut back after every native and every out-of-line iterator operation, so those may push freely.
 
-A missed root fails under the stress mode, where every allocating call collects first and every access to a freed index panics (`cargo test -p oxide-core --features gc-stress`, `scripts/checks/check-gc-stress.py`). Release builds check nothing.
+A missed root fails under the stress mode, where every allocating call collects first and every access to a freed index panics (`cargo test -p quickjs-oxide-core --features gc-stress`, `scripts/checks/check-gc-stress.py`). Release builds check nothing.
 
 ## The `&mut` discipline
 

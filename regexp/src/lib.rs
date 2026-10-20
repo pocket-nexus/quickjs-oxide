@@ -4,7 +4,7 @@
 //! The crate is runtime independent: it owns typed flags, compiler errors,
 //! instruction IR and the executor, all over UTF-16 code units (`&[u16]`) and
 //! plain `u32` code points. Heap objects and ECMAScript intrinsics are wired
-//! by the engines that depend on it (the root crate and `oxide-core`).
+//! by the engines that depend on it (the root crate and `quickjs-oxide-core`).
 
 #![forbid(unsafe_code)]
 

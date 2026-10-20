@@ -1,6 +1,6 @@
 # Execution
 
-This page describes how the core (`oxide-core`, in [`core/`](../../core/README.md)) runs register bytecode: the loop, its frames and register windows, the inline caches, iteration, suspension and the native ABI. The main files are `core/src/vm/interp.rs` (the loop), `vm/ic.rs` (the caches), `vm/iter.rs`, `vm/suspend.rs`, `vm/native.rs` and `core/src/bytecode/`. The heap, shapes and the collector are in [Heap](../heap.md); the core's design record is [`core/README.md`](../../core/README.md).
+This page describes how the core (`quickjs-oxide-core`, in [`core/`](../../core/README.md)) runs register bytecode: the loop, its frames and register windows, the inline caches, iteration, suspension and the native ABI. The main files are `core/src/vm/interp.rs` (the loop), `vm/ic.rs` (the caches), `vm/iter.rs`, `vm/suspend.rs`, `vm/native.rs` and `core/src/bytecode/`. The heap, shapes and the collector are in [Heap](../heap.md); the core's design record is [`core/README.md`](../../core/README.md).
 
 ## Code
 
@@ -113,7 +113,7 @@ Builtins are natives: one `Native` enum generated with its table of entry points
 
 ## Verification
 
-- The loop, frames, calls and suspension: `core/tests/vm.rs` and the corpus in `core/tests/corpus`, also under `cargo test -p oxide-core --features gc-stress` and `scripts/checks/check-gc-stress.py`.
+- The loop, frames, calls and suspension: `core/tests/vm.rs` and the corpus in `core/tests/corpus`, also under `cargo test -p quickjs-oxide-core --features gc-stress` and `scripts/checks/check-gc-stress.py`.
 - Caches: `core/tests/ic.rs` and `src/engine/compiler/register/ic_tests.rs`.
 - Instruction encoding and validation: `core/tests/bytecode.rs`.
 - The lowering and the register window: `src/engine/compiler/register/run_tests.rs` and `window_tests.rs`, with `--features register-stress`.

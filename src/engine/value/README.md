@@ -1,7 +1,7 @@
 # Front-end primitive values
 
 value holds the primitives the front end, its constant pool and the
-embedding API share. JavaScript values at run time are `oxide-core`'s
+embedding API share. JavaScript values at run time are `quickjs-oxide-core`'s
 (`oxide_core::Value`, NaN-boxed, with strings, symbols, BigInts and objects
 as heap records); the values here are Rust data. The lowering copies constants into the core, and the API
 copies primitives out of it.

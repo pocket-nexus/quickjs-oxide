@@ -4,10 +4,10 @@ quickjs-oxide is a Rust JavaScript engine available through its command-line app
 
 ## Engine
 
-- The front end (`src/engine/compiler`) parses Script and ECMAScript Module source, resolves bindings and emits stack code; the register lowering (`src/engine/compiler/register`) turns each function into a code unit of `oxide-core`. The core validates each unit once when it is published.
+- The front end (`src/engine/compiler`) parses Script and ECMAScript Module source, resolves bindings and emits stack code; the register lowering (`src/engine/compiler/register`) turns each function into a code unit of `quickjs-oxide-core`. The core validates each unit once when it is published.
 - The core runs register bytecode in one loop over register windows, with inline caches for property reads and writes, global accesses and construction, a fast path for iterating ordinary arrays, and suspension for generators and async functions. `qjs --disassemble FILE` prints the register code.
 - The heap holds NaN-boxed values, typed arenas, a value heap, shapes with validity cells and a mark-sweep collector that runs on heap growth. `RuntimeOptions` sets the collection threshold, its growth factor, a heap cap and the register file's limit; `MemoryReport` reports what every part of the runtime holds.
-- The core implements objects, strings, numbers, BigInts, regular expressions (through `oxide-regexp`), binary data, collections, weak references, Promises, jobs, modules, `SharedArrayBuffer`/`Atomics` and the corresponding builtins.
+- The core implements objects, strings, numbers, BigInts, regular expressions (through `quickjs-oxide-regexp`), binary data, collections, weak references, Promises, jobs, modules, `SharedArrayBuffer`/`Atomics` and the corresponding builtins.
 - A runtime has one realm. `with` is an early `SyntaxError`, direct `eval` runs as indirect eval, and nothing reads `Symbol.species` or `Symbol.unscopables`; the [deviation ledger](deviations.md) records each.
 - The embedding API (`quickjs_oxide::engine::api::core`) exposes `Runtime`, `Context`, `Value`, the `Host` trait, host functions that receive a `Scope`, host objects, module loaders that receive a `ModuleScope`, `RuntimeOptions` and the collector, memory and inline-cache reports.
 - Host adapters supply environment capabilities: `SystemHost` (`adapters/native`) and `WebHost` (`adapters/web`). Applications own file loading, output, diagnostics and job driving.
@@ -32,7 +32,7 @@ The profile, admission vector and result hashes are recorded in [`dev-support/te
 ```sh
 cargo test --locked --workspace --all-targets
 cargo test --locked --workspace --features test262-host --lib --bins
-cargo test --locked -p oxide-core --features gc-stress
+cargo test --locked -p quickjs-oxide-core --features gc-stress
 cargo build -p quickjs-oxide-cli --features gc-stress --bin qjs
 python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 ./scripts/checks/check-oracle-registry.sh

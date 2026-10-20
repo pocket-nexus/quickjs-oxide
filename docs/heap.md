@@ -1,6 +1,6 @@
 # The heap and the collector
 
-This page describes the heap of `oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with growth that stops at the cap and heap snapshots; [the memory plan](memory-plan.md) is the plan for peak memory against QuickJS.
+This page describes the heap of `quickjs-oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with growth that stops at the cap and heap snapshots; [the memory plan](memory-plan.md) is the plan for peak memory against QuickJS.
 
 ## Values
 
@@ -165,7 +165,7 @@ Under a cap the budget stops one growth step short of it: the churn ring of `cor
 
 ### Stress mode
 
-The `gc-stress` cargo feature (on `oxide-core`, forwarded by the root crate and by `quickjs-oxide-cli`) builds the stress collector. Under it:
+The `gc-stress` cargo feature (on `quickjs-oxide-core`, forwarded by the root crate and by `quickjs-oxide-cli`) builds the stress collector. Under it:
 
 - a safepoint collects before every N-th allocating call (`stress_interval`, 1 by default: every call);
 - arena slots freed by a sweep are quarantined in a second bitmap until the next sweep, and a shrink keeps them, so a stale index is not recycled into a live record before the liveness assertion can catch it;
@@ -175,7 +175,7 @@ The `gc-stress` cargo feature (on `oxide-core`, forwarded by the root crate and 
 A heap built with the feature starts with stress on at interval 1. The embedding API's `Runtime::set_gc_stress(Some(n))` sets the interval and `None` turns stress off; `Runtime::GC_STRESS_AVAILABLE` says whether the build has it. `qjs --gc-stress=N` (`--gc-stress` alone is 1) needs a `qjs` built with the feature; without the option a stress build runs without stress. CI runs the core's tests, the lowering's tests, the two-core corpus and the fixed probes under stress, and the suite programs on a release `qjs`:
 
 ```sh
-cargo test -p oxide-core --features gc-stress
+cargo test -p quickjs-oxide-core --features gc-stress
 cargo build -p quickjs-oxide-cli --features gc-stress --bin qjs
 python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
 ```
