@@ -36,7 +36,7 @@ def main() -> int:
     failures = []
     with tempfile.TemporaryDirectory() as directory:
         subprocess.run(
-            [sys.executable, str(ROOT / "docs/performance/probes/build_fixed_matrix.py"),
+            [sys.executable, str(ROOT / "scripts/benchmark/bench.py"), "fixed-matrix",
              "--smoke", "--output", directory],
             check=True, capture_output=True)
         manifest = json.loads((Path(directory) / "manifest.json").read_text())

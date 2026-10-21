@@ -4,4 +4,4 @@ function work(n) {
     for(var i=0;i<n;i++) sum=sum+unit();
     return sum;
 }
-print(work(800000));
+print(work(9700000));

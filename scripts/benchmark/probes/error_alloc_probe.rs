@@ -1,6 +1,6 @@
 //! Diagnostic allocation probe for the public Error channel.
 //!
-//! Build with build_compile_probe.py --probe. This instrumented binary must
+//! Build with `bench.py compile probe --probe`. This instrumented binary must
 //! never supply a formal benchmark Score. Run base/candidate builds with the
 //! same iteration count and compare stdout. Linux VmHWM reports process RSS.
 use quickjs_oxide::engine::api::core::{Error, ErrorKind, RuntimeError};

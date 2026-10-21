@@ -26,9 +26,9 @@ The crate has `#![forbid(unsafe_code)]`. The loop indexes registers with plain `
 | Gate | Rule | Read with |
 | --- | --- | --- |
 | Loop size | `vm::interp::run_at` under 16,384 bytes | `nm --size-sort` on the release `qjs` |
-| Instructions | each of the eight V8 v7 programs within 2% of the base's `qjs` in `instructions:u` | `scripts/benchmark/fixed.py --linux-counters` over the [suite matrix](../../scripts/benchmark/README.md) |
+| Instructions | each of the eight V8 v7 programs within 2% of the base's `qjs` in `instructions:u` | `bench.py run --linux-counters` over the [suite matrix](../../scripts/benchmark/README.md#suite), read with `bench.py suite table --instructions` |
 
-A change that crosses the loop-size gate moves code out of line (`rare_op` or another out-of-line arm) before it merges; a new opcode enters `run_at` inline only when a profile of a suite program shows it hot, and is appended at the end of `Opcode`. Both sides of the instruction gate are plain release builds of the same toolchain (`scripts/benchmark/build.py --plain-only`), run with the same manifest, CPU and repeat order (for example `--repeat 4 --order abba --cpu 2`); the medians are compared. A rise past 2% is investigated as a real change before the pull request merges.
+A change that crosses the loop-size gate moves code out of line (`rare_op` or another out-of-line arm) before it merges; a new opcode enters `run_at` inline only when a profile of a suite program shows it hot, and is appended at the end of `Opcode`. Both sides of the instruction gate are plain release builds of the same toolchain (`bench.py build`), run with the same manifest, CPU and repeat order (`--repeat 4 --order abba --cpu 2`); the medians are compared. `bench.py sweep` runs both gates ([Benchmarking](benchmarking.md#sweep)). A rise past 2% is investigated as a real change before the pull request merges.
 
 ## Measurement
 

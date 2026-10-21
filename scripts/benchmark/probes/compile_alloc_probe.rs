@@ -3,7 +3,7 @@
 //! The measurement boundary matches `apps/cli/examples/compile_probe.rs`:
 //! source I/O, Runtime/Context construction and teardown are outside the
 //! counted window. This probe is instrumented on purpose, so it is not part
-//! of the cross-engine timing contract and `compile_matrix.py` deliberately
+//! of the cross-engine timing contract and `bench.py compile matrix` deliberately
 //! rejects it. Output is `compile_ns:<ns>` followed by one line per counter;
 //! byte counters are requested sizes, `peak_live_bytes` is the high-water mark
 //! of outstanding allocations observed during the compile call.

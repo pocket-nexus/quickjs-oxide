@@ -24,8 +24,8 @@ pass rate is 79.815%.
   V8 v7, Octane 2.0 and AWFY suites, quickjs-oxide takes 0.94× QuickJS
   2026-06-04's time over V8 v7's eight programs, 1.15× over Octane's 15 and
   0.99× over AWFY's 14 (geometric means of release builds on one Linux
-  machine; `scripts/benchmark/suite_matrix.py` runs the
-  [matrix](scripts/benchmark/README.md#fixed-work-v8-v7-octane-and-awfy-matrix)).
+  machine; `scripts/benchmark/bench.py suite` builds the
+  [matrix](scripts/benchmark/README.md#suite)).
 - **ECMAScript first, QuickJS where it is open.** ECMA-262 and Test262 decide
   correctness; QuickJS 2026-06-04 decides what the specification leaves to
   the implementation (error messages, `stack`, the printer, property order of

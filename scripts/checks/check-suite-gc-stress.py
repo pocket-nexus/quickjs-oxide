@@ -3,7 +3,7 @@
 collector.
 
 Runs every workload (or those starting with `--prefix`) of a suite built with
-`scripts/benchmark/suite_matrix.py build --pilot 1` on `qjs
+`scripts/benchmark/bench.py suite build --pilot 1` on `qjs
 --gc-stress=1` (an `qjs` built with the `gc-stress` feature)
 and compares its stdout with the manifest's expected line.
 
@@ -36,7 +36,7 @@ INTERVALS = {
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--qjs", required=True, type=Path)
-    parser.add_argument("--suite", required=True, type=Path, help="suite_matrix.py build --pilot 1 output")
+    parser.add_argument("--suite", required=True, type=Path, help="bench.py suite build --pilot 1 output")
     parser.add_argument("--prefix", default="")
     parser.add_argument("--gc-stress", default="1")
     parser.add_argument("--timeout", type=int, default=3600, help="seconds per program")

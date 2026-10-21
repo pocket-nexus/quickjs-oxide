@@ -216,7 +216,7 @@ jobs:
 
       - name: Build the one-run suite
         run: |
-          python3 scripts/benchmark/suite_matrix.py build --pilot 1 \
+          python3 scripts/benchmark/bench.py suite build --pilot 1 \
             --v8-source "$RUNNER_TEMP/v8" --octane-source "$RUNNER_TEMP/octane" \
             --awfy-source "$RUNNER_TEMP/awfy" --output "$RUNNER_TEMP/suite"
 

@@ -3,4 +3,4 @@ function work(n) {
     while(n>0) { sum=sum+1; n=n-1; }
     return sum;
 }
-print(work(3000000));
+print(work(43000000));

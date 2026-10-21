@@ -7,4 +7,4 @@ function work(n) {
     }
     return caught;
 }
-print(work(12000));
+print(work(220000));
