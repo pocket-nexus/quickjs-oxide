@@ -70,6 +70,7 @@ for package in packages.values():
             fail("unreviewed path dependency is outside engine fingerprint coverage")
 for name, expected in {
     "quickjs-oxide": {
+        "atomics_wait",
         "checked_string_construction",
         "embedding_api",
         "json_stack_depth",

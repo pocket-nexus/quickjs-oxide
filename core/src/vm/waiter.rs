@@ -224,6 +224,24 @@ mod tests {
     }
 
     #[test]
+    fn maximum_duration_wait_can_be_notified_and_removes_its_registration() {
+        let location = location(8);
+        let (compared_tx, compared_rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            wait(location, Some(Duration::MAX), || {
+                compared_tx.send(()).unwrap();
+                Ok::<_, ()>(true)
+            })
+            .unwrap()
+        });
+
+        compared_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(notify(location, 1), 1);
+        assert_eq!(worker.join().unwrap(), WaitOutcome::Ok);
+        assert_eq!(notify(location, 1), 0);
+    }
+
+    #[test]
     fn timeout_removes_the_registration() {
         let location = location(12);
         assert_eq!(

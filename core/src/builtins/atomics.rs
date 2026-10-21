@@ -310,7 +310,9 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let timeout = if timeout.is_nan() || timeout == f64::INFINITY {
         None
     } else {
-        Some(Duration::from_secs_f64(timeout.max(0.0) / 1000.0))
+        // A finite JS timeout can exceed Duration's range. Saturate it rather
+        // than panicking, while keeping NaN/+Infinity as untimed waits.
+        Some(Duration::try_from_secs_f64(timeout.max(0.0) / 1000.0).unwrap_or(Duration::MAX))
     };
     if !cx.host.can_block {
         return Err(error::type_error(cx, "cannot block in this thread"));
