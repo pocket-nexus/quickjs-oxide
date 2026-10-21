@@ -850,8 +850,16 @@ impl Runtime {
         };
         let heap = &self.heap;
         let names = &self.realm.names;
+        let units = self.units();
         let own = |object: ObjectId, key: StringId| {
-            crate::vm::property::own(heap, names, object, Names::key(key))
+            let key = Names::key(key);
+            if let Some(found) = heap.lookup_own(object, key)
+                && found.1.has(crate::shape::PropertyFlags::AUTOINIT)
+            {
+                let value = crate::vm::property::peek_data(heap, units, names, object, key, found);
+                return Some(crate::vm::property::Found::Data(value));
+            }
+            crate::vm::property::own(heap, names, object, key)
         };
         let own_string = |object: ObjectId, key: StringId| match own(object, key) {
             Some(crate::vm::property::Found::Data(value)) => {

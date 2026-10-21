@@ -372,6 +372,7 @@ pub(crate) fn set_function_name(
     prefix: &str,
     always: bool,
 ) -> Result<(), Throw> {
+    super::object::materialize(cx, function)?;
     let names = cx.realm.names;
     let name_key = Names::key(names.name);
     // The common case: an anonymous closure named by an atom. Its own
@@ -1070,24 +1071,30 @@ fn make_closure(
     result
 }
 
+/// The `[[Prototype]]` of a closure of `unit` and the index of its kind in
+/// the closure shape caches.
+fn closure_kind(unit: &CodeUnit) -> (Intrinsic, usize) {
+    match (unit.has(flags::GENERATOR), unit.has(flags::ASYNC)) {
+        (false, false) if unit.has(flags::PROTOTYPE) => (Intrinsic::FunctionPrototype, 1),
+        (false, false) => (Intrinsic::FunctionPrototype, 0),
+        (false, true) => (Intrinsic::AsyncFunctionPrototype, 2),
+        (true, false) => (Intrinsic::GeneratorFunctionPrototype, 3),
+        (true, true) => (Intrinsic::AsyncGeneratorFunctionPrototype, 4),
+    }
+}
+
 /// The function object of a closure over `scope` for bytecode record
-/// `child` of unit `child_unit`, with its `length`, `name` and `prototype`;
-/// rooted.
+/// `child` of unit `child_unit`; rooted. Its `length`, `name` and
+/// `prototype` are pending: the shape has their keys and attributes, the
+/// values come with [`materialize_closure`] when an own-property operation
+/// first needs one.
 fn closure_function(
     cx: &mut Cx<'_>,
     child: BytecodeId,
     child_unit: &CodeUnit,
     scope: Option<ScopeId>,
 ) -> Result<ObjectId, Throw> {
-    let generator = child_unit.has(flags::GENERATOR);
-    let asynchronous = child_unit.has(flags::ASYNC);
-    let (prototype, cache) = match (generator, asynchronous) {
-        (false, false) if child_unit.has(flags::PROTOTYPE) => (Intrinsic::FunctionPrototype, 1),
-        (false, false) => (Intrinsic::FunctionPrototype, 0),
-        (false, true) => (Intrinsic::AsyncFunctionPrototype, 2),
-        (true, false) => (Intrinsic::GeneratorFunctionPrototype, 3),
-        (true, true) => (Intrinsic::AsyncGeneratorFunctionPrototype, 4),
-    };
+    let (prototype, cache) = closure_kind(child_unit);
     let function_prototype = cx.realm.intrinsic(prototype);
     let function = cx
         .heap
@@ -1098,44 +1105,113 @@ fn closure_function(
         cx.heap
             .set_object_flag(function, crate::heap::object::flags::CONSTRUCTOR);
     }
+    match cx.heap.pending_closure_shapes[cache] {
+        Some(shape) if cx.heap.prototype_of_shape(shape) == Some(function_prototype) => {
+            cx.heap.apply_pending_shape(function, shape);
+        }
+        _ => {
+            let names = cx.realm.names;
+            let data = PropertyFlags::data(false, false, true);
+            let mut entries = vec![
+                (Names::key(names.length), data),
+                (Names::key(names.name), data),
+            ];
+            if child_unit.has(flags::PROTOTYPE) {
+                entries.push((
+                    Names::key(names.prototype),
+                    PropertyFlags::data(true, false, false),
+                ));
+            }
+            let shape = cx
+                .heap
+                .pending_closure_shape(function, &entries)
+                .map_err(|error| error::heap_error(cx, error))?;
+            cx.heap.pending_closure_shapes[cache] = Some(shape);
+        }
+    }
+    Ok(function)
+}
+
+/// Gives a pending closure the values of its `length`, `name` and
+/// `prototype` (a new object, unless `prototype` supplies the value a write
+/// stores) and the closure shape of its kind. No JavaScript runs, so the
+/// laziness is unobservable.
+#[cold]
+#[inline(never)]
+pub(crate) fn materialize_closure(
+    cx: &mut Cx<'_>,
+    function: ObjectId,
+    prototype: Option<Value>,
+) -> Result<(), Throw> {
+    let bytecode = cx
+        .heap
+        .function_bytecode(function)
+        .expect("a bytecode closure");
+    let unit = cx.unit(cx.heap.bytecode_unit(bytecode));
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(Value::object(function));
+    if let Some(prototype) = prototype {
+        cx.heap.roots().push(prototype);
+    }
+    let result = closure_properties(cx, function, &unit, prototype);
+    cx.heap.roots().truncate(mark);
+    result
+}
+
+fn closure_properties(
+    cx: &mut Cx<'_>,
+    function: ObjectId,
+    unit: &CodeUnit,
+    prototype: Option<Value>,
+) -> Result<(), Throw> {
+    let generator = unit.has(flags::GENERATOR);
+    let asynchronous = unit.has(flags::ASYNC);
+    let (_, cache) = closure_kind(unit);
     let names = cx.realm.names;
-    let name = Value::string(child_unit.name_atom.unwrap_or(names.empty));
-    let length = Value::int32(i32::from(child_unit.length));
-    // The `prototype` object, created before the shape is applied so the
-    // function stays in a consistent state at the safepoint.
-    let instance = if child_unit.has(flags::PROTOTYPE) {
-        let object_prototype = cx.realm.intrinsic(match (generator, asynchronous) {
-            (true, false) => Intrinsic::GeneratorPrototype,
-            (true, true) => Intrinsic::AsyncGeneratorPrototype,
-            _ => Intrinsic::ObjectPrototype,
-        });
-        let heap = &mut *cx.heap;
-        let instance = heap
-            .alloc_object(ObjectKind::Ordinary, Some(object_prototype), 1)
-            .and_then(|instance| {
-                if !generator {
-                    heap.add_property(
-                        instance,
-                        Names::key(names.constructor),
-                        PropertyFlags::data(true, false, true),
-                        Value::object(function),
-                    )?;
-                }
-                Ok(instance)
-            })
-            .map_err(|error| error::heap_error(cx, error))?;
-        // Rooted like the function: the shape's slow path allocates.
-        cx.heap.roots().push(Value::object(instance));
-        Some(Value::object(instance))
-    } else {
-        None
+    let name = Value::string(unit.name_atom.unwrap_or(names.empty));
+    let length = Value::int32(i32::from(unit.length));
+    // The `prototype` object, created before the slots so the function stays
+    // pending, a consistent state, at the safepoint.
+    let instance = match prototype {
+        _ if !unit.has(flags::PROTOTYPE) => None,
+        Some(prototype) => Some(prototype),
+        None => {
+            let object_prototype = cx.realm.intrinsic(match (generator, asynchronous) {
+                (true, false) => Intrinsic::GeneratorPrototype,
+                (true, true) => Intrinsic::AsyncGeneratorPrototype,
+                _ => Intrinsic::ObjectPrototype,
+            });
+            let heap = &mut *cx.heap;
+            let instance = heap
+                .alloc_object(ObjectKind::Ordinary, Some(object_prototype), 1)
+                .and_then(|instance| {
+                    if !generator {
+                        heap.add_property(
+                            instance,
+                            Names::key(names.constructor),
+                            PropertyFlags::data(true, false, true),
+                            Value::object(function),
+                        )?;
+                    }
+                    Ok(instance)
+                })
+                .map_err(|error| error::heap_error(cx, error))?;
+            // Rooted like the function: the slots and the shape's slow path
+            // allocate.
+            cx.heap.roots().push(Value::object(instance));
+            Some(Value::object(instance))
+        }
     };
     let values = [length, name, instance.unwrap_or(Value::UNDEFINED)];
     let count = if instance.is_some() { 3 } else { 2 };
+    cx.heap
+        .unpend_closure(function, count)
+        .map_err(|error| error::heap_error(cx, error))?;
+    let function_prototype = cx.heap.prototype_of(function);
     match cx.heap.closure_shapes[cache] {
-        Some(shape) if cx.heap.prototype_of_shape(shape) == Some(function_prototype) => {
+        Some(shape) if cx.heap.prototype_of_shape(shape) == function_prototype => {
             cx.heap
-                .apply_closure_shape(function, shape, &values[..count]);
+                .apply_closure_shape(function, shape, &values[..count as usize]);
         }
         _ => {
             let heap = &mut *cx.heap;
@@ -1144,7 +1220,7 @@ fn closure_function(
                 &names,
                 function,
                 name,
-                child_unit.length.into(),
+                unit.length.into(),
             );
             if let (Ok(()), Some(instance)) = (result, instance) {
                 result = heap.add_property(
@@ -1160,7 +1236,7 @@ fn closure_function(
             }
         }
     }
-    Ok(function)
+    Ok(())
 }
 
 /// A closure for child `index` of `root`'s unit whose captures are all of
@@ -1251,6 +1327,11 @@ fn construct_receiver(
         let names = cx.realm.names;
         let key = Names::key(names.prototype);
         let slots = u32::from(this_slots);
+        // A pending constructor's first `new` materializes it, so the entry
+        // fills with the shape it keeps.
+        super::object::materialize_for(cx, constructor, key)?;
+        let heap = &*cx.heap;
+        let shape = heap.shape_of(constructor).index();
         match heap.lookup_own(constructor, key) {
             Some((slot, property))
                 if !property.has(PropertyFlags::ACCESSOR) && !heap.is_dictionary(constructor) =>

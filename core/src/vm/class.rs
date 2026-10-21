@@ -269,6 +269,7 @@ fn class_op_rooted(
             );
             let target = private_target(cx, target)?;
             let key = private_name(cx, name)?;
+            object::materialize(cx, target)?;
             if cx.heap.lookup_own(target, key).is_some() {
                 return Err(error::type_error(
                     cx,
@@ -511,6 +512,7 @@ fn make_class(
             cx.realm.intrinsic(Intrinsic::FunctionPrototype),
         )
     };
+    object::materialize(cx, constructor)?;
     let prototype = cx
         .heap
         .alloc_object(ObjectKind::Ordinary, prototype_parent, 4)
@@ -566,6 +568,7 @@ fn ensure_brand(cx: &mut Cx<'_>, home: ObjectId) -> Result<Value, Throw> {
     if let Some((slot, _)) = cx.heap.lookup_own(home, key) {
         return Ok(cx.heap.get_slot(home, slot));
     }
+    object::materialize(cx, home)?;
     let brand = cx
         .heap
         .alloc_symbol(None, true)
@@ -585,6 +588,7 @@ fn ensure_brand(cx: &mut Cx<'_>, home: ObjectId) -> Result<Value, Throw> {
 fn add_brand(cx: &mut Cx<'_>, home: ObjectId, target: ObjectId) -> Result<(), Throw> {
     let brand = ensure_brand(cx, home)?;
     let key = private_key(brand);
+    object::materialize(cx, target)?;
     if cx.heap.lookup_own(target, key).is_some() {
         return Err(error::type_error(cx, "private method is already present"));
     }

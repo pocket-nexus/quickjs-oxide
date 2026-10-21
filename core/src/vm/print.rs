@@ -755,8 +755,9 @@ impl Printer<'_, '_> {
             }
             // QuickJS's `get_prop_string` takes only `JS_TAG_STRING`: a rope
             // (`JS_TAG_STRING_ROPE`) reads as absent.
+            let (units, names) = (self.cx.units(), &self.cx.realm.names);
             Some(
-                heap.get_slot(object, slot)
+                crate::vm::property::peek_data(heap, units, names, object, key, (slot, flags))
                     .as_string()
                     .filter(|id| heap.strings.get(id.0).flat().is_some())
                     .map(|id| heap.string(id).repr().units().collect()),

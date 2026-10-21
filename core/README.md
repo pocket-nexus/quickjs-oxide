@@ -142,7 +142,8 @@ check nothing.
   safepoint by `Heap::alloc_bytecode_function` (via `Runtime::instantiate`),
   because a record is not a value the root stack can hold; `MakeClosure` uses
   `Heap::alloc_closure`, whose record is reachable through the running
-  function.
+  function. A new closure's `length`, `name` and `prototype` are pending until
+  first used ([Heap](../docs/heap.md#shapes-and-validity-cells)).
 
 ## Bindings and cells
 

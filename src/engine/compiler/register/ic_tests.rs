@@ -287,3 +287,109 @@ fn polymorphic_rows_and_the_megamorphic_mark() {
     assert_eq!(session.run("print(getX(e), getX(a));"), "5 1\n");
     assert_eq!(session.entry(site).w0, MEGA_TAG);
 }
+
+/// A closure is a header and a function record until an own-property
+/// operation needs its `length`, `name` or `prototype`: neither an arrow nor
+/// a `function` takes value slots, and a `function`'s `prototype` object
+/// exists only once read.
+#[test]
+fn untouched_closures_take_no_slots() {
+    let mut session = Session::new();
+    session.run(
+        "var keep = []; var fill = (make) => { for (var i = 0; i < 1000; i++) keep[i] = make(); };",
+    );
+    let counts = |session: &mut Session| {
+        session.runtime.run_gc();
+        let report = session.runtime.memory_report();
+        (report.objects.live, report.values.used_slots)
+    };
+    session.run("fill(() => 0);");
+    let (objects, slots) = counts(&mut session);
+    session.run("fill(() => () => 0);");
+    assert_eq!(
+        counts(&mut session),
+        (objects + 1000, slots),
+        "an arrow is pending"
+    );
+    session.run("fill(() => function () {});");
+    assert_eq!(
+        counts(&mut session),
+        (objects + 1000, slots),
+        "a function is pending"
+    );
+    assert_eq!(session.run("keep.forEach((f) => f.prototype);"), "");
+    let touched = counts(&mut session);
+    assert_eq!(touched.0, objects + 2000, "one prototype object each");
+    assert!(
+        touched.1 >= slots + 5 * 1000,
+        "the closures' and prototypes' slots"
+    );
+}
+
+/// A pending closure answers every own-property operation as a
+/// materialized one would.
+#[test]
+fn pending_closures_keep_their_own_properties() {
+    let mut session = Session::new();
+    let source = r#"
+        function f(a, b) {}
+        print(Object.getOwnPropertyNames(f).join(), f.hasOwnProperty('prototype'), 'name' in f);
+        print(f.length, f.name, f.prototype === f.prototype, f.prototype.constructor === f);
+        const g = function* () {};
+        print(Object.getOwnPropertyNames(g.prototype).length,
+              Object.getPrototypeOf(g.prototype) === Object.getPrototypeOf(function* () {}).prototype);
+        const a = (x) => x;
+        print(Object.getOwnPropertyNames(a).join(), a.length, a.name, a.hasOwnProperty('prototype'));
+        function h() {} const p = { q: 1 }; h.prototype = p;
+        print(h.prototype === p, new h().q, Object.getOwnPropertyNames(h).join());
+        function d() {} delete d.length; print(d.length, Object.getOwnPropertyNames(d).join());
+        function e() {} Object.defineProperty(e, 'name', { value: 'zz' });
+        print(e.name, JSON.stringify(Object.getOwnPropertyDescriptor(e, 'prototype')));
+        function b(x, y, z) {} const bound = b.bind(null, 1); print(bound.name, bound.length);
+        function C() { this.v = 1; } print(new C().v, new C() instanceof C, {} instanceof function () {});
+        function F() {} F.foo = 1; print(Object.getOwnPropertyNames(F).join());
+        function G() {} Object.freeze(G); print(Object.isFrozen(G), typeof G.prototype);
+        function H() {} Object.setPrototypeOf(H, null); print(Object.getOwnPropertyNames(H).join(), H.length);
+        function I() {} const o = Object.create(I); print(o.length, o.name, typeof o.prototype);
+        class Base { constructor() { return function () {}; } }
+        class Sub extends Base { #x = 1; static has(o) { return #x in o; } }
+        print(Sub.has(new Sub()));
+        function P() {} P.prototype = 5; print(typeof new P(), P.prototype);
+        function Q() {} Reflect.set(Q, 'prototype', 7, {}); print(typeof Q.prototype);
+        async function M() {} print(M.hasOwnProperty('prototype'), M.name);
+    "#;
+    assert_eq!(
+        session.run(source),
+        "length,name,prototype true true\n\
+         2 f true true\n\
+         0 true\n\
+         length,name 1 a false\n\
+         true 1 length,name,prototype\n\
+         0 name,prototype\n\
+         zz {\"value\":{},\"writable\":true,\"enumerable\":false,\"configurable\":false}\n\
+         bound b 2\n\
+         1 true false\n\
+         length,name,prototype,foo\n\
+         true object\n\
+         length,name,prototype 0\n\
+         0 I object\n\
+         true\n\
+         object 5\n\
+         object\n\
+         false M\n"
+    );
+}
+
+/// A read or a write of a pending property is never cached: a site that
+/// meets many pending closures reads and writes each one's own value.
+#[test]
+fn a_pending_property_is_never_cached() {
+    let mut session = Session::new();
+    let source = "function get(f) { return f.length; }
+                  function set(f, v) { f.prototype = v; }
+                  var fs = [function (a) {}, function (a, b) {}, function (a, b, c) {}];
+                  print(fs.map(get).join());
+                  fs.forEach(set);
+                  print(fs.map((f) => f.prototype).join(), fs.map(get).join());";
+    assert_eq!(session.run(source), "1,2,3\n0,1,2 1,2,3\n");
+}

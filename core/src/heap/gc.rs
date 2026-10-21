@@ -497,6 +497,7 @@ impl Heap {
         }
         let mut shapes = mem::take(&mut self.gc.shape_stack);
         shapes.extend(self.closure_shapes.iter().flatten());
+        shapes.extend(self.pending_closure_shapes.iter().flatten());
         shapes.extend(self.arguments_shapes.iter().flatten());
         self.mark_shapes(&mut shapes, &mut stack);
         self.gc.shape_stack = shapes;

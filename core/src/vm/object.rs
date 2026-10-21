@@ -127,6 +127,33 @@ pub(crate) fn heap_error(cx: &Cx<'_>, error: crate::HeapError) -> Throw {
     error::heap_error(cx, error)
 }
 
+// ---- pending closures ----
+
+/// Materializes `object` if it is a pending closure: before an own-property
+/// operation that adds, removes or reconfigures a property.
+#[inline]
+pub(crate) fn materialize(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
+    if cx.heap.is_pending_closure(object) {
+        return super::interp::materialize_closure(cx, object, None);
+    }
+    Ok(())
+}
+
+/// Materializes `object` if `key` is one of its pending closure properties:
+/// before an operation that reads `key`'s value.
+#[inline]
+pub(crate) fn materialize_for(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+) -> Result<(), Throw> {
+    // A pending shape holds only pending properties.
+    if cx.heap.is_pending_closure(object) && cx.heap.lookup_own(object, key).is_some() {
+        return super::interp::materialize_closure(cx, object, None);
+    }
+    Ok(())
+}
+
 // ---- [[GetOwnProperty]] ----
 
 /// The own property `key` of `object` as a complete descriptor.
@@ -135,6 +162,7 @@ pub(crate) fn get_own_property(
     object: ObjectId,
     key: PropertyKey,
 ) -> Result<Option<Descriptor>, Throw> {
+    materialize_for(cx, object, key)?;
     match cx.heap.object_kind(object) {
         ObjectKind::Proxy => proxy::get_own_property(cx, object, key),
         ObjectKind::StringWrapper => {
@@ -190,7 +218,8 @@ fn string_index(
     )))
 }
 
-/// `OrdinaryGetOwnProperty`, which never runs JavaScript.
+/// `OrdinaryGetOwnProperty`, which never runs JavaScript. `key` is not a
+/// pending closure property ([`materialize_for`]).
 pub(crate) fn ordinary_get_own(
     cx: &Cx<'_>,
     object: ObjectId,
@@ -365,6 +394,7 @@ pub(crate) fn ordinary_define(
     key: PropertyKey,
     descriptor: &Descriptor,
 ) -> Result<bool, Throw> {
+    materialize(cx, object)?;
     let current = ordinary_get_own(cx, object, key);
     let extensible = cx.heap.header(object).has(flags::EXTENSIBLE);
     if !compatible(cx, extensible, descriptor, current.as_ref()) {
@@ -734,6 +764,7 @@ pub(crate) fn has_property(
 ) -> Result<bool, Throw> {
     let mut current = object;
     loop {
+        materialize_for(cx, current, key)?;
         match cx.heap.object_kind(current) {
             ObjectKind::Proxy => return proxy::has(cx, current, key),
             ObjectKind::StringWrapper => {
@@ -772,6 +803,7 @@ pub(crate) fn get(
 ) -> Result<Value, Throw> {
     let mut current = object;
     loop {
+        materialize_for(cx, current, key)?;
         let descriptor = match cx.heap.object_kind(current) {
             ObjectKind::Proxy => return proxy::get(cx, current, key, receiver),
             ObjectKind::StringWrapper => match string_index(cx, current, key)? {
@@ -819,6 +851,7 @@ pub(crate) fn set(
 ) -> Result<bool, Throw> {
     let mut current = object;
     let own = loop {
+        materialize_for(cx, current, key)?;
         let descriptor = match cx.heap.object_kind(current) {
             ObjectKind::Proxy => return proxy::set(cx, current, key, value, receiver),
             ObjectKind::ModuleNamespace => return Ok(false),
@@ -914,6 +947,7 @@ pub(crate) fn ordinary_delete(
     object: ObjectId,
     key: PropertyKey,
 ) -> Result<bool, Throw> {
+    materialize_for(cx, object, key)?;
     let heap = &mut *cx.heap;
     match key.kind() {
         KeyKind::Index(index) => {
@@ -1176,6 +1210,7 @@ pub(crate) fn create_data_property(
     value: Value,
 ) -> Result<bool, Throw> {
     // The ordinary common case: an absent key on an extensible object.
+    materialize(cx, object)?;
     let kind = cx.heap.object_kind(object);
     if !kind.is_exotic() && kind != ObjectKind::Arguments {
         let heap = &mut *cx.heap;

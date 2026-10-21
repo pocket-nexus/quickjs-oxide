@@ -924,12 +924,11 @@ pub(crate) fn instance_of(cx: &mut Cx<'_>, x: Value, f: Value) -> Result<bool, T
     let function_prototype = cx
         .realm
         .intrinsic(crate::runtime::Intrinsic::FunctionPrototype);
+    let shape = Some(cx.heap.shape_of(function));
     let plain_closure = cx.heap.object_kind(function) == crate::ObjectKind::Function
         && cx.heap.prototype_of(function) == Some(function_prototype)
-        && cx
-            .heap
-            .closure_shapes
-            .contains(&Some(cx.heap.shape_of(function)));
+        && (cx.heap.closure_shapes.contains(&shape)
+            || cx.heap.pending_closure_shapes.contains(&shape));
     let handler = if plain_closure {
         Value::UNDEFINED
     } else {
@@ -1003,7 +1002,10 @@ fn ordinary_instance_of(
     // The constructor's own data `prototype` is read straight from its slot
     // (measured on Earley-Boyer's `instanceof` tests).
     let prototype = match cx.heap.lookup_own(function, Names::key(names.prototype)) {
-        Some((slot, flags)) if !flags.has(crate::shape::PropertyFlags::ACCESSOR) => {
+        Some((slot, flags))
+            if !flags.has(crate::shape::PropertyFlags::ACCESSOR)
+                && !flags.has(crate::shape::PropertyFlags::AUTOINIT) =>
+        {
             cx.heap.get_slot(function, slot)
         }
         _ => property::get_value(cx, function, Names::key(names.prototype))?,
