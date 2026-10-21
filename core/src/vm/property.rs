@@ -111,7 +111,7 @@ pub(crate) fn peek_data(
 #[derive(Debug)]
 struct Pending;
 
-#[inline]
+#[inline(always)]
 fn slot_value(heap: &Heap, object: ObjectId, slot: u32, property: PropertyFlags) -> Found {
     if property.has(PropertyFlags::ACCESSOR) {
         Found::Accessor(heap.get_slot(object, slot), heap.get_slot(object, slot + 1))
@@ -359,6 +359,7 @@ pub(crate) fn get_cached(
     };
     let heap = &*cx.heap;
     let mut holder = start;
+    let mut pending = false;
     let walked = loop {
         if heap.object_kind(holder).is_exotic() {
             cx.heap.ics.count_miss(site, false);
@@ -369,8 +370,8 @@ pub(crate) fn get_cached(
         }
         if let Some((slot, property)) = heap.lookup_own(holder, key) {
             if property.has(PropertyFlags::AUTOINIT) {
-                cx.heap.ics.count_miss(site, false);
-                return get(cx, receiver, key);
+                pending = true;
+                break Err(None);
             }
             // A dictionary-mode prototype is cacheable: any change to it
             // clears the cell like any prototype's. A dictionary receiver is
@@ -388,6 +389,15 @@ pub(crate) fn get_cached(
             None => break Err(None),
         }
     };
+    if pending {
+        // A pending closure's first read of one of its properties reads the
+        // materialized slot; the entry fills on a later read of a function
+        // already materialized.
+        cx.heap.ics.count_miss(site, false);
+        super::object::materialize(cx, holder)?;
+        let (slot, _) = cx.heap.lookup_own(holder, key).expect("a closure property");
+        return Ok(cx.heap.get_slot(holder, slot));
+    }
     let slot = match walked {
         Ok(slot) => slot,
         Err(found) => {
@@ -907,8 +917,10 @@ fn add(
     value: Value,
     strict: bool,
 ) -> Result<(), Throw> {
-    super::object::materialize(cx, object)?;
     let heap = &mut *cx.heap;
+    if heap.is_pending_closure(object) {
+        return add_pending(cx, object, key, value, strict);
+    }
     if !heap.header(object).has(flags::EXTENSIBLE) {
         if strict {
             return Err(error::type_error(cx, "object is not extensible"));
@@ -925,6 +937,20 @@ fn add(
     heap.add_property(object, key, PropertyFlags::DEFAULT, value)
         .map_err(|_| error::oom(cx.realm))?;
     Ok(())
+}
+
+/// [`add`] to a pending closure, materialized first.
+#[cold]
+#[inline(never)]
+fn add_pending(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    value: Value,
+    strict: bool,
+) -> Result<(), Throw> {
+    super::object::materialize(cx, object)?;
+    add(cx, object, key, value, strict)
 }
 
 /// `CreateDataPropertyOrThrow` for object and array literals and class

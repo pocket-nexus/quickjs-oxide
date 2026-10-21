@@ -131,7 +131,7 @@ pub(crate) fn heap_error(cx: &Cx<'_>, error: crate::HeapError) -> Throw {
 
 /// Materializes `object` if it is a pending closure: before an own-property
 /// operation that adds, removes or reconfigures a property.
-#[inline]
+#[inline(always)]
 pub(crate) fn materialize(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw> {
     if cx.heap.is_pending_closure(object) {
         return super::interp::materialize_closure(cx, object, None);
@@ -141,7 +141,7 @@ pub(crate) fn materialize(cx: &mut Cx<'_>, object: ObjectId) -> Result<(), Throw
 
 /// Materializes `object` if `key` is one of its pending closure properties:
 /// before an operation that reads `key`'s value.
-#[inline]
+#[inline(always)]
 pub(crate) fn materialize_for(
     cx: &mut Cx<'_>,
     object: ObjectId,
@@ -1209,8 +1209,10 @@ pub(crate) fn create_data_property(
     key: PropertyKey,
     value: Value,
 ) -> Result<bool, Throw> {
+    if cx.heap.is_pending_closure(object) {
+        return create_data_property_pending(cx, object, key, value);
+    }
     // The ordinary common case: an absent key on an extensible object.
-    materialize(cx, object)?;
     let kind = cx.heap.object_kind(object);
     if !kind.is_exotic() && kind != ObjectKind::Arguments {
         let heap = &mut *cx.heap;
@@ -1235,6 +1237,19 @@ pub(crate) fn create_data_property(
     let result = define_own_property(cx, object, key, &Descriptor::plain(value));
     cx.heap.roots().truncate(mark);
     result
+}
+
+/// [`create_data_property`] on a pending closure, materialized first.
+#[cold]
+#[inline(never)]
+fn create_data_property_pending(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    value: Value,
+) -> Result<bool, Throw> {
+    materialize(cx, object)?;
+    create_data_property(cx, object, key, value)
 }
 
 pub(crate) fn create_data_property_or_throw(

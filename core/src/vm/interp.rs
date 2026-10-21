@@ -372,7 +372,18 @@ pub(crate) fn set_function_name(
     prefix: &str,
     always: bool,
 ) -> Result<(), Throw> {
-    super::object::materialize(cx, function)?;
+    if cx.heap.is_pending_closure(function) {
+        // A unit named where its closure is created already holds the name:
+        // a named function keeps it unless `always`, and a method's is its
+        // key.
+        let bytecode = cx.heap.function_bytecode(function).expect("a closure");
+        let pending = cx.unit(cx.heap.bytecode_unit(bytecode)).name_atom;
+        match pending {
+            Some(name) if !always && cx.heap.string_len(name) > 0 => return Ok(()),
+            Some(name) if prefix.is_empty() && key == PropertyKey::atom(name) => return Ok(()),
+            _ => super::object::materialize(cx, function)?,
+        }
+    }
     let names = cx.realm.names;
     let name_key = Names::key(names.name);
     // The common case: an anonymous closure named by an atom. Its own

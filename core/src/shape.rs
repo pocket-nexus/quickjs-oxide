@@ -543,7 +543,7 @@ impl Heap {
     /// Whether `object` is a pending closure: a function whose shape has more
     /// slots than its range, the `AUTOINIT` entries of
     /// [`Heap::pending_closure_shape`] not yet materialized.
-    #[inline]
+    #[inline(always)]
     pub fn is_pending_closure(&self, object: ObjectId) -> bool {
         let header = self.objects.get(object.0);
         header.kind == ObjectKind::Function

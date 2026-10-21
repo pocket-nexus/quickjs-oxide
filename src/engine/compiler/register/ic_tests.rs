@@ -317,6 +317,25 @@ fn untouched_closures_take_no_slots() {
         (objects + 1000, slots),
         "a function is pending"
     );
+    // Named where it is created, a closure's unit carries the name.
+    session.run("fill(() => { const named = (a) => a; return named; });");
+    assert_eq!(
+        counts(&mut session),
+        (objects + 1000, slots),
+        "a named arrow is pending"
+    );
+    // The literal's four slots, and none for its method.
+    session.run("fill(() => ({ m() {} }));");
+    assert_eq!(
+        counts(&mut session),
+        (objects + 2000, slots + 4 * 1000),
+        "a method is pending"
+    );
+    assert_eq!(
+        session.run("print(keep[0].m.name, keep[0].m.length);"),
+        "m 0\n"
+    );
+    session.run("fill(() => function () {});");
     assert_eq!(session.run("keep.forEach((f) => f.prototype);"), "");
     let touched = counts(&mut session);
     assert_eq!(touched.0, objects + 2000, "one prototype object each");

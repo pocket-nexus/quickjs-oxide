@@ -127,7 +127,7 @@ pub(crate) fn lower_script_into(
     let result = (|| {
         let mut constants = HashMap::new();
         let mut tree = TreeCache::default();
-        let root = lower_tree(runtime, &mut tree, script, None, &mut constants)?;
+        let root = lower_tree(runtime, &mut tree, script, None, None, &mut constants)?;
         let order = runtime.units().tree(root);
         let tables: Vec<&[CoreValue]> = order.iter().map(|id| constants[id].as_slice()).collect();
         let function = runtime.instantiate(root, &tables)?;
@@ -300,31 +300,93 @@ fn negated_jump(op: Opcode) -> Option<Opcode> {
 
 /// Lowers and publishes `function` after its children. `parent` is the
 /// parent's layout (`None` for the script), which places the parent's locals
-/// for this function's captures.
+/// for this function's captures; `inferred` the name the parent's code gives
+/// it where it creates it ([`inferred_names`]).
 fn lower_tree(
     runtime: &mut Compiler<'_>,
     tree: &mut TreeCache,
     function: &UnlinkedFunction,
     parent: Option<Layout>,
+    inferred: Option<&JsString>,
     constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
 ) -> Result<CodeUnitId, LowerError> {
     let mut analysis = tree.analyses.pop().unwrap_or_default();
     analyze_into(function.code(), &mut analysis, &mut tree.analysis_scratch)?;
     let layout = Layout::of(function, &analysis)?;
+    let names = inferred_names(function, &analysis);
     let mut children = Vec::new();
-    for constant in function.constants() {
+    for (index, constant) in function.constants().iter().enumerate() {
         if let Some(child) = constant.as_child() {
-            children.push(lower_tree(runtime, tree, child, Some(layout), constants)?);
+            let name = names.get(&(index as u32)).copied();
+            children.push(lower_tree(
+                runtime,
+                tree,
+                child,
+                Some(layout),
+                name,
+                constants,
+            )?);
         }
     }
-    let (unit, pool) = lower_function(runtime, tree, function, analysis, layout, parent, children)?;
+    let named = names.into_keys().collect();
+    let (unit, pool) = lower_function(
+        runtime, tree, function, analysis, layout, parent, children, inferred, named,
+    )?;
     let id = runtime.publish(unit)?;
     constants.insert(id, pool);
     Ok(id)
 }
 
+/// The names `function`'s code gives its anonymous children where it creates
+/// them, by constant index: a child without a name of its own whose every
+/// `FClosure` is followed, at no join, by a `SetName` of a string constant or
+/// a plain method's `DefineMethod`. Its unit carries the name, so a new
+/// closure is named without `SetFunctionName` and its properties stay
+/// pending.
+fn inferred_names<'f>(
+    function: &'f UnlinkedFunction,
+    analysis: &Analysis,
+) -> HashMap<u32, &'f JsString> {
+    let code = function.code();
+    let constants = function.constants();
+    let string = |index: u32| match constants.get(index as usize)?.as_primitive()? {
+        PrimitiveValue::String(string) => Some(string),
+        _ => None,
+    };
+    let mut names: HashMap<u32, Option<&'f JsString>> = HashMap::new();
+    for (pc, instruction) in code.iter().enumerate() {
+        let Instruction::FClosure(child) = *instruction else {
+            continue;
+        };
+        let anonymous = constants
+            .get(child as usize)
+            .and_then(|constant| constant.as_child())
+            .is_some_and(|child| child.func_name().is_none_or(|name| name.is_empty()));
+        let name = match code.get(pc + 1) {
+            _ if !anonymous || analysis.label.get(pc + 1).copied().unwrap_or(true) => None,
+            Some(&Instruction::SetName(name)) => string(name),
+            Some(&Instruction::DefineMethod {
+                key,
+                kind: DefineMethodKind::Method,
+                ..
+            }) => string(key),
+            _ => None,
+        };
+        let entry = names.entry(child).or_insert(name);
+        if *entry != name {
+            *entry = None;
+        }
+    }
+    names
+        .into_iter()
+        .filter_map(|(child, name)| Some((child, name?)))
+        .collect()
+}
+
 /// Lowers one function whose children are already published, given its
-/// analysis and the layout that analysis gives it.
+/// analysis and the layout that analysis gives it. `inferred` is the name its
+/// parent gives it, `named` the children it gives one ([`inferred_names`]).
+#[allow(clippy::too_many_arguments)]
 fn lower_function(
     runtime: &mut Compiler<'_>,
     tree: &mut TreeCache,
@@ -333,10 +395,14 @@ fn lower_function(
     layout: Layout,
     parent: Option<Layout>,
     children: Vec<CodeUnitId>,
+    inferred: Option<&JsString>,
+    named: HashSet<u32>,
 ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
     check_surface(function)?;
     let is_script = parent.is_none() && !function.metadata().is_module;
     let mut lowerer = Lowerer::new(runtime, tree, function, analysis, layout, is_script)?;
+    lowerer.inferred_name = inferred.cloned();
+    lowerer.named_children = named;
     lowerer.prologue()?;
     lowerer.body()?;
     lowerer.finish(parent, children)
@@ -763,6 +829,12 @@ struct Lowerer<'a, 'c> {
     /// it: the jump's register PC, the register and its temporary, the
     /// target.
     store_stubs: Vec<(u32, u8, u32, usize)>,
+    /// The name the parent's code gives this function, for its unit when it
+    /// has none of its own.
+    inferred_name: Option<JsString>,
+    /// The children whose units carry the name the `SetName` after their
+    /// `FClosure` gives: that `SetName` emits nothing.
+    named_children: HashSet<u32>,
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {
@@ -835,6 +907,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             next_scratch: 0,
             result_scratch: 0,
             store_stubs: Vec::new(),
+            inferred_name: None,
+            named_children: HashSet::new(),
             pc: 0,
             last_dest: None,
             checked: HashSet::new(),
@@ -1896,6 +1970,10 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let object = self.operand(self.stack.len() - 1)?;
                 self.emit(|b| b.abc(Opcode::DefineElem, object, key, value));
             }
+            I::SetName(_)
+                if pc > 0
+                    && matches!(self.code[pc - 1],
+                        I::FClosure(child) if self.named_children.contains(&child)) => {}
             I::SetName(name) => {
                 let entry = self.pool_entry(name)?;
                 let scratch = self.scratch()?;
@@ -3360,11 +3438,13 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             0
         };
         let name_atom = match self.function.func_name() {
-            Some(name) if !name.is_empty() => {
-                Some(self.atom_value(name)?.as_string().ok_or_else(|| {
-                    LowerError::Internal("a function name atom is not a string".into())
-                })?)
-            }
+            Some(name) if !name.is_empty() => Some(name.clone()),
+            _ => self.inferred_name.clone(),
+        };
+        let name_atom = match name_atom {
+            Some(name) => Some(self.atom_value(&name)?.as_string().ok_or_else(|| {
+                LowerError::Internal("a function name atom is not a string".into())
+            })?),
             _ => None,
         };
         let source = self
