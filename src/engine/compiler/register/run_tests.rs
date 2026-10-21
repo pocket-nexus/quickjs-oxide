@@ -269,7 +269,7 @@ fn corpus_covers_every_emitted_opcode() {
     assert!(missing.is_empty(), "not covered: {missing:?}");
 }
 
-/// Measurement hook for `docs/performance/probes/slopes/instruction_slopes.py`:
+/// Measurement hook for `scripts/benchmark/bench.py slopes instructions`:
 /// runs the file `PROBE_FILE` and prints its output. Ignored in ordinary runs.
 #[test]
 #[ignore = "measurement hook"]

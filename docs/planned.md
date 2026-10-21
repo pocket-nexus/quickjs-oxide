@@ -58,7 +58,7 @@ The items add to it what they need to report:
 | atoms | the table's capacity beside the count | 3.2 |
 | per arena | bytes the records own out of line (string units, BigInt limbs, buffers, tables, suspended frames), beside bytes reserved | 3.2 |
 
-`qjs --memory-report` prints it at exit, and `fixed.py` reads peak RSS from the operating system; the two are reported side by side, since the process floor (16 MiB on an empty script) and the allocator's own overhead are outside the heap's view.
+`qjs --memory-report` prints it at exit, and `bench.py memory` reads peak RSS from the operating system; the two are reported side by side, since the process floor (16 MiB on an empty script) and the allocator's own overhead are outside the heap's view.
 
 **Acceptance (heap cap item, first step).** The report of each of the 37 suite programs at one `run()` is recorded as the first column of the memory table (section 9) before anything else changes.
 
@@ -88,7 +88,7 @@ A PSP-class profile is one `RuntimeOptions` value, documented in `core/README.md
 
 ### 3.4 PSP-class controlled workloads
 
-The "controlled workloads under PSP-class memory" of #122's exit are: the 37 suite programs at one `run()` and the 20 fixed probes at smoke size, under caps of 32, 24 and 16 MiB, plus the churn ring (`heap_workloads.py churn`, a 12–16 MB live set) under an 8 MiB cap once the ring is sized to 4 MiB live, on x86_64 and on the 32-bit target of section 5, each recording completion or `OutOfMemory`, collections, pauses, heap reserved and peak RSS (the capped-run table). The pass condition: under a cap of C, every program whose live set at exit is below C/2 completes with the manifest's stdout, and its peak RSS is at most C plus the process floor plus 10%. Splay (75 MiB live) is expected to fail every cap and is reported, not excused; QuickJS cannot run it in 32 MiB either.
+The "controlled workloads under PSP-class memory" of #122's exit are: the 37 suite programs at one `run()` and the 20 fixed probes at smoke size, under caps of 32, 24 and 16 MiB, plus the churn ring (`bench.py slopes heap`'s `churn`, a 12–16 MB live set) under an 8 MiB cap once the ring is sized to 4 MiB live, on x86_64 and on the 32-bit target of section 5, each recording completion or `OutOfMemory`, collections, pauses, heap reserved and peak RSS (the capped-run table). The pass condition: under a cap of C, every program whose live set at exit is below C/2 completes with the manifest's stdout, and its peak RSS is at most C plus the process floor plus 10%. Splay (75 MiB live) is expected to fail every cap and is reported, not excused; QuickJS cannot run it in 32 MiB either.
 
 ## 4. Code images and heap snapshots
 
@@ -185,7 +185,7 @@ The mechanism that fits a non-moving arena heap is **generational marking with s
 
 ## 7. The driver and CI
 
-`qjs` grows `--compile`, `--snapshot`, `--load-snapshot`, honors `--strip-source` for both, and accepts `.oxc` files as programs. The churn ring of `heap_workloads.py` gains the cap and the report.
+`qjs` grows `--compile`, `--snapshot`, `--load-snapshot`, honors `--strip-source` for both, and accepts `.oxc` files as programs. The churn ring of `bench.py slopes heap` gains the cap and the report.
 
 CI:
 - `fast`: `cargo check -p quickjs-oxide-core --no-default-features --target thumbv7em-none-eabi` (`no_std` item); `cargo check --target i686-unknown-linux-musl -p quickjs-oxide-cli` (32-bit item); the snapshot round-trip, determinism and truncation tests run inside `cargo test -p quickjs-oxide-core` (snapshot item).
@@ -209,7 +209,7 @@ Total, if every item is taken: about 34–50 working days without the generation
 
 ## 9. Measurement and exit
 
-Every number is produced by [Measurement method](performance/measurement.md) on the reference machine: the frozen manifest, `fixed.py --repeat 5 --cpu 2 --linux-counters --timeout 900`, medians of 5, every sample's stdout checked, raw samples kept outside the repository; probe slopes from `docs/performance/probes/slopes/instruction_slopes.py`; instruction counts from `perf stat -e instructions:u`.
+Every number is produced by [Measurement method](performance/measurement.md) on the reference machine: the frozen manifest, `bench.py run --repeat 5 --cpu 2 --linux-counters --timeout 900`, medians of 5, every sample's stdout checked, raw samples kept outside the repository; probe slopes from `bench.py slopes instructions`; instruction counts from `perf stat -e instructions:u`.
 
 **The memory table: the 37 programs** at the default trigger: the `MemoryReport` at exit (reserved and live by arena, code store, value heap), peak RSS for QuickJS and `quickjs-oxide-core`, and the reserved-to-live ratio before and after the heap cap item's shrinking.
 

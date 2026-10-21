@@ -7,4 +7,4 @@ function work(n) {
     }
     return x===baseline;
 }
-print(work(120000));
+print(work(910000));

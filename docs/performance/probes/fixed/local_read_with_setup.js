@@ -4,4 +4,4 @@ function work(n) {
     while(n) { sum=plain; n=n-1; }
     return sum;
 }
-print(work(3000000));
+print(work(39000000));

@@ -3,4 +3,4 @@ function work(n) {
     for(var i=0;i<n;i++) sum=sum+o.x;
     return sum;
 }
-print(work(2000000));
+print(work(30000000));

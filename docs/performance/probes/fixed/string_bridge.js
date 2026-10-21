@@ -8,4 +8,4 @@ function work(n) {
     }
     return completed;
 }
-print(work(180000));
+print(work(3900000));

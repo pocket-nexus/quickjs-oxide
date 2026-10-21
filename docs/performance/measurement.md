@@ -1,18 +1,21 @@
 # Performance measurement method
 
-This page uses the repository's [`scripts/benchmark`](../../scripts/benchmark/README.md) tools and the [fixed workload matrix](probes/README.md). Each comparison records the full source SHA of candidate and reference, tool versions, build configuration, binary SHA-256, workload SHA-256, host information, raw samples and output validation.
+This page uses the repository's [`scripts/benchmark/bench.py`](../../scripts/benchmark/README.md) commands and the [fixed workload matrix](probes/README.md); [Benchmarking](benchmarking.md) gives the standard command for each question. Each comparison records the full source SHA of candidate and reference, tool versions, build configuration, binary SHA-256, workload SHA-256, host information, raw samples and output validation.
 
 ## Builds and sampling
 
-Plain release builds are used for time and hardware counters. Cache events come from a build with the `ic-stats` feature (`qjs --ic-stats`); collector and memory figures from `qjs --gc-stats` and `--memory-report` on a plain build. Both sides use the same toolchain and build configuration, each with its own target directory. `build.py` produces identity receipts for source, tools and binaries.
+Plain release builds are used for time and hardware counters. Cache events come from a build with the `ic-stats` feature (`qjs --ic-stats`); collector and memory figures from `qjs --gc-stats` and `--memory-report` on a plain build. Both sides use the same toolchain and build configuration, each with its own target directory. `bench.py build` produces identity receipts for source, tools and binaries.
 
 ```sh
-python3 scripts/benchmark/build.py --repo "$SOURCE_TREE"   --plain-only --jobs 2 --plain-target "$OUTPUT/plain"
-python3 docs/performance/probes/build_fixed_matrix.py --check
-python3 scripts/benchmark/fixed.py   --manifest docs/performance/probes/fixed/manifest.json   --workload-dir docs/performance/probes/fixed   --engine reference="$REFERENCE_QJS" --engine candidate="$CANDIDATE_QJS"   --repeat 8 --order abba-baab --output "$OUTPUT/fixed"
+python3 scripts/benchmark/bench.py build --repo "$SOURCE_TREE" --jobs 2 --plain-target "$OUTPUT/plain"
+python3 scripts/benchmark/bench.py fixed-matrix --check
+python3 scripts/benchmark/bench.py run --manifest docs/performance/probes/fixed/manifest.json \
+  --workload-dir docs/performance/probes/fixed \
+  --engine reference="$REFERENCE_QJS" --engine candidate="$CANDIDATE_QJS" \
+  --repeat 8 --order abba-baab --output "$OUTPUT/fixed"
 ```
 
-Sampling first establishes time resolution with an A/A comparison of the same binary, then runs interleaved A/B comparisons. Each program fixes its guest workload, and every run validates stdout, stderr and exit status. Applications that write use fresh application state on every run; property experiments start under the recorded cache policy. Fixed iterations, whole-process time, compile probes, the formal V8 v7 score and profiling counts are named separately.
+Sampling first establishes time resolution with an A/A comparison of the same binary, then runs interleaved A/B comparisons; `bench.py paired` judges the A/B result against the A/A range. Each program fixes its guest workload, and every run validates stdout, stderr and exit status. Applications that write use fresh application state on every run; property experiments start under the recorded cache policy. Fixed iterations, whole-process time, compile probes, the formal V8 v7 score and profiling counts are named separately.
 
 ## Result fields
 

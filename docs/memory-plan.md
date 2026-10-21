@@ -10,7 +10,7 @@ Decisions the maintainer made on 2026-10-19: the minimum heap becomes 1 MiB; ite
 
 **Outside this plan.** Code units compiled at run time ([#156](https://github.com/pocket-nexus/quickjs-oxide/issues/156), Code-Load); the growth factor (section 6 says why it stays 2); the generational collector of [Planned work](planned.md#6-the-generational-collector-optional); any change to the loop-size gate or the instruction gate of [Execution principles](performance/principles.md).
 
-**Fixed constraints.** Growth stays 2. No V8 v7 program retires more than 2% more instructions than the base branch's binary, and the 37 programs' time stays within 2% of today's (medians, `fixed.py --order abba-baab`). `run_at` stays under the loop-size gate. The heap stays non-moving, with indices that never change.
+**Fixed constraints.** Growth stays 2. No V8 v7 program retires more than 2% more instructions than the base branch's binary, and the 37 programs' time stays within 2% of today's (medians, `bench.py run --order abba-baab`). `run_at` stays under the loop-size gate. The heap stays non-moving, with indices that never change.
 
 ## 1. Where the memory goes
 
@@ -176,7 +176,7 @@ Saved: 4 bytes per free slot (20% of a full object arena, 1 MiB at Bounce's peak
 
 ### 4.5 Shrinking after a collection
 
-After the sweep, an arena whose trailing free run is more than a quarter of its capacity truncates its record vector to the last live index plus one and calls `shrink_to(len + step)`; the bitmaps follow. The value heap does the same after 4.4's rebuild. Shrinking returns memory through the allocator (`munmap` or trimming for large blocks), which is what peak RSS of a later phase sees. A program that fills and refills the same heap (the churn ring of `docs/performance/probes/slopes/heap_workloads.py`) never has a trailing run above a quarter, so it pays nothing. This is the shrinking of [Planned work 3.2](planned.md#32-growth-that-stops-at-the-cap-and-shrinking), made unconditional of the cap; the register file's shrink stays with that plan.
+After the sweep, an arena whose trailing free run is more than a quarter of its capacity truncates its record vector to the last live index plus one and calls `shrink_to(len + step)`; the bitmaps follow. The value heap does the same after 4.4's rebuild. Shrinking returns memory through the allocator (`munmap` or trimming for large blocks), which is what peak RSS of a later phase sees. A program that fills and refills the same heap (the churn ring of `bench.py slopes heap`) never has a trailing run above a quarter, so it pays nothing. This is the shrinking of [Planned work 3.2](planned.md#32-growth-that-stops-at-the-cap-and-shrinking), made unconditional of the cap; the register file's shrink stays with that plan.
 
 ### 4.6 The minimum heap
 
@@ -184,14 +184,14 @@ After the sweep, an arena whose trailing free run is more than a quarter of its 
 
 ### 4.7 Accounting
 
-`Heap::bytes()` and the memory report gain what they do not count today: the rope table (`Heap::ropes`, 3.4 MB on PdfJS while concatenating), the inline-cache store (16 bytes an entry), the atom table's capacity and the class lists' capacity. The report prints the budget, and `fixed.py`'s peak RSS is reported beside it as [Planned work 2](planned.md#2-memory-accounting) asks.
+`Heap::bytes()` and the memory report gain what they do not count today: the rope table (`Heap::ropes`, 3.4 MB on PdfJS while concatenating), the inline-cache store (16 bytes an entry), the atom table's capacity and the class lists' capacity. The report prints the budget, and `bench.py memory`'s peak RSS is reported beside it as [Planned work 2](planned.md#2-memory-accounting) asks.
 
 ### 4.8 Acceptance
 
 - After every collection of every one of the 37 programs, `bytes() ≤ budget + step` (an assertion under `gc-stress`, and the report's `reserved / budget` column at most 1.25 at exit).
 - Peak RSS: Richards (Octane) at most 5.6 MiB, Bounce at most 7.0 MiB, Earley-Boyer at most 18 MiB (all with item A landed).
 - The churn ring's steady state reserves no more than today and shrinks nothing.
-- Time within 2% on the 37 programs (`fixed.py --order abba-baab`), the instruction gate on the eight, `run_at` under the loop-size gate; `gc-stress` green on the corpus, the probes and the 37 programs.
+- Time within 2% on the 37 programs (`bench.py run --order abba-baab`), the instruction gate on the eight, `run_at` under the loop-size gate; `gc-stress` green on the corpus, the probes and the 37 programs.
 - The lowest-index-first reuse order is unchanged: the corpora's outputs that print object or string identities replay byte for byte.
 
 Expected: the small programs' heap goes from 3–8 MiB to about 1.2 MiB; Earley-Boyer's reserved from 16.4 to about 10 MiB; PdfJS's from 34 to about 18 MiB; Splay loses its slack only (about 30 MiB).
@@ -234,7 +234,7 @@ About 11–16 working days in all. The order puts the cheapest change that moves
 
 Every number is produced by [Measurement method](performance/measurement.md) on the reference machine, medians of 3 or more interleaved runs, every sample's stdout checked. Peak RSS is `ru_maxrss` of the `qjs` process alone (`wait4`), never of a wrapper that forks from a larger process.
 
-**The memory table**, one row per program, is recorded in the pull request with one column group per commit of section 7 that changes memory (baseline, floor, trigger, value heap, representation) and replayed on the branch's final binary: peak RSS for `qjs` and QuickJS and their ratio; the compile-phase peak (`--compile-only`, or `massif` until it exists); collections, live after the last collection, reserved and budget at exit; the code store's size. The script that produces it (`scripts/benchmark/memory_table.py`: the 37 bundles, both engines, `ru_maxrss` through `wait4`, `--gc-stats` and `--memory-report` parsed, medians of 3) is the first commit, so every later commit's effect is one command away. The geometric mean of the ratio column over the 37 programs is the acceptance figure.
+**The memory table**, one row per program, is recorded in the pull request with one column group per commit of section 7 that changes memory (baseline, floor, trigger, value heap, representation) and replayed on the branch's final binary: peak RSS for `qjs` and QuickJS and their ratio; the compile-phase peak (`--compile-only`, or `massif` until it exists); collections, live after the last collection, reserved and budget at exit; the code store's size. The script that produces it (`scripts/benchmark/bench.py memory`: the 37 bundles, both engines, `ru_maxrss` through `wait4`, `--gc-stats` and `--memory-report` parsed, medians of 3) is the first commit, so every later commit's effect is one command away. The geometric mean of the ratio column over the 37 programs is the acceptance figure.
 
 **Exit condition**, checked once on the pull request's final binary: the geometric mean of peak RSS over the 37 programs is at most 1.3× QuickJS's; the 37 programs' time is within 2% of the 689296ae binary's; no V8 v7 program retires more than 2% more instructions; `gc-stress` is green on the corpus, the probes and the 37 programs; the Test262 receipts replay. A commit whose own gate fails is dropped from the branch or fixed before the next one builds on it; failing the final gate is a finding that names the mechanism, recorded in the pull request, and the pull request does not land until the gate holds or the maintainer accepts the exception in writing there.
 

@@ -5,4 +5,4 @@ function work(n) {
     while(n>0) { sum=sum+1; sum=object; n=n-1; }
     return calls;
 }
-print(work(180000));
+print(work(3800000));

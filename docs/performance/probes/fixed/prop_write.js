@@ -3,4 +3,4 @@ function work(n) {
     for(var i=0;i<n;i++) o.x=i;
     return o.x;
 }
-print(work(2000000));
+print(work(41000000));

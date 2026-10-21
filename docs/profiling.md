@@ -33,11 +33,11 @@ valgrind --tool=callgrind --callgrind-out-file=workload.callgrind ./target/relea
 callgrind_annotate workload.callgrind | head -40
 ```
 
-The probe scripts in [`docs/performance/probes`](performance/probes/README.md) apply the method to fixed workloads. Each probe is a `work(n)` loop with a checked result, run under Callgrind at N, 2N and 4N: the slope (2N − N) / N is the per-iteration instruction count, (4N − 2N) / 2N checks linearity, and the same difference of per-function self cost splits the iteration by function. "Net" values subtract the empty loop's figure.
+`scripts/benchmark/bench.py probes` applies the method to fixed workloads ([Diagnostic probes](performance/probes/README.md)). Each probe is a `work(n)` loop with a checked result, run under Callgrind at N, 2N and 4N: the slope (2N − N) / N is the per-iteration instruction count, (4N − 2N) / 2N checks linearity, and the same difference of per-function self cost splits the iteration by function. "Net" values subtract the empty loop's figure.
 
 ```sh
-python3 docs/performance/probes/runtime/probes.py --qjs ./target/release/qjs \
+python3 scripts/benchmark/bench.py probes --qjs ./target/release/qjs \
   --v8 "$V8_V7_DIR" --output "$OUTPUT/probes"
 ```
 
-`probes.py` covers binding, property, array, call and construction probes and the object-literal, `new` and empty-loop allocation probes; `--v8` adds fixed-iteration V8 v7 benchmark bodies under cache simulation and reports their instructions, data writes and per-function self cost; `--v8-case CASE[=ITERATIONS]` selects cases. The report is `OUTPUT/probes.json`.
+`probes` covers binding, property, array, call and construction probes and the object-literal, `new` and empty-loop allocation probes; `--v8` adds fixed-iteration V8 v7 benchmark bodies under cache simulation and reports their instructions, data writes and per-function self cost; `--v8-case CASE[=ITERATIONS]` selects cases. The report is `OUTPUT/probes.json`.

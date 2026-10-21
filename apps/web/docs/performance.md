@@ -28,7 +28,7 @@ The collector is a mark-and-sweep collector that runs when the heap reaches a bu
 
 ## How the programs are built
 
-`scripts/benchmark/suite_matrix.py` generates one program per benchmark from checkouts pinned to fixed commits:
+`scripts/benchmark/bench.py suite build` generates one program per benchmark from checkouts pinned to fixed commits:
 
 | Suite | Source | Commit |
 | --- | --- | --- |
@@ -54,27 +54,28 @@ The release profile uses `lto = "fat"` and `codegen-units = 1`. Compare builds m
 Check out the three suites at their pinned commits, generate the programs, run them, and print the table:
 
 ```sh
-python3 scripts/benchmark/suite_matrix.py build \
+python3 scripts/benchmark/bench.py suite build \
   --v8-source /path/to/js-engine-benchmark --octane-source /path/to/octane \
   --awfy-source /path/to/are-we-fast-yet --output target/suite-matrix
-python3 scripts/benchmark/fixed.py --manifest target/suite-matrix/manifest.json \
+python3 scripts/benchmark/bench.py run --manifest target/suite-matrix/manifest.json \
   --engine quickjs="$reference" --engine oxide="$PWD/target/release/qjs" \
   --repeat 5 --cpu 2 --linux-counters --timeout 900 --output target/suite-results
-python3 scripts/benchmark/suite_matrix.py table target/suite-results/results.json \
+python3 scripts/benchmark/bench.py suite table target/suite-results/results.json \
   --reference quickjs --instructions
 ```
 
-`suite_matrix.py build` refuses a checkout at any other commit. `fixed.py` runs each sample in a fresh process, alternates the engine order, pins the processes to one CPU with `--cpu`, and with `--linux-counters` records user-space instructions and cycles through `perf stat`. It needs a new output directory every time. `table` prints each program's median wall time and instruction count per engine, each engine's time ratio to the reference, and the geometric means. Run the matrix with no builds or tests competing for the machine.
+`suite build` refuses a checkout at any other commit. `run` runs each sample in a fresh process, alternates the engine order, pins the processes to one CPU with `--cpu`, and with `--linux-counters` records user-space instructions and cycles through `perf stat`. It needs a new output directory every time. `table` prints each program's median wall time and instruction count per engine, each engine's time and instruction ratios to the reference, and the geometric means. Run the matrix with no builds or tests competing for the machine.
 
 ### Peak memory
 
-`scripts/benchmark/memory_table.py` measures peak RSS of both engines over the same programs. By default it reads `target/suite-matrix/manifest.json`, `target/release/qjs` and the QuickJS that `build-quickjs-oracle.sh` builds:
+`scripts/benchmark/bench.py memory` measures peak RSS of each named engine over the same programs, by default those of `target/suite-matrix/manifest.json`; the first engine is the reference of the ratios:
 
 ```sh
-python3 scripts/benchmark/memory_table.py --markdown target/memory-table.md
+python3 scripts/benchmark/bench.py memory --engine quickjs="$reference" --engine oxide="$PWD/target/release/qjs" \
+  --markdown target/memory-table.md
 ```
 
-It starts each sample through a small C helper (`vfork`, `execvp`, `wait4`), so `ru_maxrss` is the measured process's own peak, and takes the median of 3 runs. Before measuring it evicts both binaries from the page cache. It runs `qjs --gc-stats --memory-report` once per program for the collector's and the heap's figures, and prints the geometric mean of the ratio. It needs a C compiler (`cc`).
+It starts each sample through a small C helper (`vfork`, `execvp`, `wait4`), so `ru_maxrss` is the measured process's own peak, and takes the median of 3 runs. Before measuring it evicts every binary from the page cache. It runs `qjs --gc-stats --memory-report` once per program for the collector's and the heap's figures, and prints the geometric mean of the ratio. It needs a C compiler (`cc`).
 
 ### Your own scripts
 
@@ -92,4 +93,4 @@ It starts each sample through a small C helper (`vfork`, `execvp`, `wait4`), so 
 - [Optimizations](./optimizations.md): inline caches, NaN-boxing, shapes and the collector.
 - [Architecture](./architecture.md): the crates and how a script runs.
 - [Errors and limits](./limits.md): heap caps and the collector's settings.
-- [`scripts/benchmark/README.md`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/scripts/benchmark/README.md): every benchmark tool, including the V8 v7 score runner and the compile-time matrix.
+- [`scripts/benchmark/README.md`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/scripts/benchmark/README.md): every benchmark tool, including the paired A/B comparison and the compile-time matrix.
