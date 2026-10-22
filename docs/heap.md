@@ -83,6 +83,8 @@ An object with the `SPARSE` flag keeps its index properties as named properties 
 
 Dictionary mode gives an object an unshared shape that owns a hash table and an insertion-ordered entry list, with deleted slots reused. An object enters it on deletion, past 64 properties, and the global object starts in it.
 
+A bytecode closure is created *pending*: `MakeClosure` allocates the object header and the function record with no slot range and gives it a cached pending shape, whose `length`, `name` and (for a constructor `function`) `prototype` entries carry the `AUTOINIT` flag: the keys, their order and their attributes, without the values. An untouched closure therefore costs 40 bytes, and no `prototype` object exists until one is used. The first own-property operation that needs a value or changes the shape materializes the closure (`interp::materialize_closure`): it allocates the slots and, for a constructor, the `prototype` object (with `constructor`), and moves the function to the full closure shape of its kind. A write of `prototype` before any read stores the value without creating the default object. A closure named where it is created (`const f = () => …`, `x = function () {}`, a method in a literal) gets the name from its unit: the register lowering gives an anonymous child the name of the `SetName` or `DefineMethod` that directly follows its every `FClosure`, as its unit's `name_atom`, and emits no `SetFunctionName` for it, so naming does not materialize it. A heap-only lookup that meets an `AUTOINIT` entry continues through `vm::object`'s internal methods, which materialize; the inline caches never fill for one, and a pending and a materialized function never share a shape. `[[OwnPropertyKeys]]` reads only the shape and does not materialize. The readers that work through a shared heap (backtraces, the printers) take a pending `name` or `length` from the code unit.
+
 Validity cells guard prototype chains:
 
 - An object that becomes a prototype is flagged `USED_AS_PROTOTYPE` and gets a `PrototypeInfo`: a lazily created validity cell and the list of prototype objects that inherit from it.
@@ -120,7 +122,7 @@ Non-moving mark-sweep (`heap/gc.rs`). Marking uses an explicit stack, never recu
 | the register file | `registers[..top]`: the running frame's window and every frame below it |
 | the frame table | each frame's function object |
 | the job queue | each pending job's values |
-| pinned and held atoms, pinned dynamic units, the static cell, the cached closure and `arguments` shapes | atoms that live as long as the heap; the atoms and the published units of a compilation still running |
+| pinned and held atoms, pinned dynamic units, the static cell, the cached closure shapes (pending and materialized) and `arguments` shapes | atoms that live as long as the heap; the atoms and the published units of a compilation still running |
 | `kept`, `rejections`, `modules` | `WeakRef` targets kept until the current job ends, unhandled rejected promises while the embedder tracks them, every module record |
 
 Registers above `top` belong to returned frames and may name records a collection has since freed. They are not roots. Each collection lowers `stale_from` to `top`, and a frame that resumes after a return or an unwind clears its registers from `stale_from` up before they become roots again (`interp::raise_top`). A suspended generator or async frame keeps its registers in its `Internal` record's slots, which are traced like any object's.

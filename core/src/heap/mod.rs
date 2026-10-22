@@ -175,6 +175,10 @@ pub struct Heap {
     /// `prototype` for the third), per function kind: learned from the first
     /// closure of each kind and marked as roots.
     pub(crate) closure_shapes: [Option<ShapeId>; CLOSURE_SHAPES],
+    /// The shapes `MakeClosure` gives a new function before its properties
+    /// are read: the keys of `closure_shapes`, each with the `AUTOINIT` flag,
+    /// over no slots. Learned and marked like `closure_shapes`.
+    pub(crate) pending_closure_shapes: [Option<ShapeId>; CLOSURE_SHAPES],
     /// The shapes of a new `arguments` object (`length`, `@@iterator`,
     /// `callee`), sloppy then strict: learned from the first of each and
     /// marked as roots.
@@ -244,6 +248,7 @@ impl Heap {
             global_generation: 0,
             holes_writable: true,
             closure_shapes: [None; CLOSURE_SHAPES],
+            pending_closure_shapes: [None; CLOSURE_SHAPES],
             arguments_shapes: [None; 2],
             jobs: std::collections::VecDeque::new(),
         };
@@ -989,17 +994,17 @@ impl Heap {
         Ok(function)
     }
 
-    /// A closure over `bytecode`, for `MakeClosure`. The record must be
-    /// reachable through a rooted function (it is a child of the running
-    /// function's record), since a record is not a value the root stack can
-    /// hold.
+    /// A closure over `bytecode`, for `MakeClosure`: no slots, its
+    /// properties pending until first used. The record must be reachable
+    /// through a rooted function (it is a child of the running function's
+    /// record), since a record is not a value the root stack can hold.
     pub fn alloc_closure(
         &mut self,
         prototype: Option<ObjectId>,
         scope: Option<ScopeId>,
         bytecode: BytecodeId,
     ) -> Result<ObjectId, HeapError> {
-        let function = self.alloc_function_with(prototype, scope, 3)?;
+        let function = self.alloc_function_with(prototype, scope, 0)?;
         debug_assert!(self.payloads.bytecode.is_live(bytecode.0));
         let payload = self.objects.get(function.0).payload;
         self.payloads.functions.get_mut(payload).bytecode = bytecode.0;
@@ -1046,6 +1051,14 @@ impl Heap {
         for (slot, &value) in values.iter().enumerate() {
             self.values.set(slots, slot as u32, value);
         }
+    }
+
+    /// Gives a new closure, allocated with no slots, a cached pending shape
+    /// (`MakeClosure`'s fast path).
+    pub(crate) fn apply_pending_shape(&mut self, function: ObjectId, shape: ShapeId) {
+        let header = self.objects.get_mut(function.0);
+        debug_assert_eq!(header.slots().len, 0);
+        header.shape = shape;
     }
 
     /// The function record of a `Function` object.

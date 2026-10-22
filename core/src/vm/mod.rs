@@ -389,6 +389,15 @@ fn dynamic_unit(heap: &Heap, id: CodeUnitId) -> UnitRef<'static> {
 }
 
 impl Cx<'_> {
+    /// Every published unit, for readers that hold no unit across a heap
+    /// call.
+    pub(crate) fn units(&self) -> crate::bytecode::Units<'_> {
+        crate::bytecode::Units {
+            code: self.static_code,
+            dynamic: &self.heap.code,
+        }
+    }
+
     /// Records an intrinsic the builtins created, as a fixed root.
     pub(crate) fn set_intrinsic(&mut self, intrinsic: crate::Intrinsic, object: ObjectId) {
         self.heap.add_fixed_root(Value::object(object));

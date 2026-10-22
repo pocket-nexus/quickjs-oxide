@@ -27,31 +27,91 @@ pub(crate) enum Found {
     Accessor(Value, Value),
 }
 
-/// An own property.
+/// An own property. `object` is not a pending closure, or `key` is not one
+/// of its pending properties.
 #[inline]
 pub(crate) fn own(heap: &Heap, names: &Names, object: ObjectId, key: PropertyKey) -> Option<Found> {
+    own_or_pending(heap, names, object, key).expect("a materialized property")
+}
+
+/// [`own`], or `Err(Pending)` for a pending closure's `AUTOINIT` property,
+/// whose value is not yet in its slot.
+#[inline]
+fn own_or_pending(
+    heap: &Heap,
+    names: &Names,
+    object: ObjectId,
+    key: PropertyKey,
+) -> Result<Option<Found>, Pending> {
     match key.kind() {
         KeyKind::Index(index) => {
             let value = heap.get_element(object, index);
             if !value.is_empty() {
-                return Some(Found::Data(value));
+                return Ok(Some(Found::Data(value)));
             }
             if let Some(cell) = super::arguments::mapped_cell(heap, object, index) {
-                return Some(Found::Data(heap.scope_get(cell, 0, 0)));
+                return Ok(Some(Found::Data(heap.scope_get(cell, 0, 0))));
             }
         }
         KeyKind::String(id) if id == names.length => {
             if heap.object_kind(object) == ObjectKind::Array {
-                return Some(Found::Data(length_value(heap.array_length(object))));
+                return Ok(Some(Found::Data(length_value(heap.array_length(object)))));
             }
         }
         _ => {}
     }
-    let (slot, property) = heap.lookup_own(object, key)?;
-    Some(slot_value(heap, object, slot, property))
+    let Some((slot, property)) = heap.lookup_own(object, key) else {
+        return Ok(None);
+    };
+    if property.has(PropertyFlags::AUTOINIT) {
+        return Err(Pending);
+    }
+    Ok(Some(slot_value(heap, object, slot, property)))
 }
 
-#[inline]
+/// The value a pending closure's `length` or `name` holds once
+/// materialized, a constant of its code unit: for the readers that work
+/// through a shared heap (the printers and backtraces). `None` for
+/// `prototype`, which is an object only materialization creates.
+pub(crate) fn pending_value(
+    heap: &Heap,
+    units: crate::bytecode::Units<'_>,
+    names: &Names,
+    function: ObjectId,
+    key: PropertyKey,
+) -> Option<Value> {
+    let unit = units.get(heap.bytecode_unit(heap.function_bytecode(function)?));
+    if key == Names::key(names.length) {
+        Some(Value::int32(i32::from(unit.length)))
+    } else if key == Names::key(names.name) {
+        Some(Value::string(unit.name_atom.unwrap_or(names.empty)))
+    } else {
+        None
+    }
+}
+
+/// The value of the own data property `key` at `slot` with `flags`, for
+/// the readers that work through a shared heap: a pending closure's `length`
+/// or `name` from its unit, its `prototype` as `undefined`.
+pub(crate) fn peek_data(
+    heap: &Heap,
+    units: crate::bytecode::Units<'_>,
+    names: &Names,
+    object: ObjectId,
+    key: PropertyKey,
+    (slot, flags): (u32, PropertyFlags),
+) -> Value {
+    if flags.has(PropertyFlags::AUTOINIT) {
+        return pending_value(heap, units, names, object, key).unwrap_or(Value::UNDEFINED);
+    }
+    heap.get_slot(object, slot)
+}
+
+/// A pending closure property met by a heap-only lookup.
+#[derive(Debug)]
+struct Pending;
+
+#[inline(always)]
 fn slot_value(heap: &Heap, object: ObjectId, slot: u32, property: PropertyFlags) -> Found {
     if property.has(PropertyFlags::ACCESSOR) {
         Found::Accessor(heap.get_slot(object, slot), heap.get_slot(object, slot + 1))
@@ -65,8 +125,9 @@ fn slot_value(heap: &Heap, object: ObjectId, slot: u32, property: PropertyFlags)
 pub(crate) enum Lookup {
     Hit(Found),
     Miss,
-    /// The walk met an exotic object: the lookup continues through
-    /// `vm::object`'s internal methods from this holder.
+    /// The walk met an exotic object, or a pending closure property: the
+    /// lookup continues through `vm::object`'s internal methods from this
+    /// holder, which materialize the closure.
     Exotic(ObjectId),
 }
 
@@ -78,8 +139,10 @@ pub(crate) fn lookup(heap: &Heap, names: &Names, object: ObjectId, key: Property
         if heap.object_kind(current).is_exotic() {
             return Lookup::Exotic(current);
         }
-        if let Some(found) = own(heap, names, current, key) {
-            return Lookup::Hit(found);
+        match own_or_pending(heap, names, current, key) {
+            Ok(Some(found)) => return Lookup::Hit(found),
+            Ok(None) => {}
+            Err(Pending) => return Lookup::Exotic(current),
         }
         match heap.prototype_of(current) {
             Some(prototype) => current = prototype,
@@ -296,6 +359,7 @@ pub(crate) fn get_cached(
     };
     let heap = &*cx.heap;
     let mut holder = start;
+    let mut pending = false;
     let walked = loop {
         if heap.object_kind(holder).is_exotic() {
             cx.heap.ics.count_miss(site, false);
@@ -305,6 +369,10 @@ pub(crate) fn get_cached(
             break Err(Some(Found::Data(length_value(heap.array_length(holder)))));
         }
         if let Some((slot, property)) = heap.lookup_own(holder, key) {
+            if property.has(PropertyFlags::AUTOINIT) {
+                pending = true;
+                break Err(None);
+            }
             // A dictionary-mode prototype is cacheable: any change to it
             // clears the cell like any prototype's. A dictionary receiver is
             // not (its shape does not change with its properties).
@@ -321,6 +389,15 @@ pub(crate) fn get_cached(
             None => break Err(None),
         }
     };
+    if pending {
+        // A pending closure's first read of one of its properties reads the
+        // materialized slot; the entry fills on a later read of a function
+        // already materialized.
+        cx.heap.ics.count_miss(site, false);
+        super::object::materialize(cx, holder)?;
+        let (slot, _) = cx.heap.lookup_own(holder, key).expect("a closure property");
+        return Ok(cx.heap.get_slot(holder, slot));
+    }
     let slot = match walked {
         Ok(slot) => slot,
         Err(found) => {
@@ -479,7 +556,8 @@ fn chain_allows_add(heap: &Heap, object: ObjectId, key: PropertyKey) -> bool {
 }
 
 fn is_plain_data(property: PropertyFlags) -> bool {
-    property.has(PropertyFlags::WRITABLE) && !property.has(PropertyFlags::ACCESSOR)
+    property.bits() & (PropertyFlags::WRITABLE | PropertyFlags::ACCESSOR | PropertyFlags::AUTOINIT)
+        == PropertyFlags::WRITABLE
 }
 
 /// Whether an element write at `index` stays in the dense range: the object
@@ -641,6 +719,9 @@ pub(crate) fn set_on(
         _ => {}
     }
     if let Some((slot, property)) = heap.lookup_own(object, key) {
+        if property.has(PropertyFlags::AUTOINIT) {
+            return set_pending(cx, object, key, value, strict);
+        }
         if property.has(PropertyFlags::ACCESSOR) {
             let setter = heap.get_slot(object, slot + 1);
             return call_setter(cx, setter, Value::object(object), value, strict);
@@ -689,6 +770,29 @@ pub(crate) fn set_on(
         current = heap.prototype_of(prototype);
     }
     add(cx, object, key, value, strict)
+}
+
+/// [`set_on`] of a pending closure property. A write of `prototype` before
+/// any read stores the value without creating the default object.
+#[cold]
+#[inline(never)]
+fn set_pending(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    value: Value,
+    strict: bool,
+) -> Result<(), Throw> {
+    if key == Names::key(cx.realm.names.prototype)
+        && cx
+            .heap
+            .lookup_own(object, key)
+            .is_some_and(|(_, property)| property.has(PropertyFlags::WRITABLE))
+    {
+        return super::interp::materialize_closure(cx, object, Some(value));
+    }
+    super::object::materialize(cx, object)?;
+    set_on(cx, object, key, value, strict)
 }
 
 /// `[[Set]]` through the internal methods, for receivers and chains the
@@ -814,6 +918,9 @@ fn add(
     strict: bool,
 ) -> Result<(), Throw> {
     let heap = &mut *cx.heap;
+    if heap.is_pending_closure(object) {
+        return add_pending(cx, object, key, value, strict);
+    }
     if !heap.header(object).has(flags::EXTENSIBLE) {
         if strict {
             return Err(error::type_error(cx, "object is not extensible"));
@@ -830,6 +937,20 @@ fn add(
     heap.add_property(object, key, PropertyFlags::DEFAULT, value)
         .map_err(|_| error::oom(cx.realm))?;
     Ok(())
+}
+
+/// [`add`] to a pending closure, materialized first.
+#[cold]
+#[inline(never)]
+fn add_pending(
+    cx: &mut Cx<'_>,
+    object: ObjectId,
+    key: PropertyKey,
+    value: Value,
+    strict: bool,
+) -> Result<(), Throw> {
+    super::object::materialize(cx, object)?;
+    add(cx, object, key, value, strict)
 }
 
 /// `CreateDataPropertyOrThrow` for object and array literals and class
@@ -889,6 +1010,7 @@ pub(crate) fn define_accessor(
     setter: bool,
     flags: PropertyFlags,
 ) -> Result<(), Throw> {
+    super::object::materialize(cx, object)?;
     let heap = &mut *cx.heap;
     if let Some((slot, property)) = heap.lookup_own(object, key)
         && property.has(PropertyFlags::ACCESSOR)
@@ -972,7 +1094,9 @@ pub(crate) fn delete(
             non_configurable(cx, key, true, strict)
         }
         Some(_) => {
-            heap.delete_property(object, key)
+            super::object::materialize(cx, object)?;
+            cx.heap
+                .delete_property(object, key)
                 .map_err(|_| error::oom(cx.realm))?;
             Ok(true)
         }
@@ -1243,6 +1367,7 @@ fn has_own(cx: &mut Cx<'_>, object: ObjectId, key: PropertyKey) -> Result<bool, 
     if cx.heap.object_kind(object).is_exotic() {
         return Ok(super::object::get_own_property(cx, object, key)?.is_some());
     }
+    super::object::materialize(cx, object)?;
     Ok(super::object::ordinary_get_own(cx, object, key).is_some())
 }
 

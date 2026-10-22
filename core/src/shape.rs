@@ -42,6 +42,11 @@ impl PropertyFlags {
     pub const ENUMERABLE: u8 = 1 << 1;
     pub const CONFIGURABLE: u8 = 1 << 2;
     pub const ACCESSOR: u8 = 1 << 3;
+    /// A pending closure's `length`, `name` or `prototype`: the key and its
+    /// attributes are in the shape, the value is not yet in a slot (see
+    /// [`Heap::pending_closure_shape`]). Never read or written before the
+    /// closure is materialized.
+    pub const AUTOINIT: u8 = 1 << 4;
     /// Writable, enumerable, configurable data property.
     pub const DEFAULT: PropertyFlags = PropertyFlags::data(true, true, true);
 
@@ -69,6 +74,10 @@ impl PropertyFlags {
         self.0 & flag != 0
     }
 
+    pub const fn with(self, flag: u8) -> Self {
+        PropertyFlags(self.0 | flag)
+    }
+
     /// The slots a property with these flags occupies: two for an accessor
     /// (getter, then setter), one for a data property.
     pub const fn width(self) -> u32 {
@@ -81,7 +90,8 @@ impl fmt::Debug for PropertyFlags {
         let flag = |bit, name| if self.has(bit) { name } else { "-" };
         write!(
             f,
-            "{}{}{}{}",
+            "{}{}{}{}{}",
+            flag(Self::AUTOINIT, "i"),
             flag(Self::ACCESSOR, "a"),
             flag(Self::WRITABLE, "w"),
             flag(Self::ENUMERABLE, "e"),
@@ -530,6 +540,64 @@ impl Heap {
         self.shape_lookup(self.objects.get(object.0).shape, key)
     }
 
+    /// Whether `object` is a pending closure: a function whose shape has more
+    /// slots than its range, the `AUTOINIT` entries of
+    /// [`Heap::pending_closure_shape`] not yet materialized.
+    #[inline(always)]
+    pub fn is_pending_closure(&self, object: ObjectId) -> bool {
+        let header = self.objects.get(object.0);
+        header.kind == ObjectKind::Function
+            && header.slots().len < self.shapes.get(header.shape.0).width
+    }
+
+    /// Gives a new closure, allocated with no slots, the shape reached from
+    /// the root for its prototype by adding `entries` with the `AUTOINIT`
+    /// flag: its keys and attributes without their values. Returns the shape.
+    pub(crate) fn pending_closure_shape(
+        &mut self,
+        function: ObjectId,
+        entries: &[(PropertyKey, PropertyFlags)],
+    ) -> Result<ShapeId, HeapError> {
+        debug_assert_eq!(self.objects.get(function.0).slots().len, 0);
+        let need = Need {
+            shapes: entries.len() + 1,
+            ..Need::default()
+        };
+        self.safepoint(&need, &[Value::object(function)])?;
+        let mut shape = self.root_shape(self.prototype_of(function), ObjectKind::Function);
+        for &(key, flags) in entries {
+            shape = self.transition(shape, key, flags.with(PropertyFlags::AUTOINIT));
+        }
+        self.objects.get_mut(function.0).shape = shape;
+        Ok(shape)
+    }
+
+    /// Turns a pending closure into a function with a range of `count` slots
+    /// and no properties, the root shape for its prototype, for its
+    /// properties to be added in their pending order.
+    pub(crate) fn unpend_closure(
+        &mut self,
+        function: ObjectId,
+        count: u32,
+    ) -> Result<(), HeapError> {
+        debug_assert!(self.is_pending_closure(function));
+        let need = Need {
+            shapes: 1,
+            values: [count, 0],
+            ..Need::default()
+        };
+        self.safepoint(&need, &[Value::object(function)])?;
+        let shape = self.root_shape(self.prototype_of(function), ObjectKind::Function);
+        let slots = self.values.alloc_slots(count, &mut self.gc.room);
+        let header = self.objects.get_mut(function.0);
+        header.shape = shape;
+        header.set_slots(slots);
+        if header.has(flags::USED_AS_PROTOTYPE) {
+            self.invalidate(function);
+        }
+        Ok(())
+    }
+
     /// `values[start + slot]`: one header load, one value load.
     #[inline]
     #[track_caller]
@@ -638,6 +706,7 @@ impl Heap {
         flags: PropertyFlags,
         values: [Value; 2],
     ) -> Result<(), HeapError> {
+        debug_assert!(!self.is_pending_closure(object), "a pending closure");
         let header = *self.objects.get(object.0);
         if header.has(flags::DICTIONARY) {
             return self.dictionary_add(object, key, flags, values);
@@ -759,6 +828,7 @@ impl Heap {
         object: ObjectId,
         keep: &[Value],
     ) -> Result<(), HeapError> {
+        debug_assert!(!self.is_pending_closure(object), "a pending closure");
         let mut roots = vec![Value::object(object)];
         roots.extend_from_slice(keep);
         self.safepoint(
@@ -842,6 +912,7 @@ impl Heap {
         if old == flags {
             return Ok(true);
         }
+        debug_assert!(!self.is_pending_closure(object), "a pending closure");
         debug_assert_eq!(old.width(), flags.width(), "a data/accessor change");
         let header = *self.objects.get(object.0);
         if header.has(flags::DICTIONARY) {

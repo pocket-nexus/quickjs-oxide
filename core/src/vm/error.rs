@@ -314,8 +314,8 @@ fn native_name(cx: &Cx<'_>, function: ObjectId) -> String {
                 String::new()
             } else {
                 // A rope (`JS_TAG_STRING_ROPE`) reads as absent.
-                cx.heap
-                    .get_slot(object, slot)
+                let names = &cx.realm.names;
+                super::property::peek_data(cx.heap, cx.units(), names, object, key, (slot, flags))
                     .as_string()
                     .filter(|id| cx.heap.strings.get(id.0).flat().is_some())
                     .map(|id| cx.heap.string_text(id))
@@ -679,8 +679,9 @@ fn function_name_units(cx: &Cx<'_>, value: Value) -> Option<Vec<u16>> {
         }
         // `get_prop_string` takes only `JS_TAG_STRING`: a rope reads as
         // absent.
+        let names = &cx.realm.names;
         Some(
-            heap.get_slot(object, slot)
+            super::property::peek_data(heap, cx.units(), names, object, key, (slot, flags))
                 .as_string()
                 .filter(|id| heap.strings.get(id.0).flat().is_some())
                 .map(|id| heap.string(id).repr().units().collect()),

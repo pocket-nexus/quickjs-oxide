@@ -408,6 +408,8 @@ fn census(script: &crate::engine::code::function::UnlinkedFunction) -> Census {
                     layout,
                     *parent,
                     children,
+                    None,
+                    Default::default(),
                 )
             });
         match lowered {
