@@ -1186,7 +1186,7 @@ impl<'source> Parser<'source> {
             loop {
                 let current = self.functions[function_id]
                     .scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("identifier use scope is out of bounds"))?;
                 if current.kind == ScopeKind::With {
                     return Ok(true);

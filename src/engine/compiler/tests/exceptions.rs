@@ -22,14 +22,14 @@ fn try_catch_lowering_keeps_parameter_and_body_scopes_distinct() {
         .scopes
         .iter()
         .position(|scope| scope.kind == ScopeKind::Catch)
-        .map(super::ScopeId)
+        .map(super::ScopeId::new)
         .unwrap();
     let catch_body_scope = root
         .scopes
         .iter()
         .enumerate()
         .find(|(_, scope)| scope.kind == ScopeKind::Block && scope.parent == Some(catch_scope))
-        .map(|(index, _)| super::ScopeId(index))
+        .map(|(index, _)| super::ScopeId::new(index))
         .unwrap();
     let catch_binding = root
         .binding_in_scope(catch_scope, tree.names.lookup("e").unwrap())
@@ -170,7 +170,7 @@ fn catch_binding_patterns_compile_with_ordinary_lexical_provenance() {
         .scopes
         .iter()
         .position(|scope| scope.kind == ScopeKind::Catch)
-        .map(ScopeId)
+        .map(ScopeId::new)
         .expect("catch pattern lost its scope");
 
     for name in ["value", "fallback", "rest"] {
@@ -200,7 +200,7 @@ fn catch_binding_patterns_compile_with_ordinary_lexical_provenance() {
         .scopes
         .iter()
         .position(|scope| scope.kind == ScopeKind::Catch)
-        .map(ScopeId)
+        .map(ScopeId::new)
         .expect("simple catch binding lost its scope");
     assert!(
         simple_root

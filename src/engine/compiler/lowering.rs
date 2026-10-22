@@ -373,7 +373,7 @@ pub(super) fn lower_unlinked_tree(
                 .ok_or_else(|| Error::internal("local binding definition is out of bounds"))?;
             let storage_scope = function
                 .scopes
-                .get(binding.storage_scope.0)
+                .get(binding.storage_scope.index())
                 .ok_or_else(|| Error::internal("local binding scope is out of bounds"))?;
             let is_parameter_initializer = storage_scope.is_parameter_initializer
                 && storage_scope.kind != ScopeKind::Parameter;
@@ -1211,13 +1211,13 @@ fn lower_ops(
         }
         let emitted = match &operation.op {
             IrOp::EnterScope(scope) => scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("scope entry is out of bounds"))?
                 .tdz_locals
                 .len()
                 .checked_add(
                     scopes
-                        .get(scope.0)
+                        .get(scope.index())
                         .ok_or_else(|| Error::internal("scope entry is out of bounds"))?
                         .function_entries
                         .len()
@@ -1226,7 +1226,7 @@ fn lower_ops(
                 .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?,
             IrOp::PrepareCatchScope(scope) => {
                 let lifecycle = scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("catch scope preparation is out of bounds"))?;
                 if !lifecycle.function_entries.is_empty() {
                     return Err(Error::internal(
@@ -1240,7 +1240,7 @@ fn lower_ops(
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?
             }
             IrOp::LeaveScope(scope) => scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("scope exit is out of bounds"))?
                 .close_locals
                 .len(),
@@ -1287,7 +1287,7 @@ fn lower_ops(
         match op {
             IrOp::EnterScope(scope) => {
                 let lifecycle = scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("scope entry is out of bounds"))?;
                 // Reset every ordinary lexical lifetime before any block
                 // closure captures it. This is observationally equivalent to
@@ -1307,7 +1307,7 @@ fn lower_ops(
             }
             IrOp::PrepareCatchScope(scope) => {
                 let lifecycle = scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("catch scope preparation is out of bounds"))?;
                 if !lifecycle.function_entries.is_empty() {
                     return Err(Error::internal(
@@ -1323,7 +1323,7 @@ fn lower_ops(
             }
             IrOp::LeaveScope(scope) => {
                 for &index in &scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("scope exit is out of bounds"))?
                     .close_locals
                 {
@@ -1371,7 +1371,7 @@ fn lower_ops(
                 // Retain the parser scope as an IR invariant until lowering,
                 // but publish only its immutable linked descriptor ordinal.
                 scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("eval call scope is out of bounds"))?;
                 let environment = environment
                     .ok_or_else(|| Error::internal("eval call has no linked environment"))?;
@@ -1698,7 +1698,7 @@ mod tests {
                 &mut names,
             )
             .unwrap();
-            let scope = ScopeId(function.scopes.len());
+            let scope = ScopeId::new(function.scopes.len());
             function.scopes.push(IrScope {
                 parent: Some(function.body_scope),
                 kind: ScopeKind::With,
@@ -1720,8 +1720,8 @@ mod tests {
 
         let (function, scope, _) = make_function(false);
         let lifecycles = build_scope_lifecycles(&function, &[true]).unwrap();
-        assert!(lifecycles[scope.0].tdz_locals.is_empty());
-        assert!(lifecycles[scope.0].function_entries.is_empty());
-        assert_eq!(lifecycles[scope.0].close_locals, [0]);
+        assert!(lifecycles[scope.index()].tdz_locals.is_empty());
+        assert!(lifecycles[scope.index()].function_entries.is_empty());
+        assert_eq!(lifecycles[scope.index()].close_locals, [0]);
     }
 }

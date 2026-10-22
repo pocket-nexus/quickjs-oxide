@@ -610,8 +610,8 @@ impl FunctionIr {
             is_catch_parameter: false,
             declaration_span,
         });
-        self.scopes[storage_scope.0].bindings.push(binding);
-        self.scopes[storage_scope.0].index_binding(name, binding, &self.bindings);
+        self.scopes[storage_scope.index()].bindings.push(binding);
+        self.scopes[storage_scope.index()].index_binding(name, binding, &self.bindings);
         binding
     }
 
@@ -647,13 +647,13 @@ impl FunctionIr {
         scope: ScopeId,
         name: NameId,
     ) -> Option<BindingId> {
-        self.scopes[scope.0].binding_named(name, &self.bindings)
+        self.scopes[scope.index()].binding_named(name, &self.bindings)
     }
 
     /// Rare late function-name insertion changes order after normal appends.
     /// Rebuild once there, rather than burdening every name lookup with a scan.
     pub(in crate::engine::compiler) fn rebuild_scope_name_index(&mut self, scope: ScopeId) {
-        self.scopes[scope.0].rebuild_name_index(&self.bindings);
+        self.scopes[scope.index()].rebuild_name_index(&self.bindings);
     }
 
     pub(in crate::engine::compiler) fn binding_id_from_scope(
@@ -665,7 +665,7 @@ impl FunctionIr {
             if let Some(binding) = self.binding_id_in_scope(scope, name) {
                 return Some((scope, binding));
             }
-            scope = self.scopes[scope.0].parent?;
+            scope = self.scopes[scope.index()].parent?;
         }
     }
 
@@ -737,7 +737,7 @@ impl FunctionIr {
                     kind: binding.kind,
                 });
             }
-            scope = self.scopes[scope.0].parent?;
+            scope = self.scopes[scope.index()].parent?;
         }
     }
 
@@ -750,7 +750,7 @@ impl FunctionIr {
             if scope == ancestor {
                 return true;
             }
-            let Some(parent) = self.scopes[scope.0].parent else {
+            let Some(parent) = self.scopes[scope.index()].parent else {
                 return false;
             };
             scope = parent;

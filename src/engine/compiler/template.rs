@@ -81,7 +81,7 @@ impl<'source> Parser<'source> {
                 // bytecode stack has been checked, then encode QuickJS's low
                 // u16 operand bits during lowering.
                 self.emit(IrOp::TemplateCall {
-                    argument_count,
+                    argument_count: template_argument_count(argument_count)?,
                     method: true,
                 })?;
                 self.advance()?;
@@ -151,7 +151,7 @@ impl<'source> Parser<'source> {
             ) {
                 self.emit_at(
                     IrOp::TemplateCall {
-                        argument_count,
+                        argument_count: template_argument_count(argument_count)?,
                         method,
                     },
                     source_offset(call_span)?,
@@ -208,4 +208,10 @@ impl<'source> Parser<'source> {
         self.current_ir_mut().context.last_optional_chain = None;
         self.anonymous_function_definition = None;
     }
+}
+
+/// A template call's argument count. Every argument is a substitution of the
+/// source, so the count fits the 32-bit source offsets.
+fn template_argument_count(count: usize) -> Result<u32, Error> {
+    u32::try_from(count).map_err(|_| Error::new(ErrorKind::JsInternal, "out of memory"))
 }

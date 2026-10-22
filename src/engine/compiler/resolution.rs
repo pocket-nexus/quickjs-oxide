@@ -339,7 +339,7 @@ fn install_parameter_eval_arguments(
         .parameter_scope
         .ok_or_else(|| Error::internal("parameter eval arguments has no parameter scope"))?;
     if function.arguments_local.is_none() {
-        let reusable = function.scopes[function.var_scope.0]
+        let reusable = function.scopes[function.var_scope.index()]
             .bindings
             .iter()
             .rev()
@@ -377,7 +377,7 @@ fn install_parameter_eval_arguments(
         function.arguments_local = Some(local);
     }
 
-    if function.scopes[parameter_scope.0]
+    if function.scopes[parameter_scope.index()]
         .bindings
         .iter()
         .any(|binding| function.bindings[binding.0].name == arguments_name)
@@ -626,7 +626,7 @@ fn link_eval_environment(
         loop {
             let ir_scope = tree.functions[owner]
                 .scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("eval call scope is out of bounds"))?;
             scope_path.push((owner, scope));
             let Some(parent) = ir_scope.parent else {
@@ -648,7 +648,7 @@ fn link_eval_environment(
             let function = &tree.functions[owner];
             let ir_scope = function
                 .scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("eval scope path is out of bounds"))?;
             let mut ordered = ir_scope.bindings.iter().rev().copied().collect::<Vec<_>>();
             if ir_scope.kind == ScopeKind::FunctionRoot
@@ -710,7 +710,7 @@ fn link_eval_environment(
                 // new.target, this, and the private function-expression name.
                 // Raw arguments, body declarations, the body arguments object,
                 // and `<var>` remain excluded.
-                let mut pseudo = function.scopes[function.var_scope.0]
+                let mut pseudo = function.scopes[function.var_scope.index()]
                     .bindings
                     .iter()
                     .rev()
@@ -1734,7 +1734,7 @@ fn has_authored_with_scope(
         loop {
             let current = tree.functions[owner]
                 .scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("identifier use scope is out of bounds"))?;
             if current.kind == ScopeKind::With {
                 return Ok(true);
@@ -1789,7 +1789,7 @@ fn resolve_identifier_path(
                     .ok_or_else(|| Error::internal("identifier owner is out of bounds"))?;
                 let current = function
                     .scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("identifier use scope is out of bounds"))?;
                 // The scope's last binding of the name, unless it is an
                 // eval root's imported descriptor, which only a pseudo
@@ -2583,15 +2583,15 @@ fn find_or_create_private_function_name_binding(
         is_const: function.strict,
     };
     let root = function.var_scope;
-    let insertion = function.scopes[root.0]
+    let insertion = function.scopes[root.index()]
         .bindings
         .iter()
         .position(|binding| function.bindings[binding.0].name == name)
-        .unwrap_or(function.scopes[root.0].bindings.len());
+        .unwrap_or(function.scopes[root.index()].bindings.len());
     function.locals.push(name);
     function.function_name_local = Some(index);
     let binding = function.add_binding(root, root, name, BindingStorage::Local(index), kind, None);
-    let appended = function.scopes[root.0]
+    let appended = function.scopes[root.index()]
         .bindings
         .pop()
         .ok_or_else(|| Error::internal("function-name binding was not appended"))?;
@@ -2600,7 +2600,9 @@ fn find_or_create_private_function_name_binding(
             "function-name binding append order is malformed",
         ));
     }
-    function.scopes[root.0].bindings.insert(insertion, binding);
+    function.scopes[root.index()]
+        .bindings
+        .insert(insertion, binding);
     function.rebuild_scope_name_index(root);
     Ok(Some(ResolvedBinding {
         storage: BindingStorage::Local(index),
@@ -2617,7 +2619,7 @@ pub(super) fn find_or_create_own_binding(
 ) -> Result<Option<ResolvedBinding>, Error> {
     let is_arguments = tree.names.name(name) == "arguments";
     let function = &tree.functions[function_id];
-    if start_scope.0 >= function.scopes.len() {
+    if start_scope.index() >= function.scopes.len() {
         return Err(Error::internal("identifier use scope is out of bounds"));
     }
     if let Some(binding) = function.binding_from_scope(start_scope, name) {

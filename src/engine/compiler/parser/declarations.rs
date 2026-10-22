@@ -331,7 +331,7 @@ impl<'source> Parser<'source> {
             }
             EvalDeclarationMode::Local => {
                 let function = self.current_ir_mut();
-                let existing = function.scopes[function.ir.var_scope.0]
+                let existing = function.scopes[function.ir.var_scope.index()]
                     .bindings
                     .iter()
                     .rev()
@@ -380,7 +380,7 @@ impl<'source> Parser<'source> {
                 if caller_lexical_conflict && function.eval_redeclaration.is_none() {
                     function.eval_redeclaration = Some(name);
                 }
-                let existing = function.scopes[function.ir.var_scope.0]
+                let existing = function.scopes[function.ir.var_scope.index()]
                     .bindings
                     .iter()
                     .rev()
@@ -414,7 +414,7 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let scope = self.current_ir().context.current_scope;
         let is_module_body = matches!(
-            self.current_ir().scopes[scope.0].kind,
+            self.current_ir().scopes[scope.index()].kind,
             ScopeKind::ProgramBody
         ) && matches!(self.current_ir().kind, FunctionKind::Module)
             && scope == self.current_ir().body_scope;
@@ -450,7 +450,7 @@ impl<'source> Parser<'source> {
         allow_body_parameter_shadow: bool,
     ) -> Result<(), Error> {
         let scope = self.current_ir().context.current_scope;
-        let scope_kind = self.current_ir().scopes[scope.0].kind;
+        let scope_kind = self.current_ir().scopes[scope.index()].kind;
         let is_global = matches!(scope_kind, ScopeKind::ProgramBody)
             && matches!(self.current_ir().kind, FunctionKind::Script)
             && scope == self.current_ir().body_scope;
@@ -555,9 +555,9 @@ impl<'source> Parser<'source> {
                 "lexical declaration escaped its supported parser scope",
             ));
         }
-        let direct_catch_parameter_conflict = function.scopes[scope.0]
+        let direct_catch_parameter_conflict = function.scopes[scope.index()]
             .parent
-            .filter(|parent| function.scopes[parent.0].kind == ScopeKind::Catch)
+            .filter(|parent| function.scopes[parent.index()].kind == ScopeKind::Catch)
             .and_then(|parent| function.binding_id_in_scope(parent, name))
             .is_some_and(|binding| function.bindings[binding.0].is_catch_parameter);
         if direct_catch_parameter_conflict {
@@ -790,7 +790,7 @@ impl<'source> Parser<'source> {
                 if caller_lexical_conflict && function.eval_redeclaration.is_none() {
                     function.eval_redeclaration = Some(name);
                 }
-                let has_global = function.scopes[function.ir.var_scope.0]
+                let has_global = function.scopes[function.ir.var_scope.index()]
                     .bindings
                     .iter()
                     .copied()
@@ -812,7 +812,7 @@ impl<'source> Parser<'source> {
             EvalDeclarationMode::Local => {
                 self.register_eval_var_binding(name, declaration_span, conflict_span)?;
                 let function = self.current_ir_mut();
-                let binding = function.scopes[function.ir.var_scope.0]
+                let binding = function.scopes[function.ir.var_scope.index()]
                     .bindings
                     .iter()
                     .rev()
@@ -907,7 +907,7 @@ impl<'source> Parser<'source> {
         let program_body = matches!(function.kind, FunctionKind::Script)
             && function.context.current_scope == function.body_scope
             && matches!(
-                function.scopes[function.context.current_scope.0].kind,
+                function.scopes[function.context.current_scope.index()].kind,
                 ScopeKind::ProgramBody
             );
         if program_body {
@@ -1036,7 +1036,7 @@ impl<'source> Parser<'source> {
         lexical_only: bool,
     ) -> Result<PreparedScopedFunction, Error> {
         let function = self.current_ir();
-        let scope_kind = function.scopes[function.context.current_scope.0].kind;
+        let scope_kind = function.scopes[function.context.current_scope.index()].kind;
         let eval_program_body = matches!(function.kind, FunctionKind::Eval(_))
             && function.context.current_scope == function.body_scope
             && matches!(scope_kind, ScopeKind::ProgramBody);
@@ -1095,7 +1095,7 @@ impl<'source> Parser<'source> {
                 // the function's inner binding; only the eligibility scan
                 // skips it while looking for a blocking lexical declaration.
                 if binding.is_catch_parameter {
-                    let Some(parent) = function.scopes[scope.0].parent else {
+                    let Some(parent) = function.scopes[scope.index()].parent else {
                         break;
                     };
                     scope = parent;
@@ -1104,7 +1104,7 @@ impl<'source> Parser<'source> {
                 if matches!(function.kind, FunctionKind::Eval(_))
                     && matches!(binding.storage, BindingStorage::External(_))
                 {
-                    let Some(parent) = function.scopes[scope.0].parent else {
+                    let Some(parent) = function.scopes[scope.index()].parent else {
                         break;
                     };
                     scope = parent;
@@ -1112,13 +1112,13 @@ impl<'source> Parser<'source> {
                 }
                 let masked_program_lexical = matches!(function.kind, FunctionKind::Script)
                     && scope == function.body_scope
-                    && matches!(function.scopes[scope.0].kind, ScopeKind::ProgramBody)
+                    && matches!(function.scopes[scope.index()].kind, ScopeKind::ProgramBody)
                     && function.first_global_declaration_is_normal(name);
                 if !masked_program_lexical {
                     return false;
                 }
             }
-            let Some(parent) = function.scopes[scope.0].parent else {
+            let Some(parent) = function.scopes[scope.index()].parent else {
                 break;
             };
             scope = parent;
@@ -1202,7 +1202,7 @@ impl<'source> Parser<'source> {
                 EvalDeclarationTarget::Dynamic(_) => Ok(IrAnnexBinding::Dynamic),
                 EvalDeclarationTarget::External { index, .. } => {
                     let function = self.current_ir();
-                    let binding = function.scopes[function.ir.var_scope.0]
+                    let binding = function.scopes[function.ir.var_scope.index()]
                         .bindings
                         .iter()
                         .copied()
@@ -1257,7 +1257,7 @@ impl<'source> Parser<'source> {
             (FunctionKind::Eval(_), Some(EvalDeclarationMode::Dynamic(_)))
             | (FunctionKind::Eval(_), None) => false,
         };
-        let scope = &function.scopes[root.0];
+        let scope = &function.scopes[root.index()];
         let existing = scope
             .binding_named(name, &function.bindings)
             .and_then(|last| {

@@ -12,9 +12,9 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn push_scope(&mut self, kind: ScopeKind) -> ScopeId {
         let function = self.current_ir_mut();
         let parent = function.context.current_scope;
-        let is_parameter_initializer = function.scopes[parent.0].is_parameter_initializer
+        let is_parameter_initializer = function.scopes[parent.index()].is_parameter_initializer
             || (function.pattern_parameter_initialization && parent == function.ir.var_scope);
-        let scope = ScopeId(function.scopes.len());
+        let scope = ScopeId::new(function.scopes.len());
         function.scopes.push(IrScope {
             parent: Some(parent),
             kind,
@@ -42,7 +42,7 @@ impl<'source> Parser<'source> {
             op: IrOp::LeaveScope(expected),
             pc_site: None,
         });
-        function.context.current_scope = function.scopes[expected.0]
+        function.context.current_scope = function.scopes[expected.index()]
             .parent
             .ok_or_else(|| Error::internal("cannot pop a function root scope"))?;
         Ok(())
@@ -60,7 +60,7 @@ impl<'source> Parser<'source> {
             let parent = self
                 .current_ir()
                 .scopes
-                .get(scope.0)
+                .get(scope.index())
                 .and_then(|scope| scope.parent)
                 .ok_or_else(|| Error::internal("abrupt scope target is not an ancestor"))?;
             self.current_ir_mut().ops.push(SpannedIrOp {

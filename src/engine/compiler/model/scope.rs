@@ -9,7 +9,20 @@ use oxide_core::FxHashMap;
 /// `scope_level` beside every unresolved scope opcode; keeping it typed avoids
 /// accidentally resolving a child use from the parent's final parse scope.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(in crate::engine::compiler) struct ScopeId(pub(in crate::engine::compiler) usize);
+pub(in crate::engine::compiler) struct ScopeId(pub(in crate::engine::compiler) u32);
+
+impl ScopeId {
+    /// The scope at `index` of its function's table. Every scope opens at a
+    /// distinct source token, so an index fits a 32-bit source offset.
+    pub(in crate::engine::compiler) const fn new(index: usize) -> Self {
+        Self(index as u32)
+    }
+
+    /// The scope's index in its function's table.
+    pub(in crate::engine::compiler) const fn index(self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(in crate::engine::compiler) enum ScopeKind {

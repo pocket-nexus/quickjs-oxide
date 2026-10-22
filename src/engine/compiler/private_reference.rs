@@ -152,7 +152,7 @@ fn resolve_private_binding(
                     .ok_or_else(|| Error::internal("private-name owner is out of bounds"))?;
                 let current = function
                     .scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("private-name use scope is out of bounds"))?;
                 let exact = current
                     .binding_named(name, &function.bindings)

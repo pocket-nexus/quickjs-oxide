@@ -39,7 +39,7 @@ impl<'source> Parser<'source> {
         if self
             .current_ir()
             .scopes
-            .get(scope.0)
+            .get(scope.index())
             .is_none_or(|scope| scope.kind != ScopeKind::ClassPrivate)
         {
             return Err(Error::internal(

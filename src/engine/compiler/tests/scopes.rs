@@ -39,7 +39,7 @@ fn scope_name_lookup_selects_the_last_duplicate_parameter() {
     )
     .unwrap();
     let function = &tree.functions[1];
-    let scope = &function.scopes[function.var_scope.0];
+    let scope = &function.scopes[function.var_scope.index()];
     let binding = scope
         .binding_named(tree.names.lookup("value").unwrap(), &function.bindings)
         .unwrap();
@@ -109,7 +109,7 @@ fn parser_records_quickjs_scope_boundaries_and_child_definition_sites() {
             .parent
             .expect("child definition scope")
             .definition_scope;
-        root.scopes[scope.0].kind
+        root.scopes[scope.index()].kind
     };
     assert_eq!(parent_scope_kind("blockChild"), ScopeKind::Block);
     assert_eq!(parent_scope_kind("ifChild"), ScopeKind::If);
@@ -217,7 +217,7 @@ fn ancestor_lookup_uses_each_function_definition_scope() {
     let middle_definition_scope = tree.functions[1].parent.unwrap().definition_scope;
     let leaf_definition_scope = tree.functions[2].parent.unwrap().definition_scope;
     assert_eq!(
-        tree.functions[1].scopes[leaf_definition_scope.0].kind,
+        tree.functions[1].scopes[leaf_definition_scope.index()].kind,
         ScopeKind::FunctionBody
     );
 
@@ -254,7 +254,7 @@ fn identifier_rewrites_preserve_the_original_use_scope() {
         .ops
         .iter()
         .filter_map(|operation| match operation.op {
-            super::IrOp::Identifier { scope, .. } => Some(function.scopes[scope.0].kind),
+            super::IrOp::Identifier { scope, .. } => Some(function.scopes[scope.index()].kind),
             _ => None,
         })
         .collect::<Vec<_>>();
