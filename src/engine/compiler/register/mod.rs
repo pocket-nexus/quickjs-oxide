@@ -816,6 +816,9 @@ const CONCAT_OPERANDS: usize = 16;
 /// forward, and only `SetLocalUninitialized` re-enters it).
 const CAPTURE_BIT: u32 = 1 << 31;
 
+/// No pool slot or child ordinal yet.
+const NO_SLOT: u32 = u32::MAX;
+
 struct Lowerer<'a, 'c> {
     runtime: &'a mut Compiler<'c>,
     tree: &'a mut TreeCache,
@@ -843,12 +846,14 @@ struct Lowerer<'a, 'c> {
     /// Depth of temporaries used above the stack (TDZ checks of captures).
     max_scratch: u32,
     pool: Vec<CoreValue>,
-    pool_index: FxHashMap<u32, u32>,
+    /// The pool slot of each constant, [`NO_SLOT`] until it is used.
+    pool_index: Vec<u32>,
     /// The key of each string constant used as a name, and of each
     /// local's name.
     name_keys: Vec<Option<PropertyKey>>,
     local_keys: Vec<Option<PropertyKey>>,
-    child_ordinal: FxHashMap<u32, u32>,
+    /// The ordinal of each child constant among the children, else [`NO_SLOT`].
+    child_ordinal: Vec<u32>,
     this_keys: FxHashSet<u32>,
     /// Register PCs of the calls written as a direct `eval` (for the
     /// backtrace, which QuickJS gives no native frame there).
@@ -885,12 +890,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         let locals = u32::from(metadata.local_count);
         let mut captured_arguments = vec![false; arguments as usize];
         let mut captured_locals = vec![false; locals as usize];
-        let mut child_ordinal = FxHashMap::default();
+        let mut child_ordinal = vec![NO_SLOT; function.constants().len()];
+        let mut children = 0;
         for (index, constant) in function.constants().iter().enumerate() {
             let Some(child) = constant.as_child() else {
                 continue;
             };
-            child_ordinal.insert(index as u32, child_ordinal.len() as u32);
+            child_ordinal[index] = children;
+            children += 1;
             for variable in child.closure_variables() {
                 let slot = match variable.source {
                     ClosureSource::ParentLocal(local) => captured_locals.get_mut(local as usize),
@@ -948,7 +955,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             checked: FxHashSet::default(),
             max_scratch: 0,
             pool: Vec::new(),
-            pool_index: FxHashMap::default(),
+            pool_index: vec![NO_SLOT; function.constants().len()],
             name_keys,
             local_keys,
             child_ordinal,
@@ -1551,7 +1558,9 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     }
 
     fn pool_entry(&mut self, index: u32) -> Result<Entry, LowerError> {
-        if let Some(&slot) = self.pool_index.get(&index) {
+        if let Some(&slot) = self.pool_index.get(index as usize)
+            && slot != NO_SLOT
+        {
             return Ok(Entry::Const(slot));
         }
         let constant = self
@@ -1563,7 +1572,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             let value = self.template_entry(cooked, raw)?;
             let slot = self.pool.len() as u32;
             self.pool.push(value);
-            self.pool_index.insert(index, slot);
+            self.pool_index[index as usize] = slot;
             return Ok(Entry::Const(slot));
         }
         let Some(primitive) = constant.as_primitive() else {
@@ -1601,7 +1610,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         };
         let slot = self.pool.len() as u32;
         self.pool.push(value);
-        self.pool_index.insert(index, slot);
+        self.pool_index[index as usize] = slot;
         Ok(Entry::Const(slot))
     }
 
@@ -1802,9 +1811,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::PushTrue => self.stack.push(Entry::Bool(true)),
             I::PushThis => self.stack.push(Entry::Reg(0)),
             I::FClosure(index) => {
-                let ordinal = *self
+                let ordinal = self
                     .child_ordinal
-                    .get(&index)
+                    .get(index as usize)
+                    .copied()
+                    .filter(|&ordinal| ordinal != NO_SLOT)
                     .ok_or_else(|| LowerError::Internal("closure of a non-child".into()))?;
                 let dst = self.result_register()?;
                 let at = self.emit(|b| b.a_child(Opcode::MakeClosure, dst, ordinal));

@@ -1131,14 +1131,16 @@ fn emit_dynamic_identifier_reference(
 /// results are Numbers or Strings rather than shared object owners.
 fn elide_discarded_assignment_ops(operations: &mut [SpannedIrOp]) -> Vec<bool> {
     let mut elided = vec![false; operations.len()];
-    let targets = operations
-        .iter()
-        .filter_map(|operation| match &operation.op {
-            IrOp::Bytecode(instruction) => super::relocation::instruction_target(instruction),
-            _ => None,
-        })
-        .collect::<oxide_core::FxHashSet<_>>();
-    let targeted = |index: usize| u32::try_from(index).is_ok_and(|index| targets.contains(&index));
+    let mut targets = vec![false; operations.len() + 1];
+    for operation in operations.iter() {
+        if let IrOp::Bytecode(instruction) = &operation.op
+            && let Some(target) = super::relocation::instruction_target(instruction)
+            && let Some(targeted) = targets.get_mut(target as usize)
+        {
+            *targeted = true;
+        }
+    }
+    let targeted = |index: usize| targets.get(index).copied().unwrap_or(false);
     let mut index = 0;
     while index + 1 < operations.len() {
         if index + 2 < operations.len()
