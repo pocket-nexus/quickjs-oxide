@@ -47,6 +47,7 @@ impl FunctionBuilder {
             return Err(Error::internal("function parser controls are not closed"));
         }
         self.ir.body_parsed = context.in_function_body;
+        self.ir.release_growth();
         Ok(())
     }
 

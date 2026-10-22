@@ -417,20 +417,22 @@ impl FunctionIr {
             },
         ];
         let var_scope = function_root;
-        let ops = if matches!(
+        // Most functions emit a few dozen operations; starting past the
+        // smallest growth steps saves their reallocations, and
+        // `release_growth` returns the excess once the body is parsed.
+        let mut ops = Vec::with_capacity(INITIAL_OPS);
+        if matches!(
             kind,
             FunctionKind::Ordinary
                 | FunctionKind::Method
                 | FunctionKind::Arrow
                 | FunctionKind::Eval(_)
         ) {
-            vec![SpannedIrOp {
+            ops.push(SpannedIrOp {
                 op: IrOp::EnterScope(body),
                 pc_site: None,
-            }]
-        } else {
-            Vec::new()
-        };
+            });
+        }
         let mut function = Self {
             body_parsed: false,
             parent,
@@ -756,6 +758,23 @@ impl FunctionIr {
     }
 }
 
+/// The operation capacity a function's IR starts with.
+const INITIAL_OPS: usize = 16;
+
+impl FunctionIr {
+    /// Drop the spare capacity of the tables parsing grew. The tree keeps
+    /// every function's IR until lowering, so growth slack would otherwise
+    /// stay resident for the whole compilation.
+    pub(in crate::engine::compiler) fn release_growth(&mut self) {
+        self.ops.shrink_to_fit();
+        self.operands.spans.shrink_to_fit();
+        self.constants.shrink_to_fit();
+        self.bindings.shrink_to_fit();
+        self.scopes.shrink_to_fit();
+        self.locals.shrink_to_fit();
+    }
+}
+
 #[derive(Debug)]
 pub(in crate::engine::compiler) struct FunctionTree<'source> {
     // Boxed elements keep wide IR records stationary while the arena grows.
@@ -767,4 +786,6 @@ pub(in crate::engine::compiler) struct FunctionTree<'source> {
     pub(in crate::engine::compiler) filename: JsString,
     pub(in crate::engine::compiler) module: Option<module::IrModule>,
     pub(in crate::engine::compiler) pending_unsupported: Option<Error>,
+    /// A buffer identifier resolution reuses for ancestor paths.
+    pub(in crate::engine::compiler) path_scratch: Vec<FunctionId>,
 }

@@ -60,7 +60,9 @@ fn function_resolution_events(tree: &FunctionTree) -> Result<Vec<FunctionResolut
     if tree.functions.is_empty() {
         return Err(Error::internal("compiler produced no root function"));
     }
-    let mut children = vec![Vec::new(); tree.functions.len()];
+    // Each function's children, in arena order, as one flat table: `first[f]`
+    // indexes the children of `f` in `children`.
+    let mut first = vec![0_usize; tree.functions.len() + 1];
     for (function_id, function) in tree.functions.iter().enumerate().skip(1) {
         let parent = function
             .parent
@@ -71,10 +73,17 @@ fn function_resolution_events(tree: &FunctionTree) -> Result<Vec<FunctionResolut
                 "function parent must precede its child in the arena",
             ));
         }
-        let siblings = children
-            .get_mut(parent)
-            .ok_or_else(|| Error::internal("function parent is out of bounds"))?;
-        siblings.push(function_id);
+        first[parent + 1] += 1;
+    }
+    for index in 1..first.len() {
+        first[index] += first[index - 1];
+    }
+    let mut children = vec![0_usize; tree.functions.len().saturating_sub(1)];
+    let mut next = first.clone();
+    for (function_id, function) in tree.functions.iter().enumerate().skip(1) {
+        let parent = function.parent.map_or(0, |parent| parent.function);
+        children[next[parent]] = function_id;
+        next[parent] += 1;
     }
     if tree.functions[0].parent.is_some() {
         return Err(Error::internal("root function unexpectedly has a parent"));
@@ -89,7 +98,10 @@ fn function_resolution_events(tree: &FunctionTree) -> Result<Vec<FunctionResolut
         }
         events.push(FunctionResolutionEvent::Enter(function_id));
         stack.push((function_id, true));
-        for &child in children[function_id].iter().rev() {
+        for &child in children[first[function_id]..first[function_id + 1]]
+            .iter()
+            .rev()
+        {
             stack.push((child, false));
         }
     }
@@ -120,13 +132,14 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
     let import_meta_name = tree
         .names
         .lookup(crate::engine::code::module::MODULE_IMPORT_META_BINDING_NAME);
+    let mut unresolved = Vec::new();
     for event in function_resolution_events(tree)? {
         match event {
             FunctionResolutionEvent::Enter(function_id) => {
                 link_eval_environments(tree, function_id)?;
             }
             FunctionResolutionEvent::Resolve(function_id) => {
-                let mut unresolved = Vec::new();
+                unresolved.clear();
                 for (index, operation) in tree.functions[function_id].ops.iter().enumerate() {
                     match &operation.op {
                         IrOp::Identifier {
@@ -178,7 +191,7 @@ pub(super) fn resolve_identifiers(tree: &mut FunctionTree) -> Result<(), Error> 
                     }
                 }
 
-                for (operation_index, name, span, scope, access) in unresolved {
+                for (operation_index, name, span, scope, access) in unresolved.drain(..) {
                     let operation = match access {
                         UnresolvedAccess::Identifier(access) => {
                             resolve_identifier(tree, function_id, scope, name, span, access)?
@@ -2417,15 +2430,7 @@ fn capture_global_declaration_path(
     name: NameId,
     is_lexical: bool,
 ) -> Result<u16, Error> {
-    let mut path = Vec::new();
-    let mut cursor = Some(consuming_function);
-    while let Some(function_id) = cursor {
-        path.push(function_id);
-        cursor = tree.functions[function_id]
-            .parent
-            .map(|parent| parent.function);
-    }
-    path.reverse();
+    let path = take_ancestor_path(tree, consuming_function, None)?;
 
     let (root_index, root_descriptor) = tree.functions[0]
         .first_global_declaration_of(name, is_lexical)
@@ -2440,7 +2445,7 @@ fn capture_global_declaration_path(
         .ok_or_else(|| Error::internal("global declaration closure was not seeded"))?;
     let mut source = ClosureSource::ParentGlobal(root_index);
     let mut final_index = Some(root_index);
-    for function_id in path.into_iter().skip(1) {
+    for &function_id in path.iter().skip(1) {
         let name_index = {
             let FunctionTree {
                 functions, names, ..
@@ -2458,6 +2463,7 @@ fn capture_global_declaration_path(
         source = ClosureSource::ParentGlobal(index);
         final_index = Some(index);
     }
+    tree.path_scratch = path;
     final_index.ok_or_else(|| Error::internal("global declaration closure path was empty"))
 }
 
@@ -2469,19 +2475,11 @@ fn capture_global_path(
     consuming_function: FunctionId,
     name: NameId,
 ) -> Result<u16, Error> {
-    let mut path = Vec::new();
-    let mut cursor = Some(consuming_function);
-    while let Some(function_id) = cursor {
-        path.push(function_id);
-        cursor = tree.functions[function_id]
-            .parent
-            .map(|parent| parent.function);
-    }
-    path.reverse();
+    let path = take_ancestor_path(tree, consuming_function, None)?;
 
     let mut source = ClosureSource::Global;
     let mut final_index = None;
-    for function_id in path {
+    for &function_id in &path {
         let name_index = {
             let FunctionTree {
                 functions, names, ..
@@ -2499,6 +2497,7 @@ fn capture_global_path(
         source = ClosureSource::ParentGlobal(index);
         final_index = Some(index);
     }
+    tree.path_scratch = path;
     final_index.ok_or_else(|| Error::internal("global closure path was empty"))
 }
 
@@ -2906,6 +2905,29 @@ const fn closure_kind(kind: BindingKind) -> ClosureVariableKind {
     }
 }
 
+/// `function` and its ancestors, outermost first, stopping below `until`
+/// (`None`: through the root), in the tree's reused path buffer. The caller
+/// hands the buffer back through `tree.path_scratch`.
+fn take_ancestor_path(
+    tree: &mut FunctionTree,
+    function: FunctionId,
+    until: Option<FunctionId>,
+) -> Result<Vec<FunctionId>, Error> {
+    let mut path = std::mem::take(&mut tree.path_scratch);
+    path.clear();
+    let mut cursor = function;
+    while Some(cursor) != until {
+        path.push(cursor);
+        match tree.functions[cursor].parent {
+            Some(parent) => cursor = parent.function,
+            None if until.is_none() => break,
+            None => return Err(Error::internal("closure binding owner is not an ancestor")),
+        }
+    }
+    path.reverse();
+    Ok(path)
+}
+
 pub(super) fn capture_binding_path(
     tree: &mut FunctionTree,
     defining_function: FunctionId,
@@ -2917,16 +2939,7 @@ pub(super) fn capture_binding_path(
 ) -> Result<(u16, BindingKind), Error> {
     let module_import_view =
         binding_storage_is_module_import_view(tree, defining_function, binding.storage)?;
-    let mut path = Vec::new();
-    let mut cursor = consuming_function;
-    while cursor != defining_function {
-        path.push(cursor);
-        cursor = tree.functions[cursor]
-            .parent
-            .ok_or_else(|| Error::internal("closure binding owner is not an ancestor"))?
-            .function;
-    }
-    path.reverse();
+    let path = take_ancestor_path(tree, consuming_function, Some(defining_function))?;
 
     // QuickJS's `add_eval_variables` requests ordinary metadata for an
     // ancestor's unscoped FunctionName. `get_closure_var` recursively carries
@@ -2961,7 +2974,7 @@ pub(super) fn capture_binding_path(
     };
     let mut final_index = None;
     let mut final_kind = None;
-    for function_id in path {
+    for &function_id in &path {
         let function = &mut tree.functions[function_id];
         let descriptor_name = if retain_name
             || !function.eval_environments.is_empty()
@@ -3019,6 +3032,7 @@ pub(super) fn capture_binding_path(
         final_index = Some(index);
         final_kind = Some(actual_kind);
     }
+    tree.path_scratch = path;
     final_index
         .zip(final_kind)
         .ok_or_else(|| Error::internal("closure path did not cross a function boundary"))

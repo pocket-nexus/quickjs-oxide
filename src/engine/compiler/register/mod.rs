@@ -928,7 +928,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             function,
             code,
             is_script,
-            builder: CodeBuilder::new(),
+            builder: CodeBuilder::with_capacity(function.code().len()),
             stack,
             temp_base: layout.temp_base,
             layout,
@@ -3574,10 +3574,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         else {
             return Box::new([]);
         };
-        let mut positions: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
         // The entries are sorted by pc and the origins rise but for the
         // stubs at the end: walk forward, and search again on a step back.
         let entries = &table.entries;
+        let mut positions: Vec<oxide_core::bytecode::SourcePosition> =
+            Vec::with_capacity(entries.len() + 1);
         let mut after = 0;
         let mut previous = 0;
         for (pc, &origin) in self.origins.iter().take(len).enumerate() {

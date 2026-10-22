@@ -268,6 +268,7 @@ pub(super) fn lower_unlinked_tree(
         filename,
         module: _,
         pending_unsupported: _,
+        path_scratch: _,
     } = tree;
     let source_index = if debug_info == DebugInfoMode::StripDebug {
         None
@@ -1468,7 +1469,7 @@ fn build_unlinked_debug(
     let definition = located
         .locate(definition)
         .map_err(|error| Error::internal(error.to_string()))?;
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(pc_sites.len());
     let mut previous_position = Some(definition);
     for (pc, site) in pc_sites.iter().copied().enumerate() {
         let Some(site) = site else {

@@ -290,6 +290,7 @@ impl<'source> Parser<'source> {
             filename,
             module: parser.module,
             pending_unsupported: parser.pending_unsupported,
+            path_scratch: Vec::new(),
         })
     }
 }
