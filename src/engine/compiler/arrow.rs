@@ -2,7 +2,9 @@ use crate::engine::api::error::Error;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::function::metadata::ClassInitializerKind;
 use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKind;
+use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexContext;
+use crate::engine::compiler::lexer::Lexer;
 use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Punctuator;
 use crate::engine::compiler::lexer::Span;
@@ -24,6 +26,16 @@ use crate::engine::compiler::parser::diagnostics::source_offset;
 use crate::engine::compiler::parser::tokens::for_head_regexp_allowed_after;
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::source::SourceOffset;
+
+/// A parenthesized arrow probe declined at its first token, kept until the
+/// AssignmentExpression it began has been parsed.
+#[derive(Clone)]
+pub(in crate::engine::compiler) struct DeclinedArrow<'source> {
+    /// The probe lexer at the `(`, in the context the probe ran with.
+    lexer: Lexer<'source>,
+    /// The token after `(`, where the arrow parameter list fails.
+    first: Span,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ArrowHead {
@@ -332,22 +344,102 @@ impl<'source> Parser<'source> {
     /// no IR or scope state: it balances the cover grammar, respects template
     /// substitutions and RegExp lexical goals, and accepts `=>` only when no
     /// LineTerminator separates it from the closing parenthesis.
+    ///
+    /// Contents whose first token cannot begin ArrowFormalParameters, such as
+    /// `(function () { ... })`, are declined without scanning to the closing
+    /// parenthesis. The decline is recorded so [`Self::declined_arrow_error`]
+    /// can still report the arrow's diagnostic when the program turns out to
+    /// be invalid.
     fn parenthesized_arrow_ahead(&self, opening: Span) -> bool {
         if let Some(arrow) = self.cached_parenthesized_arrow(opening.start.byte_offset) {
             return arrow;
         }
         let mut lexer = self.lexer.clone();
         lexer.seek(opening.start);
+        let at_opening = lexer.clone();
         let Ok(first) = self.probe_token(&mut lexer, LexicalGoal::Div) else {
             return false;
         };
         if !matches!(first.kind, TokenKind::Punctuator(Punctuator::LeftParen)) {
             return false;
         }
+        if let Some(first) = self.first_token_rejecting_arrow_parameters(&lexer) {
+            self.lookahead.borrow_mut().declined_arrow = Some(DeclinedArrow {
+                lexer: at_opening,
+                first,
+            });
+            return false;
+        }
+        self.scan_parenthesized_arrow(lexer, opening.start.byte_offset, true)
+    }
 
+    /// The span of the token after `(` when no ArrowFormalParameters can
+    /// start with it: QuickJS's arrow parameter parser then fails on that
+    /// very token with "missing formal parameter". Identifiers, including
+    /// every contextual or strict-mode reserved word, never decline.
+    fn first_token_rejecting_arrow_parameters(&self, lexer: &Lexer<'source>) -> Option<Span> {
+        let mut lexer = lexer.clone();
+        let token = self.probe_token(&mut lexer, LexicalGoal::Div).ok()?;
+        let rejects = match token.kind {
+            TokenKind::Number(_)
+            | TokenKind::String(_)
+            | TokenKind::Template(_)
+            | TokenKind::RegExp(_) => true,
+            TokenKind::Punctuator(punctuator) => !matches!(
+                punctuator,
+                Punctuator::LeftBracket
+                    | Punctuator::LeftBrace
+                    | Punctuator::Ellipsis
+                    | Punctuator::RightParen
+            ),
+            TokenKind::Keyword(keyword) => matches!(
+                keyword,
+                Keyword::Null
+                    | Keyword::False
+                    | Keyword::True
+                    | Keyword::This
+                    | Keyword::Delete
+                    | Keyword::Void
+                    | Keyword::Typeof
+                    | Keyword::New
+                    | Keyword::Function
+                    | Keyword::Class
+                    | Keyword::Super
+                    | Keyword::Import
+            ),
+            _ => false,
+        };
+        rejects.then_some(token.span)
+    }
+
+    /// The diagnostic QuickJS reports for a declined arrow probe, which
+    /// commits to the arrow form whenever the balanced parentheses are
+    /// followed by `=>`. Only called once the expression parse has failed or
+    /// stopped at `=>`, so the complete scan runs on invalid programs alone.
+    pub(super) fn declined_arrow_error(&self, declined: DeclinedArrow<'source>) -> Option<Error> {
+        let mut lexer = declined.lexer;
+        let opening = lexer.current_position().byte_offset;
+        let first = self.probe_token(&mut lexer, LexicalGoal::Div).ok()?;
+        debug_assert!(matches!(
+            first.kind,
+            TokenKind::Punctuator(Punctuator::LeftParen)
+        ));
+        self.scan_parenthesized_arrow(lexer, opening, false)
+            .then(|| Error::syntax("missing formal parameter", declined.first))
+    }
+
+    /// Scan from just after the `(` at `opening` to its matching `)` and
+    /// report whether `=>` follows on the same line. `cache` records the
+    /// nested parentheses' answers for the committed parse.
+    fn scan_parenthesized_arrow(
+        &self,
+        mut lexer: Lexer<'source>,
+        opening: usize,
+        cache: bool,
+    ) -> bool {
         let mut delimiters = self.delimiter_stack();
         delimiters.push(ForHeadDelimiter::Parenthesis);
-        let mut parentheses = vec![opening.start.byte_offset];
+        let mut parentheses = vec![opening];
         let mut closed_parenthesis = None;
         let mut goal = LexicalGoal::Div;
         let mut regexp_allowed = true;
@@ -357,7 +449,9 @@ impl<'source> Parser<'source> {
             let Ok(mut token) = self.probe_token(&mut lexer, requested_goal) else {
                 return false;
             };
-            if let Some(start) = closed_parenthesis.take() {
+            if let Some(start) = closed_parenthesis.take()
+                && cache
+            {
                 self.cache_parenthesized_arrow(
                     start,
                     !token.line_terminator_before
@@ -409,7 +503,9 @@ impl<'source> Parser<'source> {
                         };
                         let result = !arrow.line_terminator_before
                             && matches!(arrow.kind, TokenKind::Punctuator(Punctuator::Arrow));
-                        self.cache_parenthesized_arrow(start, result);
+                        if cache {
+                            self.cache_parenthesized_arrow(start, result);
+                        }
                         return result;
                     }
                     closed_parenthesis = Some(start);

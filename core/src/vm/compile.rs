@@ -248,7 +248,8 @@ impl<'a> Compiler<'a> {
             // A static unit lives as long as the runtime, and so do its keys,
             // wherever they were interned.
             Store::Owned(code) => {
-                for &atom in &unit.key_atoms() {
+                // Pinning is idempotent, so a key used twice needs no dedup.
+                for atom in unit.key_atom_uses() {
                     self.heap.pin_atom(atom);
                 }
                 Ok(code.push(unit))

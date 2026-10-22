@@ -84,6 +84,13 @@ mod tests {
     fn cold_operands_do_not_widen_the_instruction_stream() {
         // This is a footprint contract for the hot parser write stream, not
         // an ABI promise. Keep new variable-sized payloads in the operand table.
-        assert!(size_of::<SpannedIrOp>() <= 40);
+        assert!(size_of::<SpannedIrOp>() <= 24);
+    }
+
+    #[test]
+    fn rare_constants_do_not_widen_the_constant_table() {
+        // Every function keeps its constants until lowering; payloads only a
+        // few constants carry stay boxed.
+        assert!(size_of::<crate::engine::compiler::model::ir::IrConstant>() <= 24);
     }
 }

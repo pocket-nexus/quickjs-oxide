@@ -33,21 +33,21 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn parse(
         source: &'source str,
         filename: JsString,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         Self::parse_root(source, None, filename, RootCompileContext::Script)
     }
 
     pub(in crate::engine::compiler) fn parse_module(
         source: &'source str,
         filename: JsString,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         Self::parse_root(source, None, filename, RootCompileContext::Module)
     }
 
     pub(in crate::engine::compiler) fn parse_module_source(
         source: &'source SourceText,
         filename: JsString,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         Self::parse_root(
             source.carrier(),
             Some(source),
@@ -59,7 +59,7 @@ impl<'source> Parser<'source> {
     pub(in crate::engine::compiler) fn parse_script_source(
         source: &'source SourceText,
         filename: JsString,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         Self::parse_root(
             source.carrier(),
             Some(source),
@@ -73,7 +73,7 @@ impl<'source> Parser<'source> {
         source: &'source str,
         filename: JsString,
         context: EvalCompileContext,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         Self::parse_root(source, None, filename, RootCompileContext::Eval(context))
     }
 
@@ -81,7 +81,7 @@ impl<'source> Parser<'source> {
         source: &'source SourceText,
         filename: JsString,
         context: EvalCompileContext,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         Self::parse_root(
             source.carrier(),
             Some(source),
@@ -95,7 +95,7 @@ impl<'source> Parser<'source> {
         source_text: Option<&'source SourceText>,
         filename: JsString,
         context: RootCompileContext,
-    ) -> Result<FunctionTree, Error> {
+    ) -> Result<FunctionTree<'source>, Error> {
         validate_source_length(source.len())?;
         let is_module = matches!(&context, RootCompileContext::Module);
         let (
@@ -283,12 +283,14 @@ impl<'source> Parser<'source> {
                 .map(FunctionBuilder::finish)
                 .collect::<Result<_, _>>()?,
             names: parser.names,
-            source: source_text
-                .cloned()
-                .unwrap_or_else(|| SourceText::from_utf8(source)),
+            source: source_text.map_or_else(
+                || std::borrow::Cow::Owned(SourceText::from_utf8(source)),
+                std::borrow::Cow::Borrowed,
+            ),
             filename,
             module: parser.module,
             pending_unsupported: parser.pending_unsupported,
+            path_scratch: Vec::new(),
         })
     }
 }

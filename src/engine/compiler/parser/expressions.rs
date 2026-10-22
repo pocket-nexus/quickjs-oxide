@@ -102,6 +102,20 @@ impl<'source> Parser<'source> {
         if let Some(head) = self.arrow_head_ahead() {
             return self.parse_arrow_function(head);
         }
+        let Some(declined) = self.lookahead.get_mut().declined_arrow.take() else {
+            return self.parse_assignment_tail();
+        };
+        let result = self.parse_assignment_tail();
+        if (result.is_err() || self.is_punctuator(Punctuator::Arrow))
+            && let Some(error) = self.declined_arrow_error(declined)
+        {
+            return Err(error);
+        }
+        result
+    }
+
+    /// The AssignmentExpression forms after the arrow-head probes.
+    fn parse_assignment_tail(&mut self) -> Result<(), Error> {
         // Destructuring assignment is recognized only after every arrow-head
         // probe has had its say. Like pinned QuickJS, the Array form takes a
         // control-inverted path only when the matching `]` is immediately
@@ -1172,7 +1186,7 @@ impl<'source> Parser<'source> {
             loop {
                 let current = self.functions[function_id]
                     .scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("identifier use scope is out of bounds"))?;
                 if current.kind == ScopeKind::With {
                     return Ok(true);

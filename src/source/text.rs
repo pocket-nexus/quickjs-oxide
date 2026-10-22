@@ -118,6 +118,19 @@ impl SourceText {
         carrier
             .try_reserve_exact(source.len())
             .map_err(|_| JsStringError::OutOfMemory)?;
+        // Well-formed UTF-8 has no surrogate or malformed sequence, so it is
+        // its own carrier.
+        if let Ok(text) = std::str::from_utf8(source) {
+            carrier.push_str(text);
+            let result = Self {
+                raw: None,
+                carrier: carrier.into_boxed_str(),
+                surrogates: Box::default(),
+                invalid_bytes: Box::default(),
+            };
+            debug_assert!(result.invariants_hold());
+            return Ok(result);
+        }
         let mut surrogates = Vec::new();
         let mut invalid_bytes = Vec::new();
 

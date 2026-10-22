@@ -279,7 +279,7 @@ impl<'source> Parser<'source> {
             function.parameter_local_reservation_count = Some(bound_name_count);
         }
         function.ops.clear();
-        let parameter_scope = ScopeId(function.scopes.len());
+        let parameter_scope = ScopeId::new(function.scopes.len());
         function.scopes.push(IrScope {
             parent: None,
             kind: ScopeKind::Parameter,
@@ -327,7 +327,7 @@ impl<'source> Parser<'source> {
                 ));
             }
             function.ops.clear();
-            let parameter_scope = ScopeId(function.scopes.len());
+            let parameter_scope = ScopeId::new(function.scopes.len());
             function.scopes.push(IrScope {
                 parent: None,
                 kind: ScopeKind::Parameter,

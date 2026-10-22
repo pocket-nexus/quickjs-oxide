@@ -420,6 +420,17 @@ impl UnlinkedFunction {
         &self.eval_environments
     }
 
+    /// Moves every function's source text out of the tree, children before
+    /// their parent: the order the register lowering publishes units in.
+    pub(crate) fn take_sources(&mut self, sources: &mut Vec<Option<Box<[u8]>>>) {
+        for constant in &mut self.constants {
+            if let UnlinkedConstantKind::Child(child) = &mut constant.0 {
+                child.take_sources(sources);
+            }
+        }
+        sources.push(self.debug.as_mut().and_then(|debug| debug.source.take()));
+    }
+
     #[cfg_attr(not(test), allow(dead_code))]
     #[must_use]
     pub const fn debug(&self) -> Option<&UnlinkedFunctionDebug> {

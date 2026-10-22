@@ -32,7 +32,7 @@ mod tests;
 #[cfg(test)]
 mod window_tests;
 
-use std::collections::{HashMap, HashSet};
+use oxide_core::{FxHashMap, FxHashSet};
 use std::fmt;
 
 use oxide_core::bytecode::builder::UnitLayout;
@@ -120,13 +120,35 @@ pub(crate) fn lower_script_into(
     runtime: &mut Compiler<'_>,
     script: &UnlinkedFunction,
 ) -> Result<LoweredScript, LowerError> {
+    lower_script_with(runtime, script, TreeCache::default())
+}
+
+/// [`lower_script_into`] for a script the caller no longer needs: each
+/// function's source text moves into its unit instead of being copied.
+pub(crate) fn lower_owned_script_into(
+    runtime: &mut Compiler<'_>,
+    mut script: UnlinkedFunction,
+) -> Result<LoweredScript, LowerError> {
+    let mut sources = Vec::new();
+    script.take_sources(&mut sources);
+    let tree = TreeCache {
+        sources: Some(sources.into_iter()),
+        ..TreeCache::default()
+    };
+    lower_script_with(runtime, &script, tree)
+}
+
+fn lower_script_with(
+    runtime: &mut Compiler<'_>,
+    script: &UnlinkedFunction,
+    mut tree: TreeCache,
+) -> Result<LoweredScript, LowerError> {
     // BigInt constants are heap records but not atoms, which the compilation
     // keeps: they stay on the root stack until `instantiate` attaches the
     // constant tables.
     let mark = runtime.heap_mut().roots().mark();
     let result = (|| {
-        let mut constants = HashMap::new();
-        let mut tree = TreeCache::default();
+        let mut constants = FxHashMap::default();
         let root = lower_tree(runtime, &mut tree, script, None, None, &mut constants)?;
         let order = runtime.units().tree(root);
         let tables: Vec<&[CoreValue]> = order.iter().map(|id| constants[id].as_slice()).collect();
@@ -308,7 +330,7 @@ fn lower_tree(
     function: &UnlinkedFunction,
     parent: Option<Layout>,
     inferred: Option<&JsString>,
-    constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
+    constants: &mut FxHashMap<CodeUnitId, Vec<CoreValue>>,
 ) -> Result<CodeUnitId, LowerError> {
     let mut analysis = tree.analyses.pop().unwrap_or_default();
     analyze_into(function.code(), &mut analysis, &mut tree.analysis_scratch)?;
@@ -422,8 +444,8 @@ fn lower_function(
 struct TreeCache {
     /// The key and the atom of each string of the tree, by its address; the
     /// string is kept, so the address is not reused while the entry is.
-    keys: HashMap<usize, (JsString, PropertyKey)>,
-    atoms: HashMap<usize, (JsString, StringId)>,
+    keys: FxHashMap<usize, (JsString, PropertyKey)>,
+    atoms: FxHashMap<usize, (JsString, StringId)>,
     /// The tree's file name, converted once.
     filename: Option<(JsString, std::rc::Rc<str>)>,
     /// Buffers kept for the next function: analyses not in use (a parent's
@@ -432,6 +454,9 @@ struct TreeCache {
     analyses: Vec<Analysis>,
     analysis_scratch: analysis::Scratch,
     lowering: LowerScratch,
+    /// Each function's source text moved out of an owned tree, in the order
+    /// the functions lower (children first); `None` copies it from the tree.
+    sources: Option<std::vec::IntoIter<Option<Box<[u8]>>>>,
 }
 
 /// A [`Lowerer`]'s buffers between functions, empty.
@@ -791,6 +816,9 @@ const CONCAT_OPERANDS: usize = 16;
 /// forward, and only `SetLocalUninitialized` re-enters it).
 const CAPTURE_BIT: u32 = 1 << 31;
 
+/// No pool slot or child ordinal yet.
+const NO_SLOT: u32 = u32::MAX;
+
 struct Lowerer<'a, 'c> {
     runtime: &'a mut Compiler<'c>,
     tree: &'a mut TreeCache,
@@ -814,17 +842,19 @@ struct Lowerer<'a, 'c> {
     /// The last instruction, if it only wrote a temporary: its PC and the
     /// temporary, for retargeting into a local.
     last_dest: Option<(u32, u32)>,
-    checked: HashSet<u32>,
+    checked: FxHashSet<u32>,
     /// Depth of temporaries used above the stack (TDZ checks of captures).
     max_scratch: u32,
     pool: Vec<CoreValue>,
-    pool_index: HashMap<u32, u32>,
+    /// The pool slot of each constant, [`NO_SLOT`] until it is used.
+    pool_index: Vec<u32>,
     /// The key of each string constant used as a name, and of each
     /// local's name.
     name_keys: Vec<Option<PropertyKey>>,
     local_keys: Vec<Option<PropertyKey>>,
-    child_ordinal: HashMap<u32, u32>,
-    this_keys: HashSet<u32>,
+    /// The ordinal of each child constant among the children, else [`NO_SLOT`].
+    child_ordinal: Vec<u32>,
+    this_keys: FxHashSet<u32>,
     /// Register PCs of the calls written as a direct `eval` (for the
     /// backtrace, which QuickJS gives no native frame there).
     direct_eval_sites: Vec<u32>,
@@ -860,12 +890,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         let locals = u32::from(metadata.local_count);
         let mut captured_arguments = vec![false; arguments as usize];
         let mut captured_locals = vec![false; locals as usize];
-        let mut child_ordinal = HashMap::new();
+        let mut child_ordinal = vec![NO_SLOT; function.constants().len()];
+        let mut children = 0;
         for (index, constant) in function.constants().iter().enumerate() {
             let Some(child) = constant.as_child() else {
                 continue;
             };
-            child_ordinal.insert(index as u32, child_ordinal.len() as u32);
+            child_ordinal[index] = children;
+            children += 1;
             for variable in child.closure_variables() {
                 let slot = match variable.source {
                     ClosureSource::ParentLocal(local) => captured_locals.get_mut(local as usize),
@@ -903,7 +935,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             function,
             code,
             is_script,
-            builder: CodeBuilder::new(),
+            builder: CodeBuilder::with_capacity(function.code().len()),
             stack,
             temp_base: layout.temp_base,
             layout,
@@ -920,14 +952,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             named_children: Vec::new(),
             pc: 0,
             last_dest: None,
-            checked: HashSet::new(),
+            checked: FxHashSet::default(),
             max_scratch: 0,
             pool: Vec::new(),
-            pool_index: HashMap::new(),
+            pool_index: vec![NO_SLOT; function.constants().len()],
             name_keys,
             local_keys,
             child_ordinal,
-            this_keys: HashSet::new(),
+            this_keys: FxHashSet::default(),
             analysis,
         })
     }
@@ -1526,7 +1558,9 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     }
 
     fn pool_entry(&mut self, index: u32) -> Result<Entry, LowerError> {
-        if let Some(&slot) = self.pool_index.get(&index) {
+        if let Some(&slot) = self.pool_index.get(index as usize)
+            && slot != NO_SLOT
+        {
             return Ok(Entry::Const(slot));
         }
         let constant = self
@@ -1538,7 +1572,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             let value = self.template_entry(cooked, raw)?;
             let slot = self.pool.len() as u32;
             self.pool.push(value);
-            self.pool_index.insert(index, slot);
+            self.pool_index[index as usize] = slot;
             return Ok(Entry::Const(slot));
         }
         let Some(primitive) = constant.as_primitive() else {
@@ -1576,7 +1610,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         };
         let slot = self.pool.len() as u32;
         self.pool.push(value);
-        self.pool_index.insert(index, slot);
+        self.pool_index[index as usize] = slot;
         Ok(Entry::Const(slot))
     }
 
@@ -1777,9 +1811,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::PushTrue => self.stack.push(Entry::Bool(true)),
             I::PushThis => self.stack.push(Entry::Reg(0)),
             I::FClosure(index) => {
-                let ordinal = *self
+                let ordinal = self
                     .child_ordinal
-                    .get(&index)
+                    .get(index as usize)
+                    .copied()
+                    .filter(|&ordinal| ordinal != NO_SLOT)
                     .ok_or_else(|| LowerError::Internal("closure of a non-child".into()))?;
                 let dst = self.result_register()?;
                 let at = self.emit(|b| b.a_child(Opcode::MakeClosure, dst, ordinal));
@@ -3457,12 +3493,15 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             })?),
             _ => None,
         };
-        let source = self
-            .function
-            .debug()
-            .and_then(|debug| debug.source.as_ref())
-            .filter(|_| !self.is_script)
-            .map(|bytes| bytes.to_vec().into_boxed_slice());
+        let source = match &mut self.tree.sources {
+            Some(sources) => sources.next().flatten(),
+            None => self
+                .function
+                .debug()
+                .and_then(|debug| debug.source.as_deref())
+                .map(Box::from),
+        }
+        .filter(|_| !self.is_script);
         let captures = self.captures(parent)?;
         let name = self
             .function
@@ -3546,10 +3585,11 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         else {
             return Box::new([]);
         };
-        let mut positions: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
         // The entries are sorted by pc and the origins rise but for the
         // stubs at the end: walk forward, and search again on a step back.
         let entries = &table.entries;
+        let mut positions: Vec<oxide_core::bytecode::SourcePosition> =
+            Vec::with_capacity(entries.len() + 1);
         let mut after = 0;
         let mut previous = 0;
         for (pc, &origin) in self.origins.iter().take(len).enumerate() {

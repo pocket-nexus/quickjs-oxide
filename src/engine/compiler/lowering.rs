@@ -48,7 +48,7 @@ use crate::source::QuickJsSourceLocator;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
 #[cfg(test)]
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 use std::ops::Range;
 
 #[derive(Debug, Default)]
@@ -215,7 +215,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
     let captured_locals = vec![false; function.locals.len()];
     let scope_lifecycles = build_scope_lifecycles(&function, &captured_locals)?;
     let code = lower_ops(function.ops, &scope_lifecycles, function.operands)?.code;
-    let mut atom_strings = HashMap::<u32, Vec<JsString>>::new();
+    let mut atom_strings = FxHashMap::<u32, Vec<JsString>>::default();
     let constants = function
         .constants
         .into_iter()
@@ -238,7 +238,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
                 ErrorKind::Unsupported,
                 "RegExp literals require runtime publication; use Context::compile or Context::eval",
             )),
-            IrConstant::TemplateObject { .. } => Err(Error::new(
+            IrConstant::TemplateObject(_) => Err(Error::new(
                 ErrorKind::Unsupported,
                 "tagged template objects require runtime publication; use Context::compile or Context::eval",
             )),
@@ -268,6 +268,7 @@ pub(super) fn lower_unlinked_tree(
         filename,
         module: _,
         pending_unsupported: _,
+        path_scratch: _,
     } = tree;
     let source_index = if debug_info == DebugInfoMode::StripDebug {
         None
@@ -280,17 +281,14 @@ pub(super) fn lower_unlinked_tree(
     };
     // Every function's definition and source sites, located together.
     let located = source_index.as_ref().map(|index| {
-        let sites = tree_functions
-            .iter()
-            .flat_map(|function| {
-                std::iter::once(function.source.definition).chain(
-                    function
-                        .ops
-                        .iter()
-                        .filter_map(|operation| operation.pc_site),
-                )
-            })
-            .collect();
+        let sites = tree_functions.iter().flat_map(|function| {
+            std::iter::once(function.source.definition).chain(
+                function
+                    .ops
+                    .iter()
+                    .filter_map(|operation| operation.pc_site),
+            )
+        });
         index.locate_all(sites)
     });
     let function_count = tree_functions.len();
@@ -372,7 +370,7 @@ pub(super) fn lower_unlinked_tree(
                 .ok_or_else(|| Error::internal("local binding definition is out of bounds"))?;
             let storage_scope = function
                 .scopes
-                .get(binding.storage_scope.0)
+                .get(binding.storage_scope.index())
                 .ok_or_else(|| Error::internal("local binding scope is out of bounds"))?;
             let is_parameter_initializer = storage_scope.is_parameter_initializer
                 && storage_scope.kind != ScopeKind::Parameter;
@@ -517,8 +515,8 @@ pub(super) fn lower_unlinked_tree(
                 IrConstant::RegExp { pattern, program } => {
                     Ok(UnlinkedConstant::regexp(pattern, program))
                 }
-                IrConstant::TemplateObject { cooked, raw } => {
-                    UnlinkedConstant::template_object(cooked, raw).map_err(|error| {
+                IrConstant::TemplateObject(site) => {
+                    UnlinkedConstant::template_object(site.cooked, site.raw).map_err(|error| {
                         Error::internal(format!(
                             "compiler produced an invalid template object: {error}"
                         ))
@@ -1130,14 +1128,16 @@ fn emit_dynamic_identifier_reference(
 /// results are Numbers or Strings rather than shared object owners.
 fn elide_discarded_assignment_ops(operations: &mut [SpannedIrOp]) -> Vec<bool> {
     let mut elided = vec![false; operations.len()];
-    let targets = operations
-        .iter()
-        .filter_map(|operation| match &operation.op {
-            IrOp::Bytecode(instruction) => super::relocation::instruction_target(instruction),
-            _ => None,
-        })
-        .collect::<std::collections::HashSet<_>>();
-    let targeted = |index: usize| u32::try_from(index).is_ok_and(|index| targets.contains(&index));
+    let mut targets = vec![false; operations.len() + 1];
+    for operation in operations.iter() {
+        if let IrOp::Bytecode(instruction) = &operation.op
+            && let Some(target) = super::relocation::instruction_target(instruction)
+            && let Some(targeted) = targets.get_mut(target as usize)
+        {
+            *targeted = true;
+        }
+    }
+    let targeted = |index: usize| targets.get(index).copied().unwrap_or(false);
     let mut index = 0;
     while index + 1 < operations.len() {
         if index + 2 < operations.len()
@@ -1208,13 +1208,13 @@ fn lower_ops(
         }
         let emitted = match &operation.op {
             IrOp::EnterScope(scope) => scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("scope entry is out of bounds"))?
                 .tdz_locals
                 .len()
                 .checked_add(
                     scopes
-                        .get(scope.0)
+                        .get(scope.index())
                         .ok_or_else(|| Error::internal("scope entry is out of bounds"))?
                         .function_entries
                         .len()
@@ -1223,7 +1223,7 @@ fn lower_ops(
                 .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?,
             IrOp::PrepareCatchScope(scope) => {
                 let lifecycle = scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("catch scope preparation is out of bounds"))?;
                 if !lifecycle.function_entries.is_empty() {
                     return Err(Error::internal(
@@ -1237,7 +1237,7 @@ fn lower_ops(
                     .ok_or_else(|| Error::new(ErrorKind::JsInternal, "stack overflow"))?
             }
             IrOp::LeaveScope(scope) => scopes
-                .get(scope.0)
+                .get(scope.index())
                 .ok_or_else(|| Error::internal("scope exit is out of bounds"))?
                 .close_locals
                 .len(),
@@ -1284,7 +1284,7 @@ fn lower_ops(
         match op {
             IrOp::EnterScope(scope) => {
                 let lifecycle = scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("scope entry is out of bounds"))?;
                 // Reset every ordinary lexical lifetime before any block
                 // closure captures it. This is observationally equivalent to
@@ -1304,7 +1304,7 @@ fn lower_ops(
             }
             IrOp::PrepareCatchScope(scope) => {
                 let lifecycle = scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("catch scope preparation is out of bounds"))?;
                 if !lifecycle.function_entries.is_empty() {
                     return Err(Error::internal(
@@ -1320,7 +1320,7 @@ fn lower_ops(
             }
             IrOp::LeaveScope(scope) => {
                 for &index in &scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("scope exit is out of bounds"))?
                     .close_locals
                 {
@@ -1368,7 +1368,7 @@ fn lower_ops(
                 // Retain the parser scope as an IR invariant until lowering,
                 // but publish only its immutable linked descriptor ordinal.
                 scopes
-                    .get(scope.0)
+                    .get(scope.index())
                     .ok_or_else(|| Error::internal("eval call scope is out of bounds"))?;
                 let environment = environment
                     .ok_or_else(|| Error::internal("eval call has no linked environment"))?;
@@ -1468,7 +1468,7 @@ fn build_unlinked_debug(
     let definition = located
         .locate(definition)
         .map_err(|error| Error::internal(error.to_string()))?;
-    let mut entries = Vec::new();
+    let mut entries = Vec::with_capacity(pc_sites.len());
     let mut previous_position = Some(definition);
     for (pc, site) in pc_sites.iter().copied().enumerate() {
         let Some(site) = site else {
@@ -1588,9 +1588,7 @@ mod tests {
                      definition: SourceOffset,
                      range: Option<Range<SourceOffset>>,
                      sites: &[Option<SourceOffset>]| {
-            let offsets = std::iter::once(definition)
-                .chain(sites.iter().flatten().copied())
-                .collect();
+            let offsets = std::iter::once(definition).chain(sites.iter().flatten().copied());
             build_unlinked_debug(
                 source,
                 &index.locate_all(offsets),
@@ -1695,7 +1693,7 @@ mod tests {
                 &mut names,
             )
             .unwrap();
-            let scope = ScopeId(function.scopes.len());
+            let scope = ScopeId::new(function.scopes.len());
             function.scopes.push(IrScope {
                 parent: Some(function.body_scope),
                 kind: ScopeKind::With,
@@ -1717,8 +1715,8 @@ mod tests {
 
         let (function, scope, _) = make_function(false);
         let lifecycles = build_scope_lifecycles(&function, &[true]).unwrap();
-        assert!(lifecycles[scope.0].tdz_locals.is_empty());
-        assert!(lifecycles[scope.0].function_entries.is_empty());
-        assert_eq!(lifecycles[scope.0].close_locals, [0]);
+        assert!(lifecycles[scope.index()].tdz_locals.is_empty());
+        assert!(lifecycles[scope.index()].function_entries.is_empty());
+        assert_eq!(lifecycles[scope.index()].close_locals, [0]);
     }
 }

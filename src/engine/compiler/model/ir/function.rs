@@ -43,7 +43,7 @@ use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,7 +207,7 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// Appended through [`FunctionIr::push_global_declaration`], which keeps
     /// `global_declaration_index`.
     pub(in crate::engine::compiler) global_declarations: Vec<IrGlobalDeclaration>,
-    global_declaration_index: HashMap<NameId, FirstGlobalDeclarations>,
+    global_declaration_index: FxHashMap<NameId, FirstGlobalDeclarations>,
     /// Last direct function declaration attached to each ordinary
     /// function-scoped argument/local binding.
     pub(in crate::engine::compiler) hoisted_functions: Vec<IrHoistedFunction>,
@@ -240,12 +240,11 @@ pub(in crate::engine::compiler) struct FunctionIr {
     pub(in crate::engine::compiler) operands: super::operands::IrOperands,
     pub(in crate::engine::compiler) constants: Vec<IrConstant>,
     /// First primitive string occurrence; constant ordinals remain append-only.
-    pub(in crate::engine::compiler) string_constants: HashMap<JsString, u32>,
+    pub(in crate::engine::compiler) string_constants: FxHashMap<JsString, u32>,
     pub(in crate::engine::compiler) closure_variables: Vec<ClosureVariable>,
     /// The first slot of each storage in `closure_variables` once there are
     /// more than 8, kept by `push_closure_variable`.
-    #[expect(clippy::box_collection)]
-    pub(in crate::engine::compiler) closure_index: Option<Box<HashMap<ClosureKey, u16>>>,
+    pub(in crate::engine::compiler) closure_index: Option<Box<FxHashMap<ClosureKey, u16>>>,
     /// Exact flattened caller bindings imported by a synthetic direct-eval
     /// root. Entries retain their original R1w descriptor indices even though
     /// bindings are inserted into the synthetic root in outer-to-inner order
@@ -418,20 +417,22 @@ impl FunctionIr {
             },
         ];
         let var_scope = function_root;
-        let ops = if matches!(
+        // Most functions emit a few dozen operations; starting past the
+        // smallest growth steps saves their reallocations, and
+        // `release_growth` returns the excess once the body is parsed.
+        let mut ops = Vec::with_capacity(INITIAL_OPS);
+        if matches!(
             kind,
             FunctionKind::Ordinary
                 | FunctionKind::Method
                 | FunctionKind::Arrow
                 | FunctionKind::Eval(_)
         ) {
-            vec![SpannedIrOp {
+            ops.push(SpannedIrOp {
                 op: IrOp::EnterScope(body),
                 pc_site: None,
-            }]
-        } else {
-            Vec::new()
-        };
+            });
+        }
         let mut function = Self {
             body_parsed: false,
             parent,
@@ -474,7 +475,7 @@ impl FunctionIr {
             scopes,
             bindings: Vec::new(),
             global_declarations: Vec::new(),
-            global_declaration_index: HashMap::new(),
+            global_declaration_index: FxHashMap::default(),
             hoisted_functions: Vec::new(),
             eval_declarations: Vec::new(),
             eval_declarations_installed: false,
@@ -489,7 +490,7 @@ impl FunctionIr {
             ops,
             operands: Default::default(),
             constants: Vec::new(),
-            string_constants: HashMap::new(),
+            string_constants: FxHashMap::default(),
             closure_variables: Vec::new(),
             closure_index: None,
             external_bindings: Vec::new(),
@@ -609,8 +610,8 @@ impl FunctionIr {
             is_catch_parameter: false,
             declaration_span,
         });
-        self.scopes[storage_scope.0].bindings.push(binding);
-        self.scopes[storage_scope.0].index_binding(name, binding, &self.bindings);
+        self.scopes[storage_scope.index()].bindings.push(binding);
+        self.scopes[storage_scope.index()].index_binding(name, binding, &self.bindings);
         binding
     }
 
@@ -646,13 +647,13 @@ impl FunctionIr {
         scope: ScopeId,
         name: NameId,
     ) -> Option<BindingId> {
-        self.scopes[scope.0].binding_named(name, &self.bindings)
+        self.scopes[scope.index()].binding_named(name, &self.bindings)
     }
 
     /// Rare late function-name insertion changes order after normal appends.
     /// Rebuild once there, rather than burdening every name lookup with a scan.
     pub(in crate::engine::compiler) fn rebuild_scope_name_index(&mut self, scope: ScopeId) {
-        self.scopes[scope.0].rebuild_name_index(&self.bindings);
+        self.scopes[scope.index()].rebuild_name_index(&self.bindings);
     }
 
     pub(in crate::engine::compiler) fn binding_id_from_scope(
@@ -664,7 +665,7 @@ impl FunctionIr {
             if let Some(binding) = self.binding_id_in_scope(scope, name) {
                 return Some((scope, binding));
             }
-            scope = self.scopes[scope.0].parent?;
+            scope = self.scopes[scope.index()].parent?;
         }
     }
 
@@ -736,7 +737,7 @@ impl FunctionIr {
                     kind: binding.kind,
                 });
             }
-            scope = self.scopes[scope.0].parent?;
+            scope = self.scopes[scope.index()].parent?;
         }
     }
 
@@ -749,7 +750,7 @@ impl FunctionIr {
             if scope == ancestor {
                 return true;
             }
-            let Some(parent) = self.scopes[scope.0].parent else {
+            let Some(parent) = self.scopes[scope.index()].parent else {
                 return false;
             };
             scope = parent;
@@ -757,14 +758,34 @@ impl FunctionIr {
     }
 }
 
+/// The operation capacity a function's IR starts with.
+const INITIAL_OPS: usize = 16;
+
+impl FunctionIr {
+    /// Drop the spare capacity of the tables parsing grew. The tree keeps
+    /// every function's IR until lowering, so growth slack would otherwise
+    /// stay resident for the whole compilation.
+    pub(in crate::engine::compiler) fn release_growth(&mut self) {
+        self.ops.shrink_to_fit();
+        self.operands.spans.shrink_to_fit();
+        self.constants.shrink_to_fit();
+        self.bindings.shrink_to_fit();
+        self.scopes.shrink_to_fit();
+        self.locals.shrink_to_fit();
+    }
+}
+
 #[derive(Debug)]
-pub(in crate::engine::compiler) struct FunctionTree {
+pub(in crate::engine::compiler) struct FunctionTree<'source> {
     // Boxed elements keep wide IR records stationary while the arena grows.
     #[expect(clippy::vec_box)]
     pub(in crate::engine::compiler) functions: Vec<Box<FunctionIr>>,
     pub(in crate::engine::compiler) names: NameTable,
-    pub(in crate::engine::compiler) source: SourceText,
+    /// The caller's source, borrowed when it already owns a [`SourceText`].
+    pub(in crate::engine::compiler) source: std::borrow::Cow<'source, SourceText>,
     pub(in crate::engine::compiler) filename: JsString,
     pub(in crate::engine::compiler) module: Option<module::IrModule>,
     pub(in crate::engine::compiler) pending_unsupported: Option<Error>,
+    /// A buffer identifier resolution reuses for ancestor paths.
+    pub(in crate::engine::compiler) path_scratch: Vec<FunctionId>,
 }

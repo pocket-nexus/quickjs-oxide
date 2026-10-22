@@ -7,7 +7,7 @@ use oxide_core::vm::module::ModuleSource;
 
 use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::code::debug::DebugInfoMode;
-use crate::engine::compiler::register::{LowerError, LoweredScript, lower_script_into};
+use crate::engine::compiler::register::{LowerError, LoweredScript, lower_owned_script_into};
 use crate::engine::compiler::{
     EvalCompileContext, compile_unlinked_eval_source_with_filename,
     compile_unlinked_script_bytes_with_filename, compile_unlinked_script_source_with_filename,
@@ -74,7 +74,7 @@ pub(crate) fn compile_script(
 ) -> Result<LoweredScript, ScriptCompileError> {
     let script = compile_unlinked_script_bytes_with_filename(source, filename, debug_info)
         .map_err(ScriptCompileError::Front)?;
-    lower_script_into(compiler, &script).map_err(ScriptCompileError::Lower)
+    lower_owned_script_into(compiler, script).map_err(ScriptCompileError::Lower)
 }
 
 /// The debug-information mode `eval` code compiles with: the running API
@@ -105,7 +105,7 @@ pub(crate) fn compile_for_core(
     };
     let script = compiled
         .map_err(|error| front_compile_error(&error, source.raw_bytes(), request.filename))?;
-    let lowered = lower_script_into(compiler, &script).map_err(lower_compile_error)?;
+    let lowered = lower_owned_script_into(compiler, script).map_err(lower_compile_error)?;
     Ok(lowered.function)
 }
 

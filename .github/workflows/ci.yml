@@ -125,9 +125,7 @@ jobs:
               cmp "${file}" "${crate}/${file}"
             done
           done
-          cargo package --locked \
-            -p quickjs-oxide-regexp -p quickjs-oxide-core -p quickjs-oxide \
-            -p quickjs-oxide-host -p quickjs-oxide-cli
+          ./scripts/checks/package-crates.sh
 
       - name: Lint targets
         run: |

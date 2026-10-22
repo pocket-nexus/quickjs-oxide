@@ -444,3 +444,33 @@ fn primary_expression_slashes_are_rescanned_as_complete_regexp_tokens() {
         Value::Int(42)
     );
 }
+
+#[test]
+fn declined_arrow_probes_keep_the_arrow_parameter_diagnostic() {
+    for (source, message, column) in [
+        ("(function(){}) => 1", "missing formal parameter", 2),
+        (
+            "(function(){ return return }) => 1",
+            "missing formal parameter",
+            2,
+        ),
+        (
+            "(function(){ 'use strict'; 010 }) => 1",
+            "missing formal parameter",
+            2,
+        ),
+        ("((a)) => 1", "missing formal parameter", 2),
+        ("(1 +) => 1", "missing formal parameter", 2),
+        ("async (1) => 2", "missing formal parameter", 8),
+        ("f((function(){}) => 1)", "missing formal parameter", 4),
+        ("(1)\n=> 2", "unexpected token in expression: '=>'", 1),
+        ("(1 + ) + 2", "unexpected token in expression: ')'", 6),
+        ("(}) => 1", "unexpected token in expression: '}'", 2),
+        ("(function(){} => 1)", "expecting ')'", 15),
+    ] {
+        let error = compile_unlinked_script(source).unwrap_err();
+        assert_eq!(error.kind(), ErrorKind::Syntax, "{source:?}: {error}");
+        assert_eq!(error.message(), message, "{source:?}");
+        assert_eq!(error.span().unwrap().start.column, column, "{source:?}");
+    }
+}

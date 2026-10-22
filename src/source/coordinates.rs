@@ -163,25 +163,42 @@ impl<'source> QuickJsSourceIndex<'source> {
     }
 
     /// Locate every offset in `offsets` in one forward pass: each source
-    /// byte is scanned at most once, however the offsets are ordered.
+    /// byte is scanned at most once, however the offsets are ordered. The
+    /// offsets are kept as one bit per source byte, so collecting them is
+    /// linear and [`QuickJsLocatedOffsets::locate`] takes constant time.
     pub(crate) fn locate_all(
         &self,
-        mut offsets: Vec<SourceOffset>,
+        offsets: impl IntoIterator<Item = SourceOffset>,
     ) -> QuickJsLocatedOffsets<'_, 'source> {
-        offsets.sort_unstable();
-        offsets.dedup();
+        let len = self.locator.source.len();
+        let mut words = vec![0_u64; len / 64 + 1];
+        for offset in offsets {
+            let offset = offset.as_usize();
+            if offset <= len {
+                words[offset / 64] |= 1 << (offset % 64);
+            }
+        }
         let mut cursor = self.cursor();
-        let mut positions = Vec::with_capacity(offsets.len());
+        let mut ranks = Vec::with_capacity(words.len());
+        let mut positions = Vec::new();
         let mut errors = Vec::new();
-        for (at, &offset) in offsets.iter().enumerate() {
-            positions.push(cursor.locate(offset).unwrap_or_else(|error| {
-                errors.push((at, error));
-                LineColumn::default()
-            }));
+        for (word_index, &word) in words.iter().enumerate() {
+            ranks.push(positions.len());
+            let mut bits = word;
+            while bits != 0 {
+                let offset = word_index * 64 + bits.trailing_zeros() as usize;
+                bits &= bits - 1;
+                let at = positions.len();
+                positions.push(cursor.locate_byte_offset(offset).unwrap_or_else(|error| {
+                    errors.push((at, error));
+                    LineColumn::default()
+                }));
+            }
         }
         QuickJsLocatedOffsets {
             index: self,
-            offsets,
+            words,
+            ranks,
             positions,
             errors,
         }
@@ -223,13 +240,6 @@ pub(crate) struct QuickJsSourceCursor<'index, 'source> {
 }
 
 impl QuickJsSourceCursor<'_, '_> {
-    pub(crate) fn locate(
-        &mut self,
-        offset: SourceOffset,
-    ) -> Result<LineColumn, DebugMetadataError> {
-        self.locate_byte_offset(offset.as_usize())
-    }
-
     fn locate_byte_offset(&mut self, byte_offset: usize) -> Result<LineColumn, DebugMetadataError> {
         self.index.validate_byte_offset(byte_offset)?;
         let position = match self.previous {
@@ -254,18 +264,28 @@ impl QuickJsSourceCursor<'_, '_> {
 /// An offset outside the set is located through the index.
 pub(crate) struct QuickJsLocatedOffsets<'index, 'source> {
     index: &'index QuickJsSourceIndex<'source>,
-    /// Sorted and distinct.
-    offsets: Vec<SourceOffset>,
+    /// One bit per source byte offset: set for the located offsets.
+    words: Vec<u64>,
+    /// The located offsets before each word of `words`.
+    ranks: Vec<usize>,
+    /// The located offsets' coordinates, in offset order.
     positions: Vec<LineColumn>,
-    /// The offsets that did not locate, by their position in `offsets`.
+    /// The offsets that did not locate, by their position in `positions`.
     errors: Vec<(usize, DebugMetadataError)>,
 }
 
 impl QuickJsLocatedOffsets<'_, '_> {
     pub(crate) fn locate(&self, offset: SourceOffset) -> Result<LineColumn, DebugMetadataError> {
-        let Ok(at) = self.offsets.binary_search(&offset) else {
+        let byte_offset = offset.as_usize();
+        let bit = 1_u64 << (byte_offset % 64);
+        let Some(&word) = self
+            .words
+            .get(byte_offset / 64)
+            .filter(|&&word| word & bit != 0)
+        else {
             return self.index.locate(offset);
         };
+        let at = self.ranks[byte_offset / 64] + (word & (bit - 1)).count_ones() as usize;
         match self.errors.binary_search_by_key(&at, |&(at, _)| at) {
             Ok(error) => Err(self.errors[error].1),
             Err(_) => Ok(self.positions[at]),

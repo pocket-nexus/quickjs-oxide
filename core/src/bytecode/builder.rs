@@ -19,6 +19,14 @@ impl CodeBuilder {
         CodeBuilder::default()
     }
 
+    /// A builder with room for `instructions` before it grows.
+    pub fn with_capacity(instructions: usize) -> CodeBuilder {
+        CodeBuilder {
+            code: Vec::with_capacity(instructions),
+            handlers: Vec::new(),
+        }
+    }
+
     /// The index the next instruction gets.
     #[inline]
     pub fn pc(&self) -> u32 {

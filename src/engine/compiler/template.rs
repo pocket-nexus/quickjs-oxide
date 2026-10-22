@@ -81,7 +81,7 @@ impl<'source> Parser<'source> {
                 // bytecode stack has been checked, then encode QuickJS's low
                 // u16 operand bits during lowering.
                 self.emit(IrOp::TemplateCall {
-                    argument_count,
+                    argument_count: template_argument_count(argument_count)?,
                     method: true,
                 })?;
                 self.advance()?;
@@ -126,10 +126,7 @@ impl<'source> Parser<'source> {
         // QuickJS emits the constant load before parsing substitutions. Keep a
         // parser-private structural placeholder at that exact stack position,
         // then append each token's cooked/raw pair as it is reached.
-        let constant = self.add_constant(IrConstant::TemplateObject {
-            cooked: Vec::new(),
-            raw: Vec::new(),
-        })?;
+        let constant = self.add_constant(IrConstant::TemplateObject(Box::default()))?;
         self.emit(IrOp::PushConstant(constant))?;
         let mut argument_count = 1_usize;
 
@@ -151,7 +148,7 @@ impl<'source> Parser<'source> {
             ) {
                 self.emit_at(
                     IrOp::TemplateCall {
-                        argument_count,
+                        argument_count: template_argument_count(argument_count)?,
                         method,
                     },
                     source_offset(call_span)?,
@@ -181,17 +178,15 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let constant = usize::try_from(constant)
             .map_err(|_| Error::internal("template constant index did not fit usize"))?;
-        let Some(IrConstant::TemplateObject {
-            cooked: cooked_parts,
-            raw: raw_parts,
-        }) = self.current_ir_mut().constants.get_mut(constant)
+        let Some(IrConstant::TemplateObject(site)) =
+            self.current_ir_mut().constants.get_mut(constant)
         else {
             return Err(Error::internal(
                 "template site constant lost its structural payload",
             ));
         };
-        cooked_parts.push(cooked);
-        raw_parts.push(raw);
+        site.cooked.push(cooked);
+        site.raw.push(raw);
         Ok(())
     }
 
@@ -208,4 +203,10 @@ impl<'source> Parser<'source> {
         self.current_ir_mut().context.last_optional_chain = None;
         self.anonymous_function_definition = None;
     }
+}
+
+/// A template call's argument count. Every argument is a substitution of the
+/// source, so the count fits the 32-bit source offsets.
+fn template_argument_count(count: usize) -> Result<u32, Error> {
+    u32::try_from(count).map_err(|_| Error::new(ErrorKind::JsInternal, "out of memory"))
 }

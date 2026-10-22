@@ -668,26 +668,62 @@ fn current_token_context_is_distinct_from_future_scan_context() {
 fn nested_arrow_probe_summaries_respect_regexp_newlines_context_and_depth() {
     use crate::engine::compiler::arrow::ArrowHead;
     use crate::engine::compiler::lexer::LexContext;
-    let source = "((a = /\\)/) => a, (b)\n=> b)";
+    let source = "(x, (a = /\\)/) => a, (b)\n=> b)";
     let mut parser = lookahead_test_parser(source);
+    let inner = source.find("(a").unwrap();
     assert_eq!(parser.arrow_head_ahead(), None);
-    assert_eq!(parser.cached_parenthesized_arrow(1), Some(true));
+    assert_eq!(parser.cached_parenthesized_arrow(inner), Some(true));
     assert_eq!(
         parser.cached_parenthesized_arrow(source.find("(b)").unwrap()),
         Some(false)
     );
-    parser.advance().unwrap();
+    for _ in 0..3 {
+        parser.advance().unwrap();
+    }
     assert_eq!(parser.arrow_head_ahead(), Some(ArrowHead::Parenthesized));
     parser.set_future_lex_context(LexContext {
         generator: true,
         ..LexContext::default()
     });
-    assert_eq!(parser.cached_parenthesized_arrow(1), None);
+    assert_eq!(parser.cached_parenthesized_arrow(inner), None);
 
-    let deep = format!("{}0{}", "(".repeat(256), ")".repeat(256));
+    let deep = format!("{}0{}", "(x, ".repeat(256), ")".repeat(256));
     let parser = lookahead_test_parser(&deep);
     assert_eq!(parser.arrow_head_ahead(), None);
     assert_eq!(parser.cached_parenthesized_arrow(0), None);
+}
+
+#[test]
+fn arrow_probe_declines_at_a_first_token_no_parameter_list_starts_with() {
+    for source in [
+        "(function () { x => x; (y) => y })",
+        "(0, f)()",
+        "(`t`)",
+        "(!a)",
+        "(this)",
+    ] {
+        let parser = lookahead_test_parser(source);
+        assert_eq!(parser.arrow_head_ahead(), None, "{source}");
+        assert_eq!(parser.cached_parenthesized_arrow(0), None, "{source}");
+        assert!(
+            parser.lookahead.borrow().declined_arrow.is_some(),
+            "{source}"
+        );
+    }
+    for source in [
+        "(a) => a",
+        "([a]) => a",
+        "({a}) => a",
+        "(...a) => a",
+        "() => 0",
+    ] {
+        let parser = lookahead_test_parser(source);
+        assert!(parser.arrow_head_ahead().is_some(), "{source}");
+        assert!(
+            parser.lookahead.borrow().declined_arrow.is_none(),
+            "{source}"
+        );
+    }
 }
 
 #[test]

@@ -25,11 +25,16 @@ pub(in crate::engine::compiler) enum IrConstant {
     /// Runtime-independent template-site payload. Publication materializes
     /// the two frozen realm-local Arrays once and replaces this structural
     /// constant with the cooked template object identity retained by bytecode.
-    TemplateObject {
-        cooked: Vec<Option<JsString>>,
-        raw: Vec<JsString>,
-    },
+    TemplateObject(Box<TemplateSite>),
     Child(FunctionId),
+}
+
+/// The cooked and raw strings of one template site, boxed in [`IrConstant`]
+/// so a rare site does not widen every constant.
+#[derive(Debug, Default)]
+pub(in crate::engine::compiler) struct TemplateSite {
+    pub(in crate::engine::compiler) cooked: Vec<Option<JsString>>,
+    pub(in crate::engine::compiler) raw: Vec<JsString>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -117,7 +122,7 @@ pub(in crate::engine::compiler) enum IrOp {
     /// u16 argument guard.  Retain the full count until the bytecode stack
     /// limit has been checked during lowering.
     TemplateCall {
-        argument_count: usize,
+        argument_count: u32,
         method: bool,
     },
     /// Parser/linker form of QuickJS `OP_eval`. Retain the syntactic call
@@ -192,7 +197,7 @@ impl IrOp {
             Self::TemplateCall {
                 argument_count,
                 method,
-            } => (argument_count + usize::from(*method) + 1, 1),
+            } => (*argument_count as usize + usize::from(*method) + 1, 1),
             Self::EvalCall { arguments, .. } => match arguments {
                 CallArguments::Fixed(argument_count) => (usize::from(*argument_count) + 1, 1),
                 CallArguments::Spread => (2, 1),
