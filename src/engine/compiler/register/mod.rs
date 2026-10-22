@@ -317,7 +317,7 @@ fn lower_tree(
     let mut children = Vec::new();
     for (index, constant) in function.constants().iter().enumerate() {
         if let Some(child) = constant.as_child() {
-            let name = names.get(&(index as u32)).copied();
+            let name = names.get(index).copied().flatten();
             children.push(lower_tree(
                 runtime,
                 tree,
@@ -328,7 +328,7 @@ fn lower_tree(
             )?);
         }
     }
-    let named = names.into_keys().collect();
+    let named = names.iter().map(Option::is_some).collect();
     let (unit, pool) = lower_function(
         runtime, tree, function, analysis, layout, parent, children, inferred, named,
     )?;
@@ -338,7 +338,7 @@ fn lower_tree(
 }
 
 /// The names `function`'s code gives its anonymous children where it creates
-/// them, by constant index: a child without a name of its own whose every
+/// them, indexed by constant (empty when it creates none): a child without a name of its own whose every
 /// `FClosure` is followed, at no join, by a `SetName` of a string constant or
 /// a plain method's `DefineMethod`. Its unit carries the name, so a new
 /// closure is named without `SetFunctionName` and its properties stay
@@ -346,14 +346,22 @@ fn lower_tree(
 fn inferred_names<'f>(
     function: &'f UnlinkedFunction,
     analysis: &Analysis,
-) -> HashMap<u32, &'f JsString> {
+) -> Vec<Option<&'f JsString>> {
     let code = function.code();
     let constants = function.constants();
+    if !constants
+        .iter()
+        .any(|constant| constant.as_child().is_some())
+    {
+        return Vec::new();
+    }
     let string = |index: u32| match constants.get(index as usize)?.as_primitive()? {
         PrimitiveValue::String(string) => Some(string),
         _ => None,
     };
-    let mut names: HashMap<u32, Option<&'f JsString>> = HashMap::new();
+    // Per constant: unseen, a name every `FClosure` so far agrees on, or
+    // `Some(None)` once one does not.
+    let mut names: Vec<Option<Option<&'f JsString>>> = vec![None; constants.len()];
     for (pc, instruction) in code.iter().enumerate() {
         let Instruction::FClosure(child) = *instruction else {
             continue;
@@ -372,15 +380,16 @@ fn inferred_names<'f>(
             }) => string(key),
             _ => None,
         };
-        let entry = names.entry(child).or_insert(name);
-        if *entry != name {
-            *entry = None;
+        let Some(entry) = names.get_mut(child as usize) else {
+            continue;
+        };
+        match entry {
+            None => *entry = Some(name),
+            Some(seen) if *seen != name => *seen = None,
+            Some(_) => {}
         }
     }
-    names
-        .into_iter()
-        .filter_map(|(child, name)| Some((child, name?)))
-        .collect()
+    names.into_iter().map(Option::flatten).collect()
 }
 
 /// Lowers one function whose children are already published, given its
@@ -396,7 +405,7 @@ fn lower_function(
     parent: Option<Layout>,
     children: Vec<CodeUnitId>,
     inferred: Option<&JsString>,
-    named: HashSet<u32>,
+    named: Vec<bool>,
 ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
     check_surface(function)?;
     let is_script = parent.is_none() && !function.metadata().is_module;
@@ -834,7 +843,7 @@ struct Lowerer<'a, 'c> {
     inferred_name: Option<JsString>,
     /// The children whose units carry the name the `SetName` after their
     /// `FClosure` gives: that `SetName` emits nothing.
-    named_children: HashSet<u32>,
+    named_children: Vec<bool>,
 }
 
 impl<'a, 'c> Lowerer<'a, 'c> {
@@ -908,7 +917,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             result_scratch: 0,
             store_stubs: Vec::new(),
             inferred_name: None,
-            named_children: HashSet::new(),
+            named_children: Vec::new(),
             pc: 0,
             last_dest: None,
             checked: HashSet::new(),
@@ -1973,7 +1982,8 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             I::SetName(_)
                 if pc > 0
                     && matches!(self.code[pc - 1],
-                        I::FClosure(child) if self.named_children.contains(&child)) => {}
+                        I::FClosure(child)
+                            if self.named_children.get(child as usize) == Some(&true)) => {}
             I::SetName(name) => {
                 let entry = self.pool_entry(name)?;
                 let scratch = self.scratch()?;
