@@ -126,10 +126,7 @@ impl<'source> Parser<'source> {
         // QuickJS emits the constant load before parsing substitutions. Keep a
         // parser-private structural placeholder at that exact stack position,
         // then append each token's cooked/raw pair as it is reached.
-        let constant = self.add_constant(IrConstant::TemplateObject {
-            cooked: Vec::new(),
-            raw: Vec::new(),
-        })?;
+        let constant = self.add_constant(IrConstant::TemplateObject(Box::default()))?;
         self.emit(IrOp::PushConstant(constant))?;
         let mut argument_count = 1_usize;
 
@@ -181,17 +178,15 @@ impl<'source> Parser<'source> {
     ) -> Result<(), Error> {
         let constant = usize::try_from(constant)
             .map_err(|_| Error::internal("template constant index did not fit usize"))?;
-        let Some(IrConstant::TemplateObject {
-            cooked: cooked_parts,
-            raw: raw_parts,
-        }) = self.current_ir_mut().constants.get_mut(constant)
+        let Some(IrConstant::TemplateObject(site)) =
+            self.current_ir_mut().constants.get_mut(constant)
         else {
             return Err(Error::internal(
                 "template site constant lost its structural payload",
             ));
         };
-        cooked_parts.push(cooked);
-        raw_parts.push(raw);
+        site.cooked.push(cooked);
+        site.raw.push(raw);
         Ok(())
     }
 

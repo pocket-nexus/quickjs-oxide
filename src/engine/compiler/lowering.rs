@@ -238,7 +238,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
                 ErrorKind::Unsupported,
                 "RegExp literals require runtime publication; use Context::compile or Context::eval",
             )),
-            IrConstant::TemplateObject { .. } => Err(Error::new(
+            IrConstant::TemplateObject(_) => Err(Error::new(
                 ErrorKind::Unsupported,
                 "tagged template objects require runtime publication; use Context::compile or Context::eval",
             )),
@@ -518,8 +518,8 @@ pub(super) fn lower_unlinked_tree(
                 IrConstant::RegExp { pattern, program } => {
                     Ok(UnlinkedConstant::regexp(pattern, program))
                 }
-                IrConstant::TemplateObject { cooked, raw } => {
-                    UnlinkedConstant::template_object(cooked, raw).map_err(|error| {
+                IrConstant::TemplateObject(site) => {
+                    UnlinkedConstant::template_object(site.cooked, site.raw).map_err(|error| {
                         Error::internal(format!(
                             "compiler produced an invalid template object: {error}"
                         ))

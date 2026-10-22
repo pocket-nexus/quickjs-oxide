@@ -25,11 +25,16 @@ pub(in crate::engine::compiler) enum IrConstant {
     /// Runtime-independent template-site payload. Publication materializes
     /// the two frozen realm-local Arrays once and replaces this structural
     /// constant with the cooked template object identity retained by bytecode.
-    TemplateObject {
-        cooked: Vec<Option<JsString>>,
-        raw: Vec<JsString>,
-    },
+    TemplateObject(Box<TemplateSite>),
     Child(FunctionId),
+}
+
+/// The cooked and raw strings of one template site, boxed in [`IrConstant`]
+/// so a rare site does not widen every constant.
+#[derive(Debug, Default)]
+pub(in crate::engine::compiler) struct TemplateSite {
+    pub(in crate::engine::compiler) cooked: Vec<Option<JsString>>,
+    pub(in crate::engine::compiler) raw: Vec<JsString>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
