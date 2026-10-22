@@ -15,6 +15,7 @@
 //! already committed past; the cache is capped and front-compacts so a probe
 //! that scans an arbitrarily long region cannot make parsing quadratic.
 
+use crate::engine::compiler::arrow::DeclinedArrow;
 use crate::engine::compiler::destructuring::{BindingPatternScan, ParenthesizedParameterScan};
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexError;
@@ -52,6 +53,9 @@ pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     /// recorded. Context is checked because yield/await affect tokenization.
     parentheses: HashMap<usize, (LexContext, bool)>,
     parentheses_pruned_at: Option<usize>,
+    /// The arrow probe that declined at the first token of the
+    /// AssignmentExpression being parsed (`arrow.rs`).
+    pub(in crate::engine::compiler) declined_arrow: Option<DeclinedArrow<'source>>,
     // One result per probe family is enough for adjacent grammar consumers.
     // These bounded summaries are pure functions of offset/context and never
     // evict token entries or grow with source length.
