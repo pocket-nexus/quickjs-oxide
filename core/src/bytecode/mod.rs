@@ -445,9 +445,17 @@ impl CodeUnit {
     /// The distinct atoms the instructions name as property keys, with the
     /// function's name: what a live dynamic unit keeps alive.
     pub(crate) fn key_atoms(&self) -> Box<[crate::value::StringId]> {
+        let mut atoms: Vec<crate::value::StringId> = self.key_atom_uses().collect();
+        atoms.sort_unstable();
+        atoms.dedup();
+        atoms.into()
+    }
+
+    /// Every atom the instructions name as a property key, and the
+    /// function's name, once per use.
+    pub(crate) fn key_atom_uses(&self) -> impl Iterator<Item = crate::value::StringId> + '_ {
         use crate::heap::atom::KeyKind;
-        let mut atoms: Vec<crate::value::StringId> = self
-            .code
+        self.code
             .iter()
             .filter(|insn| matches!(insn.op.format(), Format::Key | Format::AKey | Format::ABKey))
             .filter_map(|insn| match insn.key().kind() {
@@ -455,10 +463,6 @@ impl CodeUnit {
                 _ => None,
             })
             .chain(self.name_atom)
-            .collect();
-        atoms.sort_unstable();
-        atoms.dedup();
-        atoms.into()
     }
 
     /// Bytes the unit holds: its instructions, tables, positions, source
