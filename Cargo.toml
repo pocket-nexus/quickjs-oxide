@@ -57,7 +57,7 @@ default-members = [".", "apps/cli"]
 resolver = "3"
 
 [workspace.package]
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
@@ -70,14 +70,14 @@ publish = true
 [workspace.dependencies]
 # Each published member carries the workspace version, which cut-release.sh
 # sets here too.
-quickjs-oxide-web-host = { path = "adapters/web", version = "0.4.0" }
-quickjs-oxide-host = { path = "adapters/native", version = "0.4.0" }
-quickjs-oxide = { path = ".", version = "0.4.0", default-features = false }
+quickjs-oxide-web-host = { path = "adapters/web", version = "0.4.1" }
+quickjs-oxide-host = { path = "adapters/native", version = "0.4.1" }
+quickjs-oxide = { path = ".", version = "0.4.1", default-features = false }
 # The core and regexp packages are named for the engine (`oxide-core` is
 # taken on crates.io); their libraries keep the names `oxide_core` and
 # `oxide_regexp`.
-oxide-core = { path = "core", version = "0.4.0", package = "quickjs-oxide-core" }
-oxide-regexp = { path = "regexp", version = "0.4.0", package = "quickjs-oxide-regexp" }
+oxide-core = { path = "core", version = "0.4.1", package = "quickjs-oxide-core" }
+oxide-regexp = { path = "regexp", version = "0.4.1", package = "quickjs-oxide-regexp" }
 num-bigint = "=0.5.1"
 num-traits = "=0.2.19"
 tz-rs = "=0.7.3"
