@@ -120,13 +120,35 @@ pub(crate) fn lower_script_into(
     runtime: &mut Compiler<'_>,
     script: &UnlinkedFunction,
 ) -> Result<LoweredScript, LowerError> {
+    lower_script_with(runtime, script, TreeCache::default())
+}
+
+/// [`lower_script_into`] for a script the caller no longer needs: each
+/// function's source text moves into its unit instead of being copied.
+pub(crate) fn lower_owned_script_into(
+    runtime: &mut Compiler<'_>,
+    mut script: UnlinkedFunction,
+) -> Result<LoweredScript, LowerError> {
+    let mut sources = Vec::new();
+    script.take_sources(&mut sources);
+    let tree = TreeCache {
+        sources: Some(sources.into_iter()),
+        ..TreeCache::default()
+    };
+    lower_script_with(runtime, &script, tree)
+}
+
+fn lower_script_with(
+    runtime: &mut Compiler<'_>,
+    script: &UnlinkedFunction,
+    mut tree: TreeCache,
+) -> Result<LoweredScript, LowerError> {
     // BigInt constants are heap records but not atoms, which the compilation
     // keeps: they stay on the root stack until `instantiate` attaches the
     // constant tables.
     let mark = runtime.heap_mut().roots().mark();
     let result = (|| {
         let mut constants = HashMap::new();
-        let mut tree = TreeCache::default();
         let root = lower_tree(runtime, &mut tree, script, None, None, &mut constants)?;
         let order = runtime.units().tree(root);
         let tables: Vec<&[CoreValue]> = order.iter().map(|id| constants[id].as_slice()).collect();
@@ -432,6 +454,9 @@ struct TreeCache {
     analyses: Vec<Analysis>,
     analysis_scratch: analysis::Scratch,
     lowering: LowerScratch,
+    /// Each function's source text moved out of an owned tree, in the order
+    /// the functions lower (children first); `None` copies it from the tree.
+    sources: Option<std::vec::IntoIter<Option<Box<[u8]>>>>,
 }
 
 /// A [`Lowerer`]'s buffers between functions, empty.
@@ -3457,12 +3482,15 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             })?),
             _ => None,
         };
-        let source = self
-            .function
-            .debug()
-            .and_then(|debug| debug.source.as_ref())
-            .filter(|_| !self.is_script)
-            .map(|bytes| bytes.to_vec().into_boxed_slice());
+        let source = match &mut self.tree.sources {
+            Some(sources) => sources.next().flatten(),
+            None => self
+                .function
+                .debug()
+                .and_then(|debug| debug.source.as_deref())
+                .map(Box::from),
+        }
+        .filter(|_| !self.is_script);
         let captures = self.captures(parent)?;
         let name = self
             .function

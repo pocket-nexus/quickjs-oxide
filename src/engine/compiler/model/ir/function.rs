@@ -758,12 +758,13 @@ impl FunctionIr {
 }
 
 #[derive(Debug)]
-pub(in crate::engine::compiler) struct FunctionTree {
+pub(in crate::engine::compiler) struct FunctionTree<'source> {
     // Boxed elements keep wide IR records stationary while the arena grows.
     #[expect(clippy::vec_box)]
     pub(in crate::engine::compiler) functions: Vec<Box<FunctionIr>>,
     pub(in crate::engine::compiler) names: NameTable,
-    pub(in crate::engine::compiler) source: SourceText,
+    /// The caller's source, borrowed when it already owns a [`SourceText`].
+    pub(in crate::engine::compiler) source: std::borrow::Cow<'source, SourceText>,
     pub(in crate::engine::compiler) filename: JsString,
     pub(in crate::engine::compiler) module: Option<module::IrModule>,
     pub(in crate::engine::compiler) pending_unsupported: Option<Error>,
