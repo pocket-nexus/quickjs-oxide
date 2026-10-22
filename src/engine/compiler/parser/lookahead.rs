@@ -17,7 +17,6 @@
 
 use crate::engine::compiler::arrow::DeclinedArrow;
 use crate::engine::compiler::destructuring::{BindingPatternScan, ParenthesizedParameterScan};
-use crate::engine::compiler::hash::FxHashMap;
 use crate::engine::compiler::lexer::LexContext;
 use crate::engine::compiler::lexer::LexError;
 use crate::engine::compiler::lexer::Lexer;
@@ -27,6 +26,7 @@ use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::parser::context::ForHeadDelimiter;
 use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
+use oxide_core::FxHashMap;
 use std::cell::{Cell, RefCell};
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a

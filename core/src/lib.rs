@@ -21,6 +21,7 @@ pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, UnitRef, Units
 pub use embed::{KeyName, NativeCx, PropertyDescriptor};
 pub use heap::atom::{KeyKind, PropertyKey};
 pub use heap::gc::{Handle, HeapLimits, RootMark};
+pub use heap::hash::{FxHashMap, FxHashSet, FxHasher};
 pub use heap::object::ObjectKind;
 pub use heap::report::MemoryReport;
 pub use heap::{AtomMode, BytecodeTemplate, Heap, HeapError};

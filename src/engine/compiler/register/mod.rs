@@ -32,7 +32,7 @@ mod tests;
 #[cfg(test)]
 mod window_tests;
 
-use crate::engine::compiler::hash::{FxHashMap, FxHashSet};
+use oxide_core::{FxHashMap, FxHashSet};
 use std::fmt;
 
 use oxide_core::bytecode::builder::UnitLayout;
@@ -935,7 +935,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             function,
             code,
             is_script,
-            builder: CodeBuilder::new(),
+            builder: CodeBuilder::with_capacity(function.code().len()),
             stack,
             temp_base: layout.temp_base,
             layout,

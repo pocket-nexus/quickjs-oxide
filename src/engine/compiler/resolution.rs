@@ -39,7 +39,6 @@ use crate::engine::code::function::metadata::EvalKind;
 use crate::engine::code::function::metadata::EvalScope;
 use crate::engine::code::function::metadata::EvalScopeKind;
 use crate::engine::code::function::metadata::EvalVariableEnvironment;
-use crate::engine::compiler::hash::FxHashMap;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::pseudo_binding::PseudoBinding;
 use crate::engine::compiler::pseudo_binding::ensure_eval_visible_pseudo_bindings;
@@ -47,6 +46,7 @@ use crate::engine::compiler::pseudo_binding::find_or_create_own_pseudo_binding;
 use crate::engine::compiler::pseudo_binding::install_pseudo_binding_prologues;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
+use oxide_core::FxHashMap;
 
 use crate::engine::compiler::model::bindings::ResolvedBinding;
 
