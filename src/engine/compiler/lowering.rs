@@ -281,17 +281,14 @@ pub(super) fn lower_unlinked_tree(
     };
     // Every function's definition and source sites, located together.
     let located = source_index.as_ref().map(|index| {
-        let sites = tree_functions
-            .iter()
-            .flat_map(|function| {
-                std::iter::once(function.source.definition).chain(
-                    function
-                        .ops
-                        .iter()
-                        .filter_map(|operation| operation.pc_site),
-                )
-            })
-            .collect();
+        let sites = tree_functions.iter().flat_map(|function| {
+            std::iter::once(function.source.definition).chain(
+                function
+                    .ops
+                    .iter()
+                    .filter_map(|operation| operation.pc_site),
+            )
+        });
         index.locate_all(sites)
     });
     let function_count = tree_functions.len();
@@ -1591,9 +1588,7 @@ mod tests {
                      definition: SourceOffset,
                      range: Option<Range<SourceOffset>>,
                      sites: &[Option<SourceOffset>]| {
-            let offsets = std::iter::once(definition)
-                .chain(sites.iter().flatten().copied())
-                .collect();
+            let offsets = std::iter::once(definition).chain(sites.iter().flatten().copied());
             build_unlinked_debug(
                 source,
                 &index.locate_all(offsets),
