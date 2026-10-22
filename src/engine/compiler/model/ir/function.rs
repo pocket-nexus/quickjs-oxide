@@ -15,6 +15,7 @@ use crate::engine::code::function::metadata::FunctionKind as BytecodeFunctionKin
 use crate::engine::code::function::metadata::ParameterDefaultSource;
 use crate::engine::compiler::EVAL_RET_LOCAL_NAME;
 use crate::engine::compiler::MAX_LOCAL_VARIABLES;
+use crate::engine::compiler::hash::FxHashMap;
 use crate::engine::compiler::lexer::Span;
 use crate::engine::compiler::model::bindings::BindingId;
 use crate::engine::compiler::model::bindings::BindingKind;
@@ -43,7 +44,6 @@ use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
-use oxide_core::FxHashMap;
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

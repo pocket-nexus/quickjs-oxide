@@ -11,6 +11,7 @@ use crate::engine::api::error::NativeErrorMessage;
 use crate::engine::code::bytecode::Instruction;
 use crate::engine::code::function::UnlinkedFunction;
 use crate::engine::code::module::ModuleImportAttribute;
+use crate::engine::compiler::hash::FxHashMap;
 use crate::engine::compiler::lexer::Keyword;
 use crate::engine::compiler::lexer::LexicalGoal;
 use crate::engine::compiler::lexer::Punctuator;
@@ -32,7 +33,6 @@ use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use oxide_core::FxHashMap;
 
 use crate::engine::code::module::{
     MODULE_DEFAULT_BINDING_NAME, MODULE_IMPORT_META_BINDING_NAME, ModuleExport, ModuleExportTarget,

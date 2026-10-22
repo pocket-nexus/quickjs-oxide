@@ -15,6 +15,7 @@
 pub mod lexer;
 mod options;
 pub use options::{CompileOptions, DEFAULT_EVAL_FILENAME, EvalCompileContext};
+mod hash;
 mod model;
 mod names;
 use model::ir::function::FunctionTree;

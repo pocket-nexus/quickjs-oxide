@@ -37,6 +37,8 @@ use crate::engine::code::function::metadata::ParameterBodyStorage;
 use crate::engine::code::function::metadata::ParameterEnvironmentLayout;
 use crate::engine::code::function::metadata::ParameterPatternCopy;
 use crate::engine::compiler::flow::lowered_max_stack;
+#[cfg(test)]
+use crate::engine::compiler::hash::FxHashMap;
 use crate::engine::compiler::optimize::{
     apply_quickjs_late_throw_sites, fold_quickjs_constant_branches,
 };
@@ -47,8 +49,6 @@ use crate::engine::value::PrimitiveValue as Value;
 use crate::source::QuickJsSourceLocator;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
-#[cfg(test)]
-use oxide_core::FxHashMap;
 use std::ops::Range;
 
 #[derive(Debug, Default)]
