@@ -72,8 +72,14 @@ can be configured, so the first version of each crate is published by hand:
    `pocket-nexus/quickjs-oxide`, workflow `release.yml`.
 4. Push the tag. The `crates` job finds every crate already published.
 
-`fast` CI runs `cargo package` on the five crates, which builds each from its
-packaged sources alone. Each package lists its files with `include`: sources,
+`fast` CI runs `scripts/checks/package-crates.sh`, which packages the five
+crates and builds each from its packaged sources alone. Cargo resolves one
+member's dependency on another to the copy packaged beside it only when
+crates.io has no release of that version, so the script packages at an
+unpublished pre-release of the next patch version (`0.4.1-ci` for `0.4.0`)
+and restores `Cargo.toml` and `Cargo.lock` afterwards; a change may use a
+core API that the last release lacks. `cut-release.sh` sets the version
+through `scripts/release/set-workspace-version.sh`, the same script. Each package lists its files with `include`: sources,
 `README.md`, and `LICENSE`, `NOTICE` and `LICENSES/` (copies of the root's,
 which the same CI step compares); the tests, corpora and tooling stay in the
 repository.
