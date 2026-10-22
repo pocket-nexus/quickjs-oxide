@@ -48,7 +48,7 @@ use crate::source::QuickJsSourceLocator;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
 #[cfg(test)]
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 use std::ops::Range;
 
 #[derive(Debug, Default)]
@@ -215,7 +215,7 @@ pub(super) fn lower_detached_script(tree: FunctionTree) -> Result<DetachedByteco
     let captured_locals = vec![false; function.locals.len()];
     let scope_lifecycles = build_scope_lifecycles(&function, &captured_locals)?;
     let code = lower_ops(function.ops, &scope_lifecycles, function.operands)?.code;
-    let mut atom_strings = HashMap::<u32, Vec<JsString>>::new();
+    let mut atom_strings = FxHashMap::<u32, Vec<JsString>>::default();
     let constants = function
         .constants
         .into_iter()
@@ -1136,7 +1136,7 @@ fn elide_discarded_assignment_ops(operations: &mut [SpannedIrOp]) -> Vec<bool> {
             IrOp::Bytecode(instruction) => super::relocation::instruction_target(instruction),
             _ => None,
         })
-        .collect::<std::collections::HashSet<_>>();
+        .collect::<oxide_core::FxHashSet<_>>();
     let targeted = |index: usize| u32::try_from(index).is_ok_and(|index| targets.contains(&index));
     let mut index = 0;
     while index + 1 < operations.len() {

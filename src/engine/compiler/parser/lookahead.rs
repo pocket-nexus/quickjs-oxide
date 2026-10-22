@@ -26,8 +26,8 @@ use crate::engine::compiler::lexer::Token;
 use crate::engine::compiler::parser::context::ForHeadDelimiter;
 use crate::engine::compiler::parser::context::ForIterationKind;
 use crate::engine::compiler::parser::context::Parser;
+use oxide_core::FxHashMap;
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 
 /// Upper bound on memoized entries. A probe that scans a giant region (say a
 /// whole array literal looking for its initializer) stops caching past this
@@ -51,7 +51,7 @@ pub(in crate::engine::compiler) struct LookaheadCache<'source> {
     /// Complete nested cover-grammar probes can be reused when real parsing
     /// reaches the same parentheses. Failed/depth-limited probes are never
     /// recorded. Context is checked because yield/await affect tokenization.
-    parentheses: HashMap<usize, (LexContext, bool)>,
+    parentheses: FxHashMap<usize, (LexContext, bool)>,
     parentheses_pruned_at: Option<usize>,
     /// The arrow probe that declined at the first token of the
     /// AssignmentExpression being parsed (`arrow.rs`).

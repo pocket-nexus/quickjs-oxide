@@ -3,7 +3,7 @@
 use super::bindings::BindingId;
 use crate::engine::compiler::model::bindings::IrBinding;
 use crate::engine::compiler::names::NameId;
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 
 /// Function-local lexical scope identity. QuickJS carries the corresponding
 /// `scope_level` beside every unresolved scope opcode; keeping it typed avoids
@@ -47,8 +47,7 @@ pub(in crate::engine::compiler) struct IrScope {
     /// Last binding in declaration order for each name. The ordered list remains
     /// authoritative for validation, lowering and observable declaration order.
     /// Boxing keeps every small scope's header compact; only large scopes allocate it.
-    #[expect(clippy::box_collection)]
-    pub(in crate::engine::compiler) bindings_by_name: Option<Box<HashMap<NameId, BindingId>>>,
+    pub(in crate::engine::compiler) bindings_by_name: Option<Box<FxHashMap<NameId, BindingId>>>,
 }
 
 impl IrScope {

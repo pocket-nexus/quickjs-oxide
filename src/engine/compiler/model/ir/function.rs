@@ -43,7 +43,7 @@ use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
 use crate::source::SourceOffset;
 use crate::source::text::SourceText;
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 use std::ops::Range;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -207,7 +207,7 @@ pub(in crate::engine::compiler) struct FunctionIr {
     /// Appended through [`FunctionIr::push_global_declaration`], which keeps
     /// `global_declaration_index`.
     pub(in crate::engine::compiler) global_declarations: Vec<IrGlobalDeclaration>,
-    global_declaration_index: HashMap<NameId, FirstGlobalDeclarations>,
+    global_declaration_index: FxHashMap<NameId, FirstGlobalDeclarations>,
     /// Last direct function declaration attached to each ordinary
     /// function-scoped argument/local binding.
     pub(in crate::engine::compiler) hoisted_functions: Vec<IrHoistedFunction>,
@@ -240,12 +240,11 @@ pub(in crate::engine::compiler) struct FunctionIr {
     pub(in crate::engine::compiler) operands: super::operands::IrOperands,
     pub(in crate::engine::compiler) constants: Vec<IrConstant>,
     /// First primitive string occurrence; constant ordinals remain append-only.
-    pub(in crate::engine::compiler) string_constants: HashMap<JsString, u32>,
+    pub(in crate::engine::compiler) string_constants: FxHashMap<JsString, u32>,
     pub(in crate::engine::compiler) closure_variables: Vec<ClosureVariable>,
     /// The first slot of each storage in `closure_variables` once there are
     /// more than 8, kept by `push_closure_variable`.
-    #[expect(clippy::box_collection)]
-    pub(in crate::engine::compiler) closure_index: Option<Box<HashMap<ClosureKey, u16>>>,
+    pub(in crate::engine::compiler) closure_index: Option<Box<FxHashMap<ClosureKey, u16>>>,
     /// Exact flattened caller bindings imported by a synthetic direct-eval
     /// root. Entries retain their original R1w descriptor indices even though
     /// bindings are inserted into the synthetic root in outer-to-inner order
@@ -474,7 +473,7 @@ impl FunctionIr {
             scopes,
             bindings: Vec::new(),
             global_declarations: Vec::new(),
-            global_declaration_index: HashMap::new(),
+            global_declaration_index: FxHashMap::default(),
             hoisted_functions: Vec::new(),
             eval_declarations: Vec::new(),
             eval_declarations_installed: false,
@@ -489,7 +488,7 @@ impl FunctionIr {
             ops,
             operands: Default::default(),
             constants: Vec::new(),
-            string_constants: HashMap::new(),
+            string_constants: FxHashMap::default(),
             closure_variables: Vec::new(),
             closure_index: None,
             external_bindings: Vec::new(),

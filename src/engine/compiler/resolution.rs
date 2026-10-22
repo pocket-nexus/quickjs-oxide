@@ -46,7 +46,7 @@ use crate::engine::compiler::pseudo_binding::find_or_create_own_pseudo_binding;
 use crate::engine::compiler::pseudo_binding::install_pseudo_binding_prologues;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 
 use crate::engine::compiler::model::bindings::ResolvedBinding;
 
@@ -443,7 +443,7 @@ fn link_eval_environments(tree: &mut FunctionTree, function_id: FunctionId) -> R
             _ => None,
         })
         .collect::<Vec<_>>();
-    let mut by_scope = HashMap::<ScopeId, u16>::new();
+    let mut by_scope = FxHashMap::<ScopeId, u16>::default();
     let mut linked_sites = Vec::with_capacity(sites.len());
     for (operation_index, scope) in sites {
         let environment = if let Some(&environment) = by_scope.get(&scope) {

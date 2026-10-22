@@ -32,7 +32,7 @@ mod tests;
 #[cfg(test)]
 mod window_tests;
 
-use std::collections::{HashMap, HashSet};
+use oxide_core::{FxHashMap, FxHashSet};
 use std::fmt;
 
 use oxide_core::bytecode::builder::UnitLayout;
@@ -148,7 +148,7 @@ fn lower_script_with(
     // constant tables.
     let mark = runtime.heap_mut().roots().mark();
     let result = (|| {
-        let mut constants = HashMap::new();
+        let mut constants = FxHashMap::default();
         let root = lower_tree(runtime, &mut tree, script, None, None, &mut constants)?;
         let order = runtime.units().tree(root);
         let tables: Vec<&[CoreValue]> = order.iter().map(|id| constants[id].as_slice()).collect();
@@ -330,7 +330,7 @@ fn lower_tree(
     function: &UnlinkedFunction,
     parent: Option<Layout>,
     inferred: Option<&JsString>,
-    constants: &mut HashMap<CodeUnitId, Vec<CoreValue>>,
+    constants: &mut FxHashMap<CodeUnitId, Vec<CoreValue>>,
 ) -> Result<CodeUnitId, LowerError> {
     let mut analysis = tree.analyses.pop().unwrap_or_default();
     analyze_into(function.code(), &mut analysis, &mut tree.analysis_scratch)?;
@@ -444,8 +444,8 @@ fn lower_function(
 struct TreeCache {
     /// The key and the atom of each string of the tree, by its address; the
     /// string is kept, so the address is not reused while the entry is.
-    keys: HashMap<usize, (JsString, PropertyKey)>,
-    atoms: HashMap<usize, (JsString, StringId)>,
+    keys: FxHashMap<usize, (JsString, PropertyKey)>,
+    atoms: FxHashMap<usize, (JsString, StringId)>,
     /// The tree's file name, converted once.
     filename: Option<(JsString, std::rc::Rc<str>)>,
     /// Buffers kept for the next function: analyses not in use (a parent's
@@ -839,17 +839,17 @@ struct Lowerer<'a, 'c> {
     /// The last instruction, if it only wrote a temporary: its PC and the
     /// temporary, for retargeting into a local.
     last_dest: Option<(u32, u32)>,
-    checked: HashSet<u32>,
+    checked: FxHashSet<u32>,
     /// Depth of temporaries used above the stack (TDZ checks of captures).
     max_scratch: u32,
     pool: Vec<CoreValue>,
-    pool_index: HashMap<u32, u32>,
+    pool_index: FxHashMap<u32, u32>,
     /// The key of each string constant used as a name, and of each
     /// local's name.
     name_keys: Vec<Option<PropertyKey>>,
     local_keys: Vec<Option<PropertyKey>>,
-    child_ordinal: HashMap<u32, u32>,
-    this_keys: HashSet<u32>,
+    child_ordinal: FxHashMap<u32, u32>,
+    this_keys: FxHashSet<u32>,
     /// Register PCs of the calls written as a direct `eval` (for the
     /// backtrace, which QuickJS gives no native frame there).
     direct_eval_sites: Vec<u32>,
@@ -885,7 +885,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
         let locals = u32::from(metadata.local_count);
         let mut captured_arguments = vec![false; arguments as usize];
         let mut captured_locals = vec![false; locals as usize];
-        let mut child_ordinal = HashMap::new();
+        let mut child_ordinal = FxHashMap::default();
         for (index, constant) in function.constants().iter().enumerate() {
             let Some(child) = constant.as_child() else {
                 continue;
@@ -945,14 +945,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             named_children: Vec::new(),
             pc: 0,
             last_dest: None,
-            checked: HashSet::new(),
+            checked: FxHashSet::default(),
             max_scratch: 0,
             pool: Vec::new(),
-            pool_index: HashMap::new(),
+            pool_index: FxHashMap::default(),
             name_keys,
             local_keys,
             child_ordinal,
-            this_keys: HashSet::new(),
+            this_keys: FxHashSet::default(),
             analysis,
         })
     }

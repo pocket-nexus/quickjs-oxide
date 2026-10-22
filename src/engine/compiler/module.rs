@@ -32,7 +32,7 @@ use crate::engine::compiler::parser::diagnostics::IdentifierContext;
 use crate::engine::compiler::parser::diagnostics::lex_error;
 use crate::engine::value::JsString;
 use crate::engine::value::PrimitiveValue as Value;
-use std::collections::HashMap;
+use oxide_core::FxHashMap;
 
 use crate::engine::code::module::{
     MODULE_DEFAULT_BINDING_NAME, MODULE_IMPORT_META_BINDING_NAME, ModuleExport, ModuleExportTarget,
@@ -970,7 +970,7 @@ pub(super) fn resolve_module_exports(tree: &mut FunctionTree) -> Result<(), Erro
         .iter()
         .enumerate()
         .map(|(index, binding)| (binding.name, ModuleBindingId(index)))
-        .collect::<HashMap<_, _>>();
+        .collect::<FxHashMap<_, _>>();
     for export in &mut module.local_exports {
         let binding = binding_names
             .get(&export.local_name)
