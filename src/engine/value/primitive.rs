@@ -504,6 +504,9 @@ impl JsString {
     /// [`Self::MAX_LEN`]. Recoverable allocator failure remains a separate
     /// parity gap.
     pub fn try_from_utf8(value: &str) -> Result<Self, JsStringError> {
+        if value.is_ascii() {
+            return Self::try_from_latin1(value.as_bytes());
+        }
         Self::try_from_utf16(value.encode_utf16())
     }
 
@@ -572,6 +575,9 @@ impl JsString {
         if ascii_len > max_len {
             return Err(JsStringError::TooLong);
         }
+        if ascii_len == value.len() {
+            return Ok(Self::from_owned_latin1(value.to_vec()));
+        }
 
         let mut output = JsStringBuilder::with_limit(value.len(), max_len);
         output.push_latin1(&value[..ascii_len])?;
@@ -599,14 +605,11 @@ impl JsString {
 
     fn from_validated_utf16(units: Vec<u16>) -> Self {
         debug_assert!(units.len() <= Self::MAX_LEN);
-        let latin1 = units
-            .iter()
-            .copied()
-            .map(u8::try_from)
-            .collect::<Result<Vec<_>, _>>();
-        match latin1 {
-            Ok(latin1) => Self(StringRepr::allocate(StringData::Latin1(latin1))),
-            Err(_) => Self(StringRepr::allocate(StringData::Utf16(units))),
+        if units.iter().all(|&unit| unit <= 0xff) {
+            let latin1 = units.iter().map(|&unit| unit as u8).collect();
+            Self(StringRepr::allocate(StringData::Latin1(latin1)))
+        } else {
+            Self(StringRepr::allocate(StringData::Utf16(units)))
         }
     }
 
