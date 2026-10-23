@@ -421,6 +421,13 @@ impl<T: Record> Arena<T> {
 }
 
 #[cfg(test)]
+#[allow(unexpected_cfgs)]
+mod verification {
+    #[cfg(kani)]
+    include!("arena_kani_tests.rs");
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

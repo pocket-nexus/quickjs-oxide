@@ -5,7 +5,7 @@ Implementations have a single owner:
 | Directory | Responsibility |
 | --- | --- |
 | `checks/` | Architecture and provenance checks, oracle inventory, aggregate parity gate |
-| `verification/` | Pinned Kani proofs and their receipts; see `docs/formal-verification.md` |
+| `verification/` | Pinned Kani/Verus proofs and their receipts; see `docs/formal-verification.md` |
 | `test262/` | Suite preparation, admission generators, diagnostics, metrics and receipt verification |
 | `benchmark/` | External workload runners, profiler experiments and build/result provenance |
 | `quickjs/` | Pinned reference builds, cache tests, differential fixtures and dynamic-import traces |

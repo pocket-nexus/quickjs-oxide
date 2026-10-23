@@ -589,6 +589,17 @@ mod verification {
 }
 
 #[cfg(test)]
+#[allow(unexpected_cfgs)]
+mod allocation_verification {
+    #[cfg(kani)]
+    include!("allocation_kani_tests.rs");
+}
+
+#[cfg(test)]
+#[path = "allocation_model_tests.rs"]
+mod allocation_model_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

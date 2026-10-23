@@ -1,8 +1,11 @@
 # Formal verification
 
-The first phase verifies scalar value representation and value-heap size/range
-encoding in the **production Rust functions**, using Kani. It does not verify
-the whole engine, its ECMAScript semantics, allocation, or garbage collection.
+This work covers scalar representation, bounded arena schedules, a source-bound
+Verus proof of `Arena::mark`, an inductive bitmap model, and initial storage,
+collector and rooting checks. **The five-stage acceptance criteria are not all
+met:** the complete production-arena refinement in phase 4 remains open.
+Neither the abstract model nor bounded Kani schedules establish that refinement.
+The engine's ECMAScript semantics are outside these proofs.
 
 ## Run phase 1
 
@@ -37,7 +40,7 @@ Each invocation creates a new `target/verification/phase1-*` directory with:
   of the core/regexp sources, their manifests, workspace manifest, lockfile,
   toolchain file and verification scripts.
 
-Raw results stay out of commits. The `Formal verification (phase 1)` workflow
+Raw results stay out of commits. The `Formal verification` workflow
 runs on relevant pull requests, main pushes, and manual dispatch, and uploads
 these receipts even on failure. Changing the harness inventory requires updating
 the runner's expected set and this document.
@@ -109,40 +112,191 @@ sample or a small arena.
 - These results apply to the recorded target and default feature configuration.
   No wasm32, other architecture, or `gc-stress` proof is claimed.
 
-## Staged implementation
+## Phase 2: production arena schedules
 
-Each phase should be a separately reviewable PR with actual proof receipts and
-an explicit list of remaining assumptions. The following phases are planned,
-not completed by the phase-1 proofs.
+Run the two configurations **serially within one checkout**. Kani's force-build
+can remove another invocation's intermediate files. CI uses isolated jobs.
 
-| Phase | Work | Completion criterion |
+```sh
+python3 scripts/verification/stateful.py arena
+python3 scripts/verification/stateful.py arena-stress
+```
+
+The six harnesses in `arena_kani_tests.rs` exercise production functions, without
+stubs. The independent model uses slot contents and direct expected counts;
+it does not implement the arena's bitmap search or cursor logic.
+
+| Harness | Domain and checked behavior |
+| --- | --- |
+| `arena_free_and_reuse` | Two slots, arbitrary u8 payloads/external-byte amounts, either freed slot; lowest-index reuse, content frame, live/free/extra accounting |
+| `arena_write_frame_and_accounting` | Either of two live slots, arbitrary replacement; paired `get_mut`/`adjust_extra` preserves the other slot and accounting |
+| `arena_mark_and_sweep` | Either of two live slots marked twice; freshness, exactly the unmarked record delivered once, survivor contents and accounting |
+| `arena_sweep_all_and_empty` | Two unmarked records; descending callbacks, all records freed, subsequent empty sweep and shrink |
+| `arena_sweep_quarantine_cycle` | Two collections and intervening allocations; delayed reuse under `gc-stress`, immediate reuse normally, old quarantine released next cycle |
+| `arena_multiword_reuse` | A full 130-slot fixture, any freed index 0–129; reuse across both 63/64 and 127/128 word boundaries |
+
+These are recorded schedules, not all schedules of a given length. Most use
+unwind 8 or 12; the 130-slot fixture uses 140. Insufficient unfolding fails.
+The fixture does not establish arbitrary multiword construction or sweeping.
+
+## Phase 3: source-bound Verus mark proof
+
+```sh
+python3 scripts/verification/install_verus.py
+python3 scripts/verification/verus.py --verus target/verification/tools/verus-x86-linux/verus --mutations
+```
+
+Verus is pinned to **0.2026.10.18.7d82994**, Rust **1.99.1**. The installer
+checks the Linux x86-64 release archive's SHA-256 before extraction. Neither
+Cargo dependencies nor the product toolchain change.
+
+`verus.py` extracts `bit` and the complete `mark` body from `arena.rs` into
+`arena_mark.rs.in`. The proof has no vector-length bound. Its obligations are:
+
+- Precondition: the ID denotes a live record and the bitmap/vector lengths
+  satisfy the stated structural representation invariant.
+- Postcondition: exactly the selected mark bit is set; the returned Boolean
+  says whether that bit was clear beforehand.
+- Frame: all records, live/quarantine bits, counters and cursor are unchanged;
+  every other mark word is unchanged by the sequence-update postcondition.
+- The structural invariant and the target's liveness are preserved.
+
+This is an explicitly audited source projection, not a Verus build of the
+entire engine. `Option::is_some_and` has no usable specification in this Verus
+release: its exact source spelling is checked before translation to an equivalent
+`match`. The diagnostic-only `check` body is checked before translation to an
+unconditional liveness assertion (a stronger executable check than release).
+The projected quarantine field also represents a ghost frame for normal builds.
+Changes to either translation boundary fail the runner and require review.
+No `assume`, `admit`, external body, or unchecked contract is introduced;
+`--no-cheating` is required. Verus/vstd and the audited translations are trusted.
+
+The runner requires successful whole-file verification and the expected proof
+count (5 for mark, 15 for the model). Negative controls replace setting the mark
+bit with clearing it and replace free's live mask with all ones. Both must fail
+a proof obligation, not merely compilation. Generated source, exact commands,
+source hashes, verifier JSON and diagnostics are retained with each receipt.
+
+## Phase 4: induction and the remaining refinement gap
+
+`verus/arena_model.rs` proves a live/reusable/quarantined bitmap partition:
+live and quarantine bits lie within valid slots and are disjoint. Marks are
+**not** required to be a subset of live bits: production free/shrink can leave
+stale marks until `clear_marks`.
+
+The constructor establishes this invariant. Append, reuse, free, mark,
+clear-marks, sweep, quarantine release, trimming reusable slots and payload
+writes preserve it under their explicit legal-operation preconditions. The
+proof composes these transitions over arbitrary finite sequences and gives a
+frame theorem for unrelated bitmap words. This theorem has no sequence-length
+or word-count bound, but concerns the **abstract transition system**. It does
+not prove production counters, cursor selection, payload destruction, vector
+capacity arithmetic or the full Rust loops refine those transitions.
+
+Experimental production induction harnesses are also provided:
+
+```sh
+python3 scripts/verification/stateful.py arena-inductive
+python3 scripts/verification/stateful.py arena-inductive-stress
+```
+
+They quantify over canonical states with at most two `Item` slots, record
+capacity 0 or 4, matching bitmap capacities, arbitrary u8 payload/extra values,
+legal live/quarantine partitions and stale marks. Separate steps cover the
+constructor, allocation, free, paired write/accounting, mark/clear, sweep and
+shrink. Even if all these steps pass, their induction applies only to this
+restricted state space, not arbitrary arena capacities or arbitrary `Record`
+implementations. The initial symbolic sweep attempt exhausted verifier memory;
+these groups are experimental, not accepted CI proof gates or completed proofs.
+
+Phase 4 is **not complete**. Completion needs a production correspondence for
+all relevant mutations, including cursor/free-count bookkeeping and shrink,
+plus the actual `Record` and caller obligations. In particular `get_mut` and
+`adjust_extra` are separate methods; mutations changing `extra_bytes()` must
+be specified as a paired transaction. The API alone does not enforce that
+protocol. This is a proof obligation, not a demonstrated caller defect.
+
+## Phase 5: separate coverage reports
+
+Accepted proof groups and executable model tests:
+
+```sh
+python3 scripts/verification/stateful.py storage
+python3 scripts/verification/stateful.py rooting
+cargo test -p quickjs-oxide-core --lib model_tests
+cargo test -p quickjs-oxide-core --lib --features gc-stress model_tests
+```
+
+| Layer | Proof/test evidence | Remaining obligations |
 | --- | --- | --- |
-| 1 — implemented | Kani for Value and size-class/range encoding | The 12 named scalar properties pass over the documented domains; assumptions and provenance are recorded |
-| 2 — next | Kani for small arena operation sequences | Production arena agrees with an independent slot-array model for fixed, recorded capacity/sequence bounds; normal and quarantine behavior are covered |
-| 3 — planned | Select Verus or Creusot through one arena operation | An operation's precondition, representation invariant, frame condition and postcondition are proved against executable production code or a proved correspondence |
-| 4 — planned | Constructor and all relevant arena mutations | Initialization establishes the invariant and every operation preserves it under discharged caller obligations, supporting induction over arbitrary legal finite sequences |
-| 5 — planned | Value heap, collector and rooting protocol | Separate coverage reports for allocation/partition invariants, collector reachability including ephemerons, and callers' root/safepoint obligations |
+| Storage | Kani: fixed request pairs (1, 3), (2, 4), symbolic contents, non-overlap, free/reuse poisoning and used-slot accounting; growth 2→6 and slot growth 4→8. Runtime model: all 16 request pairs in 1–4 through coalescing, growth and complete sweep. | Arbitrary request sizes/sequences, formal coalescing/sweep partition preservation, allocation failure and cap admission |
+| Collector | Runtime independent reachability model: all 64 directed-graph/root-set combinations on two scope objects, followed by root removal and another full collection. Four WeakMap/key root combinations and 32 two-map ephemeron-chain/root-order combinations. | **Collector Kani proofs have not passed**; general payload/graph/fixpoint proof, weak refs/finalizers, code/shape/module root combinations, concurrency |
+| Rooting | Kani: nested root-stack scopes and two handle slots with replacement/release/reuse, preserving the other handle. Runtime: actual collection keeps a handled object until release. | Every VM/host caller roots all values across safepoints; reentry, borrowed references, stale handles, error/unwind cleanup |
 
-Phase 2 should compare allocation, marking, sweep and reuse against a simple
-model, including content preservation and free/live counters. Bounds are part
-of the result; they must not be described as arbitrary-sequence correctness.
-Exercise multiword bitmap boundaries explicitly before increasing sequence
-lengths. A proof on a few slots does not cover the cursor crossing bit 63.
+The executable tests use the complete production `collect()` path, including
+weak processing and reclamation. They are exhaustive over the listed finite
+fixtures, **not formal proofs of the collector**. They run both normally and
+under `gc-stress`. The independent closure is not the engine's stress verifier.
 
-Phases 3–4 need a model of live, reusable and quarantined slots, and must show
-that existing live records survive unrelated changes. Proving only an abstract
-arena does not verify the current Rust implementation. Trusted external
-contracts and unverified bodies must be inventoried rather than hidden.
+Experimental collector proofs remain reproducible, outside accepted CI gates:
 
-Phase 5 separates collector correctness from complete rooting by callers. The
-existing stress verifier reuses `mark_from_roots`; the formal reachability model
-must be independent of that traversal. Host reentry, VM registers, weak maps,
-dynamic code and other root sources need explicit coverage.
+```sh
+python3 scripts/verification/stateful.py collector
+```
 
-Phase 1 changes only test-gated Rust, verification tooling, CI and documentation;
-it takes the repository's no-benchmark tier. Future production changes must run
-the Sweep and the additional memory/compile/scaling checks required by
-`AGENTS.md`, even if their motivation is verification.
+They check production mark bits against the two-object transitive closure and
+one ephemeron fixture before reclamation. Manual collection mode excludes
+automatic safepoints; timing/budget policy is not specified. No function is
+stubbed. Initial runs timed out, including the one-map ephemeron harness at
+300 seconds. An earlier complete-collection attempt also failed to verify.
+These are **open proof obligations**, not successful coverage or implementation
+counterexamples. Kani's atomic operations are modeled sequentially, so no
+concurrency claim is possible here.
+
+The 64 free-list constructor, drop and capacity-fold loops get an explicit
+unwind 65. `stateful.py` derives their IDs from current compiler loop output;
+it does not raise every nested loop's bound. The loop-inspection invocation is
+**not verification**, even though Kani's old-format trailer prints "success".
+Only the subsequent structured verification report is accepted. Default safety
+and unwinding checks remain enabled.
+
+Stateful receipts require the exact inventory, completion, no failed or
+unresolved check, and at least one reachable successful proof assertion per
+harness. Conditional invariant assertions may be unreachable in an empty-state
+constructor. Phase 1 retains its stricter requirement that every explicit proof
+assertion be reachable. Tests reject wholly vacuous results.
+
+### Defect found by the independent collector tests
+
+`Heap::verify()` calls `mark_from_roots`, leaving reachable weak objects in
+`gc.weak`. Previously the next mark traversal did not reset that scratch list.
+If a WeakMap then lost its root while its key stayed rooted, the stale map
+could incorrectly keep its value alive. Normal explicit verification produced
+extra retention; automatic post-collection verification under `gc-stress`
+reported "live but unreachable". This is a reproduced implementation defect,
+not a Kani counterexample.
+
+`verification_does_not_root_a_dead_weak_map_in_the_next_collection` fails on the
+old implementation in a normal build. The fix clears `gc.weak` at the start of
+every mark traversal, before discovering the current reachable weak objects.
+Repeated verification, root removal and the next collection are covered. All
+six new storage/collector model test functions pass in normal and stress modes.
+
+## Status and acceptance
+
+| Phase | Implementation status | Acceptance boundary |
+| --- | --- | --- |
+| 1 | 12 production Kani scalar harnesses | Documented scalar domains only; callers' admission is not proved |
+| 2 | 6 production Kani schedules in normal and stress configurations | Fixed schedules plus the 130-slot reuse fixture |
+| 3 | Source-bound Verus mark proof and mutation controls | Audited translations and stated caller preconditions |
+| 4 | Abstract induction proved; production induction/refinement experimental | **Original acceptance criterion remains unmet** |
+| 5 | Storage/root-container proofs and separate full-collector finite model tests; weak-work-list defect fixed | Collector formal proofs and complete caller protocol remain open |
+
+Proof code and model tests are test-gated. The weak-work-list fix changes the
+production collector, so this PR requires both the Sweep and memory checks
+under `AGENTS.md`; it is no longer in the no-benchmark tier. Results and the
+exact measured commits/commands are reported in the PR, with raw receipts
+outside version control.
 
 ## Tool references
 

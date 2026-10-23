@@ -24,7 +24,7 @@ HARNESSES = {
 }
 
 
-def check_results(report):
+def check_results(report, harnesses=HARNESSES, *, strict_assertions=True):
     """Accept only the complete inventory with reachable, passing assertions."""
     if report["metadata"]["kani_version"] != VERSION:
         raise ValueError("unexpected Kani version")
@@ -33,14 +33,14 @@ def check_results(report):
     verification = report["verification_results"]
     summary = verification["summary"]
     if summary["status"] != "completed" or any(
-        summary[key] != len(HARNESSES)
+        summary[key] != len(harnesses)
         for key in ("total_harnesses", "executed", "successful")
     ) or summary["failed"] != 0:
         raise ValueError("incomplete or unsuccessful verification")
     results = verification["results"]
-    if len(results) != len(HARNESSES) or {
+    if len(results) != len(harnesses) or {
         item["harness_id"] for item in results
-    } != HARNESSES:
+    } != harnesses:
         raise ValueError("harness inventory changed")
     for item in results:
         if item["status"] != "Success":
@@ -51,7 +51,8 @@ def check_results(report):
         assertions = [check for check in checks if
                       check["description"].startswith("assertion failed:")
                       and check["location"].get("file", "").endswith("_kani_tests.rs")]
-        if not assertions or any(check["status"] != "Success" for check in assertions):
+        if (not assertions or not any(check["status"] == "Success" for check in assertions)
+            or (strict_assertions and any(check["status"] != "Success" for check in assertions))):
             raise ValueError(f"missing or unreachable proof assertion: {item['harness_id']}")
 
 

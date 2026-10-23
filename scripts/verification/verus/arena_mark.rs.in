@@ -1,0 +1,49 @@
+// Verified projection of Arena::mark. Bodies are inserted from arena.rs.
+// No bounds on vector length or sequence count; allocation/Record effects do
+// not occur in this operation. The validity predicate is a caller obligation.
+use vstd::prelude::*;
+verus! {
+struct Arena<T> {
+    records: Vec<T>, live: Vec<u64>, marks: Vec<u64>,
+    free_count: usize, cursor: usize, quarantine: Vec<u64>,
+    live_count: usize, extra: usize,
+}
+fn bit(index: u32) -> (r: (usize, u64))
+    ensures r.0 == index / 64, r.1 == (1u64 << (index % 64)),
+{ /* BIT_BODY */ }
+impl<T> Arena<T> {
+    spec fn wf(&self) -> bool {
+        self.live@.len() == self.marks@.len()
+        && self.live@.len() == self.quarantine@.len()
+        && self.records@.len() <= self.live@.len() * 64
+    }
+    spec fn valid(&self, index: u32) -> bool {
+        index < self.records@.len()
+        && (index / 64) < self.live@.len()
+        && self.live@[(index / 64) as int] & (1u64 << (index % 64)) != 0
+    }
+    fn is_live(&self, index: u32) -> (r: bool)
+        ensures r == ((index / 64) < self.live@.len()
+            && self.live@[(index / 64) as int] & (1u64 << (index % 64)) != 0),
+    { /* IS_LIVE_BODY */ }
+    fn check(&self, index: u32)
+        requires self.valid(index),
+    { assert!(self.is_live(index)); }
+    fn mark(&mut self, index: u32) -> (fresh: bool)
+        requires old(self).wf(), old(self).valid(index),
+        ensures
+            final(self).wf(), final(self).valid(index),
+            final(self).marks@ == old(self).marks@.update((index / 64) as int,
+                old(self).marks@[(index / 64) as int] | (1u64 << (index % 64))),
+            fresh == (old(self).marks@[(index / 64) as int] & (1u64 << (index % 64)) == 0),
+            final(self).records@ == old(self).records@,
+            final(self).live@ == old(self).live@,
+            final(self).quarantine@ == old(self).quarantine@,
+            final(self).free_count == old(self).free_count,
+            final(self).live_count == old(self).live_count,
+            final(self).cursor == old(self).cursor,
+            final(self).extra == old(self).extra,
+    { /* MARK_BODY */ }
+}
+fn main() {}
+}

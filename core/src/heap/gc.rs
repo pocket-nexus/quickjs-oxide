@@ -15,6 +15,17 @@ use crate::shape::STATIC_CELL;
 use crate::value::{Kind, ShapeId, Value};
 use crate::vm::ic::Record;
 
+#[cfg(test)]
+#[allow(unexpected_cfgs)]
+mod verification {
+    #[cfg(kani)]
+    include!("gc_kani_tests.rs");
+}
+
+#[cfg(test)]
+#[path = "gc_model_tests.rs"]
+mod model_tests;
+
 /// A position on the [`RootStack`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct RootMark(usize);
@@ -466,6 +477,9 @@ impl Heap {
     /// record panics here in debug and `gc-stress` builds.
     fn mark_from_roots(&mut self) {
         self.clear_marks();
+        // verify() also marks, without consuming the weak work list. Only
+        // weak objects reached by this traversal may contribute ephemerons.
+        self.gc.weak.clear();
         let mut stack = mem::take(&mut self.gc.mark_stack);
         stack.extend_from_slice(self.roots.stack.values());
         stack.extend(self.roots.handles.values());
