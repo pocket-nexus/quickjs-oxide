@@ -260,11 +260,12 @@ it does not raise every nested loop's bound. The loop-inspection invocation is
 Only the subsequent structured verification report is accepted. Default safety
 and unwinding checks remain enabled.
 
-Stateful receipts require the exact inventory, completion, no failed or
-unresolved check, and at least one reachable successful proof assertion per
-harness. Conditional invariant assertions may be unreachable in an empty-state
-constructor. Phase 1 retains its stricter requirement that every explicit proof
-assertion be reachable. Tests reject wholly vacuous results.
+Accepted stateful receipts require the exact inventory, completion, no failed
+or unresolved check, and every explicit proof assertion reachable and passing,
+as in phase 1. Only experimental induction groups allow unreachable conditional
+invariant assertions (for example in an empty-state constructor), while still
+requiring at least one reachable property. Tests reject wholly vacuous results
+and require every proof in the source tree to belong to an explicit group.
 
 ### Defect found by the independent collector tests
 

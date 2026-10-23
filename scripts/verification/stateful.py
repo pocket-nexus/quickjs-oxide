@@ -117,7 +117,8 @@ def main():
         verify += ["--force-build"]
     record(verify)
     run(verify, directory / "run.log")
-    check_results(json.loads(report.read_text()), expected, strict_assertions=False)
+    check_results(json.loads(report.read_text()), expected,
+                  strict_assertions=not args.group.startswith("arena-inductive"))
     print(f"{args.group}: {len(expected)} harnesses passed; receipts {directory}")
 
 

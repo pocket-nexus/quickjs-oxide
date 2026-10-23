@@ -1,12 +1,30 @@
+import re
 import unittest
 
-from phase1 import check_results
-from stateful import fixed_array_bounds
+from phase1 import HARNESSES, check_results
+from stateful import GROUPS, fixed_array_bounds
 from test_phase1 import successful_report
 from verus import ROOT, mark_source
 
 
 class StatefulTests(unittest.TestCase):
+    def test_every_proof_belongs_to_an_explicit_group(self):
+        prefixes = {
+            "core/src/value_kani_tests.rs": "value::verification::",
+            "core/src/heap/values_kani_tests.rs": "heap::values::verification::",
+            "core/src/heap/arena_kani_tests.rs": "heap::arena::verification::",
+            "core/src/heap/allocation_kani_tests.rs": "heap::values::allocation_verification::",
+            "core/src/heap/gc_kani_tests.rs": "heap::gc::verification::",
+        }
+        actual = set()
+        for path in ROOT.glob("core/src/**/*_kani_tests.rs"):
+            relative = str(path.relative_to(ROOT))
+            self.assertIn(relative, prefixes, "assign the new proof file to a group")
+            source = re.sub(r"//[^\n]*", "", path.read_text())
+            names = re.findall(r"#\[kani::proof\]\s*(?:#\[[^\]]+\]\s*)*fn (\w+)", source)
+            actual.update(prefixes[relative] + name for name in names)
+        self.assertEqual(actual, HARNESSES | set().union(*GROUPS.values()))
+
     def test_selects_fixed_loops_without_increasing_nested_loop_bound(self):
         source = 'for (class, list) in self.free.iter_mut().enumerate() {\nfor list in &mut self.free {'
         listing = '''Loop outer.1:
