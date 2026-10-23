@@ -582,6 +582,13 @@ fn next_bit(bits: &[u64], from: usize, set: bool, len: usize) -> Option<usize> {
 }
 
 #[cfg(test)]
+#[allow(unexpected_cfgs)] // `kani` is supplied by the verifier, not product builds.
+mod verification {
+    #[cfg(kani)]
+    include!("values_kani_tests.rs");
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

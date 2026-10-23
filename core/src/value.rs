@@ -360,6 +360,13 @@ impl ScopeId {
 }
 
 #[cfg(test)]
+#[allow(unexpected_cfgs)] // `kani` is supplied by the verifier, not product builds.
+mod verification {
+    #[cfg(kani)]
+    include!("value_kani_tests.rs");
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

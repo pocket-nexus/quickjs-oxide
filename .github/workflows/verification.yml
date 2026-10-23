@@ -1,0 +1,55 @@
+name: Formal verification (phase 1)
+
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'regexp/**'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'scripts/verification/**'
+      - '.github/workflows/verification.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'regexp/**'
+      - '**/Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'scripts/verification/**'
+      - '.github/workflows/verification.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kani:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned Kani
+        run: |
+          version=$(cat scripts/verification/kani-version)
+          cargo install --locked kani-verifier --version "$version"
+          cargo kani setup
+      - name: Check proof formatting and receipt validation
+        run: |
+          cargo fmt --all -- --check
+          rustfmt --edition 2024 --check core/src/value_kani_tests.rs core/src/heap/values_kani_tests.rs
+          python3 -m unittest discover -s scripts/verification -p 'test_*.py'
+      - name: Verify phase 1
+        run: python3 scripts/verification/phase1.py
+      - name: Upload proof receipts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: kani-phase1-${{ github.sha }}
+          path: target/verification/
+          if-no-files-found: warn
+          retention-days: 30
