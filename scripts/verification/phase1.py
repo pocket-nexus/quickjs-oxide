@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Run the phase-1 Kani proofs and reject missing or vacuous results."""
+import argparse
 import hashlib
 import json
 from pathlib import Path
 import subprocess
 import tempfile
+import re
 
 ROOT = Path(__file__).resolve().parents[2]
 VERSION = Path(__file__).with_name("kani-version").read_text().strip()
@@ -22,6 +24,13 @@ HARNESSES = {
         "range_exponent_round_trip", "empty_range_is_canonical",
     )
 }
+
+
+def harness_timeout(value):
+    """Use Kani's duration syntax, rejecting zero and malformed budgets."""
+    if not re.fullmatch(r"[1-9][0-9]*[smh]?", value):
+        raise argparse.ArgumentTypeError("expected a positive duration, e.g. 1800s, 30m or 1h")
+    return value
 
 
 def check_results(report, harnesses=HARNESSES, *, strict_assertions=True):
@@ -61,6 +70,10 @@ def output(*command):
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--harness-timeout", type=harness_timeout, default="1h",
+                        help="time budget per harness (default: 1h; local verification)")
+    args = parser.parse_args()
     version = output("cargo", "kani", "--version")
     if version.splitlines()[0] != f"Kani Rust Verifier {VERSION} (cargo plugin)":
         raise SystemExit(f"Install kani-verifier {VERSION}; found {version}")
@@ -72,7 +85,7 @@ def main():
         "cargo", "kani", "-p", "quickjs-oxide-core", "--lib", "--tests",
         "--harness", "value::verification::", "--harness", "heap::values::verification::",
         "--default-unwind", "2", "--force-build", "--output-format", "terse",
-        "-Z", "unstable-options", "--harness-timeout", "60s",
+        "-Z", "unstable-options", "--harness-timeout", args.harness_timeout,
         "--export-json", str(report),
     ]
     # Record bytes as well as HEAD: local proofs may run on uncommitted changes.

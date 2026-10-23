@@ -8,7 +8,7 @@ import re
 import subprocess
 import tempfile
 
-from phase1 import ROOT, VERSION, check_results, output
+from phase1 import ROOT, VERSION, check_results, harness_timeout, output
 
 ARENA = {"heap::arena::verification::" + name for name in (
     "arena_free_and_reuse", "arena_write_frame_and_accounting",
@@ -30,6 +30,20 @@ COLLECTOR = {"heap::gc::verification::" + name for name in (
 )}
 GROUPS = {"arena": ARENA, "arena-stress": ARENA, "storage": STORAGE, "rooting": ROOTING, "collector": COLLECTOR,
           "arena-inductive": INDUCTIVE, "arena-inductive-stress": INDUCTIVE}
+
+
+def select_harnesses(group, names):
+    """An explicitly selected subset must still have an exact receipt inventory."""
+    available = GROUPS[group]
+    if not names:
+        return available
+    selected = set()
+    for name in names:
+        matches = {full for full in available if full == name or full.endswith("::" + name)}
+        if len(matches) != 1:
+            raise ValueError(f"unknown or ambiguous harness in {group}: {name}")
+        selected.update(matches)
+    return selected
 
 
 def fixed_array_bounds(loop_listing, source):
@@ -70,7 +84,16 @@ def run(command, path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("group", choices=GROUPS)
+    parser.add_argument("--harness-timeout", type=harness_timeout, default="1h",
+                        help="time budget per harness (default: 1h; groups run serially)")
+    parser.add_argument("--harness", action="append", metavar="NAME",
+                        help="select a harness within the group; repeat for a subset")
+    parser.add_argument("--verbose", action="store_true", help="log verifier commands and progress")
     args = parser.parse_args()
+    try:
+        expected = select_harnesses(args.group, args.harness)
+    except ValueError as error:
+        parser.error(str(error))
     version = output("cargo", "kani", "--version")
     if version.splitlines()[0] != f"Kani Rust Verifier {VERSION} (cargo plugin)":
         raise SystemExit(f"Expected Kani {VERSION}; found {version}")
@@ -78,8 +101,9 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     directory = Path(tempfile.mkdtemp(prefix=args.group + "-", dir=parent))
     print(f"{args.group}: receipts {directory}", flush=True)
-    expected = GROUPS[args.group]
     command = ["cargo", "kani", "-p", "quickjs-oxide-core", "--lib", "--tests"]
+    if args.verbose:
+        command += ["--verbose"]
     if args.group.endswith("-stress"):
         command += ["--features", "gc-stress"]
     for name in sorted(expected):
@@ -92,7 +116,8 @@ def main():
                        if p.is_file() and "__pycache__" not in p.parts)
     provenance = {"commit": output("git", "rev-parse", "HEAD"),
                   "worktree_status": output("git", "status", "--short"),
-                  "group": args.group, "kani_version_output": version,
+                  "group": args.group, "selected_harnesses": sorted(expected),
+                  "harness_timeout": args.harness_timeout, "kani_version_output": version,
                   "sources": {str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
                               for p in sorted(sources)}, "commands": []}
     def record(cmd):
@@ -109,7 +134,8 @@ def main():
         bounds = fixed_array_bounds((directory / "loop-inspection.log").read_text(),
                                     (ROOT / "core/src/heap/values.rs").read_text())
     report = directory / "results.json"
-    verify = command + ["--output-format", "terse", "--harness-timeout", "300s",
+    verify = command + ["--output-format", "regular" if args.verbose else "terse",
+                        "--harness-timeout", args.harness_timeout,
                         "--export-json", str(report)]
     if bounds:
         verify += ["--cbmc-args", "--unwindset", ",".join(bounds)]

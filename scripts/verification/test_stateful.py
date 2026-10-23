@@ -2,12 +2,22 @@ import re
 import unittest
 
 from phase1 import HARNESSES, check_results
-from stateful import GROUPS, fixed_array_bounds
+from stateful import GROUPS, fixed_array_bounds, select_harnesses
 from test_phase1 import successful_report
 from verus import ROOT, mark_source
 
 
 class StatefulTests(unittest.TestCase):
+    def test_explicit_subset_is_exact_and_rejects_unknown_names(self):
+        group = GROUPS['collector']
+        full = next(name for name in group if name.endswith('::strong_graph_marking'))
+        self.assertEqual(select_harnesses('collector', None), group)
+        self.assertEqual(select_harnesses('collector', ['strong_graph_marking']), {full})
+        self.assertEqual(select_harnesses('collector', [full, full]), {full})
+        for name in ('strong_graph', 'root_stack_scopes', ''):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                select_harnesses('collector', [name])
+
     def test_every_proof_belongs_to_an_explicit_group(self):
         prefixes = {
             "core/src/value_kani_tests.rs": "value::verification::",

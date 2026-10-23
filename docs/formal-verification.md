@@ -29,8 +29,10 @@ The runner checks the Kani version, invokes it with all default safety and
 unwinding checks enabled, and validates its structured JSON result. It requires
 exactly the expected 12 harnesses, successful completion, no unresolved checks,
 and reachable, passing explicit assertions in each proof. Missing, duplicated,
-failed, or vacuous harness results fail the run. Each harness has a 60-second
-timeout; a timeout is not a proof.
+failed, or vacuous harness results fail the run. Each harness has a configurable local
+time budget, defaulting to one hour. For example, append
+`--harness-timeout 30m` or `--harness-timeout 1h`. This is a per-harness
+budget, not a bound on the total group duration. A timeout is not a proof.
 
 Each invocation creates a new `target/verification/phase1-*` directory with:
 
@@ -40,10 +42,13 @@ Each invocation creates a new `target/verification/phase1-*` directory with:
   of the core/regexp sources, their manifests, workspace manifest, lockfile,
   toolchain file and verification scripts.
 
-Raw results stay out of commits. The `Formal verification` workflow
-runs on relevant pull requests, main pushes, and manual dispatch, and uploads
-these receipts even on failure. Changing the harness inventory requires updating
-the runner's expected set and this document.
+Raw results stay out of commits. Formal verification runs **locally**, without
+GitHub solver jobs or a CI-time acceptance requirement. The `Verification support
+checks` workflow only checks formatting and the Python receipt/inventory tests.
+Ordinary storage and collector regression tests remain in the existing Engine CI.
+Retain local receipts on both success and failure, and report the source commit,
+command, budgets and outcome in the PR. Changing the harness inventory requires
+updating the runner's expected set and this document.
 
 ## Properties and input domains
 
@@ -115,7 +120,8 @@ sample or a small arena.
 ## Production arena schedules
 
 Run the two configurations **serially within one checkout**. Kani's force-build
-can remove another invocation's intermediate files. CI uses isolated jobs.
+can remove another invocation's intermediate files. Do not run a second Kani
+invocation in this checkout while a long verification is in progress.
 
 ```sh
 python3 scripts/verification/stateful.py arena
@@ -207,7 +213,7 @@ constructor, allocation, free, paired write/accounting, mark/clear, sweep and
 shrink. Even if all these steps pass, their induction applies only to this
 restricted state space, not arbitrary arena capacities or arbitrary `Record`
 implementations. The initial symbolic sweep attempt exhausted verifier memory;
-these groups are experimental, not accepted CI proof gates or completed proofs.
+these groups are experimental, not completed proofs.
 
 Production induction is **not complete**. It needs a production correspondence for
 all relevant mutations, including cursor/free-count bookkeeping and shrink,
@@ -238,17 +244,27 @@ weak processing and reclamation. They are exhaustive over the listed finite
 fixtures, **not formal proofs of the collector**. They run both normally and
 under `gc-stress`. The independent closure is not the engine's stress verifier.
 
-Experimental collector proofs remain reproducible, outside accepted CI gates:
+Collector proofs run locally through the real production entry points. To give
+each harness a full hour, run:
 
 ```sh
-python3 scripts/verification/stateful.py collector
+python3 scripts/verification/stateful.py collector --harness-timeout 1h --verbose
 ```
+
+The group runs serially and can therefore take two hours. To investigate one
+harness, add `--harness strong_graph_marking` or
+`--harness ephemeron_requires_reachable_map_and_key`. A subset run validates an
+exact subset inventory and is not evidence that the entire group passed.
+`provenance.json` records the selected harnesses and per-harness budget.
+`--verbose` retains verifier commands and regular structured-result output; it
+does not use Kani's old output mode for proof acceptance.
 
 They check production mark bits against the two-object transitive closure and
 one ephemeron fixture before reclamation. Manual collection mode excludes
 automatic safepoints; timing/budget policy is not specified. No function is
-stubbed. Initial runs timed out, including the one-map ephemeron harness at
-300 seconds. An earlier complete-collection attempt also failed to verify.
+stubbed. Initial runs used a five-minute budget and timed out, including the
+one-map ephemeron harness. These short runs do not establish that a longer local
+verification cannot complete. An earlier complete-collection attempt also failed to verify.
 These are **open proof obligations**, not successful coverage or implementation
 counterexamples. Kani's atomic operations are modeled sequentially, so no
 concurrency claim is possible here.

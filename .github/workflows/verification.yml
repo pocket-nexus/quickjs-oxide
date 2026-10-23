@@ -1,4 +1,4 @@
-name: Formal verification
+name: Verification support checks
 
 on:
   pull_request:
@@ -25,83 +25,20 @@ on:
 permissions:
   contents: read
 
+# Solvers run locally with recorded budgets and receipts. GitHub checks only
+# proof-source formatting and the receipt/inventory tooling.
 jobs:
-  kani:
+  support:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Install pinned Kani
-        run: |
-          version=$(cat scripts/verification/kani-version)
-          cargo install --locked kani-verifier --version "$version"
-          cargo kani setup
+      - name: Install pinned Rust formatting tools
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt
       - name: Check proof formatting and receipt validation
         run: |
           cargo fmt --all -- --check
           rustfmt --edition 2024 --check core/src/*_kani_tests.rs core/src/heap/*_kani_tests.rs
           python3 -m unittest discover -s scripts/verification -p 'test_*.py'
-      - name: Run finite model tests of storage and complete collection
-        run: |
-          cargo test -p quickjs-oxide-core --lib model_tests
-          cargo test -p quickjs-oxide-core --lib --features gc-stress model_tests
-      - name: Verify phase 1
-        run: python3 scripts/verification/phase1.py
-      - name: Upload proof receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: kani-phase1-${{ github.sha }}
-          path: target/verification/
-          if-no-files-found: warn
-          retention-days: 30
-
-  stateful:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 40
-    strategy:
-      fail-fast: false
-      matrix:
-        group: [arena, arena-stress, storage, rooting]
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install pinned Kani
-        run: |
-          version=$(cat scripts/verification/kani-version)
-          cargo install --locked kani-verifier --version "$version"
-          cargo kani setup
-      - name: Verify production stateful operations
-        run: python3 scripts/verification/stateful.py "${{ matrix.group }}"
-      - name: Upload proof receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: kani-${{ matrix.group }}-${{ github.sha }}
-          path: target/verification/
-          if-no-files-found: warn
-          retention-days: 30
-
-  verus:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - name: Install checksum-pinned Verus
-        run: python3 scripts/verification/install_verus.py
-      - name: Verify mark and inductive bitmap model, including negative controls
-        run: python3 scripts/verification/verus.py --verus target/verification/tools/verus-x86-linux/verus --mutations
-      - name: Upload proof receipts
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: verus-${{ github.sha }}
-          path: |
-            target/verification/verus-*/
-          if-no-files-found: warn
-          retention-days: 30

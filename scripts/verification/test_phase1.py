@@ -1,8 +1,9 @@
 """Keep the proof receipt gate closed on incomplete or vacuous verification."""
+import argparse
 import copy
 import unittest
 
-from phase1 import HARNESSES, VERSION, check_results
+from phase1 import HARNESSES, VERSION, check_results, harness_timeout
 
 
 def successful_report():
@@ -20,6 +21,13 @@ def successful_report():
 
 
 class ReceiptTests(unittest.TestCase):
+    def test_timeout_requires_a_positive_kani_duration(self):
+        for duration in ('60', '1800s', '30m', '1h'):
+            self.assertEqual(harness_timeout(duration), duration)
+        for duration in ('0', '0s', '-1h', '1.5h', 'forever', ''):
+            with self.subTest(duration=duration), self.assertRaises(argparse.ArgumentTypeError):
+                harness_timeout(duration)
+
     def test_accepts_success_and_unreachable_internal_checks(self):
         report = successful_report()
         report["verification_results"]["results"][0]["checks"].append({
