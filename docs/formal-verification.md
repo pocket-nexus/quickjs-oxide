@@ -3,11 +3,11 @@
 This work covers scalar representation, bounded arena schedules, a source-bound
 Verus proof of `Arena::mark`, an inductive bitmap model, and initial storage,
 collector and rooting checks. **The five-stage acceptance criteria are not all
-met:** the complete production-arena refinement in phase 4 remains open.
+met:** the complete production-arena refinement remains open.
 Neither the abstract model nor bounded Kani schedules establish that refinement.
 The engine's ECMAScript semantics are outside these proofs.
 
-## Run phase 1
+## Run the scalar proofs
 
 The supported proof target is `x86_64-unknown-linux-gnu`. Install the version
 recorded in `scripts/verification/kani-version`:
@@ -112,7 +112,7 @@ sample or a small arena.
 - These results apply to the recorded target and default feature configuration.
   No wasm32, other architecture, or `gc-stress` proof is claimed.
 
-## Phase 2: production arena schedules
+## Production arena schedules
 
 Run the two configurations **serially within one checkout**. Kani's force-build
 can remove another invocation's intermediate files. CI uses isolated jobs.
@@ -139,7 +139,7 @@ These are recorded schedules, not all schedules of a given length. Most use
 unwind 8 or 12; the 130-slot fixture uses 140. Insufficient unfolding fails.
 The fixture does not establish arbitrary multiword construction or sweeping.
 
-## Phase 3: source-bound Verus mark proof
+## Source-bound Verus mark proof
 
 ```sh
 python3 scripts/verification/install_verus.py
@@ -177,7 +177,7 @@ bit with clearing it and replace free's live mask with all ones. Both must fail
 a proof obligation, not merely compilation. Generated source, exact commands,
 source hashes, verifier JSON and diagnostics are retained with each receipt.
 
-## Phase 4: induction and the remaining refinement gap
+## Induction and the remaining refinement gap
 
 `verus/arena_model.rs` proves a live/reusable/quarantined bitmap partition:
 live and quarantine bits lie within valid slots and are disjoint. Marks are
@@ -209,14 +209,14 @@ restricted state space, not arbitrary arena capacities or arbitrary `Record`
 implementations. The initial symbolic sweep attempt exhausted verifier memory;
 these groups are experimental, not accepted CI proof gates or completed proofs.
 
-Phase 4 is **not complete**. Completion needs a production correspondence for
+Production induction is **not complete**. It needs a production correspondence for
 all relevant mutations, including cursor/free-count bookkeeping and shrink,
 plus the actual `Record` and caller obligations. In particular `get_mut` and
 `adjust_extra` are separate methods; mutations changing `extra_bytes()` must
 be specified as a paired transaction. The API alone does not enforce that
 protocol. This is a proof obligation, not a demonstrated caller defect.
 
-## Phase 5: separate coverage reports
+## Storage, collector and rooting coverage
 
 Accepted proof groups and executable model tests:
 
@@ -231,7 +231,7 @@ cargo test -p quickjs-oxide-core --lib --features gc-stress model_tests
 | --- | --- | --- |
 | Storage | Kani: fixed request pairs (1, 3), (2, 4), symbolic contents, non-overlap, free/reuse poisoning and used-slot accounting; growth 2→6 and slot growth 4→8. Runtime model: all 16 request pairs in 1–4 through coalescing, growth and complete sweep. | Arbitrary request sizes/sequences, formal coalescing/sweep partition preservation, allocation failure and cap admission |
 | Collector | Runtime independent reachability model: all 64 directed-graph/root-set combinations on two scope objects, followed by root removal and another full collection. Four WeakMap/key root combinations and 32 two-map ephemeron-chain/root-order combinations. | **Collector Kani proofs have not passed**; general payload/graph/fixpoint proof, weak refs/finalizers, code/shape/module root combinations, concurrency |
-| Rooting | Kani: nested root-stack scopes and two handle slots with replacement/release/reuse, preserving the other handle. Runtime: actual collection keeps a handled object until release. | Every VM/host caller roots all values across safepoints; reentry, borrowed references, stale handles, error/unwind cleanup |
+| Rooting | Kani: symbolic Int32 payloads through nested root-stack scopes and two handle slots with replacement/release/reuse, preserving the other handle. Runtime: actual collection keeps a handled object until release. | Every VM/host caller roots all values across safepoints; reentry, borrowed references, stale handles, error/unwind cleanup |
 
 The executable tests use the complete production `collect()` path, including
 weak processing and reclamation. They are exhaustive over the listed finite
@@ -262,7 +262,7 @@ and unwinding checks remain enabled.
 
 Accepted stateful receipts require the exact inventory, completion, no failed
 or unresolved check, and every explicit proof assertion reachable and passing,
-as in phase 1. Only experimental induction groups allow unreachable conditional
+as in the scalar proofs. Only experimental induction groups allow unreachable conditional
 invariant assertions (for example in an empty-state constructor), while still
 requiring at least one reachable property. Tests reject wholly vacuous results
 and require every proof in the source tree to belong to an explicit group.
@@ -285,13 +285,13 @@ six new storage/collector model test functions pass in normal and stress modes.
 
 ## Status and acceptance
 
-| Phase | Implementation status | Acceptance boundary |
+| Area | Implementation status | Acceptance boundary |
 | --- | --- | --- |
-| 1 | 12 production Kani scalar harnesses | Documented scalar domains only; callers' admission is not proved |
-| 2 | 6 production Kani schedules in normal and stress configurations | Fixed schedules plus the 130-slot reuse fixture |
-| 3 | Source-bound Verus mark proof and mutation controls | Audited translations and stated caller preconditions |
-| 4 | Abstract induction proved; production induction/refinement experimental | **Original acceptance criterion remains unmet** |
-| 5 | Storage/root-container proofs and separate full-collector finite model tests; weak-work-list defect fixed | Collector formal proofs and complete caller protocol remain open |
+| Scalar encodings | 12 production Kani scalar harnesses | Documented scalar domains only; callers' admission is not proved |
+| Arena schedules | 6 production Kani schedules in normal and stress configurations | Fixed schedules plus the 130-slot reuse fixture |
+| Arena mark | Source-bound Verus mark proof and mutation controls | Audited translations and stated caller preconditions |
+| Arena induction | Abstract induction proved; production induction/refinement experimental | **Complete production correspondence remains unproved** |
+| Heap and rooting | Storage/root-container proofs and separate full-collector finite model tests; weak-work-list defect fixed | Collector formal proofs and complete caller protocol remain open |
 
 Proof code and model tests are test-gated. The weak-work-list fix changes the
 production collector, so this PR requires both the Sweep and memory checks
