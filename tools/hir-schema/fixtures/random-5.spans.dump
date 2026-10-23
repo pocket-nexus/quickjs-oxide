@@ -1,0 +1,60 @@
+program version:1
+  unit:
+    Unit name:"Z" fingerprintInputs:["éZ\ud800😀\n"]
+  entry:
+    eval top:#1
+file #0 path:"\udfff" hash:722
+string #0 "é\u0000Z\u0000"
+string #1 "\"\udfffé "
+string #2 "\u001fa\"😀"
+string #3 "😀  éa"
+const #0 regexp source:"😀  éa" flags:"é\u0000Z\u0000"
+const #1 bigint digits:"\u001fa\"😀"
+type #0 class layout:#3
+layout #0 name:"\"\udfffé "
+  fields:
+    LayoutField name:#4? ty:#1 readonly:true
+layout #1 name:#4?
+  fields:
+    LayoutField name:#4? ty:#0 readonly:true
+layout #2 name:"😀  éa"
+  fields:
+    LayoutField name:"😀  éa" ty:#0 readonly:true
+descriptor #0 literal
+  value:
+    const value:#4
+descriptor #1 number repr:u16 min:1e-1 max:1.23456e2
+decl #0 name:"\u001fa\"😀" kind:privateName owner:#3 capturedBy:[#0 #1] assigned:false tdz:true ty:#1 span:3:0-326
+decl #1 name:"😀  éa" kind:class owner:#0 capturedBy:[#4] assigned:true tdz:false ty:#3 span:0:783-0
+decl #2 name:"\"\udfffé " kind:class owner:#0 capturedBy:[#4] assigned:true tdz:false span:4:7-1
+fn #0 kind:setter async:false generator:true strict:false params:[] simpleParams:false decls:[#1] captures:[#4 #2] inner:[#3 #1 #0] usesThis:true usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true span:2:1-665
+  body:
+    Block decls:[]
+      stmts:
+        declare decl:#2 span:3:65536-0
+  effects:
+    Effects reads:[#1 #4] writes:[#4 #0 #1] heapReads:false heapWrites:true allocates:true mayThrow:false maySuspend:true calls:known
+fn #1 name:"😀  éa" kind:staticBlock async:true generator:false strict:true params:[] simpleParams:true decls:[#2] captures:[#1] inner:[#2] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true span:4:0-65536
+  body:
+    Block stmts:[] decls:[#2 #2]
+  effects:
+    Effects reads:[] writes:[] heapReads:false heapWrites:true allocates:false mayThrow:true maySuspend:true calls:none
+module #0 file:#2 top:#1 imports:[] reexports:[] dynamic:true
+  exports:
+    Export name:#4? decl:#2
+    Export name:"é\u0000Z\u0000" decl:#3
+    Export name:"\u001fa\"😀" decl:#1
+module #1 file:#4 top:#2 imports:[] exports:[] dynamic:false
+  reexports:
+    Reexport from:"\"\udfffé "
+    Reexport from:"😀  éa"
+    Reexport from:"😀  éa"
+module #2 file:#0 top:#2 reexports:[] dynamic:false
+  imports:
+    Import from:"é\u0000Z\u0000" name:"😀  éa" decl:#2 kind:namespace
+    Import from:"\u001fa\"😀" name:"\"\udfffé " decl:#3 kind:default
+    Import from:"\"\udfffé " name:"\"\udfffé " decl:#0 kind:value
+  exports:
+    Export name:"\u001fa\"😀" decl:#4
+    Export name:#4? decl:#2
+    Export name:"😀  éa" decl:#0

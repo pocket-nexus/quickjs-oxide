@@ -1,0 +1,52 @@
+program version:1
+  unit:
+    Unit name:" " fingerprintInputs:[""]
+  entry:
+    script top:#2
+file #0 path:"\"\n_" hash:987
+file #1 path:" " hash:853
+file #2 path:"   é" hash:1
+string #0 ""
+string #1 "_\\a"
+string #2 ""
+const #0 number value:1.23456e2
+decl #0 name:"" kind:const owner:#2 capturedBy:[#3 #4] assigned:true tdz:false
+decl #1 name:"" kind:global owner:#1 capturedBy:[#2 #4] assigned:false tdz:true
+decl #2 name:"" kind:class owner:#0 capturedBy:[#3 #0] assigned:false tdz:true
+fn #0 kind:setter async:false generator:true strict:false params:[] simpleParams:true decls:[#4 #2 #2] captures:[#1 #1 #1] inner:[#3 #4] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:true homeObject:true
+  body:
+    Block stmts:[] decls:[#2 #2 #1]
+fn #1 name:#3? kind:constructor async:false generator:false strict:false params:[] simpleParams:true decls:[#0 #1] captures:[#3 #4 #0] inner:[#2] usesThis:true usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false
+  rest:
+    target
+      t:
+        pattern
+          p:
+            decl decl:#2
+  body:
+    Block decls:[]
+      stmts:
+        declare decl:#4
+module #0 file:#3 top:#1 reexports:[] dynamic:false
+  imports:
+    Import from:"" name:"" decl:#2 kind:value
+  exports:
+    Export name:"" decl:#1
+    Export name:#3? decl:#0
+    Export name:#3? decl:#4
+module #1 file:#4 top:#3 dynamic:false
+  imports:
+    Import from:"" name:"" decl:#0 kind:default
+    Import from:"_\\a" name:#3? decl:#2 kind:namespace
+  exports:
+    Export name:#3? decl:#3
+    Export name:"" decl:#0
+    Export name:"_\\a" decl:#1
+  reexports:
+    Reexport from:"_\\a"
+    Reexport from:"_\\a"
+module #2 file:#2 top:#0 imports:[] exports:[] dynamic:true
+  reexports:
+    Reexport from:""
+    Reexport from:#3?
+    Reexport from:""

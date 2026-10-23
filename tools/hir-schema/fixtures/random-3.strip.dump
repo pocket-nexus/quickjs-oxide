@@ -1,0 +1,36 @@
+program version:1
+  unit:
+    Unit name:"\"𐏿😀" fingerprintInputs:["\u001f" "\ud800\\a"]
+  entry:
+    eval top:#1
+file #0 path:"\n _\n" hash:0
+file #1 path:"" hash:478
+file #2 path:"\u001f\ud800\u0000" hash:0
+string #0 ""
+string #1 "Z "
+string #2 "\"_"
+string #3 "\\"
+const #0 bigint digits:#4?
+fn #0 kind:staticBlock async:false generator:false strict:false simpleParams:false decls:[#2] captures:[#3] inner:[] usesThis:true usesArguments:false usesNewTarget:true hasDirectEval:true homeObject:true
+  params:
+    Param
+      pattern:
+        decl decl:#4
+    Param
+      pattern:
+        decl decl:#4
+    Param
+      pattern:
+        decl decl:#4
+  rest:
+    decl decl:#1
+  body:
+    Block decls:[#0 #1 #2]
+      stmts:
+        declare decl:#3
+        declare decl:#3
+module #0 file:#1 top:#1 imports:[] reexports:[] dynamic:false
+  exports:
+    Export name:"" decl:#0
+    Export name:"Z " decl:#4
+    Export name:"Z " decl:#2

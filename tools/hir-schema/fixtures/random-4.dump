@@ -1,0 +1,42 @@
+program version:1
+  unit:
+    Unit name:"\n\"  " fingerprintInputs:["😀\ud800" " " "😀\"a"]
+  entry:
+    module module:#2
+file #0 path:"" hash:7
+file #1 path:"\\" hash:65536
+file #2 path:"\\" hash:146
+string #0 "é"
+string #1 ""
+string #2 "\\"
+string #3 ""
+string #4 "\u0000\u001f \n "
+const #0 regexp source:"\\" flags:""
+const #1 bigint digits:"\\"
+const #2 number value:-Infinity
+type #0 number repr:u32
+type #1 dynamic
+type #2 fn params:[#4 #1] rest:#1 ret:#2 async:false
+decl #0 name:"\u0000\u001f \n " kind:newTarget owner:#0 capturedBy:[#3] assigned:false tdz:false ty:#1
+decl #1 name:"" kind:privateName owner:#1 capturedBy:[#4 #2 #0] assigned:true tdz:true
+fn #0 kind:staticBlock async:false generator:true strict:false simpleParams:true decls:[#2 #4 #3] captures:[#4 #1 #2] inner:[#2 #2] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false
+  params:
+    Param
+      pattern:
+        decl decl:#3 ty:#4
+    Param
+      pattern:
+        decl decl:#0 ty:#1
+  rest:
+    target
+      t:
+        superMember
+          prop:
+            name name:""
+  body:
+    Block decls:[]
+      stmts:
+        declare decl:#1
+        declare decl:#3
+  effects:
+    Effects reads:[#2 #0 #1] writes:[#1 #1] heapReads:false heapWrites:false allocates:true mayThrow:false maySuspend:true calls:unknown

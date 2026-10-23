@@ -1,0 +1,34 @@
+program version:1
+  unit:
+    Unit name:" a" fingerprintInputs:["" "" "a"]
+  entry:
+    eval top:#2
+file #0 path:"é\"😀a\\" hash:0
+file #1 path:"\ud800a Z " hash:0
+string #0 "é"
+string #1 "\udfff\u0000\""
+string #2 " Z"
+string #3 "_\n\ud800\u0000"
+const #0 number value:-Infinity
+const #1 regexp source:#4? flags:" Z"
+decl #0 name:"é" kind:function owner:#4 capturedBy:[] assigned:false tdz:true
+decl #1 name:"é" kind:this owner:#0 capturedBy:[#3 #3] assigned:true tdz:true
+module #0 file:#4 top:#0 exports:[] dynamic:false
+  imports:
+    Import from:" Z" name:"_\n\ud800\u0000" decl:#4 kind:namespace
+    Import from:" Z" name:"é" decl:#4 kind:namespace
+  reexports:
+    Reexport from:" Z"
+    Reexport from:" Z"
+module #1 file:#1 top:#1 dynamic:false
+  imports:
+    Import from:" Z" name:" Z" decl:#1 kind:value
+    Import from:"\udfff\u0000\"" name:#4? decl:#0 kind:default
+    Import from:"\udfff\u0000\"" name:#4? decl:#1 kind:value
+  exports:
+    Export name:#4? decl:#1
+    Export name:" Z" decl:#4
+  reexports:
+    Reexport from:"\udfff\u0000\""
+    Reexport from:" Z"
+    Reexport from:#4?

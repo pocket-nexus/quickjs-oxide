@@ -1,0 +1,60 @@
+program version:1
+  unit:
+    Unit name:"\n\"é" fingerprintInputs:["é_ \\" "\n"]
+  entry:
+    script top:#2
+file #0 path:"é\udfff___" hash:7
+string #0 ""
+const #0 number value:1.7976931348623157e308
+const #1 bigint digits:#1?
+const #2 regexp source:#1? flags:#1?
+decl #0 name:#1? kind:import owner:#4 capturedBy:[#4 #0] assigned:false tdz:false
+decl #1 name:#1? kind:newTarget owner:#0 capturedBy:[#1 #3] assigned:false tdz:false
+fn #0 kind:method async:true generator:true strict:false simpleParams:false decls:[#1 #1 #2] captures:[#2 #4 #2] inner:[#1] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false
+  params:
+    Param
+      pattern:
+        decl decl:#3
+    Param
+      pattern:
+        decl decl:#4
+    Param
+      pattern:
+        decl decl:#2
+  rest:
+    object
+      props:
+        PatternProp
+          key:
+            name name:#1?
+          value:
+            decl decl:#3
+        PatternProp
+          key:
+            name name:""
+          value:
+            decl decl:#2
+        PatternProp
+          key:
+            name name:""
+          value:
+            decl decl:#0
+  body:
+    Block decls:[#1]
+      stmts:
+        declare decl:#2
+        declare decl:#3
+fn #1 kind:arrow async:false generator:false strict:false simpleParams:false decls:[#3 #3 #3] captures:[#1 #4] inner:[#0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false
+  params:
+    Param
+      pattern:
+        decl decl:#1
+  body:
+    Block stmts:[] decls:[#1 #3]
+module #0 file:#4 top:#3 reexports:[] dynamic:true
+  imports:
+    Import from:"" name:#1? decl:#4 kind:default
+    Import from:"" name:"" decl:#3 kind:value
+    Import from:"" name:#1? decl:#1 kind:namespace
+  exports:
+    Export name:#1? decl:#3
