@@ -89,7 +89,7 @@ errors = []
 # (`hir`) and the embedding API over `quickjs-oxide-core` (`api`); the engine
 # itself is the `quickjs-oxide-core` crate (`core/`) and the
 # regular-expression engine the `quickjs-oxide-regexp` crate (`regexp/`).
-expected = {"compiler", "code", "value", "hir", "api"}
+expected = {"compiler", "code", "value", "hir", "mir", "api"}
 if {p.name for p in src.glob("*.rs")} != {"lib.rs"}:
     errors.append("src must contain only lib.rs as a top-level Rust source")
 if {p.name for p in src.iterdir() if p.is_dir()} != {"engine", "source"}:
