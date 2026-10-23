@@ -1,0 +1,30 @@
+program version:1
+  unit:
+    Unit name:"" fingerprintInputs:[""]
+  entry:
+    module module:#3
+file #0 path:"a" hash:7
+string #0 ""
+string #1 "  é"
+string #2 " \n "
+string #3 "\"Z"
+const #0 number value:-1.5e0
+const #1 bigint digits:" \n "
+const #2 regexp source:"" flags:"\"Z"
+type #0 class layout:#4
+layout #0 name:""
+  fields:
+    LayoutField name:" \n " ty:#1 readonly:true
+layout #1 name:"\"Z"
+  fields:
+    LayoutField name:"" ty:#1 readonly:true
+    LayoutField name:"\"Z" ty:#4 readonly:true
+layout #2 name:#4?
+  fields:
+    LayoutField name:" \n " ty:#1 readonly:false
+    LayoutField name:#4? ty:#4 readonly:false
+descriptor #0 tagged tag:#4? variants:[]
+descriptor #1 number repr:i8 max:9.007199254740994e15
+descriptor #2 nominal base:#3 name:""
+decl #0 name:#4? kind:let owner:#4 capturedBy:[] assigned:true tdz:true ty:#2 span:1:7-0
+decl #1 name:#4? kind:newTarget owner:#1 capturedBy:[] assigned:true tdz:false ty:#1 span:0:7-0

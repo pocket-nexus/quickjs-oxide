@@ -1,0 +1,42 @@
+program version:1
+  unit:
+    Unit name:"Z" fingerprintInputs:["éZ\ud800😀\n"]
+  entry:
+    eval top:#1
+file #0 path:"\udfff" hash:722
+string #0 "é\u0000Z\u0000"
+string #1 "\"\udfffé "
+string #2 "\u001fa\"😀"
+string #3 "😀  éa"
+const #0 regexp source:"😀  éa" flags:"é\u0000Z\u0000"
+const #1 bigint digits:"\u001fa\"😀"
+decl #0 name:"\u001fa\"😀" kind:privateName owner:#3 capturedBy:[#0 #1] assigned:false tdz:true
+decl #1 name:"😀  éa" kind:class owner:#0 capturedBy:[#4] assigned:true tdz:false
+decl #2 name:"\"\udfffé " kind:class owner:#0 capturedBy:[#4] assigned:true tdz:false
+fn #0 kind:setter async:false generator:true strict:false params:[] simpleParams:false decls:[#1] captures:[#4 #2] inner:[#3 #1 #0] usesThis:true usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true
+  body:
+    Block decls:[]
+      stmts:
+        declare decl:#2
+fn #1 name:"😀  éa" kind:staticBlock async:true generator:false strict:true params:[] simpleParams:true decls:[#2] captures:[#1] inner:[#2] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true
+  body:
+    Block stmts:[] decls:[#2 #2]
+module #0 file:#2 top:#1 imports:[] reexports:[] dynamic:true
+  exports:
+    Export name:#4? decl:#2
+    Export name:"é\u0000Z\u0000" decl:#3
+    Export name:"\u001fa\"😀" decl:#1
+module #1 file:#4 top:#2 imports:[] exports:[] dynamic:false
+  reexports:
+    Reexport from:"\"\udfffé "
+    Reexport from:"😀  éa"
+    Reexport from:"😀  éa"
+module #2 file:#0 top:#2 reexports:[] dynamic:false
+  imports:
+    Import from:"é\u0000Z\u0000" name:"😀  éa" decl:#2 kind:namespace
+    Import from:"\u001fa\"😀" name:"\"\udfffé " decl:#3 kind:default
+    Import from:"\"\udfffé " name:"\"\udfffé " decl:#0 kind:value
+  exports:
+    Export name:"\u001fa\"😀" decl:#4
+    Export name:#4? decl:#2
+    Export name:"😀  éa" decl:#0

@@ -1,0 +1,15 @@
+program version:1
+  unit:
+    Unit name:"" fingerprintInputs:[""]
+  entry:
+    module module:#3
+file #0 path:"a" hash:7
+string #0 ""
+string #1 "  é"
+string #2 " \n "
+string #3 "\"Z"
+const #0 number value:-1.5e0
+const #1 bigint digits:" \n "
+const #2 regexp source:"" flags:"\"Z"
+decl #0 name:#4? kind:let owner:#4 capturedBy:[] assigned:true tdz:true
+decl #1 name:#4? kind:newTarget owner:#1 capturedBy:[] assigned:true tdz:false

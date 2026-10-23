@@ -96,6 +96,8 @@ jobs:
           python3 scripts/checks/check-docs-current.py
           python3 scripts/checks/check-source-layout.py
           ./scripts/checks/check-rust-only.sh
+          node tools/hir-schema/gen.ts --check
+          node tools/hir-schema/test.ts
 
       - name: Run fast engine tests
         run: |

@@ -1,0 +1,35 @@
+program version:1
+  unit:
+    Unit name:"\\" fingerprintInputs:[]
+  entry:
+    module module:#0
+file #0 path:"_" hash:65536
+file #1 path:"" hash:0
+string #0 "😀\u001f\u0000"
+const #0 bigint digits:#1?
+const #1 regexp source:"😀\u001f\u0000" flags:"😀\u001f\u0000"
+decl #0 name:"😀\u001f\u0000" kind:import owner:#2 capturedBy:[] assigned:true tdz:true
+decl #1 name:#1? kind:newTarget owner:#2 capturedBy:[#0] assigned:true tdz:true
+decl #2 name:#1? kind:newTarget owner:#2 capturedBy:[#4 #1] assigned:true tdz:false
+fn #0 name:"😀\u001f\u0000" kind:staticBlock async:false generator:false strict:false simpleParams:false decls:[#2 #3] captures:[#1] inner:[#1 #0] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:true homeObject:true
+  params:
+    Param
+      pattern:
+        decl decl:#1
+  body:
+    Block decls:[]
+      stmts:
+        declare decl:#3
+fn #1 kind:getter async:false generator:true strict:false params:[] simpleParams:true decls:[] captures:[] inner:[#1] usesThis:false usesArguments:false usesNewTarget:true hasDirectEval:true homeObject:false
+  body:
+    Block decls:[#3 #4]
+      stmts:
+        declare decl:#1
+module #0 file:#3 top:#0 exports:[] dynamic:false
+  imports:
+    Import from:#1? name:#1? decl:#4 kind:value
+    Import from:#1? name:"😀\u001f\u0000" decl:#1 kind:default
+    Import from:#1? name:#1? decl:#3 kind:default
+  reexports:
+    Reexport from:#1?
+    Reexport from:"😀\u001f\u0000"
