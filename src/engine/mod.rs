@@ -1,5 +1,6 @@
 //! The front end, the register lowering and the embedding API over `quickjs-oxide-core`.
 pub mod api;
+pub(crate) mod ast;
 pub(crate) mod code;
 pub(crate) mod compiler;
 pub(crate) mod hir;

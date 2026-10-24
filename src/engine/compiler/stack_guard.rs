@@ -91,7 +91,7 @@ thread_local! {
 
 /// Marginal logical cost of one recursive grammar edge.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum ParserStackFrame {
+pub(crate) enum ParserStackFrame {
     Parenthesized,
     ArrayLiteral,
     ObjectLiteral,
@@ -305,7 +305,7 @@ impl ParserStackGuard {
         }
     }
 
-    pub(super) fn enter(&mut self, frame: ParserStackFrame) -> Result<u64, ParserStackOverflow> {
+    pub(crate) fn enter(&mut self, frame: ParserStackFrame) -> Result<u64, ParserStackOverflow> {
         self.check_physical()?;
         let weight = frame.weight();
         if self.logical.saturating_add(weight) > PARSER_STACK_BUDGET {
@@ -315,7 +315,7 @@ impl ParserStackGuard {
         Ok(weight)
     }
 
-    pub(super) fn leave(&mut self, weight: u64) {
+    pub(crate) fn leave(&mut self, weight: u64) {
         self.logical = self.logical.saturating_sub(weight);
     }
 }
