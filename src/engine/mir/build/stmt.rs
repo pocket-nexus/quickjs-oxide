@@ -3,7 +3,7 @@
 
 use super::entry::lexical;
 use super::pattern::Mode;
-use super::{Access, Builder, Control, Result, internal, unsupported};
+use super::{Access, Builder, Control, Result, internal};
 use crate::engine::hir::schema::{
     self as hir, Block, DeclKind, DeclRef, ForTarget, PatternKind, Stmt, StmtKind, TargetKind,
 };
@@ -558,10 +558,7 @@ impl Builder<'_, '_> {
                 await_,
                 ..
             } => {
-                if *await_ {
-                    return unsupported("for await");
-                }
-                self.for_of(target, iter, body, *label, scoped)?;
+                self.for_of(target, iter, body, *label, scoped, *await_)?;
             }
             _ => return internal("not a loop"),
         }
@@ -678,6 +675,7 @@ impl Builder<'_, '_> {
         body: &Stmt,
         label: u32,
         scoped: bool,
+        asynchronous: bool,
     ) -> Result<()> {
         self.reset_completion();
         let outer = self.handler;
@@ -713,7 +711,11 @@ impl Builder<'_, '_> {
         self.start(expr_block);
         let iterable = self.expr(iterable)?;
         self.head_closures(scoped);
-        self.define_with(Op::IterStart, &[iterable], Imm::Int(0), &[record]);
+        if asynchronous {
+            self.define_with(Op::IterStartAsync, &[iterable], Imm::None, &[record]);
+        } else {
+            self.define_with(Op::IterStart, &[iterable], Imm::Int(0), &[record]);
+        }
         let opened = self.site;
         self.goto(next);
         self.handler = Some(handler);
@@ -722,7 +724,18 @@ impl Builder<'_, '_> {
         self.loop_body_at(label, exit, Some(next), Some(record), body, outer_depth)?;
         self.head_closures(scoped);
         self.enter(next);
-        self.define_with(Op::IterNext, &[record], Imm::None, &[value, done]);
+        if asynchronous {
+            let raw = self.op(Op::IterNextRaw, &[record], Imm::None);
+            let settled = self.await_value(raw, None);
+            self.define_with(
+                Op::IterResult,
+                &[settled, record],
+                Imm::None,
+                &[value, done],
+            );
+        } else {
+            self.define_with(Op::IterNext, &[record], Imm::None, &[value, done]);
+        }
         self.end(Terminator::Branch {
             cond: done,
             then: exit,
@@ -995,14 +1008,31 @@ impl Builder<'_, '_> {
             Some(value) => value,
             None => self.undefined(),
         };
-        if awaited && self.hf.async_ && self.hf.generator {
-            return unsupported("async generators");
+        if awaited && self.async_generator() {
+            value = self.await_value(value, Some(at));
         }
         let saved = self.handler;
         let controls = self.controls.clone();
         for control in controls.iter().rev() {
             match control {
                 Control::Breakable { iterator: None, .. } | Control::FinallyBody => {}
+                Control::Breakable {
+                    iterator: Some(record),
+                    ..
+                }
+                | Control::Iterator { record }
+                    if self.async_generator() =>
+                {
+                    // The value survives the awaited close in a variable.
+                    let var = self.new_var(VarKind::Local, None);
+                    self.set_var(var, value);
+                    self.async_iterator_return(*record)?;
+                    if let Some(h) = self.handler {
+                        self.handler = self.f.handlers[h.index()].parent;
+                    }
+                    self.rebase();
+                    value = self.get_var(var);
+                }
                 _ => {
                     // The value survives the cleanup in a variable when a
                     // finally body may run.

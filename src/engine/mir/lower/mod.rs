@@ -96,7 +96,7 @@ impl Tree<'_> {
         id: FunctionRef,
     ) -> Result<CodeUnitId, LowerError> {
         let f = &self.program.functions[id.index()];
-        let layout = Layout::of(f);
+        let layout = fit(f)?;
         self.layouts.insert(id.0, layout.clone());
         let mut children = Vec::with_capacity(f.children.len());
         for &child in &f.children {
@@ -137,6 +137,9 @@ impl Tree<'_> {
                     .position(|var| var.decl == Some(decl) && var.setter == setter)
                 {
                     let register = layout.var_regs[var];
+                    if register >= alloc::SLOT {
+                        return Ok(Capture::Slot(register16(register - alloc::SLOT)?));
+                    }
                     return Ok(Capture::Register(register16(register)?));
                 }
                 if let Some(index) = pf.captures.iter().position(|&c| c == (decl, setter)) {
@@ -180,14 +183,55 @@ impl Tree<'_> {
     }
 }
 
+/// The layout of `f` that fits the register window: its local variables
+/// spill to slots from the last until the values fit beside the others.
+fn fit(f: &Function) -> Result<Layout, LowerError> {
+    let window = oxide_core::bytecode::WINDOW;
+    let mut layout = Layout::of(f, None);
+    let locals = layout.locals;
+    let mut budget = None;
+    loop {
+        let order = Order::of(f);
+        let plan = alloc::plan(f, &layout, &order);
+        let allocation = alloc::allocate(f, &layout, &order, &plan);
+        let needed =
+            allocation
+                .used
+                .max(alloc::windows_top(&allocation, f, &layout, &order, &plan));
+        if needed <= window {
+            return Ok(layout);
+        }
+        let temps = needed - layout.temp_base;
+        let fixed = layout.first_local() + 1;
+        let next = window
+            .saturating_sub(fixed + temps)
+            .min(budget.unwrap_or(locals));
+        if budget == Some(0) || (budget.is_some() && Some(next) >= budget) {
+            if next == 0 && budget != Some(0) {
+                budget = Some(0);
+                layout = Layout::of(f, budget);
+                continue;
+            }
+            return Err(LowerError::Unsupported(
+                "functions whose values need more than 256 registers".into(),
+            ));
+        }
+        budget = Some(next);
+        layout = Layout::of(f, budget);
+    }
+}
+
 fn register16(register: u32) -> Result<u16, LowerError> {
     u16::try_from(register)
         .map_err(|_| LowerError::Unsupported("functions with more than 65535 registers".into()))
 }
 
 fn r8(register: u32) -> Result<u8, LowerError> {
-    u8::try_from(register)
-        .map_err(|_| LowerError::Unsupported("functions with more than 256 registers".into()))
+    u8::try_from(register).map_err(|_| {
+        LowerError::Unsupported(format!(
+            "functions with more than 256 registers ({register})"
+        ))
+    })
 }
 
 /// The lowering of one function.
@@ -231,35 +275,10 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         let order = Order::of(f);
         let plan = alloc::plan(f, &layout, &order);
         let alloc = alloc::allocate(f, &layout, &order, &plan);
-        // Window instructions' slots, in order.
-        let mut slots = Vec::new();
-        for &block in &order.blocks {
-            let b = f.block(block);
-            let entry = order.entry[block.index()];
-            for (index, insn) in b.insns.iter().enumerate() {
-                if !plan.dead[block.index()][index] && alloc::is_window(insn.op) {
-                    slots.push(entry + 1 + index as u32);
-                }
-            }
-            if matches!(
-                b.term,
-                Terminator::Suspend {
-                    kind: SuspendKind::Yield | SuspendKind::YieldStar | SuspendKind::Await,
-                    ..
-                }
-            ) || matches!(b.term, Terminator::Gosub { .. })
-            {
-                slots.push(order.end[block.index()] - 1);
-            }
-            // Instructions with paired results.
-            for (index, insn) in b.insns.iter().enumerate() {
-                if !plan.dead[block.index()][index] && insn.op == Op::IterCall {
-                    slots.push(entry + 1 + index as u32);
-                }
-            }
-        }
-        slots.sort_unstable();
-        slots.dedup();
+        let slots: Vec<u32> = alloc::window_slots(f, &order, &plan)
+            .into_iter()
+            .map(|(slot, _)| slot)
+            .collect();
         let bases = alloc::window_bases(&alloc, f, &layout, &slots);
         let windows = slots.into_iter().zip(bases).collect();
         let register_count = alloc.used;
@@ -339,6 +358,19 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         r8(self.layout.var_regs[var as usize])
     }
 
+    /// The spill register and slot of a variable past the window.
+    fn slot(&self, var: u32) -> Result<Option<(u8, i32)>, LowerError> {
+        let register = self.layout.var_regs[var as usize];
+        if register < alloc::SLOT {
+            return Ok(None);
+        }
+        let (spill, _) = self
+            .layout
+            .spill
+            .ok_or_else(|| LowerError::Internal("a slot without a spill scope".into()))?;
+        Ok(Some((r8(spill)?, (register - alloc::SLOT) as i32)))
+    }
+
     fn uses(&mut self, top: u32) {
         self.register_count = self.register_count.max(top);
     }
@@ -407,7 +439,26 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         self.labels[block.index()] = self.builder.pc();
         self.region = b.handler;
         let entry = self.order.entry[block.index()];
+        // The spill scope exists before anything reaches a slot; an async
+        // function's start stays first.
+        let spill_at = if block == BlockId::ENTRY {
+            let leading = b
+                .insns
+                .first()
+                .is_some_and(|insn| insn.op == Op::AsyncStart);
+            self.layout.spill.map(|spill| (usize::from(leading), spill))
+        } else {
+            None
+        };
+        let mut spill_at = spill_at;
         for (index, insn) in b.insns.iter().enumerate() {
+            if let Some((at, (spill, slots))) = spill_at
+                && index == at
+            {
+                let spill = r8(spill)?;
+                self.emit(|b| b.a_count(Opcode::NewSpill, spill, slots));
+                spill_at = None;
+            }
             if self.plan.dead[block.index()][index] {
                 continue;
             }
@@ -417,6 +468,10 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             }
             let slot = entry + 1 + index as u32;
             self.insn(insn, slot)?;
+        }
+        if let Some((_, (spill, slots))) = spill_at {
+            let spill = r8(spill)?;
+            self.emit(|b| b.a_count(Opcode::NewSpill, spill, slots));
         }
         self.pos = b.term_pos;
         self.terminator(block, self.order.end[block.index()] - 1)
@@ -436,9 +491,14 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let Imm::Var(var) = insn.imm else {
                     unreachable!("a var")
                 };
-                let src = self.var_reg(var)?;
-                if self.alloc.regs[r.index()] != NONE {
-                    let dst = self.reg(r)?;
+                if self.alloc.regs[r.index()] == NONE {
+                    return Ok(());
+                }
+                let dst = self.reg(r)?;
+                if let Some((spill, slot)) = self.slot(var)? {
+                    self.emit(|b| b.ab_int(Opcode::LoadSlot, dst, spill, slot));
+                } else {
+                    let src = self.var_reg(var)?;
                     self.mov(dst, src);
                 }
             }
@@ -446,11 +506,15 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let Imm::Var(var) = insn.imm else {
                     unreachable!("a var")
                 };
-                let dst = self.var_reg(var)?;
                 let src = a(self, 0)?;
-                self.mov(dst, src);
+                if let Some((spill, slot)) = self.slot(var)? {
+                    self.emit(|b| b.ab_int(Opcode::StoreSlot, src, spill, slot));
+                } else {
+                    let dst = self.var_reg(var)?;
+                    self.mov(dst, src);
+                }
             }
-            Op::Copy => {
+            Op::Copy | Op::IterIterator => {
                 let (dst, src) = (res(self)?, a(self, 0)?);
                 self.mov(dst, src);
             }
@@ -1302,8 +1366,8 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             flags: unit.flags,
             this_slots: unit.this_slots,
             constant_count: self.pool.len() as u32,
-            spill_register: None,
-            spill_slots: 0,
+            spill_register: self.layout.spill.map(|(register, _)| register as u16),
+            spill_slots: self.layout.spill.map_or(0, |(_, slots)| slots as u16),
             children,
             captures,
             name,

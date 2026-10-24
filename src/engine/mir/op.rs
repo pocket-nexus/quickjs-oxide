@@ -162,6 +162,8 @@ ops! {
     SetVar(Fixed(1), 0, Var, WRITE) => [];
     /// A copy, where the builder needs a fresh value.
     Copy(Fixed(1), 1, None, PURE) => [];
+    /// An iterator record's iterator, its first register.
+    IterIterator(Fixed(1), 1, None, PURE) => [];
 
     // ---- unary ----
     Neg(Fixed(1), 1, None, ANY) => [Neg];
