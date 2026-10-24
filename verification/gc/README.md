@@ -102,12 +102,12 @@ The driver's three adapter obligations are:
 | `drain` | Require at least one unmarked queued node. Preserve graph and invariant, empty the queue, preserve old marks and mark every initially queued node. |
 | `clear` | Preserve marked nodes and graph, empty the pending and waiting state. |
 
-`WeakPass` in `gc.rs` implements the production operations. Its complete
-refinement to those contracts is **not yet deductively proved**. The contract is
-an explicit assumption at that boundary. The model's semantic operations and
-the checks below provide evidence, not a replacement for that missing proof.
-The driver also assumes its adapter calls terminate; its decreases clause does
-not prove termination of arbitrary trait implementations.
+`WeakPass` in `gc.rs` implements the production operations. Normal-build
+`scan`/`clear` now have the source proofs described below, but complete refinement
+to `Graph`/`Work`, the full drain, and preservation of the representation
+invariants are **not yet deductively proved**. The driver contracts remain an
+explicit boundary. The driver also assumes its adapter calls terminate; its
+decreases clause does not prove termination of arbitrary trait implementations.
 
 The phase rank is explicitly the number of unmarked graph nodes. `drain_progress`
 derives its strict decrease from the mark-preservation and queue-coverage
@@ -210,10 +210,44 @@ mark bitmaps. Waiting keys remain unmarked.
 The entry loop requires an even slot count, a valid waiting table and initially
 unmarked waiting keys. Its caller must additionally establish live-map
 provenance, the correct heap bitmap snapshot, and complete outer-cursor coverage.
-Those premises and the complete `Heap::drain` refinement remain open. The scan
-does not prove that WeakMap mutators maintain the paired-slot representation.
+The outer scan below now proves snapshot construction and cursor coverage under
+its representation invariant. Establishing that invariant from the complete
+`Heap::drain` and WeakMap mutators remains open.
 Negative proofs remove ready/deferred output, skip a pair, or consult the object
 bitmap for a symbol; each must fail a proof obligation.
+
+### Outer WeakPass scan and heap framing
+
+`scripts/verification/weakpass.py` checks the exact normal-configuration bodies
+of `Heap::value_marked` and `WeakPass::scan`/`clear`, composing the verified arena
+accessors and entry scan. It proves that the cursor reaches the end, all entries
+in the scanned prefix remain covered, new queued values originate in marked
+maps with marked keys, and every waiting value has a source entry in a marked
+map. If scan returns no work, every listed map entry with a marked key already
+has a marked value. All Heap fields except the waiting table are framed.
+
+The incoming invariant requires valid internal-arena access, marked entries in
+the weak list, even WeakMap slot counts, coverage of the old scanned prefix,
+and provenance of existing waiters. The first scan's prefix and waiting table
+are empty. Proving that the real tracer establishes and maintains this invariant,
+and that its weak list covers every marked WeakMap, remains necessary. The
+normal-build proof does not check the extra gc-stress diagnostic iterator bodies.
+
+The proof frontend retains **every production record field**. Field types not
+inspected by these methods become independent generic parameters, making the
+proof hold for any instantiation of those types. Inspected field types must
+match the selected source declarations exactly. Field syntax it cannot preserve,
+including multiple fields on one line, is rejected. This parametric translation
+is part of the trusted frontend; it is not a byte-layout proof. Record equality
+also does not establish preservation of data behind interior-mutable pointers.
+
+The actual derived equality of `InternalTag` is checked before attaching Verus's
+`Structural` marker in the proof copy; no custom equality implementation is
+silently substituted. See the [Verus equality rules](https://verus-lang.github.io/verus/guide/equality.html)
+and [Structural marker documentation](https://docs.rs/verus_builtin/latest/verus_builtin/trait.Structural.html).
+The production for-loop uses a positive WeakMap branch instead of `continue`,
+which the pinned verifier cannot translate in a for-loop. Ghost snapshots,
+invariants and proof blocks leave the selected executable statements unchanged.
 
 The runner rejects local `assume`, `assume_specification`, `admit`, external
 body/type/trait/function specifications, and uninterpreted/axiomatic escapes.

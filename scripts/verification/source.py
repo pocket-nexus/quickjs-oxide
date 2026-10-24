@@ -83,7 +83,7 @@ def item(source, pattern):
 
 
 def method(source, name, contract, result=None, before=None, after=None, loops=None,
-           panic_condition=None):
+           panic_condition=None, bindings=None):
     """Add contracts/ghost code and optionally erase a proved panic diagnostic."""
     selected = item(source, rf"(?:pub(?:\(crate\))?\s+)?(?:const\s+)?fn\s+{name}\b")
     opening = masked(selected).index("{")
@@ -122,6 +122,15 @@ def method(source, name, contract, result=None, before=None, after=None, loops=N
         if body.count(anchor) != 1:
             raise ValueError(f"non-unique loop annotation point in {name}: {header}")
         body = body.replace(anchor, header + "\n" + annotations + "\n{")
+    for anchor, variables in (bindings or {}).items():
+        if body.count(anchor) != 1:
+            raise ValueError(f"non-unique snapshot point in {name}: {anchor}")
+        declarations = []
+        for variable, expression in variables.items():
+            if not re.fullmatch(r"[a-z][a-z0-9_]*", variable) or re.search(rf"\b{variable}\b", masked(body)):
+                raise ValueError(f"invalid or conflicting ghost binding: {variable}")
+            declarations.append(f"let ghost {variable} = {expression};")
+        body = body.replace(anchor, "\n".join(declarations) + "\n" + anchor)
     for placements, position in ((before or {}, "before"), (after or {}, "after")):
         for statement, ghost in placements.items():
             if body.count(statement) != 1:

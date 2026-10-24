@@ -31,9 +31,7 @@ def proof(source, template, value_code, waiters_code, kernel_code, roots_code):
             forall|i: int| old(stack)@.len() <= i < final(stack)@.len()
                 ==> !marks.live(final(stack)@[i]),
             forall|i: int| #![trigger final(stack)@[i]] old(stack)@.len() <= i < final(stack)@.len() ==>
-                exists|p: int| 0 <= p && p % 2 == 0 && p + 2 <= slots@.len()
-                    && slots@[p].0 != Value::EMPTY.0 && slots@[p + 1] == final(stack)@[i]
-                    && marks.live(slots@[p]),
+                ready_origin(slots@, marks, slots@.len(), final(stack)@[i]),
             forall|k: u64| final(waiters).by_key@.contains_key(k) ==> !marks.live(Value(k)),
             forall|i: int| 0 <= i && i % 2 == 0 && i + 2 <= slots@.len()
                 && slots@[i].0 != Value::EMPTY.0 ==>
@@ -70,9 +68,7 @@ def proof(source, template, value_code, waiters_code, kernel_code, roots_code):
         }
     """}, after={"position += 2;\n    }": """
         assert forall|i: int| #![trigger stack@[i]] old(stack)@.len() <= i < stack@.len() implies
-            exists|p: int| 0 <= p && p % 2 == 0 && p + 2 <= slots@.len()
-                && slots@[p].0 != Value::EMPTY.0 && slots@[p + 1] == stack@[i]
-                && marks.live(slots@[p]) by {
+            ready_origin(slots@, marks, slots@.len(), stack@[i]) by {
             let queued = ready(slots@, marks, slots@.len());
             assert(queued[i - old(stack)@.len()] == stack@[i]);
             ready_has_origin(slots@, marks, slots@.len(), stack@[i]);

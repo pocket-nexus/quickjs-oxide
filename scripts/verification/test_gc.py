@@ -3,6 +3,7 @@ from pathlib import Path
 import unittest
 
 from source import item, masked, method
+from records import record
 
 SPEC = importlib.util.spec_from_file_location("gc_proofs", Path(__file__).with_name("gc.py"))
 gc = importlib.util.module_from_spec(SPEC)
@@ -10,6 +11,27 @@ SPEC.loader.exec_module(gc)
 
 
 class ProofSourceTests(unittest.TestCase):
+    def test_parametric_records_preserve_every_field_and_reject_drift(self):
+        original = """pub struct State {
+            known: Vec<u32>,
+            ignored: Option<(usize, Vec<u8>)>,
+            other: HostState,
+            #[cfg(feature = "gc-stress")]
+            stress: bool,
+        }"""
+        generated, parameters, fields = record(original, "State", "S", {"known": ("Vec<u32>", "Vec<u32>")})
+        self.assertEqual(parameters, ["SIgnored", "SOther"])
+        self.assertEqual(fields, ["ignored", "known", "other", "stress"])
+        self.assertIn('known: Vec<u32>', generated)
+        self.assertIn('ignored: SIgnored', generated)
+        self.assertIn('#[cfg(feature = "gc-stress")]', generated)
+        self.assertIn('stress: bool', generated)
+        for broken in (original.replace('Vec<u32>', 'Vec<u64>'),
+                       original.replace('other: HostState,', 'other: HostState, hidden: u64,'),
+                       original.replace('other: HostState,', 'other: Option<\nHostState>,')):
+            with self.assertRaises(ValueError):
+                record(broken, "State", "S", {"known": ("Vec<u32>", "Vec<u32>")})
+
     def test_kernel_body_is_copied_verbatim(self):
         source = (gc.ROOT / "core/src/heap/gc_kernel.rs").read_text()
         generated = gc.kernel_proof(source)
@@ -79,6 +101,11 @@ class ProofSourceTests(unittest.TestCase):
         for source in ("fn go() {}", "fn go() { step(); step(); }"):
             with self.assertRaises(ValueError):
                 method(source, "go", "", before={"step();": "assert(true);"})
+            with self.assertRaises(ValueError):
+                method(source, "go", "", bindings={"step();": {"saved": "0"}})
+        with self.assertRaises(ValueError):
+            method("fn go() { let saved = 0; step(); }", "go", "",
+                   bindings={"step();": {"saved": "1"}})
 
     def test_panic_projection_preserves_known_guard(self):
         original = 'fn check(&self) { assert!(self.live(), "{}", type_name::<T>()); }'
@@ -113,6 +140,10 @@ class ProofSourceTests(unittest.TestCase):
         self.assertNotIn("// SCAN_ENTRIES", scan)
         self.assertNotIn("// METHOD", scan)
         gc.reject_trust_escapes(scan)
+        weakpass = gc.weakpass_proofs.proof((gc.ROOT / "core/src/heap/mod.rs").read_text(),
+            heap, (gc.ROOT / "core/src/heap/object.rs").read_text(),
+            gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()), scan)
+        gc.reject_trust_escapes(weakpass)
 
     def test_completeness_does_not_count_conditional_or_tested_code(self):
         obligations = [

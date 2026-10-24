@@ -1024,16 +1024,15 @@ impl EphemeronTrace for WeakPass<'_> {
                 "gc adapter: dead map provenance"
             );
             let internal = heap.payloads.internals.get(payload);
-            if internal.tag != InternalTag::WeakMap {
-                continue;
+            if internal.tag == InternalTag::WeakMap {
+                let marks = ValueMarks {
+                    objects: heap.objects.mark_bits(),
+                    strings: heap.strings.mark_bits(),
+                    symbols: heap.symbols.mark_bits(),
+                    bigints: heap.bigints.mark_bits(),
+                };
+                scan_entries(&internal.slots, &marks, self.stack, &mut heap.gc.ephemerons);
             }
-            let marks = ValueMarks {
-                objects: heap.objects.mark_bits(),
-                strings: heap.strings.mark_bits(),
-                symbols: heap.symbols.mark_bits(),
-                bigints: heap.bigints.mark_bits(),
-            };
-            scan_entries(&internal.slots, &marks, self.stack, &mut heap.gc.ephemerons);
         }
         self.scanned = heap.gc.weak.len();
         #[cfg(any(test, feature = "gc-stress"))]

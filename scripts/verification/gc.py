@@ -20,6 +20,7 @@ import scan as scan_proofs
 import source as source_frontend
 import value as value_proofs
 import waiters as waiter_proofs
+import weakpass as weakpass_proofs
 
 ROOT = Path(__file__).resolve().parents[2]
 PROOFS = ROOT / "verification/gc"
@@ -196,6 +197,7 @@ def main():
         ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     paths = {item["implementation"] for item in receipt["obligations"]}
     paths.update(["core/src/heap/gc_audit.rs", "core/src/heap/gc_tests.rs",
+                  "core/src/heap/mod.rs", "core/src/heap/object.rs",
                   "core/src/vm/regexp.rs", "verification/gc/driver.rs.in",
                   "verification/gc/obligations.json", "verification/gc/toolchain.json",
                   "scripts/verification/gc.py"])
@@ -228,8 +230,11 @@ def main():
         scan.write_text(scan_proofs.proof((ROOT / "core/src/heap/gc_scan.rs").read_text(),
             (PROOFS / "scan.rs.in").read_text(), value.read_text(), waiters.read_text(),
             generated.read_text(), roots.read_text()))
+        weakpass = directory / "weakpass.rs"
+        weakpass.write_text(weakpass_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
+            gc_source, (ROOT / "core/src/heap/object.rs").read_text(), arena.read_text(), scan.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
-                   generated, driver, roots, value, arena, waiters, scan]
+                   generated, driver, roots, value, arena, waiters, scan, weakpass]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -260,6 +265,20 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "weakpass_skips_maps": (weakpass,
+                    "for position in self.scanned..heap.gc.weak.len()",
+                    "for position in heap.gc.weak.len()..heap.gc.weak.len()"),
+                "weakpass_lost_cursor": (weakpass,
+                    "self.scanned = heap.gc.weak.len();", "self.scanned = self.scanned;"),
+                "weakpass_false_done": (weakpass, "!self.stack.is_empty()", "false"),
+                "weakpass_dead_map": (weakpass,
+                    "self.payloads.internals.live_at(self.gc.weak@[p])\n                && self.payloads.internals.marked_at(self.gc.weak@[p])",
+                    "self.payloads.internals.live_at(self.gc.weak@[p])"),
+                "weakpass_wrong_snapshot": (weakpass,
+                    "strings: heap.strings.mark_bits(),", "strings: heap.symbols.mark_bits(),"),
+                "weakpass_corrupts_heap": (weakpass,
+                    "self.heap.gc.ephemerons.clear();",
+                    "self.heap.gc.ephemerons.clear(); self.heap.global_generation = 0;"),
                 "scan_lost_ready": (scan, "1 => stack.push(value),", "1 => {},"),
                 "scan_lost_waiter": (scan, "_ => waiters.defer(key, value),", "_ => {},"),
                 "scan_skips_entry": (scan, "position += 2;", "position += 4;"),

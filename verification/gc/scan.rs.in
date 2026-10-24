@@ -68,11 +68,15 @@ proof fn entry_covered(slots: Seq<Value>, marks: &ValueMarks, upto: nat, positio
     }
 }
 
+spec fn ready_origin(slots: Seq<Value>, marks: &ValueMarks, upto: nat, value: Value) -> bool {
+    exists|position: int| 0 <= position && position % 2 == 0 && position + 2 <= upto
+        && slots[position].0 != Value::EMPTY.0 && slots[position + 1] == value
+        && marks.live(slots[position]) && !marks.live(value)
+}
+
 proof fn ready_has_origin(slots: Seq<Value>, marks: &ValueMarks, upto: nat, value: Value)
     requires upto <= slots.len(), upto % 2 == 0, ready(slots, marks, upto).contains(value),
-    ensures exists|position: int| 0 <= position && position % 2 == 0 && position + 2 <= upto
-        && slots[position].0 != Value::EMPTY.0 && slots[position + 1] == value
-        && marks.live(slots[position]) && !marks.live(value),
+    ensures ready_origin(slots, marks, upto, value),
     decreases upto,
 {
     reveal_with_fuel(ready, 2);
