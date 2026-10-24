@@ -27,6 +27,7 @@ def proof(source, template):
         "get_mut": ("""
             requires old(self).valid_marks(), old(self).live_at(index),
             ensures *result == old(self).records@[index as int],
+                *final(self) == (Self { records: final(self).records, ..*old(self) }),
                 final(self).records@ == old(self).records@.update(index as int, *final(result)),
                 final(self).live@ == old(self).live@, final(self).marks@ == old(self).marks@,
                 final(self).free_count == old(self).free_count,

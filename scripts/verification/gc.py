@@ -23,10 +23,12 @@ import roots as root_proofs
 import scan as scan_proofs
 import source as source_frontend
 import symbol as symbol_proofs
+import table_index as table_index_proofs
 import value as value_proofs
 import vm_roots as vm_root_proofs
 import vm_resume as vm_resume_proofs
 import waiters as waiter_proofs
+import weak_cleanup as weak_cleanup_proofs
 import weakpass as weakpass_proofs
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -260,9 +262,15 @@ def main():
         vm_resume.write_text(vm_resume_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
             (ROOT / "core/src/vm/mod.rs").read_text(), (ROOT / "core/src/vm/interp.rs").read_text(),
             value_source, vm_roots.read_text()))
+        weak_cleanup = directory / "weak_cleanup.rs"
+        weak_cleanup.write_text(weak_cleanup_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
+            gc_source, (ROOT / "core/src/heap/object.rs").read_text(), value_source,
+            arena.read_text(), scan.read_text()))
+        table_index = directory / "table_index.rs"
+        table_index.write_text(table_index_proofs.proof((ROOT / "core/src/heap/table.rs").read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
                    generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse,
-                   root_trace, job_trace, vm_roots, vm_resume]
+                   root_trace, job_trace, vm_roots, vm_resume, weak_cleanup, table_index]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -277,6 +285,8 @@ def main():
         receipt["checks"].append(checked_run(binary, symbol, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["checks"].append(checked_run(binary, reuse, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
+        receipt["checks"].append(checked_run(binary, weak_cleanup, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["sha256"]["gc_kernel.rs"] = hashlib.sha256(kernel.encode()).hexdigest()
         if args.mutations:
@@ -297,6 +307,20 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "table_index_lost_write": (table_index, "self.index[bucket] = entry as u32 + 1;", ""),
+                "table_index_wrong_entry": (table_index, "self.index[bucket] = entry as u32 + 1;", "self.index[bucket] = entry as u32;"),
+                "table_index_ignores_tombstones": (table_index, "while self.index[bucket] != VACANT && self.index[bucket] != DELETED", "while self.index[bucket] != VACANT"),
+                "table_index_bad_wrap": (table_index, "bucket = (bucket + 1) & mask;", "bucket = bucket + 1;"),
+                "table_index_wrong_start": (table_index, "let mut bucket = hash as usize & mask;", "let mut bucket = 0;"),
+                "table_index_corrupts_cursors": (table_index, "let mask = self.index.len() - 1;", "self.cursors.clear(); let mask = self.index.len() - 1;"),
+                "table_index_accepts_sentinel": (table_index, "entry < DELETED as usize - 1,", "entry < DELETED as usize,"),
+                "table_index_accepts_full_table": (table_index, "exists|i: int| old(self).available(i),", "true,"),
+                "weakref_lost_write": (weak_cleanup, "self.payloads.internals.get_mut(payload).slots[0] = Value::UNDEFINED;", ""),
+                "weakref_inverted_guard": (weak_cleanup, "if !self.value_marked(target)", "if self.value_marked(target)"),
+                "weakref_clears_live": (weak_cleanup, "if !self.value_marked(target)", "if true"),
+                "weakref_wrong_slot": (weak_cleanup, "get_mut(payload).slots[0] = Value::UNDEFINED", "get_mut(payload).slots[1] = Value::UNDEFINED"),
+                "weakref_corrupts_heap": (weak_cleanup, "let target = self.payloads.internals.get(payload).slots[0];", "self.html_dda = !self.html_dda; let target = self.payloads.internals.get(payload).slots[0];"),
+                "weakref_unchecked_slot": (weak_cleanup, "old(self).payloads.internals.records@[payload as int].slots@.len() > 0,", "true,"),
                 "vm_resume_lost_clear": (vm_resume, "clear_registers(cx, from as usize..end as usize);", ""),
                 "vm_resume_overclear": (vm_resume, "vm.top.max(vm.stale_from)", "vm.top.min(vm.stale_from)"),
                 "vm_resume_lost_boundary": (vm_resume, "cx.heap.vm.stale_from = end;", ""),

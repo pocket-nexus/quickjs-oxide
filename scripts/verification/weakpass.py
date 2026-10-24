@@ -5,7 +5,7 @@ from source import item, masked, method
 
 
 def proof(heap_source, gc_source, object_source, arena_code, scan_code, symbol_source=None,
-          extra_heap="", include_scan=True):
+          extra_heap="", include_scan=True, include_arena_mut=False):
     declarations = []
 
     def declare(source, name, prefix, retained, dependencies=()):
@@ -54,7 +54,7 @@ def proof(heap_source, gc_source, object_source, arena_code, scan_code, symbol_s
                    for name in ("valid_marks", "live_at", "marked_at")]
     arena_items += [item(arena_scope, rf"fn {name}\b")
                     for name in ("mark_bits", "is_live", "is_marked", "check", "get")]
-    if symbol_source is None:
+    if symbol_source is None and not include_arena_mut:
         declarations.append("impl<T> Arena<T> {\n" + "\n".join(arena_items) + "\n}")
     else:
         declarations.extend([item(arena_code, r"proof fn fresh_single_bit\b"),

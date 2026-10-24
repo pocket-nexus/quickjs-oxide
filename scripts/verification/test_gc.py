@@ -177,6 +177,30 @@ class ProofSourceTests(unittest.TestCase):
             (gc.ROOT / "core/src/vm/mod.rs").read_text(), (gc.ROOT / "core/src/vm/interp.rs").read_text(),
             value, vm_roots)
         gc.reject_trust_escapes(vm_resume)
+        cleanup = gc.weak_cleanup_proofs.proof((gc.ROOT / "core/src/heap/mod.rs").read_text(),
+            heap, (gc.ROOT / "core/src/heap/object.rs").read_text(), value,
+            gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()), scan)
+        gc.reject_trust_escapes(cleanup)
+        clear_scope = item(item(heap, r"impl Heap\b"), r"fn clear_weak\b")
+        arm = item(clear_scope, r"InternalTag::WeakRef\s*=>")
+        self.assertIn(arm[arm.index("{"):-1], cleanup)
+
+    def test_cleanup_arm_selection_rejects_missing_or_duplicate_guards(self):
+        heap = (gc.ROOT / "core/src/heap/gc.rs").read_text()
+        guard = "InternalTag::WeakRef => {"
+        for changed in (heap.replace(guard, "InternalTag::WeakSet => {"),
+                        heap.replace(guard, guard + "}\n" + guard)):
+            with self.assertRaises(ValueError):
+                gc.weak_cleanup_proofs.proof("", changed, "", "", "", "")
+
+    def test_table_index_projection_keeps_cursors_and_rejects_type_drift(self):
+        source = (gc.ROOT / "core/src/heap/table.rs").read_text()
+        generated = gc.table_index_proofs.proof(source)
+        gc.reject_trust_escapes(generated)
+        self.assertIn("cursors: Vec<C>", generated)
+        self.assertIn("self.index[bucket] = entry as u32 + 1;", generated)
+        with self.assertRaises(ValueError):
+            gc.table_index_proofs.proof(source.replace("index: Vec<u32>", "index: Vec<u64>"))
 
     def test_root_fields_cannot_silently_escape_tracing_policy(self):
         source = (gc.ROOT / "core/src/heap/gc.rs").read_text()

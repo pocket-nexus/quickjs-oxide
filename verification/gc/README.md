@@ -457,3 +457,38 @@ adding a local trusted specification. The source lexer masks ASCII byte
 characters because the complete interpreter source contains bracket byte
 literals; malformed or unsupported byte literals fail closed. Unit tests check
 that braces, semicolons, escapes and lifetimes cannot alter item boundaries.
+
+### WeakRef cleanup branch
+
+`scripts/verification/weak_cleanup.py` selects the existing `WeakRef` match arm
+inside `Heap::clear_weak` and checks its unchanged executable block with only
+its free variables (`self`, `payload`) supplied by a proof wrapper. Ghost code
+establishes that a dead target becomes `undefined`, a marked target stays
+unchanged, and the result is retained. Every other slot, record, bitmap and
+heap field is framed, in normal and stress configurations. The strengthened
+`Arena::get_mut` contract supplies the complete non-record field frame.
+
+The wrapper requires valid arena access and a live internal record with a
+nonempty slot vector. It does **not** prove that the enclosing loop establishes
+those conditions, visits all weak references, or correctly handles other tags.
+Missing/duplicate arm guards fail source extraction; six negative checks lose
+the write, invert or bypass its guard, change the slot, corrupt an unrelated
+heap field, or omit the nonempty-slot premise. These are deductive source
+checks, not a claim that the complete weak-cleanup phase is proved.
+
+### Collection index probing
+
+`scripts/verification/table_index.py` checks the unchanged `Table::insert_index`
+body and initialization/accessors. It proves wraparound for every representable
+mask satisfying the power-of-two-capacity condition, termination by distance to
+an available bucket, and selection of the **first** vacant or deleted bucket
+from the hashed start. Exactly that bucket receives the encoded entry; hashes,
+counts, iterator cursors and every other bucket are preserved. The cursor vector
+has an arbitrary element type because this operation does not inspect it.
+
+Nonzero power-of-two capacity, an available bucket, and an entry number below
+the tombstone encoding are explicit premises. Their establishment by rebuild
+and growth, correctness of lookup/deletion, and the full WeakMap cleanup phase
+remain open. Eight mutations lose or corrupt insertion, skip tombstones, break
+wraparound or the hashed start, clear iterator cursors, or drop the free-bucket
+or representable-entry premises. No engine source is changed for this proof.
