@@ -783,7 +783,7 @@ fn method_flags(kind: DefineMethodKind, enumerable: bool) -> u32 {
 
 /// Whether QuickJS's `JS_NewAtom` makes `string` a tagged integer atom: the
 /// canonical decimal spelling of an integer up to `JS_ATOM_MAX_INT`.
-fn is_tagged_int_atom(string: &JsString) -> bool {
+pub(crate) fn is_tagged_int_atom(string: &JsString) -> bool {
     let len = string.len();
     if len == 0 || len > 10 {
         return false;

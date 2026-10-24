@@ -623,6 +623,27 @@ impl Runtime {
         Ok(crate::engine::hir::schema::dump(&built.program))
     }
 
+    /// The new front end's MIR of `source` (`--dump-mir`).
+    pub fn dump_mir(
+        &self,
+        source: &[u8],
+        filename: &str,
+        module: bool,
+    ) -> Result<String, RuntimeError> {
+        let program = parse_new_front_end(source, module)?;
+        let has_with = program.has_with;
+        let built =
+            crate::engine::hir::build::build(program, filename).map_err(RuntimeError::Compile)?;
+        let mir = crate::engine::mir::build::build(&built.program, &built.regexps, has_with)
+            .map_err(|error| RuntimeError::Internal(error.to_string()))?;
+        let mut out = String::new();
+        for function in &mir.functions {
+            out.push_str(&crate::engine::mir::dump::dump(function));
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
     // ---- keys and symbols ----
 
     pub fn intern_property_key(&self, text: &str) -> Result<PropertyKey, RuntimeError> {

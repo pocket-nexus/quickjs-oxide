@@ -20,6 +20,7 @@ fn imm(imm: Imm) -> String {
         Imm::Flags(f) => format!(" flags:{f}"),
         Imm::Capture(c) => format!(" capture:{c}"),
         Imm::Child(c) => format!(" child:{c}"),
+        Imm::Var(v) => format!(" var:{v}"),
     }
 }
 

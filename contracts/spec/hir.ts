@@ -397,12 +397,14 @@ export type ArrayItem =
   | { kind: "spread"; e: Expr }
   | { kind: "hole" };
 
+// A target's `start` is the identifier, or the member's `.` or `[`.
 /** @kinds 560 */
-export type Target =
+export type Target = (
   | { kind: "decl"; decl: DeclRef }
   | { kind: "member"; obj: Expr; prop: PropKey; layout: Typed<LayoutRef | null>; field: Typed<u32 | null> }
   | { kind: "pattern"; p: Pattern }
-  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef };
+  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef }
+) & { span: Span };
 
 export type MethodRole = "method" | "get" | "set";
 

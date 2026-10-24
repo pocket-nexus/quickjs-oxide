@@ -21,57 +21,61 @@ descriptor #1 number repr:u32 min:5e-324
 decl #0 name:"😀\u001f\u0000" kind:implicit owner:#2 capturedBy:[] assigned:true tdz:true span:4:0-22 isStatic:false
 decl #1 name:#1? kind:global owner:#2 capturedBy:[] assigned:true tdz:true ty:#3 span:0:1-256 isStatic:false
 decl #2 name:#1? kind:implicit owner:#3 capturedBy:[#1 #0 #2] assigned:true tdz:true ty:#4 span:1:1-7 isStatic:true
-fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#1] captures:[#0 #0] inner:[#0 #2] usesThis:false usesArguments:false usesNewTarget:true hasDirectEval:false homeObject:true span:2:1-309 length:261 concise:true
+fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#0 #2] captures:[#3 #2 #3] inner:[#0] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true span:1:288-0 length:7 concise:false
   rest:
-    target ty:#3 span:0:1-65536
+    target ty:#3 span:0:7-1
       t:
-        superMember this:#2 home:#1
+        superMember this:#2 home:#1 span:3:0-65536
           prop:
             name name:"😀\u001f\u0000"
   body:
     Block decls:[]
       stmts:
-        declare decl:#2 span:3:1-1
+        declare decl:#1 span:0:1-0
+  sig:
+    Signature params:[#2 #3 #1] ret:#3 thisTy:#2
   effects:
-    Effects reads:[#4 #0] writes:[#4] heapReads:false heapWrites:false allocates:false mayThrow:true maySuspend:true calls:known
+    Effects reads:[] writes:[#4] heapReads:true heapWrites:false allocates:true mayThrow:true maySuspend:true calls:known
   source:
-    SourceRange start:1 end:7
+    SourceRange start:712 end:1
   paramCopies:
-    ParamCopy from:#0 to:#0
-    ParamCopy from:#2 to:#2
-    ParamCopy from:#3 to:#4
-fn #1 kind:getter role:method async:false generator:false strict:true simpleParams:false decls:[] captures:[#0 #1 #4] inner:[#4 #3] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true span:1:1-65536 length:7 self:#2 paramCopies:[] concise:true
+    ParamCopy from:#4 to:#1
+    ParamCopy from:#1 to:#4
+fn #1 kind:setter role:get async:false generator:false strict:false simpleParams:false decls:[] captures:[] inner:[#1] usesThis:true usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:false span:0:65536-65536 length:0 self:#2 concise:false
   params:
     Param
       pattern:
-        decl decl:#4 ty:#3 span:0:1-65536
+        decl decl:#2 span:0:946-1
+    Param
+      pattern:
+        decl decl:#2 ty:#4 span:2:65536-1
+    Param
+      pattern:
+        decl decl:#3 span:3:65536-1
   rest:
-    array span:4:0-7
-      items:
-        hole
+    decl decl:#1 ty:#4 span:3:65536-0
   body:
-    Block decls:[#3 #3 #4]
+    Block decls:[]
       stmts:
-        declare decl:#4 span:3:1-0
+        declare decl:#1 span:4:1-584
   sig:
-    Signature params:[#1 #2] rest:#0 ret:#0 thisTy:#0
+    Signature params:[#4 #1] ret:#3 thisTy:#2
   source:
-    SourceRange start:693 end:0
-module #0 file:#0 top:#3 exports:[] starExports:[7] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+    SourceRange start:65536 end:65536
+  paramCopies:
+    ParamCopy from:#4 to:#3
+module #0 file:#0 top:#3 requests:[] starExports:[] dynamic:true usesImportMeta:true hasTopLevelAwait:true
+  imports:
+    Import request:0 decl:#1
+    Import request:1 decl:#4
+  exports:
+    Export name:#1? decl:#2
+  reexports:
+    Reexport request:7 as:"😀\u001f\u0000"
+module #1 file:#4 top:#0 exports:[] reexports:[] starExports:[7 0] dynamic:false usesImportMeta:false hasTopLevelAwait:true
   requests:
     ModuleRequest specifier:"😀\u001f\u0000" hasAttributes:false attributes:[]
-    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
-    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
+    ModuleRequest specifier:"😀\u001f\u0000" hasAttributes:true attributes:[]
   imports:
-    Import request:1 decl:#4
-    Import request:65536 decl:#3
-  reexports:
-    Reexport request:65536 as:#1?
-    Reexport request:1 as:"😀\u001f\u0000"
-module #1 file:#3 top:#2 requests:[] imports:[] starExports:[0] dynamic:false usesImportMeta:true hasTopLevelAwait:true
-  exports:
-    Export name:"😀\u001f\u0000" decl:#0
-  reexports:
-    Reexport request:65536 as:"😀\u001f\u0000"
-    Reexport request:1 as:"😀\u001f\u0000"
-    Reexport request:0 as:"😀\u001f\u0000"
+    Import request:0 decl:#2
+    Import request:0 decl:#4

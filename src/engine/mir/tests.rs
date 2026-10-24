@@ -27,7 +27,11 @@ fn every_core_opcode_is_named_once_or_left_to_the_lowering() {
 #[test]
 fn immediates_match_the_core_formats() {
     for &op in Op::ALL {
-        let format = op.core()[0].format();
+        // The variables' operations are register moves.
+        let Some(first) = op.core().first() else {
+            continue;
+        };
+        let format = first.format();
         let ok = match op.imm() {
             ImmKind::None => !matches!(
                 format,
@@ -49,6 +53,7 @@ fn immediates_match_the_core_formats() {
             ImmKind::Flags => matches!(format, Format::ACount | Format::ABC),
             ImmKind::Capture => matches!(format, Format::ACapture),
             ImmKind::Child => matches!(format, Format::AChild),
+            ImmKind::Var => false,
         };
         assert!(
             ok,
