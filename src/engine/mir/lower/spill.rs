@@ -34,7 +34,9 @@ pub(super) fn spill(f: &Function, attempt: u32) -> Option<Function> {
                 if f.values[result.index()].width > 1 {
                     continue;
                 }
-                let length: u32 = allocation.ranges[result.index()]
+                let length: u32 = allocation
+                    .ranges
+                    .of(result.index())
                     .iter()
                     .map(|&(start, end)| end - start)
                     .sum();
