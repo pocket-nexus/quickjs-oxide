@@ -9,7 +9,7 @@ use std::mem;
 use std::time::Duration;
 
 use super::gc_kernel::{EphemeronTrace, close_ephemerons};
-use super::gc_scan::{ValueMarks, scan_entries};
+use super::gc_scan::{ValueMarks, finalize_entries, scan_entries};
 use super::gc_waiters::Waiters;
 use super::object::{InternalTag, NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
@@ -786,36 +786,17 @@ impl Heap {
                     }
                 }
                 InternalTag::FinalizationRegistry => {
-                    let internal = self.payloads.internals.get(payload);
-                    let callback = internal.slots[0];
-                    let mut jobs = Vec::new();
-                    let mut dead_targets = Vec::new();
-                    let mut dead_tokens = Vec::new();
-                    for (index, cell) in internal.slots[1..].chunks(3).enumerate() {
-                        if cell[0].is_empty() {
-                            continue;
-                        }
-                        if !self.value_marked(cell[0]) {
-                            dead_targets.push(index);
-                            jobs.push(crate::vm::jobs::Job::Call {
-                                function: callback,
-                                this: Value::UNDEFINED,
-                                args: vec![cell[1]],
-                            });
-                        } else if !cell[2].is_empty() && !self.value_marked(cell[2]) {
-                            dead_tokens.push(index);
-                        }
-                    }
-                    let internal = self.payloads.internals.get_mut(payload);
-                    for index in dead_targets {
-                        for slot in &mut internal.slots[1 + index * 3..4 + index * 3] {
-                            *slot = Value::EMPTY;
-                        }
-                    }
-                    for index in dead_tokens {
-                        internal.slots[3 + index * 3] = Value::EMPTY;
-                    }
-                    self.jobs.extend(jobs);
+                    let marks = ValueMarks {
+                        objects: self.objects.mark_bits(),
+                        strings: self.strings.mark_bits(),
+                        symbols: self.symbols.mark_bits(),
+                        bigints: self.bigints.mark_bits(),
+                    };
+                    finalize_entries(
+                        &mut self.payloads.internals.get_mut(payload).slots,
+                        &marks,
+                        &mut self.jobs,
+                    );
                 }
                 _ => {}
             }

@@ -463,8 +463,9 @@ that braces, semicolons, escapes and lifetimes cannot alter item boundaries.
 `scripts/verification/weak_cleanup.py` selects the existing `WeakRef` match arm
 inside `Heap::clear_weak` and checks its unchanged executable block with only
 its free variables (`self`, `payload`) supplied by a proof wrapper. Ghost code
-establishes that a dead target becomes `undefined`, a marked target stays
-unchanged, and the result is retained. Every other slot, record, bitmap and
+establishes that an unmarked target becomes `undefined`, a marked target stays
+unchanged, and the result is marked or primitive. This predicate does not by
+itself establish allocation or survival through sweep. Every other slot, record, bitmap and
 heap field is framed, in normal and stress configurations. The strengthened
 `Arena::get_mut` contract supplies the complete non-record field frame.
 
@@ -522,3 +523,36 @@ trusted specification is added. Ten negative checks remove or corrupt bucket
 and slot writes, counters, search and clearing bounds, iterator cursor framing,
 or the indexed-entry/nonzero-count premises. Source and runtime checks must
 pass alongside the required Sweep, memory and table scaling runs.
+
+
+### Finalization cells and queued roots
+
+`scripts/verification/finalization.py` checks the production `finalize_entries`
+helper and the actual `FinalizationRegistry` arm in `Heap::clear_weak`. The
+helper scans complete triples after the callback slot and terminates. It clears
+all three slots for each unmarked nonempty target; for a marked target it clears
+only an unmarked nonempty token; empty cells and every other slot stay unchanged.
+The incoming job queue remains an exact prefix, followed by one Call per cleared
+target in cell order, with the original callback, undefined receiver and that
+cell's original held value as its only argument.
+
+The source caller builds the four correct arena mark views. Its proof composes
+the checked `Arena::get_mut` and helper contracts, preserving all other Heap,
+payload arena and Internal fields in normal and stress configurations. A
+pointwise-predicate lemma bridges the bitmap snapshot to the Heap mark predicate.
+Given marked-or-primitive callback and held values, every new job root satisfies
+that predicate, using the checked production Job tracing policy. **Marked is
+not a proof of allocation or survival through sweep.** Establishing these
+premises in the full tracer, registry registration/unregistration invariants,
+the outer weak-list traversal and the complete collector remains open.
+
+The production code now uses a single explicit cell loop and appends directly
+to the job queue. This removes temporary job/index vectors; the proof checks
+the resulting body, not an unrelated model. Fifteen mutations corrupt queued
+values, order/prefix, slot clearing, mark decisions, progress, source snapshot
+or unrelated heap fields, or remove the marked-value premises. A runtime
+regression combines existing jobs, live and unmarked targets/tokens, an empty
+cell and multiple callbacks, then collects the registry and verifies the jobs
+keep the callback and held values alive until the queue is cleared. The
+regression complements the conditional source theorem; it is not a universal
+rooting proof.

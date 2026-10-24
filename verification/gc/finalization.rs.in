@@ -1,0 +1,86 @@
+// Exact cell transformation and callback order under a fixed mark predicate.
+spec fn mark_pred(marks: &ValueMarks) -> spec_fn(Value) -> bool { |v: Value| marks.live(v) }
+
+spec fn call_view(job: Job) -> Option<(Value, Value, Seq<Value>)> {
+ match job {
+  Job::Call { function, this, args } => Some((function, this, args@)),
+  _ => None,
+ }
+}
+spec fn finalization_args(source: Seq<Value>, live: spec_fn(Value) -> bool, upto: nat) -> Seq<Value>
+ decreases upto,
+{
+ if upto < 4 { Seq::empty() } else {
+  let prior = finalization_args(source, live, (upto - 3) as nat);
+  if source[upto - 3].0 != Value::EMPTY.0 && !live(source[upto - 3]) {
+   prior.push(source[upto - 2])
+  } else { prior }
+ }
+}
+spec fn cleaned(source: Seq<Value>, live: spec_fn(Value) -> bool, i: int) -> Value {
+ if i == 0 { source[0] } else {
+  let start = 1 + 3 * ((i - 1) / 3);
+  let target = source[start];
+  let token = source[start + 2];
+  if target.0 == Value::EMPTY.0 { source[i] }
+  else if !live(target) { Value::EMPTY }
+  else if i == start + 2 && token.0 != Value::EMPTY.0 && !live(token) { Value::EMPTY }
+  else { source[i] }
+ }
+}
+spec fn appended_calls(queue: Seq<Job>, prefix: Seq<Job>, callback: Value, held: Seq<Value>) -> bool {
+ queue.take(prefix.len() as int) == prefix
+ && queue.len() == prefix.len() + held.len()
+ && queue.skip(prefix.len() as int).map_values(|job: Job| call_view(job))
+   == held.map_values(|h: Value| Some((callback, Value::UNDEFINED, seq![h])))
+}
+spec fn job_roots_satisfy(queue: Seq<Job>, start: nat, live: spec_fn(Value) -> bool) -> bool {
+ forall|i: int, v: Value| start <= i < queue.len() && #[trigger] queue[i].roots().contains(v) ==> live(v)
+}
+
+proof fn equivalent_finalization_args(source: Seq<Value>, p: spec_fn(Value) -> bool,
+    q: spec_fn(Value) -> bool, upto: nat)
+    requires forall|v: Value| #[trigger] p(v) == q(v),
+    ensures finalization_args(source, p, upto) == finalization_args(source, q, upto),
+    decreases upto,
+{
+    if upto >= 4 {
+        equivalent_finalization_args(source, p, q, (upto - 3) as nat);
+    }
+}
+
+proof fn initial_calls(queue: Seq<Job>, callback: Value)
+    ensures appended_calls(queue, queue, callback, Seq::empty()),
+{
+    assert(Seq::<Value>::empty().map_values(|h: Value| Some((callback, Value::UNDEFINED, seq![h]))) =~= Seq::empty());
+    assert(queue.take(queue.len() as int) =~= queue);
+    assert(queue.skip(queue.len() as int).map_values(|job: Job| call_view(job)) =~= Seq::empty());
+}
+
+proof fn append_call(queue: Seq<Job>, prefix: Seq<Job>, callback: Value,
+    held: Seq<Value>, job: Job, arg: Value, live: spec_fn(Value) -> bool)
+    requires appended_calls(queue, prefix, callback, held),
+        job_roots_satisfy(queue, prefix.len(), live),
+        call_view(job) == Some((callback, Value::UNDEFINED, seq![arg])),
+        live(callback), live(arg), live(Value::UNDEFINED),
+    ensures appended_calls(queue.push(job), prefix, callback, held.push(arg)),
+        job_roots_satisfy(queue.push(job), prefix.len(), live),
+{
+    let actual = |j: Job| call_view(j);
+    let expected = |h: Value| Some((callback, Value::UNDEFINED, seq![h]));
+    assert(queue.push(job).take(prefix.len() as int) =~= prefix);
+    assert(queue.push(job).skip(prefix.len() as int) =~= queue.skip(prefix.len() as int).push(job));
+    assert(queue.skip(prefix.len() as int).push(job).map_values(actual)
+        =~= queue.skip(prefix.len() as int).map_values(actual).push(actual(job)));
+    assert(held.push(arg).map_values(expected) =~= held.map_values(expected).push(expected(arg)));
+    assert(job.roots() =~= seq![callback, Value::UNDEFINED, arg]);
+    assert forall|i: int, v: Value| prefix.len() <= i < queue.push(job).len()
+        && #[trigger] queue.push(job)[i].roots().contains(v) implies live(v) by {
+        if i < queue.len() {
+            assert(queue[i].roots().contains(v));
+        } else {
+            assert(job.roots().contains(v));
+            assert(v == callback || v == Value::UNDEFINED || v == arg);
+        }
+    }
+}

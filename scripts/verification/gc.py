@@ -30,6 +30,7 @@ import vm_roots as vm_root_proofs
 import vm_resume as vm_resume_proofs
 import waiters as waiter_proofs
 import weak_cleanup as weak_cleanup_proofs
+import finalization as finalization_proofs
 import weakpass as weakpass_proofs
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -273,9 +274,16 @@ def main():
         table_delete.write_text(table_delete_proofs.proof((ROOT / "core/src/heap/table.rs").read_text(),
             (ROOT / "core/src/heap/object.rs").read_text(), value.read_text(), roots.read_text(),
             table_index.read_text()))
+        finalization = directory / "finalization.rs"
+        finalization.write_text(finalization_proofs.proof((ROOT / "core/src/heap/gc_scan.rs").read_text(),
+            value_source, job_trace.read_text(), scan.read_text(), (PROOFS / "finalization.rs.in").read_text()))
+        finalization_heap = directory / "finalization_heap.rs"
+        finalization_heap.write_text(finalization_proofs.heap_proof((ROOT / "core/src/heap/mod.rs").read_text(),
+            gc_source, (ROOT / "core/src/heap/object.rs").read_text(), arena.read_text(), finalization.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
                    generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse,
-                   root_trace, job_trace, vm_roots, vm_resume, weak_cleanup, table_index, table_delete]
+                   root_trace, job_trace, vm_roots, vm_resume, weak_cleanup, table_index, table_delete,
+                   finalization, finalization_heap]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -292,6 +300,8 @@ def main():
         receipt["checks"].append(checked_run(binary, reuse, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["checks"].append(checked_run(binary, weak_cleanup, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
+        receipt["checks"].append(checked_run(binary, finalization_heap, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["sha256"]["gc_kernel.rs"] = hashlib.sha256(kernel.encode()).hexdigest()
         if args.mutations:
@@ -312,6 +322,25 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "finalization_wrong_callback": (finalization, "function: callback,", "function: held,"),
+                "finalization_wrong_argument": (finalization, "args: vec![held],", "args: vec![target],"),
+                "finalization_wrong_this": (finalization, "this: Value::UNDEFINED,", "this: target,"),
+                "finalization_reorders_jobs": (finalization, "jobs.push_back(Job::Call {", "jobs.push_front(Job::Call {"),
+                "finalization_lost_target_clear": (finalization, "slots[position] = Value::EMPTY;", ""),
+                "finalization_lost_held_clear": (finalization, "slots[position + 1] = Value::EMPTY;", ""),
+                "finalization_lost_token_clear": (finalization, "slots[position + 2] = Value::EMPTY;\n            } else", "\n            } else"),
+                "finalization_marks_inverted": (finalization, "if !marks.contains(target)", "if marks.contains(target)"),
+                "finalization_token_inverted": (finalization, "!marks.contains(token)", "marks.contains(token)"),
+                "finalization_skips_cell": (finalization, "position += 3;", "position += 6;"),
+                "finalization_loses_prefix": (finalization, "let callback = slots[0];", "jobs.clear(); let callback = slots[0];"),
+                "finalization_unmarked_callback": (finalization, "marks.live(old(slots)@[0]),", "true,"),
+                "finalization_unmarked_held": (finalization,
+                    "&& old(slots)@[i].0 != Value::EMPTY.0 ==> marks.live(old(slots)@[i + 1]),\n     ensures",
+                    "&& old(slots)@[i].0 != Value::EMPTY.0 ==> true,\n     ensures"),
+                "finalization_wrong_snapshot": (finalization_heap,
+                    "let marks = ValueMarks {\n                        objects: self.objects.mark_bits(),",
+                    "let marks = ValueMarks {\n                        objects: self.strings.mark_bits(),"),
+                "finalization_corrupts_heap": (finalization_heap, "let marks = ValueMarks {", "self.html_dda = !self.html_dda; let marks = ValueMarks {"),
                 "table_delete_lost_bucket": (table_delete, "table.index[bucket] = DELETED;", ""),
                 "table_delete_wrong_sentinel": (table_delete, "table.index[bucket] = DELETED;", "table.index[bucket] = VACANT;"),
                 "table_delete_lost_count": (table_delete, "table.live -= 1;", ""),

@@ -147,6 +147,119 @@ fn finalization_jobs_keep_callback_and_held_value_after_target_dies() {
 }
 
 #[test]
+fn mixed_finalization_cells_preserve_job_order_and_survive_registry_collection() {
+    use crate::vm::jobs::Job;
+
+    let mut heap = Heap::default();
+    let values: Vec<_> = (0..10)
+        .map(|_| Value::object(held_scope(&mut heap, 0).object()))
+        .collect();
+    let [
+        callback,
+        dead_a,
+        held_a,
+        live,
+        held_live,
+        dead_token,
+        dead_b,
+        held_b,
+        live_token,
+        held_last,
+    ] = values[..]
+    else {
+        unreachable!()
+    };
+    let registry = heap
+        .alloc_internal(
+            ObjectKind::Builtin,
+            InternalTag::FinalizationRegistry,
+            None,
+            0,
+            &[
+                callback,
+                dead_a,
+                held_a,
+                dead_token,
+                live,
+                held_live,
+                dead_token,
+                Value::EMPTY,
+                Value::EMPTY,
+                Value::EMPTY,
+                dead_b,
+                held_b,
+                Value::UNDEFINED,
+                live,
+                held_last,
+                live_token,
+            ],
+            InternalData::None,
+            0,
+        )
+        .unwrap();
+    // A different job variant makes preservation of the existing queue visible.
+    heap.jobs.push_back(Job::Reaction {
+        record: callback.as_object().unwrap(),
+        argument: Value::UNDEFINED,
+        rejected: true,
+    });
+    heap.roots().truncate(RootMark(0));
+    for value in [Value::object(registry), live, live_token] {
+        heap.roots().push(value);
+    }
+    heap.collect();
+    assert_eq!(heap.jobs.len(), 3);
+    assert!(
+        matches!(heap.jobs.front(), Some(Job::Reaction { record, argument, rejected })
+        if Value::object(*record) == callback && argument.is_undefined() && *rejected)
+    );
+    for (job, held) in heap.jobs.iter().skip(1).zip([held_a, held_b]) {
+        assert!(matches!(job, Job::Call { function, this, args }
+            if *function == callback && this.is_undefined() && args == &[held]));
+    }
+    assert_eq!(
+        heap.internal(registry).slots,
+        [
+            callback,
+            Value::EMPTY,
+            Value::EMPTY,
+            Value::EMPTY,
+            live,
+            held_live,
+            Value::EMPTY,
+            Value::EMPTY,
+            Value::EMPTY,
+            Value::EMPTY,
+            Value::EMPTY,
+            Value::EMPTY,
+            Value::EMPTY,
+            live,
+            held_last,
+            live_token,
+        ]
+    );
+    for value in [dead_a, dead_b, dead_token] {
+        assert!(!heap.is_live(value));
+    }
+    // The next collection sees only the queued roots, without the registry.
+    heap.roots().truncate(RootMark(0));
+    heap.collect();
+    assert!(!heap.is_live(Value::object(registry)));
+    assert_eq!(heap.jobs.len(), 3);
+    for value in [callback, held_a, held_b] {
+        assert!(heap.is_live(value));
+    }
+    for value in [live, held_live, live_token, held_last] {
+        assert!(!heap.is_live(value));
+    }
+    heap.jobs.clear();
+    heap.collect();
+    for value in [callback, held_a, held_b] {
+        assert!(!heap.is_live(value));
+    }
+}
+
+#[test]
 fn generated_heap_graphs_match_independent_saturation_across_collections() {
     // Fixed seeds and explicit fixture edges; no collector traversal supplies the oracle.
     for seed in 0..96_u64 {

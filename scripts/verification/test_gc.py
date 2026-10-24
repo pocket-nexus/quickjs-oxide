@@ -205,6 +205,20 @@ class ProofSourceTests(unittest.TestCase):
         clear_scope = item(item(heap, r"impl Heap\b"), r"fn clear_weak\b")
         arm = item(clear_scope, r"InternalTag::WeakRef\s*=>")
         self.assertIn(arm[arm.index("{"):-1], cleanup)
+        finalization = gc.finalization_proofs.proof((gc.ROOT / "core/src/heap/gc_scan.rs").read_text(),
+            value, jobs, scan, (gc.PROOFS / "finalization.rs.in").read_text())
+        gc.reject_trust_escapes(finalization)
+        heap_source = (gc.ROOT / "core/src/heap/mod.rs").read_text()
+        object_source = (gc.ROOT / "core/src/heap/object.rs").read_text()
+        arena_code = gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text())
+        finalization_heap = gc.finalization_proofs.heap_proof(heap_source, heap, object_source,
+            arena_code, finalization)
+        gc.reject_trust_escapes(finalization_heap)
+        self.assertIn("jobs: std::collections::VecDeque<Job>", finalization_heap)
+        with self.assertRaisesRegex(ValueError, "jobs"):
+            gc.finalization_proofs.heap_proof(heap_source.replace(
+                "std::collections::VecDeque<crate::vm::jobs::Job>", "Vec<crate::vm::jobs::Job>"),
+                heap, object_source, arena_code, finalization)
 
     def test_cleanup_arm_selection_rejects_missing_or_duplicate_guards(self):
         heap = (gc.ROOT / "core/src/heap/gc.rs").read_text()
@@ -213,6 +227,15 @@ class ProofSourceTests(unittest.TestCase):
                         heap.replace(guard, guard + "}\n" + guard)):
             with self.assertRaises(ValueError):
                 gc.weak_cleanup_proofs.proof("", changed, "", "", "", "")
+
+    def test_finalization_arm_selection_rejects_missing_or_duplicate_guards(self):
+        heap = (gc.ROOT / "core/src/heap/gc.rs").read_text()
+        scope = item(item(heap, r"impl Heap\b"), r"fn clear_weak\b")
+        guard = "InternalTag::FinalizationRegistry => {"
+        for changed in (scope.replace(guard, "InternalTag::WeakSet => {"),
+                        scope.replace(guard, guard + "}\n" + guard)):
+            with self.assertRaises(ValueError):
+                gc.finalization_proofs.heap_proof("", "impl Heap {" + changed + "}", "", "", "")
 
     def test_table_index_projection_keeps_cursors_and_rejects_type_drift(self):
         source = (gc.ROOT / "core/src/heap/table.rs").read_text()

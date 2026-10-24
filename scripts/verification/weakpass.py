@@ -5,7 +5,7 @@ from source import item, masked, method
 
 
 def proof(heap_source, gc_source, object_source, arena_code, scan_code, symbol_source=None,
-          extra_heap="", include_scan=True, include_arena_mut=False):
+          extra_heap="", include_scan=True, include_arena_mut=False, include_jobs=False):
     declarations = []
 
     def declare(source, name, prefix, retained, dependencies=()):
@@ -25,13 +25,18 @@ def proof(heap_source, gc_source, object_source, arena_code, scan_code, symbol_s
     state, gp = declare(gc_source, "GcState", "G", {
         "weak": ("Vec<u32>", "Vec<u32>"), "ephemerons": ("Waiters", "Waiters"),
     })
-    heap, hp = declare(heap_source, "Heap", "H", {
+    heap_fields = {
         "objects": ("Arena<ObjectHeader>", "Arena<O>"),
         "strings": ("Arena<StringRecord>", "Arena<S>"),
         "symbols": ("Arena<SymbolRecord>", "Arena<SymbolRecord>" if symbol_source is not None else "Arena<Y>"),
         "bigints": ("Arena<BigIntRecord>", "Arena<B>"),
         "payloads": ("PayloadArenas", payloads), "gc": ("GcState", state),
-    }, ["O", "S", *([] if symbol_source is not None else ["Y"]), "B", *pp, *gp])
+    }
+    if include_jobs:
+        heap_fields["jobs"] = ("std::collections::VecDeque<crate::vm::jobs::Job>",
+                               "std::collections::VecDeque<Job>")
+    heap, hp = declare(heap_source, "Heap", "H", heap_fields,
+                       ["O", "S", *([] if symbol_source is not None else ["Y"]), "B", *pp, *gp])
     if symbol_source is not None:
         declarations.append(item(symbol_source, r"pub struct SymbolRecord\b"))
         declarations.append(item(object_source, r"pub const NONE\b"))
