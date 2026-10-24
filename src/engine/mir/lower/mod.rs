@@ -532,7 +532,9 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         index: usize,
     ) -> Result<(), LowerError> {
         let key = (block.0, index as u32);
-        if matches!(insn.op, Op::Inc | Op::Dec)
+        let special = self.plan.special[block.index()][index];
+        if special
+            && matches!(insn.op, Op::Inc | Op::Dec)
             && let Some(operand) = self.plan.chains.get(&key).map(|chain| chain[0])
         {
             let (dst, src) = (
@@ -543,7 +545,10 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             self.emit(|b| b.ab(core, dst, src));
             return Ok(());
         }
-        if let Some(chain) = self.plan.chains.get(&key).cloned() {
+        if let Some(chain) = special
+            .then(|| self.plan.chains.get(&key).cloned())
+            .flatten()
+        {
             if let Some(&pos) = self.plan.chain_pos.get(&key) {
                 self.pos = pos;
             }
@@ -555,7 +560,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             self.emit(|b| b.ab_range(Opcode::ConcatN, dst, base, count));
             return Ok(());
         }
-        if let Some(&value) = self.plan.imm.get(&key) {
+        if let Some(&value) = special.then(|| self.plan.imm.get(&key)).flatten() {
             let dst = self.reg(insn.results[0].expect("a result"))?;
             let left = self.reg(insn.args.as_slice()[0])?;
             let core = match insn.op {
