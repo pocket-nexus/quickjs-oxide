@@ -268,8 +268,20 @@ Both frontends enforce closed field policies, with tests that add an untraced
 value field. Changing a root-store field or Job variant/field fails closed until
 the tracing policy is reviewed. This supplements, but does not replace, reviewing
 the specification. The complete `mark_from_roots` driver, job-queue traversal,
-VM registers/frames, atoms, code units, shapes, kept/rejected/module values and
-caller safepoint discipline still need source proofs and composition.
+atoms, code units, shapes, kept/rejected/module values and caller safepoint
+discipline still need source proofs and composition.
+
+`scripts/verification/vm_roots.py` checks the real `Heap::trace_vm_roots` body.
+Given `top <= registers.len()`, it appends exactly the heap values below `top`
+and every frame's function ObjectId, preserving queue order and multiplicity.
+Registers above `top` are excluded even if they contain stale heap-shaped bits.
+The stale boundary becomes `min(old_stale_from, top)`; every other Heap and VM
+field is framed through the full parametric record declarations. Mutations read
+above `top`, omit a function, lose the old stale boundary, use the wrong arena,
+clear the incoming queue, or alter an unrelated heap field. Establishing `top`
+bounds, frame/function graph relationships, and safe register resumption still
+requires proofs of the VM writers and the complete collection driver. Opaque VM
+metadata being framed does not prove that any references it contains are rooted.
 
 ### Value identity across arenas and waiting keys
 

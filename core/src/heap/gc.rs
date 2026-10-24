@@ -501,17 +501,7 @@ impl Heap {
         for job in &self.jobs {
             job.trace(&mut stack);
         }
-        // Registers above `top` belong to returned frames and may name freed
-        // records; a call clears its window before it can be marked again.
-        let top = self.vm.top as usize;
-        self.vm.stale_from = self.vm.stale_from.min(self.vm.top);
-        push_heap_values(&mut stack, &self.vm.registers[..top]);
-        stack.extend(
-            self.vm
-                .frames
-                .iter()
-                .map(|frame| Value::object(frame.function)),
-        );
+        self.trace_vm_roots(&mut stack);
         for &id in self.pinned_atoms.iter().chain(&self.held_atoms) {
             self.strings.mark(id.0);
         }
@@ -553,6 +543,19 @@ impl Heap {
         }
         stack.clear();
         self.gc.mark_stack = stack;
+    }
+
+    /// Registers above `top` may name freed records; resuming a frame clears
+    /// its stale registers before they can become roots again.
+    fn trace_vm_roots(&mut self, stack: &mut Vec<Value>) {
+        let top = self.vm.top as usize;
+        self.vm.stale_from = self.vm.stale_from.min(self.vm.top);
+        push_heap_values(stack, &self.vm.registers[..top]);
+        let mut frame = 0;
+        while frame < self.vm.frames.len() {
+            stack.push(Value::object(self.vm.frames[frame].function));
+            frame += 1;
+        }
     }
 
     /// Marks everything reachable from `stack`. With `EPHEMERONS`, marking

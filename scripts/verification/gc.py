@@ -24,6 +24,7 @@ import scan as scan_proofs
 import source as source_frontend
 import symbol as symbol_proofs
 import value as value_proofs
+import vm_roots as vm_root_proofs
 import waiters as waiter_proofs
 import weakpass as weakpass_proofs
 
@@ -205,6 +206,7 @@ def main():
     paths.update(["Cargo.toml", "core/src/heap/gc_audit.rs", "core/src/heap/gc_tests.rs",
                   "core/src/heap/mod.rs", "core/src/heap/object.rs",
                   "core/src/heap/symbol.rs",
+                  "core/src/vm/mod.rs",
                   "core/src/vm/regexp.rs", "verification/gc/driver.rs.in",
                   "verification/gc/obligations.json", "verification/gc/toolchain.json",
                   "scripts/verification/gc.py"])
@@ -250,9 +252,12 @@ def main():
         root_trace.write_text(root_trace_proofs.proof(gc_source, roots.read_text(), value.read_text()))
         job_trace = directory / "job_trace.rs"
         job_trace.write_text(job_trace_proofs.proof((ROOT / "core/src/vm/jobs.rs").read_text(), value.read_text()))
+        vm_roots = directory / "vm_roots.rs"
+        vm_roots.write_text(vm_root_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
+            gc_source, (ROOT / "core/src/vm/mod.rs").read_text(), value.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
                    generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse,
-                   root_trace, job_trace]
+                   root_trace, job_trace, vm_roots]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -287,6 +292,16 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "vm_roots_stale_registers": (vm_roots, "&self.vm.registers[..top]", "&self.vm.registers[..]"),
+                "vm_roots_lost_function": (vm_roots, "stack.push(Value::object(self.vm.frames[frame].function));", ""),
+                "vm_roots_lost_stale_boundary": (vm_roots,
+                    "self.vm.stale_from = self.vm.stale_from.min(self.vm.top);", "self.vm.stale_from = self.vm.top;"),
+                "vm_roots_wrong_kind": (vm_roots, "Value::object(self.vm.frames[frame].function)",
+                    "Value::string(StringId(self.vm.frames[frame].function.0))"),
+                "vm_roots_lost_prefix": (vm_roots, "let top = self.vm.top as usize;",
+                    "stack.clear(); let top = self.vm.top as usize;"),
+                "vm_roots_corrupts_heap": (vm_roots, "let top = self.vm.top as usize;",
+                    "self.html_dda = !self.html_dda; let top = self.vm.top as usize;"),
                 "arena_initial_cursor": (arena, "cursor: 0,", "cursor: 1,"),
                 "arena_initial_quarantine": (arena, "quarantine: Vec::new(),", "quarantine: vec![0u64],"),
                 "job_lost_record": (job_trace, "stack.push(Value::object(*record));", ""),

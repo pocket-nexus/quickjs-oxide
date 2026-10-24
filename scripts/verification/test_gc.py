@@ -159,6 +159,10 @@ class ProofSourceTests(unittest.TestCase):
         jobs = gc.job_trace_proofs.proof((gc.ROOT / "core/src/vm/jobs.rs").read_text(),
             gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap))
         gc.reject_trust_escapes(jobs)
+        vm_roots = gc.vm_root_proofs.proof((gc.ROOT / "core/src/heap/mod.rs").read_text(), heap,
+            (gc.ROOT / "core/src/vm/mod.rs").read_text(),
+            gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap))
+        gc.reject_trust_escapes(vm_roots)
 
     def test_root_fields_cannot_silently_escape_tracing_policy(self):
         source = (gc.ROOT / "core/src/heap/gc.rs").read_text()
