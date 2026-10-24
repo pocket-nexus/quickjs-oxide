@@ -2,6 +2,7 @@
 //! the order the old front end emits their code.
 
 use super::entry::lexical;
+use super::pattern::Mode;
 use super::{Access, Builder, Control, Result, internal, unsupported};
 use crate::engine::hir::schema::{
     self as hir, Block, DeclKind, DeclRef, ForTarget, PatternKind, Stmt, StmtKind, TargetKind,
@@ -56,7 +57,24 @@ impl Builder<'_, '_> {
                     self.init_binding(*decl, value)?;
                 }
             }
-            StmtKind::Destructure { .. } => return unsupported("destructuring declarations"),
+            StmtKind::Destructure {
+                pattern,
+                init,
+                declaring,
+            } => {
+                let mode = match declaring {
+                    Some(hir::DeclaringKind::Var) => Mode::Declare {
+                        var: true,
+                        catch: false,
+                    },
+                    Some(_) => Mode::Declare {
+                        var: false,
+                        catch: false,
+                    },
+                    None => Mode::Assign,
+                };
+                self.destructure_after(pattern, init, mode)?;
+            }
             StmtKind::Block { body } => {
                 if let [single] = body.stmts.as_slice()
                     && !body.decls.is_empty()
@@ -128,12 +146,10 @@ impl Builder<'_, '_> {
                 finally,
                 catch_default,
             } => {
-                if catch_default.is_some() {
-                    return unsupported("catch parameter defaults");
-                }
                 self.try_statement(
                     body,
                     catch_param.as_deref(),
+                    catch_default.as_deref(),
                     catch_body.as_ref(),
                     finally.as_ref(),
                 )?;
@@ -159,11 +175,20 @@ impl Builder<'_, '_> {
                     self.put_decl(*var, value)?;
                 }
             }
-            StmtKind::ClassDecl { .. } => return unsupported("classes"),
+            StmtKind::ClassDecl { decl, cls } => {
+                let class = self.class(cls, None)?;
+                self.mark(Some(self.decl(*decl).span.start));
+                self.init_binding(*decl, class)?;
+            }
             StmtKind::Debugger | StmtKind::Empty => {}
-            StmtKind::DefineField { .. }
-            | StmtKind::DefinePrivate { .. }
-            | StmtKind::StaticBlock { .. } => return unsupported("class fields"),
+            StmtKind::DefineField { key, value } => self.define_field(key, value.as_deref())?,
+            StmtKind::DefinePrivate { decl, value } => {
+                self.define_private(*decl, value.as_deref())?;
+            }
+            StmtKind::StaticBlock { fn_ } => {
+                let block = self.closure(*fn_);
+                self.effect(Op::CallStaticBlock, &[block], Imm::None);
+            }
         }
         Ok(())
     }
@@ -227,7 +252,11 @@ impl Builder<'_, '_> {
     /// Detaches the captured bindings `decls` from the closures made so far.
     pub(super) fn close_cells(&mut self, decls: &[DeclRef]) {
         for &decl in decls {
-            if let Some(&var) = self.vars.get(&decl) {
+            let vars = [
+                self.vars.get(&decl).copied(),
+                self.setter_vars.get(&decl).copied(),
+            ];
+            for var in vars.into_iter().flatten() {
                 let cell = self.get_var(var);
                 let fresh = self.op(Op::CloseCell, &[cell], Imm::None);
                 self.set_var(var, fresh);
@@ -360,7 +389,10 @@ impl Builder<'_, '_> {
     /// Reads `decl`; `own` is the read's own position.
     pub(super) fn read_decl(&mut self, decl: DeclRef, own: Option<u32>) -> Result<Value> {
         let d = self.decl(decl);
-        let check = d.tdz;
+        // A derived constructor's `this` waits for `super()`.
+        let check = d.tdz
+            || (d.kind == DeclKind::This
+                && self.cx.function(d.owner).kind == hir::FunctionKind::DerivedConstructor);
         let value = match self.access(decl)? {
             Access::Var { var, cell: false } => {
                 let value = self.push_get_var(var, own);
@@ -397,7 +429,13 @@ impl Builder<'_, '_> {
 
     fn push_get_var(&mut self, var: u32, own: Option<u32>) -> Value {
         match own {
-            Some(at) => self.op_at(Op::GetVar, &[], Imm::Var(var), at),
+            Some(at) => {
+                let value = self.op_at(Op::GetVar, &[], Imm::Var(var), at);
+                if self.f.vars[var as usize].kind == VarKind::This {
+                    self.this_values.insert(value);
+                }
+                value
+            }
             None => self.get_var(var),
         }
     }
@@ -676,6 +714,7 @@ impl Builder<'_, '_> {
         let iterable = self.expr(iterable)?;
         self.head_closures(scoped);
         self.define_with(Op::IterStart, &[iterable], Imm::Int(0), &[record]);
+        let opened = self.site;
         self.goto(next);
         self.handler = Some(handler);
         self.loop_depth += 1;
@@ -693,15 +732,7 @@ impl Builder<'_, '_> {
         self.handler = outer;
         self.start(exit);
         self.effect(Op::IterClose, &[record], Imm::None);
-        let after = self.block();
-        self.goto(after);
-        // The closing handler.
-        self.start(close);
-        let thrown = self.f.new_value(Default::default());
-        self.f.block_mut(close).catch = Some(thrown);
-        self.effect(Op::IterCloseThrow, &[record, thrown], Imm::None);
-        self.end(Terminator::Throw(thrown));
-        self.start(after);
+        self.close_stub(close, record, opened);
         Ok(())
     }
 
@@ -738,12 +769,21 @@ impl Builder<'_, '_> {
                         self.init_binding(decl, value)
                     }
                 }
-                _ => unsupported("destructuring for heads"),
+                _ => {
+                    let mut decls = Vec::new();
+                    Self::pattern_decls(pattern, &mut decls);
+                    let var = decls.first().is_some_and(|&decl| self.is_var(decl));
+                    self.destructure(pattern, value, Mode::Declare { var, catch: false })
+                }
             },
             ForTarget::Assign { t } => match &t.kind {
                 TargetKind::Decl { decl } => self.put_decl(*decl, value),
                 TargetKind::Member { .. } => self.assign_member_value(t, value),
-                _ => unsupported("destructuring for heads"),
+                TargetKind::Pattern { p } => self.destructure(p, value, Mode::Assign),
+                TargetKind::SuperMember { prop, this, home } => {
+                    let place = self.super_place(prop, *this, *home, t.span.start)?;
+                    self.set_place(place, value)
+                }
             },
         }
     }
@@ -978,9 +1018,10 @@ impl Builder<'_, '_> {
             }
         }
         if self.hf.kind == hir::FunctionKind::DerivedConstructor {
-            return unsupported("derived constructors");
+            self.derived_return(value, Some(at))?;
+        } else {
+            self.end_at(Terminator::Return(value), at);
         }
-        self.end_at(Terminator::Return(value), at);
         self.handler = saved;
         Ok(())
     }
@@ -991,6 +1032,7 @@ impl Builder<'_, '_> {
         &mut self,
         body: &Block,
         catch_param: Option<&hir::Pattern>,
+        catch_default: Option<&hir::Expr>,
         catch_body: Option<&Block>,
         finally: Option<&Block>,
     ) -> Result<()> {
@@ -1025,10 +1067,14 @@ impl Builder<'_, '_> {
             Some(catch_body) => {
                 // The catch parameter's bindings start as `undefined`; the
                 // body's own bindings enter their scope after them.
-                let (params, own): (Vec<DeclRef>, Vec<DeclRef>) = catch_body
-                    .decls
-                    .iter()
-                    .partition(|&&decl| self.decl(decl).kind == DeclKind::Catch);
+                let mut bound = Vec::new();
+                if let Some(pattern) = catch_param {
+                    Self::pattern_decls(pattern, &mut bound);
+                }
+                let (params, own): (Vec<DeclRef>, Vec<DeclRef>) =
+                    catch_body.decls.iter().partition(|&&decl| {
+                        self.decl(decl).kind == DeclKind::Catch || bound.contains(&decl)
+                    });
                 let mut close_params = Vec::new();
                 for &decl in params.iter().rev() {
                     if self.vars.contains_key(&decl) {
@@ -1039,12 +1085,24 @@ impl Builder<'_, '_> {
                         }
                     }
                 }
-                match catch_param.map(|p| &p.kind) {
-                    Some(PatternKind::Decl { decl }) => {
-                        self.mark(Some(catch_param.expect("a parameter").span.start));
+                match catch_param {
+                    Some(hir::Pattern {
+                        kind: PatternKind::Decl { decl },
+                        span,
+                        ..
+                    }) => {
+                        self.mark(Some(span.start));
                         self.init_binding(*decl, thrown)?;
                     }
-                    Some(_) => return unsupported("catch parameter patterns"),
+                    Some(pattern) => self.nested_element(
+                        pattern,
+                        thrown,
+                        catch_default,
+                        Mode::Declare {
+                            var: false,
+                            catch: true,
+                        },
+                    )?,
                     None => {}
                 }
                 self.scopes.push(close_params);

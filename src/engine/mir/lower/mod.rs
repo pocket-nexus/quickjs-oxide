@@ -122,21 +122,24 @@ impl Tree<'_> {
         id: FunctionRef,
         parent: Option<FunctionRef>,
     ) -> Result<Vec<Capture>, LowerError> {
-        let hf = &self.hir.functions[id.index()];
+        let f = &self.program.functions[id.index()];
         let Some(parent) = parent else {
-            return Ok(hf.captures.iter().map(|_| Capture::None).collect());
+            return Ok(f.captures.iter().map(|_| Capture::None).collect());
         };
         let pf = &self.program.functions[parent.index()];
-        let phf = &self.hir.functions[parent.index()];
         let layout = &self.layouts[&parent.0];
-        hf.captures
+        f.captures
             .iter()
-            .map(|decl| {
-                if let Some(var) = pf.vars.iter().position(|var| var.decl == Some(*decl)) {
+            .map(|&(decl, setter)| {
+                if let Some(var) = pf
+                    .vars
+                    .iter()
+                    .position(|var| var.decl == Some(decl) && var.setter == setter)
+                {
                     let register = layout.var_regs[var];
                     return Ok(Capture::Register(register16(register)?));
                 }
-                if let Some(index) = phf.captures.iter().position(|d| d == decl) {
+                if let Some(index) = pf.captures.iter().position(|&c| c == (decl, setter)) {
                     return Ok(Capture::Outer(index as u16));
                 }
                 Ok(Capture::None)
@@ -593,6 +596,14 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let core = op.core()[0];
                 self.emit(|b| b.a_key(core, dst, key));
             }
+            Op::PutRef => {
+                let Imm::Key(key) = insn.imm else {
+                    unreachable!("a key")
+                };
+                let key = self.key(key)?;
+                let (env, value) = (a(self, 0)?, a(self, 1)?);
+                self.emit(|b| b.ab_key(Opcode::PutRef, env, value, key));
+            }
             Op::SetGlobal => {
                 let Imm::Key(key) = insn.imm else {
                     unreachable!("a key")
@@ -826,6 +837,81 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             }
             Op::AsyncStart => {
                 self.emit(|b| b.op(Opcode::AsyncStart));
+            }
+            Op::MakeClass => {
+                let Imm::KeyFlags(key, heritage) = insn.imm else {
+                    unreachable!("key and flags")
+                };
+                let key = self.key(key)?;
+                let (parent, ctor) = (a(self, 0)?, a(self, 1)?);
+                let class = self.reg(insn.results[0].expect("a class"))?;
+                let proto = self.reg(insn.results[1].expect("a prototype"))?;
+                self.parallel_move(vec![(class, parent), (proto, ctor)]);
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::MakeClass,
+                        class,
+                        proto,
+                        heritage as u8,
+                        key.raw(),
+                    ))
+                });
+            }
+            Op::InitThis | Op::CheckDerivedReturn => {
+                let (dst, x, y) = (res(self)?, a(self, 0)?, a(self, 1)?);
+                if dst == y && dst != x {
+                    // The operand the result takes is read first.
+                    return Err(LowerError::Internal(
+                        "a tied result over the other operand".into(),
+                    ));
+                }
+                self.mov(dst, x);
+                let core = op.core()[0];
+                self.emit(|b| b.ab(core, dst, y));
+            }
+            Op::GetSuperValue => {
+                let Imm::Int(call) = insn.imm else {
+                    unreachable!("an int")
+                };
+                let dst = res(self)?;
+                let base = self.window(slot, 3)?;
+                let moves = self.window_moves(base, args)?;
+                self.parallel_move(moves);
+                self.emit(|b| b.ab_int(Opcode::GetSuperValue, dst, base, call));
+            }
+            Op::PutSuperValue => {
+                let base = self.window(slot, 4)?;
+                let moves = self.window_moves(base, args)?;
+                self.parallel_move(moves);
+                self.emit(|b| b.a(Opcode::PutSuperValue, base));
+            }
+            Op::NewPrivateName => {
+                let Imm::Key(key) = insn.imm else {
+                    unreachable!("a key")
+                };
+                let key = self.key(key)?;
+                let dst = res(self)?;
+                self.emit(|b| b.a_key(Opcode::NewPrivateName, dst, key));
+            }
+            Op::NamePrivateMethod => {
+                let Imm::KeyFlags(key, prefix) = insn.imm else {
+                    unreachable!("key and flags")
+                };
+                let key = self.key(key)?;
+                let function = a(self, 0)?;
+                self.emit(|b| {
+                    b.raw(oxide_core::Insn::new(
+                        Opcode::NamePrivateMethod,
+                        function,
+                        0,
+                        prefix as u8,
+                        key.raw(),
+                    ))
+                });
+            }
+            Op::InstallFields => {
+                let (x, y, z) = (a(self, 0)?, a(self, 1)?, a(self, 2)?);
+                self.emit(|b| b.abc(Opcode::InstallFields, x, y, z));
             }
             _ => {
                 return Err(LowerError::Unsupported(format!(

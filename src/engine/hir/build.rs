@@ -542,16 +542,24 @@ impl<'a> Builder<'a> {
                 tdz[index] = true;
             }
         }
-        for (decl, tdz) in self.hir_decls.iter_mut().zip(tdz) {
+        for (index, (decl, tdz)) in self.hir_decls.iter_mut().zip(tdz).enumerate() {
+            // A parameter environment's bindings are lexical: a default may
+            // read a later one.
+            let parameter_environment = decl.kind == DeclKind::Param
+                && self
+                    .ast_decls
+                    .get(index)
+                    .is_some_and(|d| d.storage == ast::Storage::Local);
             decl.tdz = tdz
-                && matches!(
-                    decl.kind,
-                    DeclKind::Let
-                        | DeclKind::Const
-                        | DeclKind::Class
-                        | DeclKind::Hidden
-                        | DeclKind::Import
-                );
+                && (parameter_environment
+                    || matches!(
+                        decl.kind,
+                        DeclKind::Let
+                            | DeclKind::Const
+                            | DeclKind::Class
+                            | DeclKind::Hidden
+                            | DeclKind::Import
+                    ));
             if decl.kind == DeclKind::Const {
                 decl.assigned = false;
             }
@@ -592,6 +600,7 @@ impl<'a> Builder<'a> {
             length,
             body,
             concise,
+            default_ctor,
             strict,
             span: function_span,
             source,
@@ -697,6 +706,7 @@ impl<'a> Builder<'a> {
             arguments_decl,
             param_copies,
             concise,
+            default_ctor,
         })
     }
 
@@ -1827,9 +1837,14 @@ impl<'a> Builder<'a> {
             ast::PatternKind::Target(target) => PatternKind::Target {
                 t: Box::new(self.assignment_target(*target)?),
             },
-            ast::PatternKind::Object { props, rest } => {
+            ast::PatternKind::Object {
+                props,
+                rest,
+                rest_pos,
+            } => {
                 let mut hir_props = Vec::with_capacity(props.len());
                 for prop in props {
+                    let key_at = prop.key_pos;
                     let inferred = leaf_name(&prop.value);
                     let key = self.prop_key(prop.key)?;
                     let value = self.pattern(prop.value, declaring)?;
@@ -1841,6 +1856,7 @@ impl<'a> Builder<'a> {
                         key: Box::new(key),
                         value: Box::new(value),
                         default,
+                        key_at,
                     });
                 }
                 PatternKind::Object {
@@ -1849,6 +1865,7 @@ impl<'a> Builder<'a> {
                         Some(rest) => Some(Box::new(self.pattern(*rest, declaring)?)),
                         None => None,
                     },
+                    rest_at: rest_pos,
                 }
             }
             ast::PatternKind::Array { items, rest } => {
@@ -2084,7 +2101,7 @@ fn pattern_decls(pattern: &Pattern, out: &mut Vec<DeclRef>) {
     match &pattern.kind {
         PatternKind::Decl { decl } => out.push(*decl),
         PatternKind::Target { .. } => {}
-        PatternKind::Object { props, rest } => {
+        PatternKind::Object { props, rest, .. } => {
             for prop in props {
                 pattern_decls(&prop.value, out);
             }

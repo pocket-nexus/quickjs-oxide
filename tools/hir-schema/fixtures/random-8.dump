@@ -21,7 +21,7 @@ descriptor #1 number repr:u32 min:5e-324
 decl #0 name:"😀\u001f\u0000" kind:implicit owner:#2 capturedBy:[] assigned:true tdz:true isStatic:false
 decl #1 name:#1? kind:global owner:#2 capturedBy:[] assigned:true tdz:true ty:#3 isStatic:false
 decl #2 name:#1? kind:implicit owner:#3 capturedBy:[#1 #0 #2] assigned:true tdz:true ty:#4 isStatic:true
-fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#0 #2] captures:[#3 #2 #3] inner:[#0] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true length:7 concise:false
+fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#0 #2] captures:[#3 #2 #3] inner:[#0] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true length:7 concise:false defaultCtor:true
   rest:
     target ty:#3
       t:
@@ -41,41 +41,22 @@ fn #0 name:#1? kind:module role:get async:true generator:false strict:true param
   paramCopies:
     ParamCopy from:#4 to:#1
     ParamCopy from:#1 to:#4
-fn #1 kind:setter role:get async:false generator:false strict:false simpleParams:false decls:[] captures:[] inner:[#1] usesThis:true usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:false length:0 self:#2 concise:false
+fn #1 kind:setter role:get async:false generator:false strict:false simpleParams:false decls:[#3 #1 #2] captures:[#0 #0 #0] inner:[#1] usesThis:true usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:false length:0 self:#2 concise:false defaultCtor:false
   params:
     Param
       pattern:
-        decl decl:#2
+        decl decl:#0
     Param
       pattern:
-        decl decl:#2 ty:#4
-    Param
-      pattern:
-        decl decl:#3
-  rest:
-    decl decl:#1 ty:#4
+        decl decl:#4 ty:#2
   body:
-    Block decls:[]
+    Block decls:[#2 #1]
       stmts:
-        declare decl:#1
+        declare decl:#3
+        declare decl:#4
   sig:
     Signature params:[#4 #1] ret:#3 thisTy:#2
   source:
     SourceRange start:65536 end:65536
   paramCopies:
     ParamCopy from:#4 to:#3
-module #0 file:#0 top:#3 requests:[] starExports:[] dynamic:true usesImportMeta:true hasTopLevelAwait:true
-  imports:
-    Import request:0 decl:#1
-    Import request:1 decl:#4
-  exports:
-    Export name:#1? decl:#2
-  reexports:
-    Reexport request:7 as:"😀\u001f\u0000"
-module #1 file:#4 top:#0 exports:[] reexports:[] starExports:[7 0] dynamic:false usesImportMeta:false hasTopLevelAwait:true
-  requests:
-    ModuleRequest specifier:"😀\u001f\u0000" hasAttributes:false attributes:[]
-    ModuleRequest specifier:"😀\u001f\u0000" hasAttributes:true attributes:[]
-  imports:
-    Import request:0 decl:#2
-    Import request:0 decl:#4

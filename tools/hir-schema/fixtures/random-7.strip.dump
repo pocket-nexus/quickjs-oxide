@@ -10,38 +10,35 @@ const #1 bigint digits:#1?
 const #2 regexp source:#1? flags:#1?
 decl #0 name:#1? kind:implicit owner:#4 capturedBy:[#4 #0] assigned:false tdz:false isStatic:false
 decl #1 name:#1? kind:var owner:#2 capturedBy:[#3] assigned:false tdz:false isStatic:false
-fn #0 kind:normal role:method async:false generator:false strict:false params:[] simpleParams:false decls:[#0] captures:[] inner:[] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:252 self:#1 concise:false
+fn #0 kind:normal role:method async:false generator:false strict:false params:[] simpleParams:true decls:[] captures:[#4 #0 #0] inner:[#2] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:false length:356 self:#4 argumentsDecl:#2 concise:false defaultCtor:false
   rest:
-    object
+    object restAt:7
       props:
-        PatternProp
+        PatternProp keyAt:7
           key:
             name name:#1?
           value:
             decl decl:#1
-        PatternProp
+        PatternProp keyAt:65536
           key:
             name name:#1?
           value:
-            decl decl:#2
+            decl decl:#0
       rest:
-        object props:[]
+        array items:[]
   body:
-    Block stmts:[] decls:[#2]
+    Block stmts:[] decls:[]
   source:
-    SourceRange start:65536 end:1
+    SourceRange start:1 end:476
   paramCopies:
-    ParamCopy from:#4 to:#2
-module #0 file:#2 top:#1 starExports:[784 1 1] dynamic:false usesImportMeta:true hasTopLevelAwait:false
+    ParamCopy from:#2 to:#1
+module #0 file:#4 top:#2 starExports:[784 1 1] dynamic:false usesImportMeta:true hasTopLevelAwait:false
   requests:
-    ModuleRequest specifier:"" hasAttributes:false attributes:[]
     ModuleRequest specifier:#1? hasAttributes:false attributes:[]
   imports:
-    Import request:7 decl:#3
-    Import request:7 decl:#3
-    Import request:65536 decl:#1
+    Import request:0 decl:#3
+    Import request:65536 decl:#4
   exports:
-    Export name:#1? decl:#1
     Export name:"" decl:#0
   reexports:
     Reexport request:732 as:""
@@ -55,3 +52,16 @@ module #1 file:#3 top:#3 reexports:[] starExports:[1] dynamic:false usesImportMe
   exports:
     Export name:#1? decl:#4
     Export name:#1? decl:#0
+module #2 file:#4 top:#1 starExports:[65536] dynamic:true usesImportMeta:true hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
+  imports:
+    Import request:333 decl:#4
+    Import request:0 decl:#0
+    Import request:0 decl:#0
+  exports:
+    Export name:"" decl:#2
+    Export name:"" decl:#3
+    Export name:#1? decl:#0
+  reexports:
+    Reexport request:0 as:""

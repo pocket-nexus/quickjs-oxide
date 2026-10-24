@@ -503,7 +503,7 @@ impl Validator<'_> {
         match &pattern.kind {
             PatternKind::Decl { decl } => self.use_decl(*decl),
             PatternKind::Target { t } => self.target(t),
-            PatternKind::Object { props, rest } => {
+            PatternKind::Object { props, rest, .. } => {
                 for prop in props {
                     self.prop_key(&prop.key)?;
                     self.pattern(&prop.value)?;

@@ -235,6 +235,8 @@ export interface Function {
   paramCopies: ParamCopy[];
   // An arrow whose body is one expression.
   concise: boolean;
+  // A class's synthesized constructor.
+  defaultCtor: boolean;
 }
 
 export interface SourceRange {
@@ -501,14 +503,17 @@ export type ForTarget =
 export type Pattern = (
   | { kind: "decl"; decl: DeclRef }
   | { kind: "target"; t: Target }
-  | { kind: "object"; props: PatternProp[]; rest: Pattern | null }
+  // `restAt`: the rest's `...`.
+  | { kind: "object"; props: PatternProp[]; rest: Pattern | null; restAt: u32 }
   | { kind: "array"; items: PatternItem[]; rest: Pattern | null }
 ) & { ty: Typed<TypeRef>; span: Span };
 
+// `keyAt`: the property name's first token.
 export interface PatternProp {
   key: PropKey;
   value: Pattern;
   default: Expr | null;
+  keyAt: u32;
 }
 
 /** @kinds 1040 */

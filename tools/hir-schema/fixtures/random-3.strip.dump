@@ -11,7 +11,7 @@ string #1 "Z "
 string #2 "\"_"
 string #3 "\\"
 const #0 bigint digits:#4?
-fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleParams:true decls:[#1 #4] captures:[] inner:[#0 #1 #2] usesThis:true usesArguments:false usesNewTarget:true hasDirectEval:false homeObject:true length:1 argumentsDecl:#2 concise:false
+fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleParams:true decls:[#1 #4] captures:[] inner:[#0 #1 #2] usesThis:true usesArguments:false usesNewTarget:true hasDirectEval:false homeObject:true length:1 argumentsDecl:#2 concise:false defaultCtor:true
   params:
     Param
       pattern:
@@ -31,12 +31,11 @@ fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleP
     SourceRange start:0 end:1
   paramCopies:
     ParamCopy from:#4 to:#4
-module #0 file:#1 top:#1 requests:[] exports:[] starExports:[870 1] dynamic:false usesImportMeta:false hasTopLevelAwait:false
-  imports:
-    Import request:0 decl:#1
-    Import request:1 decl:#2
-    Import request:7 decl:#4
-  reexports:
-    Reexport request:0 as:""
-    Reexport request:65536 as:#4?
-    Reexport request:7 as:#4?
+module #0 file:#1 top:#1 imports:[] reexports:[] starExports:[] dynamic:true usesImportMeta:false hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
+    ModuleRequest specifier:"Z " hasAttributes:false attributes:[]
+    ModuleRequest specifier:"Z " hasAttributes:false attributes:[]
+  exports:
+    Export name:#4? decl:#0
+    Export name:#4? decl:#1

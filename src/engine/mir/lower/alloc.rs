@@ -332,6 +332,9 @@ pub(super) fn early_def(op: Op) -> bool {
             | Op::IterResult
             | Op::MakeClass
             | Op::AppendSpread
+            | Op::CloseCell
+            | Op::InitThis
+            | Op::CheckDerivedReturn
     )
 }
 

@@ -23,6 +23,18 @@ pub(super) enum Place {
         key: Value,
         at: u32,
     },
+    Private {
+        obj: Value,
+        decl: DeclRef,
+        at: u32,
+    },
+    /// `super[key]` with receiver `this` and the home object's prototype.
+    Super {
+        this: Value,
+        base: Value,
+        key: Value,
+        at: u32,
+    },
 }
 
 /// The fixed and spread arguments of a call.
@@ -53,12 +65,15 @@ impl Builder<'_, '_> {
             ExprKind::Array { items } => self.array(items)?,
             ExprKind::Object { props } => self.object(props)?,
             ExprKind::Fn { fn_ } => self.closure(*fn_),
-            ExprKind::Class { .. } => return unsupported("classes"),
+            ExprKind::Class { cls } => self.class(cls, None)?,
             ExprKind::Decl { decl } => self.read_decl(*decl, Some(at))?,
             ExprKind::This { decl } => self.read_this(*decl)?,
             ExprKind::NewTarget { decl } => self.read_decl(*decl, None)?,
             ExprKind::ImportMeta => return unsupported("import.meta"),
-            ExprKind::SuperMember { .. } => return unsupported("super"),
+            ExprKind::SuperMember { prop, this, home } => {
+                let place = self.super_place(prop, *this, *home, at)?;
+                self.get_place(place)?
+            }
             ExprKind::Member { .. } => {
                 let (_, value) = self.member(e, &mut Vec::new())?;
                 value
@@ -100,7 +115,12 @@ impl Builder<'_, '_> {
                 }
             }
             ExprKind::Call { .. } | ExprKind::New { .. } => self.call_expr(e, &mut Vec::new())?,
-            ExprKind::SuperCall { .. } => return unsupported("super calls"),
+            ExprKind::SuperCall {
+                args,
+                this,
+                new_target,
+                func,
+            } => self.super_call(args, *this, *new_target, *func, at)?,
             ExprKind::Import { .. } => return unsupported("import()"),
             ExprKind::Yield { e: value, delegate } => {
                 if *delegate {
@@ -124,7 +144,10 @@ impl Builder<'_, '_> {
                 let value = self.chain_expr(inner, &mut shorts)?;
                 self.end_chain(value, shorts)
             }
-            ExprKind::PrivateIn { .. } => return unsupported("private names"),
+            ExprKind::PrivateIn { name, obj } => {
+                let obj = self.expr(obj)?;
+                self.private_in(*name, obj, at)?
+            }
             ExprKind::Named { name, e: inner } => self.named(name.0, inner)?,
         })
     }
@@ -169,6 +192,7 @@ impl Builder<'_, '_> {
                 }
                 Ok(self.closure(*fn_))
             }
+            ExprKind::Class { cls } => self.class(cls, Some(name)),
             _ => self.expr(inner),
         }
     }
@@ -321,7 +345,20 @@ impl Builder<'_, '_> {
                     Ok(self.op(Op::False, &[], Imm::None))
                 }
             },
-            ExprKind::SuperMember { .. } => unsupported("super"),
+            ExprKind::SuperMember { prop, this, home } => {
+                // QuickJS evaluates the reference, then throws.
+                let at = operand.span.start;
+                self.super_place(prop, *this, *home, at)?;
+                let message = self.static_key("unsupported reference to 'super'");
+                self.end_at(
+                    Terminator::ThrowError {
+                        kind: crate::engine::mir::ir::ThrowKind::Reference,
+                        key: message,
+                    },
+                    at,
+                );
+                Ok(self.undefined())
+            }
             _ => {
                 self.expr(operand)?;
                 Ok(self.op(Op::True, &[], Imm::None))
@@ -365,31 +402,70 @@ impl Builder<'_, '_> {
                 let key = self.expr(e)?;
                 Place::Elem { obj, key, at }
             }
-            PropKey::Private { .. } => return unsupported("private names"),
+            PropKey::Private { name } => Place::Private {
+                obj,
+                decl: *name,
+                at,
+            },
         })
     }
 
-    pub(super) fn get_place(&mut self, place: Place) -> Value {
-        match place {
-            Place::Field { obj, key, at } => self.op_at(Op::GetField, &[obj], Imm::Key(key), at),
-            Place::Elem { obj, key, at } => self.op_at(Op::GetElem, &[obj, key], Imm::None, at),
-        }
+    /// `super[key]`'s place: QuickJS reads `this` and the home object
+    /// before a computed key.
+    pub(super) fn super_place(
+        &mut self,
+        prop: &PropKey,
+        this: DeclRef,
+        home: DeclRef,
+        at: u32,
+    ) -> Result<Place> {
+        let this = self.read_decl(this, None)?;
+        let home = self.read_decl(home, None)?;
+        let base = self.op(Op::GetSuper, &[home], Imm::None);
+        let key = match prop {
+            PropKey::Name { name } => self.string(name.0),
+            PropKey::Computed { e } => self.expr(e)?,
+            PropKey::Private { .. } => return internal("a private name after super"),
+        };
+        Ok(Place::Super {
+            this,
+            base,
+            key,
+            at,
+        })
     }
 
-    pub(super) fn set_place(&mut self, place: Place, value: Value) {
+    pub(super) fn get_place(&mut self, place: Place) -> Result<Value> {
+        Ok(match place {
+            Place::Field { obj, key, at } => self.op_at(Op::GetField, &[obj], Imm::Key(key), at),
+            Place::Elem { obj, key, at } => self.op_at(Op::GetElem, &[obj, key], Imm::None, at),
+            Place::Private { obj, decl, at } => self.get_private(obj, decl, at)?,
+            Place::Super {
+                this,
+                base,
+                key,
+                at,
+            } => self.op_at(Op::GetSuperValue, &[this, base, key], Imm::Int(0), at),
+        })
+    }
+
+    pub(super) fn set_place(&mut self, place: Place, value: Value) -> Result<()> {
         match place {
             Place::Field { obj, key, .. } => {
-                if self.is_this_value(obj) {
+                if self.this_values.contains(&obj) {
                     self.this_keys.insert(key);
                 }
                 self.effect(Op::SetField, &[obj, value], Imm::Key(key));
             }
             Place::Elem { obj, key, .. } => self.effect(Op::SetElem, &[obj, key, value], Imm::None),
+            Place::Private { obj, decl, at } => self.put_private(obj, decl, value, at)?,
+            Place::Super {
+                this, base, key, ..
+            } => {
+                self.effect(Op::PutSuperValue, &[this, base, key, value], Imm::None);
+            }
         }
-    }
-
-    fn is_this_value(&self, _value: Value) -> bool {
-        false
+        Ok(())
     }
 
     /// A member expression, maybe inside an optional chain: its object and
@@ -406,7 +482,7 @@ impl Builder<'_, '_> {
         };
         let obj = self.chain_object(obj, *optional, shorts)?;
         let place = self.place(obj, prop, e.span.start)?;
-        Ok((obj, self.get_place(place)))
+        Ok((obj, self.get_place(place)?))
     }
 
     /// The object of a member in a chain, tested when `optional`.
@@ -490,6 +566,20 @@ impl Builder<'_, '_> {
                     ExprKind::Member { .. } => {
                         let (obj, function) = self.member(callee, shorts)?;
                         (Some(obj), function)
+                    }
+                    ExprKind::SuperMember { prop, this, home } => {
+                        let Place::Super {
+                            this,
+                            base,
+                            key,
+                            at,
+                        } = self.super_place(prop, *this, *home, callee.span.start)?
+                        else {
+                            unreachable!("a super place");
+                        };
+                        let function =
+                            self.op_at(Op::GetSuperValue, &[this, base, key], Imm::Int(1), at);
+                        (Some(this), function)
                     }
                     ExprKind::OptionalChain { e: inner }
                         if matches!(inner.kind, ExprKind::Member { .. }) =>
@@ -839,11 +929,19 @@ impl Builder<'_, '_> {
                     let place = self.place(obj, prop, target_at)?;
                     self.seed(target_at);
                     let value = self.expr(value)?;
-                    self.set_place(place, value);
+                    self.set_place(place, value)?;
                     Ok(value)
                 }
-                TargetKind::Pattern { .. } => unsupported("destructuring assignment"),
-                TargetKind::SuperMember { .. } => unsupported("super"),
+                TargetKind::Pattern { p } => {
+                    self.destructure_after(p, value, super::pattern::Mode::Assign)
+                }
+                TargetKind::SuperMember { prop, this, home } => {
+                    let place = self.super_place(prop, *this, *home, target_at)?;
+                    self.seed(target_at);
+                    let value = self.expr(value)?;
+                    self.set_place(place, value)?;
+                    Ok(value)
+                }
             },
             AssignOp::And | AssignOp::Or | AssignOp::Nullish => {
                 self.logical_assign(op, target, value)
@@ -862,13 +960,22 @@ impl Builder<'_, '_> {
                         let obj = self.expr(obj)?;
                         let place = self.place(obj, prop, target_at)?;
                         let place = self.convert_key(place);
-                        let old = self.get_place(place);
+                        let old = self.get_place(place)?;
                         let rhs = self.expr(value)?;
                         let new = self.binary(binary, old, rhs, at);
-                        self.set_place(place, new);
+                        self.set_place(place, new)?;
                         Ok(new)
                     }
-                    _ => unsupported("compound assignment to this target"),
+                    TargetKind::SuperMember { prop, this, home } => {
+                        let place = self.super_place(prop, *this, *home, target_at)?;
+                        let place = self.convert_key(place);
+                        let old = self.get_place(place)?;
+                        let rhs = self.expr(value)?;
+                        let new = self.binary(binary, old, rhs, at);
+                        self.set_place(place, new)?;
+                        Ok(new)
+                    }
+                    TargetKind::Pattern { .. } => internal("compound assignment to a pattern"),
                 }
             }
         }
@@ -882,6 +989,20 @@ impl Builder<'_, '_> {
                 let key = self.op(Op::ToPropertyKeyOf, &[key, obj], Imm::None);
                 Place::Elem { obj, key, at }
             }
+            Place::Super {
+                this,
+                base,
+                key,
+                at,
+            } => {
+                let key = self.op(Op::ToPropertyKey, &[key], Imm::None);
+                Place::Super {
+                    this,
+                    base,
+                    key,
+                    at,
+                }
+            }
             place => place,
         }
     }
@@ -894,9 +1015,14 @@ impl Builder<'_, '_> {
                 let obj = self.expr(obj)?;
                 let place = self.place(obj, prop, target_at)?;
                 let place = self.convert_key(place);
-                (self.get_place(place), Some(place))
+                (self.get_place(place)?, Some(place))
             }
-            _ => return unsupported("logical assignment to this target"),
+            TargetKind::SuperMember { prop, this, home } => {
+                let place = self.super_place(prop, *this, *home, target_at)?;
+                let place = self.convert_key(place);
+                (self.get_place(place)?, Some(place))
+            }
+            TargetKind::Pattern { .. } => return internal("logical assignment to a pattern"),
         };
         let cond = match op {
             AssignOp::Nullish => self.op(Op::IsUndefinedOrNull, &[old], Imm::None),
@@ -913,7 +1039,7 @@ impl Builder<'_, '_> {
         let new = self.expr(value)?;
         match (&target.kind, place) {
             (TargetKind::Decl { decl }, _) => self.put_decl(*decl, new)?,
-            (_, Some(place)) => self.set_place(place, new),
+            (_, Some(place)) => self.set_place(place, new)?,
             _ => unreachable!("a place"),
         }
         let from_write = self.branch_end();
@@ -930,7 +1056,7 @@ impl Builder<'_, '_> {
         let obj = self.expr(obj)?;
         let place = self.place(obj, prop, target.span.start)?;
         self.mark(Some(place_at(place)));
-        self.set_place(place, value);
+        self.set_place(place, value)?;
         Ok(())
     }
 
@@ -957,7 +1083,7 @@ impl Builder<'_, '_> {
                 let obj = self.expr(obj)?;
                 let place = self.place(obj, prop, target.span.start)?;
                 let place = self.convert_key(place);
-                let old = self.get_place(place);
+                let old = self.get_place(place)?;
                 let (result, new) = if prefix {
                     let new = self.op_at(step, &[old], Imm::None, at);
                     (new, new)
@@ -966,10 +1092,25 @@ impl Builder<'_, '_> {
                     let new = self.op(step, &[numeric], Imm::None);
                     (numeric, new)
                 };
-                self.set_place(place, new);
+                self.set_place(place, new)?;
                 Ok(result)
             }
-            _ => unsupported("update of this target"),
+            TargetKind::SuperMember { prop, this, home } => {
+                let place = self.super_place(prop, *this, *home, target.span.start)?;
+                let place = self.convert_key(place);
+                let old = self.get_place(place)?;
+                let (result, new) = if prefix {
+                    let new = self.op_at(step, &[old], Imm::None, at);
+                    (new, new)
+                } else {
+                    let numeric = self.op_at(Op::ToNumeric, &[old], Imm::None, at);
+                    let new = self.op(step, &[numeric], Imm::None);
+                    (numeric, new)
+                };
+                self.set_place(place, new)?;
+                Ok(result)
+            }
+            TargetKind::Pattern { .. } => internal("update of a pattern"),
         }
     }
 
@@ -1026,9 +1167,13 @@ impl Builder<'_, '_> {
     }
 }
 
+#[allow(dead_code)]
 fn place_at(place: Place) -> u32 {
     match place {
-        Place::Field { at, .. } | Place::Elem { at, .. } => at,
+        Place::Field { at, .. }
+        | Place::Elem { at, .. }
+        | Place::Private { at, .. }
+        | Place::Super { at, .. } => at,
     }
 }
 
