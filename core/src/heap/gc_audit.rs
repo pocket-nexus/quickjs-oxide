@@ -316,7 +316,7 @@ impl Snapshot {
                 let edges = self
                     .edges
                     .get(&n)
-                    .unwrap_or_else(|| panic!("gc graph: dangling {n:?}"));
+                    .unwrap_or_else(|| panic!("gc graph: stale reference to missing {n:?}"));
                 if self.reachable.insert(n) {
                     work.extend_from_slice(edges);
                 }
