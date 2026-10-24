@@ -1,0 +1,86 @@
+//! Production NaN-box decoding used by marking and root filtering.
+use vstd::prelude::*;
+
+verus! {
+// TYPES
+
+spec fn kind_of(bits: u64) -> Kind {
+    let tag = bits >> 48;
+    if tag == 0xFFF9 { Kind::Int32 }
+    else if tag == 0xFFFA {
+        if bits & 3 == 0 { Kind::Bool }
+        else if bits & 3 == 1 { Kind::Undefined }
+        else if bits & 3 == 2 { Kind::Null }
+        else { Kind::Empty }
+    }
+    else if tag == 0xFFFB { Kind::Object }
+    else if tag == 0xFFFC { Kind::String }
+    else if tag == 0xFFFD { Kind::Symbol }
+    else if tag == 0xFFFE { Kind::BigInt }
+    else { Kind::Number }
+}
+
+spec fn heap_kind(kind: Kind) -> bool {
+    kind == Kind::Object || kind == Kind::String || kind == Kind::Symbol || kind == Kind::BigInt
+}
+
+impl Value {
+    // METHOD bits
+    // METHOD kind
+    // METHOD is_heap
+    // METHOD payload_if
+    // METHOD object
+    // METHOD string
+    // METHOD symbol
+    // METHOD bigint
+    // METHOD as_object
+    // METHOD as_string
+    // METHOD as_symbol
+    // METHOD as_bigint
+}
+
+// PUSH_HEAP_VALUES
+
+// Exercises composition: classification, filtering, and payload extraction
+// agree, for every u32 index and in all four distinct arena namespaces.
+fn round_trip(index: u32) {
+    let object = Value::object(ObjectId(index));
+    let observed_1 = object.is_heap();
+    assert(observed_1);
+    let observed_2 = object.kind();
+    assert(observed_2 == Kind::Object);
+    let observed_3 = object.as_object();
+    assert(observed_3 == Some(ObjectId(index)));
+    let observed_4 = object.as_string();
+    assert(observed_4 == None);
+    let string = Value::string(StringId(index));
+    let observed_5 = string.is_heap();
+    assert(observed_5);
+    let observed_6 = string.kind();
+    assert(observed_6 == Kind::String);
+    let observed_7 = string.as_string();
+    assert(observed_7 == Some(StringId(index)));
+    let observed_8 = string.as_symbol();
+    assert(observed_8 == None);
+    let symbol = Value::symbol(SymbolId(index));
+    let observed_9 = symbol.is_heap();
+    assert(observed_9);
+    let observed_10 = symbol.kind();
+    assert(observed_10 == Kind::Symbol);
+    let observed_11 = symbol.as_symbol();
+    assert(observed_11 == Some(SymbolId(index)));
+    let observed_12 = symbol.as_bigint();
+    assert(observed_12 == None);
+    let bigint = Value::bigint(BigIntId(index));
+    let observed_13 = bigint.is_heap();
+    assert(observed_13);
+    let observed_14 = bigint.kind();
+    assert(observed_14 == Kind::BigInt);
+    let observed_15 = bigint.as_bigint();
+    assert(observed_15 == Some(BigIntId(index)));
+    let observed_16 = bigint.as_object();
+    assert(observed_16 == None);
+}
+
+pub fn main() {}
+}

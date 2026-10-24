@@ -179,7 +179,10 @@ impl<T: Record> Arena<T> {
     #[inline]
     pub fn is_live(&self, index: u32) -> bool {
         let (word, mask) = bit(index);
-        self.live.get(word).is_some_and(|bits| bits & mask != 0)
+        match self.live.get(word) {
+            Some(bits) => bits & mask != 0,
+            None => false,
+        }
     }
 
     #[inline]
@@ -273,11 +276,19 @@ impl<T: Record> Arena<T> {
     #[inline]
     pub fn is_marked(&self, index: u32) -> bool {
         let (word, mask) = bit(index);
-        self.marks.get(word).is_some_and(|bits| bits & mask != 0)
+        match self.marks.get(word) {
+            Some(bits) => bits & mask != 0,
+            None => false,
+        }
     }
 
+    /// The explicit loop is also checked by `verification/gc/arena.rs.in`.
     pub fn clear_marks(&mut self) {
-        self.marks.fill(0);
+        let mut word = 0;
+        while word < self.marks.len() {
+            self.marks[word] = 0;
+            word += 1;
+        }
     }
 
     /// Frees every live, unmarked record, highest index first, passing each to

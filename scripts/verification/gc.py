@@ -14,6 +14,11 @@ import time
 import urllib.request
 import zipfile
 
+import arena as arena_proofs
+import roots as root_proofs
+import source as source_frontend
+import value as value_proofs
+
 ROOT = Path(__file__).resolve().parents[2]
 PROOFS = ROOT / "verification/gc"
 PIN = json.loads((PROOFS / "toolchain.json").read_text())
@@ -119,9 +124,9 @@ def install(directory):
     return binary
 
 
-def checked_run(verus, path, timeout, expect_failure=False):
+def checked_run(verus, path, timeout, expect_failure=False, flags=()):
     started = time.monotonic()
-    result = subprocess.run([str(verus), str(path), "--triggers-mode", "silent"],
+    result = subprocess.run([str(verus), str(path), "--triggers-mode", "silent", *flags],
                             text=True, capture_output=True, timeout=timeout)
     output = result.stdout + result.stderr
     match = re.search(r"verification results:: (\d+) verified, (\d+) errors", output)
@@ -133,14 +138,24 @@ def checked_run(verus, path, timeout, expect_failure=False):
     print(f"{'PASS' if ok else 'FAIL'} {path.name}", flush=True)
     if not ok:
         raise RuntimeError(output)
-    return {"file": path.name, "verified": int(match[1]), "errors": int(match[2]),
+    return {"file": path.name, "flags": list(flags), "verified": int(match[1]), "errors": int(match[2]),
             "expected_failure": expect_failure, "seconds": time.monotonic() - started, "output": output}
 
 
 def reject_trust_escapes(source):
-    source = re.sub(r"//[^\n]*|/\*.*?\*/", "", source, flags=re.S)
-    if re.search(r"\b(assume|admit|external_body|external_fn_specification|axiom)\b", source):
+    source = source_frontend.masked(source)
+    if re.search(r"\b(assume|assume_specification|admit|external_body|external_fn_specification|"
+                 r"external_type_specification|external_trait_specification|external_trait_extension|"
+                 r"uninterp|axiom)\b|verifier\s*::\s*external\b", source):
         raise ValueError("proof contains a trust escape")
+
+
+def open_obligations(obligations):
+    # Model theorems discharge model obligations, not implementation obligations.
+    # A source theorem with unproved adapter contracts is still an open boundary.
+    discharged = {"proved-model", "proved-source"}
+    return [item["id"] for item in obligations if item["status"] not in discharged
+            and not (item["id"] == "GC-RESOURCES" and item["status"] == "assumption")]
 
 
 def main():
@@ -150,6 +165,8 @@ def main():
     parser.add_argument("--mutations", action="store_true")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--timeout", type=int, default=120)
+    parser.add_argument("--require-complete", action="store_true",
+                        help="fail on open implementation/caller obligations; retain the explicit host resource preconditions")
     args = parser.parse_args()
     binary = args.verus
     if args.install:
@@ -166,11 +183,17 @@ def main():
     receipt = {"version": version, "source_commit": subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "checks": [], "sha256": {}}
     receipt["obligations"] = json.loads((PROOFS / "obligations.json").read_text())
+    receipt["open_obligations"] = open_obligations(receipt["obligations"])
+    receipt["complete"] = not receipt["open_obligations"]
+    receipt["dirty"] = bool(subprocess.check_output(
+        ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     paths = {item["implementation"] for item in receipt["obligations"]}
     paths.update(["core/src/heap/gc_audit.rs", "core/src/heap/gc_tests.rs",
                   "core/src/vm/regexp.rs", "verification/gc/driver.rs.in",
                   "verification/gc/obligations.json", "verification/gc/toolchain.json",
                   "scripts/verification/gc.py"])
+    paths.update(str(path.relative_to(ROOT)) for path in PROOFS.iterdir() if path.is_file())
+    paths.update(str(path.relative_to(ROOT)) for path in (ROOT / "scripts/verification").glob("*.py"))
     for name in sorted(paths):
         receipt["sha256"][name] = hashlib.sha256((ROOT / name).read_bytes()).hexdigest()
     with tempfile.TemporaryDirectory(prefix="oxide-gc-proof-") as tmp:
@@ -181,12 +204,23 @@ def main():
         shutil.copyfile(PROOFS / "model.rs", directory / "model.rs")
         driver = directory / "driver.rs"
         driver.write_text(driver_proof(kernel))
-        sources = [PROOFS / "model.rs", PROOFS / "storage.rs", generated, driver]
+        gc_source = (ROOT / "core/src/heap/gc.rs").read_text()
+        value_source = (ROOT / "core/src/value.rs").read_text()
+        arena_source = (ROOT / "core/src/heap/arena.rs").read_text()
+        roots = directory / "roots.rs"
+        roots.write_text(root_proofs.proof(gc_source, value_source, (PROOFS / "roots.rs.in").read_text()))
+        value = directory / "value.rs"
+        value.write_text(value_proofs.proof(value_source, (PROOFS / "value.rs.in").read_text(), gc_source))
+        arena = directory / "arena.rs"
+        arena.write_text(arena_proofs.proof(arena_source, (PROOFS / "arena.rs.in").read_text()))
+        sources = [PROOFS / "model.rs", PROOFS / "storage.rs", generated, driver, roots, value, arena]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
             receipt["sha256"][path.name] = hashlib.sha256(source.encode()).hexdigest()
             receipt["checks"].append(checked_run(binary, path, args.timeout))
+        receipt["checks"].append(checked_run(binary, arena, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
         receipt["sha256"]["gc_kernel.rs"] = hashlib.sha256(kernel.encode()).hexdigest()
         if args.mutations:
             source = (PROOFS / "model.rs").read_text()
@@ -202,6 +236,26 @@ def main():
                 path = directory / f"mutant_{name}.rs"
                 path.write_text(source.replace(before, after))
                 receipt["checks"].append(checked_run(binary, path, args.timeout, True))
+            # Change executable statements in the extracted production bodies.
+            # Ghost assertions/contracts remain unchanged. Rejection must come
+            # from failed proof obligations, never from unsupported Rust syntax.
+            concrete_mutations = {
+                "root_prefix_lost": (roots, "self.values.truncate(mark.0);", "self.values.truncate(0);"),
+                "handle_not_released": (roots, "*slot = Value::EMPTY;", "*slot = *slot;"),
+                "symbol_not_heap": (value, "tag >= TAG_OBJECT && tag <= TAG_BIGINT", "tag >= TAG_OBJECT && tag < TAG_SYMBOL"),
+                "inverted_root_filter": (value, "if value.is_heap() {", "if !value.is_heap() {"),
+                "marks_not_cleared": (arena, "self.marks[word] = 0;", "self.marks[word] = 1;"),
+                "wrong_arena_bit": (arena, "*bits = marked;", "*bits = 0;"),
+                "unchecked_live_access": (arena, "requires self.live_at(index),", ""),
+            }
+            for name, (original, before, after) in concrete_mutations.items():
+                content = original.read_text()
+                if content.count(before) != 1:
+                    raise RuntimeError(f"mutation {name} no longer has a unique target")
+                path = directory / f"mutant_{name}.rs"
+                path.write_text(content.replace(before, after))
+                flags = ("--cfg", 'feature="gc-stress"') if name == "unchecked_live_access" else ()
+                receipt["checks"].append(checked_run(binary, path, args.timeout, True, flags))
             broken = kernel.replace("live & !marked", "live & marked")
             path = directory / "mutant_sweep.rs"
             path.write_text(kernel_proof(broken))
@@ -216,6 +270,8 @@ def main():
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(receipt, indent=2) + "\n")
+    if args.require_complete and not receipt["complete"]:
+        parser.exit(2, "Incomplete GC verification: " + ", ".join(receipt["open_obligations"]) + "\n")
 
 
 if __name__ == "__main__":

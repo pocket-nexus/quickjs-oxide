@@ -1084,7 +1084,15 @@ impl EphemeronTrace for WeakPass<'_> {
     }
 }
 
+/// Verified as an exact, order-preserving filter in `verification/gc/value.rs.in`.
 #[inline]
 fn push_heap_values(stack: &mut Vec<Value>, values: &[Value]) {
-    stack.extend(values.iter().copied().filter(|value| value.is_heap()));
+    let mut index = 0;
+    while index < values.len() {
+        let value = values[index];
+        if value.is_heap() {
+            stack.push(value);
+        }
+        index += 1;
+    }
 }

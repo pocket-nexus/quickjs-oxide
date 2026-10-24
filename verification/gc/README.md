@@ -2,8 +2,9 @@
 
 This package implements the first GC verification boundary: a least-fixed-point
 proof, a production phase driver checked against explicit adapter contracts,
-verbatim production bitmap/entry decisions, and independent checks of the real
-heap representation. **It is not an end-to-end proof of the entire collector or
+production bitmap/entry decisions, source proofs of root storage, Value decoding,
+arena marking and heap-value queueing, and independent checks of the real heap
+representation. **It is not an end-to-end proof of the entire collector or
 of every caller's rooting discipline.** The remaining obligations are part of
 the result, not implicit axioms hidden inside the proof.
 
@@ -19,6 +20,14 @@ cargo test --locked --release -p quickjs-oxide-core --features gc-stress
 cargo test --locked --features gc-stress --test embedding_api symbol_rope_description_survives_collection_without_other_string_roots
 python3 scripts/verification/gc_mutations.py --output target/verification/runtime-mutations.json
 ```
+
+`--require-complete` additionally requires every implementation and caller
+obligation in the ledger to be discharged. **It currently exits 2**, even when
+all of the implemented proofs pass. Receipts always include `complete`,
+`open_obligations`, the working-tree dirty flag and source hashes. The explicit
+finite-heap/host-memory/stop-the-world preconditions in `GC-RESOURCES` remain
+part of the theorem's domain; adding an arbitrary `assumption` does not pass
+this gate.
 
 An existing pinned verifier can be supplied with `--verus /path/to/verus` or
 `VERUS`. `toolchain.json` pins the official Verus archive by version and SHA-256.
@@ -89,8 +98,60 @@ the checks below provide evidence, not a replacement for that missing proof.
 The driver also assumes its adapter calls terminate; its decreases clause does
 not prove termination of arbitrary trait implementations.
 
-The runner rejects local `assume`, `admit`, `external_body`, and external function
-specification escapes. This does not eliminate the trusted base: Verus, its
+### Additional production-source proofs
+
+`roots.rs.in`, `value.rs.in` and `arena.rs.in` receive production methods from
+`gc.rs`, `value.rs` and `arena.rs`, selected by `scripts/verification/source.py`.
+They prove the following contracts for arbitrary sequence lengths permitted by
+their premises and every representable value/index, rather than a bounded
+collection of test heaps:
+
+- Every `RootStack` operation has an exact sequence contract. Restoring a valid
+  mark preserves precisely the preceding prefix. `Handles::create`, `get`,
+  `set`, `release` and `live_count` preserve the bijection between empty slots
+  and a duplicate-free free list; allocating a handle preserves other active
+  handles and their values. The count equals the number of active slots.
+- `Value::kind`, `is_heap`, the four heap constructors and their decoders agree
+  on the arena namespace and the full `u32` payload. The classification proof
+  covers every `u64` bit pattern, including primitive and reserved tags.
+- `push_heap_values` terminates and appends exactly the heap-valued subsequence,
+  retaining the previous queue and preserving order and multiplicity.
+- `Arena::new`, `is_live`, `check`, `get`, `get_mut`, `mark`, `is_marked` and
+  `clear_marks` have source proofs. Marking is fresh exactly when its one bit
+  was clear; every other bit, all record contents and metadata are preserved.
+  Clearing terminates and clears all marks. Mutable access frames the one
+  selected record. Both normal and `gc-stress` layouts are verified, including
+  preservation of the quarantine vector.
+
+The contracts state their remaining premises. Marks must belong to an adequate
+root prefix; handles must be active and nonempty, and table lengths must remain
+representable. `Handles::values`, its derived `Default`, lifetime/heap ownership
+discipline, arena allocation/sweep invariant preservation and the complete
+tracer are not discharged by these proofs. In particular, decoding an arena
+index does not prove that it still names a live record.
+
+The source frontend adds ghost contracts, proof blocks, loop invariants and
+named returns, narrows visibility inside the proof module, and instantiates the
+production identifier macro's record declarations. Constants with executable
+initializers receive a checked executable/specification correspondence. Arena
+methods that do not use `Record` are checked for arbitrary `T`, a stronger bound.
+For `Arena::check` only, it erases the panic formatting arguments after checking
+the exact assertion condition; Verus still proves that condition, so the erased
+failure branch is unreachable under the contract. A negative proof removes the
+liveness premise in the stress configuration and must fail. No collector call,
+branch condition, mutation or successful-path statement is replaced with a
+trusted summary. This small source frontend, like the original kernel extractor,
+is part of the trusted base.
+
+The production changes needed by these proofs replace two optional bitmap
+lookups with explicit matches, bitmap fill and heap-value filtering with explicit
+loops, and a Boolean-to-integer `From` call with a cast. This avoids unsupported
+standard-library specifications without adding local axioms. The loop proofs
+cover bounds, overflow, termination and their complete output sequences.
+
+The runner rejects local `assume`, `assume_specification`, `admit`, external
+body/type/trait/function specifications, and uninterpreted/axiomatic escapes.
+This does not eliminate the trusted base: Verus, its
 standard library, SMT solver, rustc/LLVM, source extraction, the specifications,
 and the stated adapter/host assumptions remain trusted. The adapter contract
 cannot be counted as a proved implementation merely because it has no body.
@@ -144,7 +205,10 @@ fails in the independent mark comparison, before sweep can recycle the halves.
 
 Proof mutations remove map liveness, drop key activation, carry stale marks,
 invert the executable sweep mask, or omit the production driver's drain/clear
-operations. Runtime mutations remove an actual strong
+operations. Further source mutations destroy a retained root prefix, fail to
+release a handle, exclude Symbol values, invert heap-value filtering, leave mark
+bits set, write the wrong arena bit, or omit a live-access precondition. Runtime
+mutations remove an actual strong
 trace edge, drop actual waiting-value activation, or retain the previous weak
 work list. Runtime mutations run in an isolated source copy after a passing
 baseline; they must fail a selected behavioral test with the expected GC
