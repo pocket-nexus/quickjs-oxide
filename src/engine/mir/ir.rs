@@ -46,6 +46,12 @@ impl Pos {
     pub const NONE: Self = Self(u32::MAX);
 }
 
+impl Default for Pos {
+    fn default() -> Self {
+        Self::NONE
+    }
+}
+
 /// An instruction's immediate, as its operation's `ImmKind` reads it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Imm {
@@ -57,6 +63,8 @@ pub enum Imm {
     Flags(u32),
     Capture(u32),
     Child(u32),
+    /// A variable of the function.
+    Var(u32),
 }
 
 /// What the middle end knows about a value: the type lattice of M1, used
@@ -321,6 +329,8 @@ impl Terminator {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Block {
     pub phis: Vec<Phi>,
+    /// The terminator's source position.
+    pub term_pos: Pos,
     /// The exception value, for a catch region's entry.
     pub catch: Option<Value>,
     /// The return address, for a `finally` subroutine's entry.
@@ -340,6 +350,7 @@ impl Block {
     pub fn new() -> Self {
         Self {
             phis: Vec::new(),
+            term_pos: Pos::NONE,
             catch: None,
             ret_addr: None,
             insns: Vec::new(),
@@ -383,21 +394,95 @@ impl Default for ValueInfo {
     }
 }
 
-/// One function's graph; `blocks[0]` is the entry.
+/// Where a variable lives: `this`, the parameters and `new.target` have
+/// the registers the core's calling convention gives them, the other
+/// variables any register the lowering chooses for the whole function.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VarKind {
+    This,
+    Param(u32),
+    NewTarget,
+    Local,
+}
+
+/// A variable: a binding, or a value of the builder's own, that keeps one
+/// register for the whole function and is read and written with `GetVar`
+/// and `SetVar`, so a catch block or a resumption sees its latest value. A
+/// captured binding's variable holds its cell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Var {
+    pub kind: VarKind,
+    pub decl: Option<DeclRef>,
+}
+
+/// A constant-pool entry; strings are indexes into the program's strings.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Constant {
+    Number(f64),
+    String(u32),
+    /// The decimal digits of a `BigInt` literal.
+    BigInt(u32),
+    /// A tagged template's strings: the template object of its site.
+    Template {
+        cooked: Vec<Option<u32>>,
+        raw: Vec<u32>,
+    },
+    /// A regular expression literal: its source and canonical flags.
+    RegExp {
+        source: u32,
+        flags: u32,
+    },
+}
+
+/// The parts of the function's unit the builder decides.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
+pub struct UnitInfo {
+    /// The core's unit flags.
+    pub flags: u16,
+    /// The registers after `this` that hold the arguments.
+    pub param_count: u16,
+    /// `Function.length`.
+    pub length: u16,
+    /// The function's own name, for the backtrace.
+    pub name: Option<u32>,
+    /// The `name` property: its own name, or the one its creation site
+    /// gives it.
+    pub name_atom: Option<u32>,
+    /// Distinct `this.x =` keys of a base constructor.
+    pub this_slots: u16,
+    /// The byte range of its source text, for `toString`.
+    pub source: Option<(u32, u32)>,
+    /// The position of its definition, for instructions without one.
+    pub definition: Pos,
+}
+
+/// One function's graph; `blocks[0]` is the entry.
+#[derive(Clone, Debug, PartialEq, Default)]
 pub struct Function {
     /// The HIR function it was built from.
     pub source: FunctionRef,
     pub blocks: Vec<Block>,
     pub values: Vec<ValueInfo>,
-    /// `this`, then the parameters, in their fixed registers.
+    /// Values defined before the entry block (the tests' parameters).
     pub params: Vec<Value>,
     pub handlers: Vec<Handler>,
     /// The HIR functions its `MakeClosure` instructions create, by child index.
     pub children: Vec<FunctionRef>,
+    pub vars: Vec<Var>,
+    pub consts: Vec<Constant>,
+    pub unit: UnitInfo,
+    /// The blocks in the order the builder emitted them, which the lowering
+    /// keeps; empty for block order.
+    pub layout: Vec<BlockId>,
 }
 
 impl Function {
+    pub fn new_var(&mut self, kind: VarKind, decl: Option<DeclRef>) -> u32 {
+        let index = u32::try_from(self.vars.len()).expect("MIR variables are indexed by u32");
+        self.vars.push(Var { kind, decl });
+        index
+    }
+
     #[must_use]
     pub fn new(source: FunctionRef) -> Self {
         Self {

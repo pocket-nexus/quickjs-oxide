@@ -76,6 +76,8 @@ pub enum ImmKind {
     Capture,
     /// An index into the unit's children.
     Child,
+    /// A variable of the function.
+    Var,
 }
 
 macro_rules! ops {
@@ -154,6 +156,12 @@ ops! {
     Function(Fixed(0), 1, None, PURE) => [LoadFunction];
     NewTarget(Fixed(0), 1, None, PURE) => [LoadNewTarget];
     HomeObject(Fixed(0), 1, None, PURE) => [LoadHomeObject];
+
+    // ---- variables: one register each for the whole function ----
+    GetVar(Fixed(0), 1, Var, PURE) => [];
+    SetVar(Fixed(1), 0, Var, WRITE) => [];
+    /// A copy, where the builder needs a fresh value.
+    Copy(Fixed(1), 1, None, PURE) => [];
 
     // ---- unary ----
     Neg(Fixed(1), 1, None, ANY) => [Neg];
@@ -292,6 +300,9 @@ ops! {
     // ---- calls: the lowering lays the operands out in the callee window ----
     /// callee, arguments…
     Call(AtLeast(1), 1, None, ANY) => [Call, TailCall];
+    /// A call written as a direct `eval`, which runs as indirect eval: the
+    /// backtrace lists no native frame for it. It lowers to `Call`.
+    CallEval(AtLeast(1), 1, None, ANY) => [];
     /// receiver, callee, arguments…
     CallMethod(AtLeast(2), 1, None, ANY) => [CallMethod, TailCallMethod];
     /// callee, new.target, arguments…

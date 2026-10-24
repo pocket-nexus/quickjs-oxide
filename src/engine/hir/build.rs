@@ -16,7 +16,7 @@ use super::schema::{
     Function, FunctionKind, FunctionRef, Import, ImportAttribute, LogicalOp, MethodRole, Module,
     ModuleRef, ModuleRequest, ObjProp, Param, ParamCopy, Pattern, PatternItem, PatternKind,
     PatternProp, Program, PropKey, Reexport, SourceRange, Span, Stmt, StmtKind, StringRef,
-    SwitchCase, Target, TypeRef, UnaryOp, Unit, UpdateOp,
+    SwitchCase, Target, TargetKind, TypeRef, UnaryOp, Unit, UpdateOp,
 };
 use crate::engine::api::error::Error;
 use crate::engine::ast::{self, DeclId, FuncId, ProgramKind, Ref, ScopeId, ScopeKind};
@@ -1168,8 +1168,11 @@ impl<'a> Builder<'a> {
                 let pattern = self.pattern(pattern, None)?;
                 let _ = at;
                 ForTarget::Assign {
-                    t: Box::new(Target::Pattern {
-                        p: Box::new(pattern),
+                    t: Box::new(Target {
+                        kind: TargetKind::Pattern {
+                            p: Box::new(pattern),
+                        },
+                        span: at,
                     }),
                 }
             }
@@ -1657,12 +1660,16 @@ impl<'a> Builder<'a> {
                 )
             }
             E::AssignPattern { pattern, value } => {
+                let pattern_span = ast_span(pattern.span);
                 let pattern = self.pattern(*pattern, None)?;
                 (
                     ExprKind::Assign {
                         op: AssignOp::Assign,
-                        target: Box::new(Target::Pattern {
-                            p: Box::new(pattern),
+                        target: Box::new(Target {
+                            kind: TargetKind::Pattern {
+                                p: Box::new(pattern),
+                            },
+                            span: pattern_span,
                         }),
                         value: self.boxed(*value)?,
                     },
@@ -1757,33 +1764,40 @@ impl<'a> Builder<'a> {
     fn assignment_target(&mut self, target: ast::Expr) -> Result<Target, Error> {
         use ast::ExprKind as E;
         let node_span = ast_span(target.span);
-        Ok(match target.kind {
+        let at = |position: u32| span(position, node_span.end);
+        let (kind, span) = match target.kind {
             E::Ident(reference) => {
                 let decl = self.resolve(reference);
                 self.mark_assigned(decl);
-                Target::Decl { decl }
+                (TargetKind::Decl { decl }, node_span)
             }
-            E::Member { obj, prop, .. } => Target::Member {
-                obj: self.boxed(*obj)?,
-                prop: Box::new(self.prop_key(prop)?),
-                layout: None,
-                field: None,
-            },
+            E::Member { obj, prop, pos, .. } => (
+                TargetKind::Member {
+                    obj: self.boxed(*obj)?,
+                    prop: Box::new(self.prop_key(prop)?),
+                    layout: None,
+                    field: None,
+                },
+                at(pos),
+            ),
             E::SuperMember { prop, pos } => {
                 let this = self.implicit(DeclKind::This, pos);
                 let home = self.implicit(DeclKind::HomeObject, pos);
-                Target::SuperMember {
-                    prop: Box::new(self.prop_key(prop)?),
-                    this,
-                    home,
-                }
+                (
+                    TargetKind::SuperMember {
+                        prop: Box::new(self.prop_key(prop)?),
+                        this,
+                        home,
+                    },
+                    at(pos),
+                )
             }
             E::Paren(inner) => return self.assignment_target(*inner),
             _ => {
-                let _ = node_span;
                 return Err(Error::internal("an assignment target is not a reference"));
             }
-        })
+        };
+        Ok(Target { kind, span })
     }
 
     fn target(&mut self, target: ast::Expr) -> Result<Target, Error> {

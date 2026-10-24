@@ -1121,7 +1121,13 @@ impl ArrayItem {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub enum Target {
+pub struct Target {
+    pub kind: TargetKind,
+    pub span: Span,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum TargetKind {
     Decl {
         decl: DeclRef,
     },
@@ -1141,14 +1147,14 @@ pub enum Target {
     },
 }
 
-impl Target {
+impl TargetKind {
     #[must_use]
     pub const fn kind_name(&self) -> &'static str {
         match self {
-            Target::Decl { .. } => "decl",
-            Target::Member { .. } => "member",
-            Target::Pattern { .. } => "pattern",
-            Target::SuperMember { .. } => "superMember",
+            TargetKind::Decl { .. } => "decl",
+            TargetKind::Member { .. } => "member",
+            TargetKind::Pattern { .. } => "pattern",
+            TargetKind::SuperMember { .. } => "superMember",
         }
     }
 }
@@ -2595,12 +2601,12 @@ fn n_array_item(w: &mut Writer, v: &ArrayItem) -> u32 {
 fn n_target(w: &mut Writer, v: &Target) -> u32 {
     let mut words = Vec::new();
     let out = &mut words;
-    match v {
-        Target::Decl { decl } => {
+    match &v.kind {
+        TargetKind::Decl { decl } => {
             out.push(560);
             out.push(decl.0);
         }
-        Target::Member {
+        TargetKind::Member {
             obj,
             prop,
             layout,
@@ -2624,14 +2630,14 @@ fn n_target(w: &mut Writer, v: &Target) -> u32 {
                 None => out.push(0),
             }
         }
-        Target::Pattern { p } => {
+        TargetKind::Pattern { p } => {
             out.push(562);
             {
                 let r = n_pattern(w, p);
                 out.push(r);
             }
         }
-        Target::SuperMember { prop, this, home } => {
+        TargetKind::SuperMember { prop, this, home } => {
             out.push(563);
             {
                 let r = n_prop_key(w, prop);
@@ -2641,7 +2647,7 @@ fn n_target(w: &mut Writer, v: &Target) -> u32 {
             out.push(home.0);
         }
     }
-    w.node(words, None)
+    w.node(words, Some(&v.span))
 }
 
 fn n_obj_prop(w: &mut Writer, v: &ObjProp) -> u32 {
@@ -4696,7 +4702,7 @@ fn rn_target(r: &Reader<'_>, n: u32, limit: usize) -> Result<Target, ReadError> 
     let value = match kind {
         560 => {
             let decl = DeclRef(c.u()?);
-            Target::Decl { decl }
+            TargetKind::Decl { decl }
         }
         561 => {
             let obj = Box::new(rn_expr(r, c.u()?, limit)?);
@@ -4709,7 +4715,7 @@ fn rn_target(r: &Reader<'_>, n: u32, limit: usize) -> Result<Target, ReadError> 
                 0 => None,
                 n => Some((n - 1)),
             };
-            Target::Member {
+            TargetKind::Member {
                 obj,
                 prop,
                 layout,
@@ -4718,17 +4724,20 @@ fn rn_target(r: &Reader<'_>, n: u32, limit: usize) -> Result<Target, ReadError> 
         }
         562 => {
             let p = Box::new(rn_pattern(r, c.u()?, limit)?);
-            Target::Pattern { p }
+            TargetKind::Pattern { p }
         }
         563 => {
             let prop = Box::new(rn_prop_key(r, c.u()?, limit)?);
             let this = DeclRef(c.u()?);
             let home = DeclRef(c.u()?);
-            Target::SuperMember { prop, this, home }
+            TargetKind::SuperMember { prop, this, home }
         }
         _ => return Err(ReadError("a node is not a Target")),
     };
-    Ok(value)
+    Ok(Target {
+        kind: value,
+        span: r.span(index),
+    })
 }
 
 fn rn_obj_prop(r: &Reader<'_>, n: u32, limit: usize) -> Result<ObjProp, ReadError> {
@@ -7145,12 +7154,12 @@ fn d_array_item(d: &mut Dumper<'_>, v: &ArrayItem, ind: usize, head: String) {
 fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
     let mut parts: Vec<String> = Vec::new();
     let mut children: Vec<(&str, Child<'_>)> = Vec::new();
-    let kind = match v {
-        Target::Decl { decl } => {
+    let kind = match &v.kind {
+        TargetKind::Decl { decl } => {
             parts.push(format!("decl:{}", format!("#{}", decl.0)));
             "decl"
         }
-        Target::Member {
+        TargetKind::Member {
             obj,
             prop,
             layout,
@@ -7180,7 +7189,7 @@ fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
             }
             "member"
         }
-        Target::Pattern { p } => {
+        TargetKind::Pattern { p } => {
             children.push((
                 "p",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
@@ -7189,7 +7198,7 @@ fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
             ));
             "pattern"
         }
-        Target::SuperMember { prop, this, home } => {
+        TargetKind::SuperMember { prop, this, home } => {
             children.push((
                 "prop",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
@@ -7201,6 +7210,12 @@ fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
             "superMember"
         }
     };
+    if d.spans {
+        parts.push(format!(
+            "span:{}",
+            format!("{}:{}-{}", (&v.span).file.0, (&v.span).start, (&v.span).end)
+        ));
+    }
     let head = if head.is_empty() {
         kind.to_string()
     } else {
@@ -8378,9 +8393,9 @@ fn s_array_item(v: &mut ArrayItem) {
 }
 
 fn s_target(v: &mut Target) {
-    match v {
-        Target::Decl { decl } => {}
-        Target::Member {
+    match &mut v.kind {
+        TargetKind::Decl { decl } => {}
+        TargetKind::Member {
             obj,
             prop,
             layout,
@@ -8391,10 +8406,10 @@ fn s_target(v: &mut Target) {
             *layout = None;
             *field = None;
         }
-        Target::Pattern { p } => {
+        TargetKind::Pattern { p } => {
             s_pattern(p);
         }
-        Target::SuperMember { prop, this, home } => {
+        TargetKind::SuperMember { prop, this, home } => {
             s_prop_key(prop);
         }
     }

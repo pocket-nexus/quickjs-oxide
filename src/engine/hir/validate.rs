@@ -473,9 +473,9 @@ impl Validator<'_> {
     }
 
     fn target(&mut self, target: &Target) -> Result<()> {
-        match target {
-            Target::Decl { decl } => self.use_decl(*decl),
-            Target::Member {
+        match &target.kind {
+            TargetKind::Decl { decl } => self.use_decl(*decl),
+            TargetKind::Member {
                 obj,
                 prop,
                 layout,
@@ -487,8 +487,8 @@ impl Validator<'_> {
                 self.expr(obj)?;
                 self.prop_key(prop)
             }
-            Target::Pattern { p } => self.pattern(p),
-            Target::SuperMember { prop, this, home } => {
+            TargetKind::Pattern { p } => self.pattern(p),
+            TargetKind::SuperMember { prop, this, home } => {
                 self.use_decl(*this)?;
                 self.use_decl(*home)?;
                 self.prop_key(prop)
