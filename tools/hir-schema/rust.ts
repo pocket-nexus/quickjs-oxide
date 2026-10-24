@@ -66,6 +66,29 @@ export function emitRust(s: Schema, version: number): string {
 
 // ---- types ----
 
+// Fields the Rust types box so the enums holding them stay small: the class
+// a class expression or declaration carries, a tagged template's string
+// lists and a try statement's blocks. The encoding does not change.
+function boxed(s: Schema, f: Field, variant?: string): boolean {
+  const t = f.type.t === "nullable" ? f.type.inner : f.type;
+  if (t.t === "named" && t.name === "Block") return variant === "try";
+  if (t.t === "named") return t.name === "Class" && decl(s, t.name).d === "struct";
+  return t.t === "list" && (f.name === "cooked" || f.name === "raw");
+}
+
+function fieldTy(s: Schema, f: Field, variant?: string): string {
+  if (!boxed(s, f, variant)) return rty(s, f.type);
+  if (f.type.t === "nullable") return `Option<Box<${rty(s, f.type.inner)}>>`;
+  return `Box<${rty(s, f.type)}>`;
+}
+
+function fieldDec(s: Schema, f: Field, variant?: string): string {
+  const e = dec(s, f.type);
+  if (!boxed(s, f, variant)) return e;
+  if (f.type.t === "nullable") return `(${e}).map(Box::new)`;
+  return `Box::new(${e})`;
+}
+
 function rty(s: Schema, t: TypeExpr, inList = false): string {
   switch (t.t) {
     case "prim":
@@ -124,7 +147,7 @@ function types(s: Schema, o: Out): void {
       case "struct":
         o.line("#[derive(Clone, Debug, PartialEq)]");
         o.line(`pub struct ${name} {`);
-        for (const f of d.fields) o.line(`    pub ${rustField(f.name)}: ${rty(s, f.type)},`);
+        for (const f of d.fields) o.line(`    pub ${rustField(f.name)}: ${fieldTy(s, f)},`);
         o.line("}");
         break;
       case "union": {
@@ -133,7 +156,7 @@ function types(s: Schema, o: Out): void {
           o.line("#[derive(Clone, Debug, PartialEq)]");
           o.line(`pub struct ${name} {`);
           o.line(`    pub kind: ${k},`);
-          for (const f of d.common) o.line(`    pub ${rustField(f.name)}: ${rty(s, f.type)},`);
+          for (const f of d.common) o.line(`    pub ${rustField(f.name)}: ${fieldTy(s, f)},`);
           o.line("}");
           o.line();
         }
@@ -144,7 +167,7 @@ function types(s: Schema, o: Out): void {
             o.line(`    ${pascal(v.kind)},`);
           } else {
             o.line(`    ${pascal(v.kind)} {`);
-            for (const f of v.fields) o.line(`        ${rustField(f.name)}: ${rty(s, f.type)},`);
+            for (const f of v.fields) o.line(`        ${rustField(f.name)}: ${fieldTy(s, f, v.kind)},`);
             o.line("    },");
           }
         }
@@ -193,7 +216,7 @@ function enc(s: Schema, t: TypeExpr, e: string, out: string): string {
     case "list": {
       const b = `buf${tmp++}`;
       const x = `x${tmp++}`;
-      return `{ let ${b} = &mut Vec::new(); for ${x} in ${e} { ${enc(s, t.elem, x, b)} } w.list(${out}, std::mem::take(${b}), ${e}.len()); }`;
+      return `{ let ${b} = &mut Vec::new(); for ${x} in ${e}.iter() { ${enc(s, t.elem, x, b)} } w.list(${out}, std::mem::take(${b}), ${e}.len()); }`;
     }
     case "nullable": {
       const x = `x${tmp++}`;
@@ -574,7 +597,7 @@ function reader(s: Schema, o: Out): void {
     const d = decl(s, name);
     if (d.d === "struct" && name !== "Program") {
       o.line(`fn ${fnName("r", name)}(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<${name}, ReadError> {`);
-      for (const f of d.fields) o.line(`    let ${rustField(f.name)} = ${dec(s, f.type)};`);
+      for (const f of d.fields) o.line(`    let ${rustField(f.name)} = ${fieldDec(s, f)};`);
       o.line(`    Ok(${name} { ${d.fields.map((f) => rustField(f.name)).join(", ")} })`);
       o.line("}");
       o.line();
@@ -583,7 +606,7 @@ function reader(s: Schema, o: Out): void {
       o.line("    Ok(match c.u()? {");
       d.variants.forEach((v, i) => {
         o.line(`        ${i} => {`);
-        for (const f of v.fields) o.line(`            let ${rustField(f.name)} = ${dec(s, f.type)};`);
+        for (const f of v.fields) o.line(`            let ${rustField(f.name)} = ${fieldDec(s, f, v.kind)};`);
         o.line(`            ${name}::${pascal(v.kind)}${bindings(v)}`);
         o.line("        }");
       });
@@ -600,7 +623,7 @@ function reader(s: Schema, o: Out): void {
       o.line("    let value = match kind {");
       d.variants.forEach((v, i) => {
         o.line(`        ${d.kinds! + i} => {`);
-        for (const f of v.fields) o.line(`            let ${rustField(f.name)} = ${dec(s, f.type)};`);
+        for (const f of v.fields) o.line(`            let ${rustField(f.name)} = ${fieldDec(s, f, v.kind)};`);
         o.line(`            ${k}::${pascal(v.kind)}${bindings(v)}`);
         o.line("        }");
       });
@@ -609,7 +632,7 @@ function reader(s: Schema, o: Out): void {
       if (d.common.length === 0) {
         o.line("    Ok(value)");
       } else {
-        for (const f of common) o.line(`    let ${rustField(f.name)} = ${dec(s, f.type)};`);
+        for (const f of common) o.line(`    let ${rustField(f.name)} = ${fieldDec(s, f)};`);
         const fields = d.common.map((f) => (f.name === "span" && hasNodeSpan(s, d) ? "span: r.span(index)" : rustField(f.name)));
         o.line(`    Ok(${name} { kind: value, ${fields.join(", ")} })`);
       }

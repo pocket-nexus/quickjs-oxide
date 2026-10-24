@@ -31,7 +31,7 @@ impl<'source> Parser<'source> {
         if self.consume_punctuator(Punctuator::Semicolon)? {
             return Ok(Stmt {
                 kind: StmtKind::Empty,
-                span: start,
+                span: start.into(),
             });
         }
         if self.lexical_declaration_ahead(position.allows_other_declaration())? {
@@ -126,7 +126,7 @@ impl<'source> Parser<'source> {
         };
         Ok(Stmt {
             kind,
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         })
     }
 
@@ -243,7 +243,7 @@ impl<'source> Parser<'source> {
         let kind = result?;
         Ok(Stmt {
             kind,
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         })
     }
 
@@ -458,7 +458,7 @@ impl<'source> Parser<'source> {
                         Some(Pattern {
                             kind: PatternKind::Binding(Ref {
                                 name,
-                                span: token.span,
+                                span: token.span.into(),
                                 scope,
                             }),
                             span: token.span,
@@ -865,7 +865,7 @@ impl<'source> Parser<'source> {
         self.consume_statement_terminator()?;
         Ok(Stmt {
             kind: StmtKind::Var(kind, declarators),
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         })
     }
 
@@ -1021,7 +1021,11 @@ pub(super) fn binding(
     scope: ScopeId,
 ) -> Pattern {
     Pattern {
-        kind: PatternKind::Binding(Ref { name, span, scope }),
+        kind: PatternKind::Binding(Ref {
+            name,
+            span: span.into(),
+            scope,
+        }),
         span,
     }
 }

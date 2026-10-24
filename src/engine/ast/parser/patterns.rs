@@ -314,7 +314,7 @@ impl<'source> Parser<'source> {
         }
         Ok(Ref {
             name,
-            span,
+            span: span.into(),
             scope: self.current_scope(),
         })
     }
@@ -773,13 +773,13 @@ impl<'source> Parser<'source> {
         }
         let reference = Ref {
             name,
-            span: token.span,
+            span: token.span.into(),
             scope: self.current_scope(),
         };
         Ok(Pattern {
             kind: PatternKind::Target(Box::new(Expr {
                 kind: ExprKind::Ident(reference),
-                span: token.span,
+                span: token.span.into(),
             })),
             span: token.span,
         })

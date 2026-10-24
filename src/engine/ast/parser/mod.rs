@@ -281,7 +281,7 @@ impl<'source> Parser<'source> {
             concise: false,
             default_ctor: false,
             strict,
-            span: source_span,
+            span: source_span.into(),
             source: (0, end),
         });
         if is_module {

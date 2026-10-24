@@ -58,7 +58,7 @@ impl<'source> Parser<'source> {
         let (class, _) = self.parse_class(true)?;
         Ok(Expr {
             kind: ExprKind::Class(Box::new(class)),
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         })
     }
 
@@ -166,7 +166,7 @@ impl<'source> Parser<'source> {
             None => self.synthesize_constructor(class_token.span, derived),
         };
         constructor.name = name;
-        constructor.span = class_token.span;
+        constructor.span = class_token.span.into();
         constructor.source = source;
         let instance_init = elements
             .instance
@@ -194,7 +194,7 @@ impl<'source> Parser<'source> {
                 members: elements.members,
                 instance_init: instance_init.map(Box::new),
                 static_init: static_init.map(Box::new),
-                span: self.span_from(class_token.span),
+                span: self.span_from(class_token.span).into(),
             },
             outer_decl,
         ))
@@ -225,7 +225,7 @@ impl<'source> Parser<'source> {
             concise: false,
             default_ctor: true,
             strict: true,
-            span,
+            span: span.into(),
             source: (pos(span), pos(span)),
         }
     }
@@ -574,9 +574,9 @@ impl<'source> Parser<'source> {
             kind: StmtKind::FieldInit(Box::new(FieldInit::Public {
                 key: field_key,
                 value,
-                span,
+                span: span.into(),
             })),
-            span,
+            span: span.into(),
         };
         Self::aggregate(elements, is_static).body.push(field);
         self.consume_statement_terminator()
@@ -599,8 +599,12 @@ impl<'source> Parser<'source> {
         self.ensure_aggregate(elements, is_static, span);
         let value = self.parse_field_initializer(elements, is_static)?;
         let field = Stmt {
-            kind: StmtKind::FieldInit(Box::new(FieldInit::Private { decl, value, span })),
-            span,
+            kind: StmtKind::FieldInit(Box::new(FieldInit::Private {
+                decl,
+                value,
+                span: span.into(),
+            })),
+            span: span.into(),
         };
         Self::aggregate(elements, is_static).body.push(field);
         self.consume_statement_terminator()
@@ -618,7 +622,7 @@ impl<'source> Parser<'source> {
         let function = result?;
         Self::aggregate(elements, true).body.push(Stmt {
             kind: StmtKind::FieldInit(Box::new(FieldInit::StaticBlock(Box::new(function)))),
-            span,
+            span: span.into(),
         });
         Ok(())
     }
@@ -657,7 +661,7 @@ impl<'source> Parser<'source> {
             concise: false,
             default_ctor: false,
             strict: true,
-            span,
+            span: span.into(),
             source: (pos(span), closing.end.byte_offset as u32),
         })
     }
@@ -692,7 +696,7 @@ impl<'source> Parser<'source> {
             concise: false,
             default_ctor: false,
             strict: true,
-            span,
+            span: span.into(),
             source: (pos(span), pos(span)),
         }
     }
