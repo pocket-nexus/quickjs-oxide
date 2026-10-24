@@ -93,7 +93,9 @@ export interface File {
   hash: u32;
 }
 
-// UTF-8 byte offsets into `file`.
+// UTF-8 byte offsets into `file`. A node's `start` is its debug position:
+// the token an error at the node is reported at (an operator, the `(` of a
+// call, the `.` of a member access), else the node's first token.
 export interface Span {
   file: FileRef;
   start: u32;
@@ -168,9 +170,16 @@ export interface TaggedVariant {
 
 // ---- declarations ----
 
+// `functionName` is a named function expression's own name, `hidden` a
+// binding the front end introduces (a computed field key, a module's
+// default export). `this`, `arguments`, `newTarget`, `homeObject` and
+// `activeFunction` are a non-arrow function's implicit bindings; an arrow
+// refers to its enclosing function's.
 export type DeclKind =
   | "var" | "let" | "const" | "param" | "function" | "class" | "catch" | "import" | "global"
-  | "this" | "arguments" | "newTarget" | "implicit" | "privateName";
+  | "this" | "arguments" | "newTarget" | "implicit" | "functionName" | "hidden"
+  | "homeObject" | "activeFunction"
+  | "privateField" | "privateMethod" | "privateGetter" | "privateSetter" | "privateAccessor";
 
 export interface Decl {
   name: StringRef;
@@ -181,6 +190,8 @@ export interface Decl {
   tdz: boolean;
   ty: Typed<TypeRef>;
   span: Span;
+  // A private name of the class constructor rather than of instances.
+  isStatic: boolean;
 }
 
 // ---- functions ----
@@ -192,6 +203,7 @@ export type FunctionKind =
 export interface Function {
   name: StringRef | null;
   kind: FunctionKind;
+  role: MethodRole;
   async: boolean;
   generator: boolean;
   strict: boolean;
@@ -210,6 +222,29 @@ export interface Function {
   sig: Typed<Signature | null>;
   effects: Typed<Effects | null>;
   span: Span;
+  // `Function.length`.
+  length: u32;
+  // The source `Function.prototype.toString` returns.
+  source: SourceRange;
+  // A named function expression's own binding.
+  self: DeclRef | null;
+  // The binding the arguments object initializes.
+  argumentsDecl: DeclRef | null;
+  // With a parameter environment (a default), each parameter's binding there
+  // and the body binding it is copied to before the body runs.
+  paramCopies: ParamCopy[];
+  // An arrow whose body is one expression.
+  concise: boolean;
+}
+
+export interface SourceRange {
+  start: u32;
+  end: u32;
+}
+
+export interface ParamCopy {
+  from: DeclRef;
+  to: DeclRef;
 }
 
 export interface Param {
@@ -239,22 +274,37 @@ export interface Effects {
 
 // ---- modules ----
 
-export type ImportKind = "value" | "namespace" | "default";
-
 export interface Module {
   file: FileRef;
   top: FunctionRef;
+  requests: ModuleRequest[];
   imports: Import[];
   exports: Export[];
   reexports: Reexport[];
+  // `export * from`: request indexes.
+  starExports: u32[];
   dynamic: boolean;
+  usesImportMeta: boolean;
+  hasTopLevelAwait: boolean;
 }
 
+export interface ModuleRequest {
+  specifier: StringRef;
+  // A `with { ... }` clause, possibly empty.
+  hasAttributes: boolean;
+  attributes: ImportAttribute[];
+}
+
+export interface ImportAttribute {
+  key: StringRef;
+  value: StringRef;
+}
+
+// `name` null is a namespace import.
 export interface Import {
-  from: StringRef;
-  name: StringRef;
+  request: u32;
+  name: StringRef | null;
   decl: DeclRef;
-  kind: ImportKind;
 }
 
 export interface Export {
@@ -262,10 +312,11 @@ export interface Export {
   decl: DeclRef;
 }
 
+// `export { name as as } from` (`name` null: `export * as as from`).
 export interface Reexport {
-  from: StringRef;
+  request: u32;
   name: StringRef | null;
-  as: StringRef | null;
+  as: StringRef;
 }
 
 // ---- expressions ----
@@ -306,7 +357,7 @@ export type Expr = (
   | { kind: "this"; decl: DeclRef }
   | { kind: "newTarget"; decl: DeclRef }
   | { kind: "importMeta" }
-  | { kind: "superMember"; prop: PropKey }
+  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef }
   | { kind: "member"; obj: Expr; prop: PropKey; optional: boolean; layout: Typed<LayoutRef | null>; field: Typed<u32 | null> }
   | { kind: "unary"; op: UnaryOp; e: Expr }
   | { kind: "update"; op: UpdateOp; prefix: boolean; target: Target }
@@ -315,9 +366,9 @@ export type Expr = (
   | { kind: "cond"; test: Expr; then: Expr; else: Expr }
   | { kind: "assign"; op: AssignOp; target: Target; value: Expr }
   | { kind: "seq"; exprs: Expr[] }
-  | { kind: "call"; callee: Expr; args: Arg[]; optional: boolean; direct: Typed<FunctionRef | null>; intrinsic: Typed<StringRef | null> }
+  | { kind: "call"; callee: Expr; args: Arg[]; optional: boolean; direct: Typed<FunctionRef | null>; intrinsic: Typed<StringRef | null>; directEval: boolean }
   | { kind: "new"; callee: Expr; args: Arg[]; direct: Typed<FunctionRef | null> }
-  | { kind: "superCall"; args: Arg[] }
+  | { kind: "superCall"; args: Arg[]; this: DeclRef; newTarget: DeclRef; func: DeclRef }
   | { kind: "import"; spec: Expr; options: Expr | null }
   | { kind: "yield"; e: Expr | null; delegate: boolean }
   | { kind: "await"; e: Expr }
@@ -325,6 +376,8 @@ export type Expr = (
   | { kind: "scratch"; elem: TypeRef; body: FunctionRef }
   | { kind: "optionalChain"; e: Expr }
   | { kind: "privateIn"; name: DeclRef; obj: Expr }
+  // NamedEvaluation: an anonymous function or class value named `name`.
+  | { kind: "named"; name: StringRef; e: Expr }
 ) & { ty: Typed<TypeRef>; span: Span };
 
 /** @kinds 512 */
@@ -349,7 +402,7 @@ export type Target =
   | { kind: "decl"; decl: DeclRef }
   | { kind: "member"; obj: Expr; prop: PropKey; layout: Typed<LayoutRef | null>; field: Typed<u32 | null> }
   | { kind: "pattern"; p: Pattern }
-  | { kind: "superMember"; prop: PropKey };
+  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef };
 
 export type MethodRole = "method" | "get" | "set";
 
@@ -360,11 +413,17 @@ export type ObjProp =
   | { kind: "spread"; e: Expr }
   | { kind: "proto"; value: Expr };
 
+// A class: its inner name binding, heritage, constructor (written or
+// synthesized), the elements evaluated with it in order, and QuickJS's two
+// aggregate initializers, one for instance fields and one for static
+// fields and static blocks.
 export interface Class {
   name: DeclRef | null;
   extends: Expr | null;
-  ctor: FunctionRef | null;
+  ctor: FunctionRef;
   members: ClassMember[];
+  instanceInit: FunctionRef | null;
+  staticInit: FunctionRef | null;
   layout: Typed<LayoutRef | null>;
   span: Span;
 }
@@ -372,9 +431,16 @@ export interface Class {
 /** @kinds 592 */
 export type ClassMember =
   | { kind: "method"; key: PropKey; fn: FunctionRef; static: boolean; role: MethodRole }
-  | { kind: "field"; key: PropKey; init: FunctionRef | null; static: boolean; ty: Typed<TypeRef> }
-  | { kind: "staticBlock"; fn: FunctionRef }
-  | { kind: "accessorAuto"; key: PropKey; static: boolean };
+  | { kind: "privateMethod"; decl: DeclRef; fn: FunctionRef; static: boolean; role: MethodRole }
+  // A computed field key, evaluated here and kept in `decl`.
+  | { kind: "fieldKey"; key: Expr; decl: DeclRef; static: boolean }
+  // A private field name, created with the class.
+  | { kind: "privateField"; decl: DeclRef; static: boolean };
+
+/** @kinds 608 */
+export type FieldKey =
+  | { kind: "name"; name: StringRef }
+  | { kind: "computed"; decl: DeclRef };
 
 // ---- statements ----
 
@@ -390,19 +456,26 @@ export type Stmt = (
   | { kind: "while"; test: Expr; body: Stmt; label: u32 }
   | { kind: "doWhile"; body: Stmt; test: Expr; label: u32 }
   | { kind: "for"; init: Stmt | null; test: Expr | null; update: Expr | null; body: Stmt; label: u32; perIteration: DeclRef[] }
-  | { kind: "forIn"; target: ForTarget; obj: Expr; body: Stmt; label: u32 }
+  // `init`: Annex B `for (var x = init in o)`.
+  | { kind: "forIn"; target: ForTarget; init: Expr | null; obj: Expr; body: Stmt; label: u32 }
   | { kind: "forOf"; target: ForTarget; iter: Expr; body: Stmt; label: u32; await: boolean; arrayFast: Typed<boolean> }
   | { kind: "switch"; disc: Expr; cases: SwitchCase[]; label: u32; exhaustive: Typed<boolean> }
   | { kind: "break"; label: u32 }
   | { kind: "continue"; label: u32 }
   | { kind: "return"; e: Expr | null }
   | { kind: "throw"; e: Expr }
-  | { kind: "try"; body: Block; catchParam: Pattern | null; catchBody: Block | null; finally: Block | null }
+  // `catchDefault`: QuickJS lets a catch pattern have a default.
+  | { kind: "try"; body: Block; catchParam: Pattern | null; catchBody: Block | null; finally: Block | null; catchDefault: Expr | null }
   | { kind: "labeled"; label: u32; body: Stmt }
-  | { kind: "fnDecl"; decl: DeclRef; fn: FunctionRef }
+  // `annexB`: the function-root var a sloppy block function also sets.
+  | { kind: "fnDecl"; decl: DeclRef; fn: FunctionRef; annexB: DeclRef | null }
   | { kind: "classDecl"; decl: DeclRef; cls: Class }
   | { kind: "debugger" }
   | { kind: "empty" }
+  // In an aggregate field initializer: a field of `this`, or a static block.
+  | { kind: "defineField"; key: FieldKey; value: Expr | null }
+  | { kind: "definePrivate"; decl: DeclRef; value: Expr | null }
+  | { kind: "staticBlock"; fn: FunctionRef }
 ) & { span: Span };
 
 export interface Block {

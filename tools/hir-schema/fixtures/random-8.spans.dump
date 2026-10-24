@@ -18,36 +18,60 @@ layout #0 name:#1?
     LayoutField name:"😀\u001f\u0000" ty:#1 readonly:false
 descriptor #0 undefined
 descriptor #1 number repr:u32 min:5e-324
-decl #0 name:"😀\u001f\u0000" kind:import owner:#2 capturedBy:[] assigned:true tdz:true span:4:0-22
-decl #1 name:#1? kind:newTarget owner:#2 capturedBy:[#0] assigned:true tdz:true ty:#3 span:0:1-256
-decl #2 name:#1? kind:newTarget owner:#2 capturedBy:[#4 #1] assigned:true tdz:false ty:#1 span:1:1-1
-fn #0 name:"😀\u001f\u0000" kind:staticBlock async:false generator:false strict:false simpleParams:false decls:[#2 #3] captures:[#1] inner:[#1 #0] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:true homeObject:true span:1:65536-65536
-  params:
-    Param
-      pattern:
-        decl decl:#1 ty:#4 span:0:65536-317
+decl #0 name:"😀\u001f\u0000" kind:implicit owner:#2 capturedBy:[] assigned:true tdz:true span:4:0-22 isStatic:false
+decl #1 name:#1? kind:global owner:#2 capturedBy:[] assigned:true tdz:true ty:#3 span:0:1-256 isStatic:false
+decl #2 name:#1? kind:implicit owner:#3 capturedBy:[#1 #0 #2] assigned:true tdz:true ty:#4 span:1:1-7 isStatic:true
+fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#1] captures:[#0 #0] inner:[#0 #2] usesThis:false usesArguments:false usesNewTarget:true hasDirectEval:false homeObject:true span:2:1-309 length:261 concise:true
+  rest:
+    target ty:#3 span:0:1-65536
+      t:
+        superMember this:#2 home:#1
+          prop:
+            name name:"😀\u001f\u0000"
   body:
     Block decls:[]
       stmts:
-        declare decl:#3 span:0:1-65536
-  sig:
-    Signature params:[] rest:#4 ret:#3 thisTy:#2
+        declare decl:#2 span:3:1-1
   effects:
-    Effects reads:[#0] writes:[#2 #4] heapReads:true heapWrites:true allocates:false mayThrow:false maySuspend:false calls:known
-fn #1 kind:getter async:false generator:true strict:false params:[] simpleParams:true decls:[] captures:[] inner:[#1] usesThis:false usesArguments:false usesNewTarget:true hasDirectEval:true homeObject:false span:4:576-1
+    Effects reads:[#4 #0] writes:[#4] heapReads:false heapWrites:false allocates:false mayThrow:true maySuspend:true calls:known
+  source:
+    SourceRange start:1 end:7
+  paramCopies:
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#2 to:#2
+    ParamCopy from:#3 to:#4
+fn #1 kind:getter role:method async:false generator:false strict:true simpleParams:false decls:[] captures:[#0 #1 #4] inner:[#4 #3] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true span:1:1-65536 length:7 self:#2 paramCopies:[] concise:true
+  params:
+    Param
+      pattern:
+        decl decl:#4 ty:#3 span:0:1-65536
+  rest:
+    array span:4:0-7
+      items:
+        hole
   body:
-    Block decls:[#3 #4]
+    Block decls:[#3 #3 #4]
       stmts:
-        declare decl:#1 span:1:0-7
+        declare decl:#4 span:3:1-0
   sig:
-    Signature params:[] ret:#1 thisTy:#2
-  effects:
-    Effects reads:[#4 #2] writes:[] heapReads:true heapWrites:false allocates:false mayThrow:true maySuspend:true calls:known
-module #0 file:#3 top:#0 exports:[] dynamic:false
+    Signature params:[#1 #2] rest:#0 ret:#0 thisTy:#0
+  source:
+    SourceRange start:693 end:0
+module #0 file:#0 top:#3 exports:[] starExports:[7] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"😀\u001f\u0000" hasAttributes:false attributes:[]
+    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
+    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
   imports:
-    Import from:#1? name:#1? decl:#4 kind:value
-    Import from:#1? name:"😀\u001f\u0000" decl:#1 kind:default
-    Import from:#1? name:#1? decl:#3 kind:default
+    Import request:1 decl:#4
+    Import request:65536 decl:#3
   reexports:
-    Reexport from:#1?
-    Reexport from:"😀\u001f\u0000"
+    Reexport request:65536 as:#1?
+    Reexport request:1 as:"😀\u001f\u0000"
+module #1 file:#3 top:#2 requests:[] imports:[] starExports:[0] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+  exports:
+    Export name:"😀\u001f\u0000" decl:#0
+  reexports:
+    Reexport request:65536 as:"😀\u001f\u0000"
+    Reexport request:1 as:"😀\u001f\u0000"
+    Reexport request:0 as:"😀\u001f\u0000"

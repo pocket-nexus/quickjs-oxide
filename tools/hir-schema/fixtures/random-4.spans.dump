@@ -17,26 +17,54 @@ const #2 number value:-Infinity
 type #0 number repr:u32
 type #1 dynamic
 type #2 fn params:[#4 #1] rest:#1 ret:#2 async:false
-decl #0 name:"\u0000\u001f \n " kind:newTarget owner:#0 capturedBy:[#3] assigned:false tdz:false ty:#1 span:3:1-65536
-decl #1 name:"" kind:privateName owner:#1 capturedBy:[#4 #2 #0] assigned:true tdz:true span:3:117-65536
-fn #0 kind:staticBlock async:false generator:true strict:false simpleParams:true decls:[#2 #4 #3] captures:[#4 #1 #2] inner:[#2 #2] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false span:0:365-0
+decl #0 name:"\u0000\u001f \n " kind:privateMethod owner:#0 capturedBy:[#3] assigned:false tdz:false ty:#1 span:3:1-65536 isStatic:true
+decl #1 name:#5? kind:global owner:#4 capturedBy:[#2 #0 #0] assigned:true tdz:true ty:#3 span:0:901-1 isStatic:true
+fn #0 name:"" kind:classFieldInit role:set async:false generator:false strict:false simpleParams:false decls:[#1 #1 #4] captures:[#1 #0 #3] inner:[] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true span:2:1-1 length:7 self:#0 concise:true
   params:
     Param
       pattern:
-        decl decl:#3 ty:#4 span:4:0-662
+        decl decl:#0 ty:#3 span:4:1-1
     Param
       pattern:
-        decl decl:#0 ty:#1 span:3:375-0
-  rest:
-    target span:3:47-7
-      t:
-        superMember
-          prop:
-            name name:""
+        decl decl:#4 ty:#4 span:0:7-7
   body:
-    Block decls:[]
-      stmts:
-        declare decl:#1 span:1:946-0
-        declare decl:#3 span:0:1-65536
+    Block stmts:[] decls:[#3 #2 #2]
+  sig:
+    Signature params:[#4] rest:#3 ret:#4 thisTy:#1
   effects:
-    Effects reads:[#2 #0 #1] writes:[#1 #1] heapReads:false heapWrites:false allocates:true mayThrow:false maySuspend:true calls:unknown
+    Effects reads:[#2 #2] writes:[#2] heapReads:false heapWrites:false allocates:false mayThrow:true maySuspend:false calls:unknown
+  source:
+    SourceRange start:7 end:7
+  paramCopies:
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#2 to:#3
+fn #1 name:"é" kind:module role:get async:true generator:true strict:false simpleParams:false decls:[#4 #1 #3] captures:[#4] inner:[] usesThis:true usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:false span:3:7-65536 length:65536 self:#0 argumentsDecl:#2 concise:true
+  params:
+    Param
+      pattern:
+        decl decl:#2 span:0:65536-888
+    Param
+      pattern:
+        decl decl:#4 ty:#3 span:4:65536-0
+    Param
+      pattern:
+        decl decl:#4 ty:#4 span:2:65536-0
+  rest:
+    array ty:#2 span:2:138-7
+      items:
+        hole
+        hole
+      rest:
+        decl decl:#0 ty:#2 span:1:347-842
+  body:
+    Block decls:[#1]
+      stmts:
+        declare decl:#3 span:2:65536-26
+        declare decl:#3 span:1:1-1
+  effects:
+    Effects reads:[#1] writes:[#1] heapReads:false heapWrites:false allocates:true mayThrow:true maySuspend:false calls:unknown
+  source:
+    SourceRange start:65536 end:0
+  paramCopies:
+    ParamCopy from:#1 to:#2
