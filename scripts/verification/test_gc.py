@@ -149,6 +149,9 @@ class ProofSourceTests(unittest.TestCase):
             (gc.ROOT / "core/src/heap/symbol.rs").read_text(),
             gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()), scan)
         gc.reject_trust_escapes(symbol)
+        reuse = gc.reuse_proofs.proof(arena,
+            gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()))
+        gc.reject_trust_escapes(reuse)
 
     def test_completeness_does_not_count_conditional_or_tested_code(self):
         obligations = [

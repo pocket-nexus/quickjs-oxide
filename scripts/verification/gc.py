@@ -16,6 +16,7 @@ import urllib.request
 import zipfile
 
 import arena as arena_proofs
+import reuse as reuse_proofs
 import roots as root_proofs
 import scan as scan_proofs
 import source as source_frontend
@@ -241,8 +242,10 @@ def main():
         symbol.write_text(symbol_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
             gc_source, (ROOT / "core/src/heap/object.rs").read_text(),
             (ROOT / "core/src/heap/symbol.rs").read_text(), arena.read_text(), scan.read_text()))
+        reuse = directory / "reuse.rs"
+        reuse.write_text(reuse_proofs.proof((ROOT / "core/src/heap/arena.rs").read_text(), arena.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
-                   generated, driver, roots, value, arena, waiters, scan, weakpass, symbol]
+                   generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -255,6 +258,8 @@ def main():
         receipt["checks"].append(checked_run(binary, scan, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["checks"].append(checked_run(binary, symbol, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
+        receipt["checks"].append(checked_run(binary, reuse, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["sha256"]["gc_kernel.rs"] = hashlib.sha256(kernel.encode()).hexdigest()
         if args.mutations:
@@ -275,6 +280,12 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "reuse_highest_slot": (reuse, "(!taken).trailing_zeros()", "63 - (!taken).leading_zeros()"),
+                "reuse_lost_count": (reuse, "self.free_count -= 1;", ""),
+                "reuse_skips_cursor": (reuse, "let mut word = self.cursor;", "let mut word = self.cursor + 1;"),
+                "reuse_wrong_bit": (reuse, "self.live[word] |= 1 << low;", "self.live[word] |= 1;"),
+                "reuse_corrupts_marks": (reuse, "self.free_count -= 1;", "self.free_count -= 1; self.marks[word] = 0;"),
+                "reuse_ignores_quarantine": (reuse, "return self.live[word] | self.quarantine[word];", "return self.live[word];"),
                 "symbol_lost_description": (symbol,
                     "stack.push(Value::string(crate::StringId(description)));", ""),
                 "symbol_lost_activation": (symbol, "stack.append(&mut values);", "values.clear();"),
@@ -322,7 +333,8 @@ def main():
                     raise RuntimeError(f"mutation {name} no longer has a unique target")
                 path = directory / f"mutant_{name}.rs"
                 path.write_text(content.replace(before, after))
-                flags = ("--cfg", 'feature="gc-stress"') if name == "unchecked_live_access" else ()
+                flags = ("--cfg", 'feature="gc-stress"') if name in (
+                    "unchecked_live_access", "reuse_ignores_quarantine") else ()
                 receipt["checks"].append(checked_run(binary, path, args.timeout, True, flags))
             # Recreate the old description-marking mistake on an explicitly
             # live description. Rejection must not depend only on a missing

@@ -249,6 +249,26 @@ The production for-loop uses a positive WeakMap branch instead of `continue`,
 which the pinned verifier cannot translate in a for-loop. Ghost snapshots,
 invariants and proof blocks leave the selected executable statements unchanged.
 
+### Arena slot reuse
+
+`scripts/verification/reuse.py` checks the unchanged production `taken` and
+`take_free` bodies in normal and stress builds. It proves termination, selection
+of the lowest reusable slot, exclusion of quarantine, setting exactly that
+live bit, and removal of precisely the returned index from the finite reusable
+set. The free counter remains equal to that set's cardinality; the updated
+cursor skips no reusable slots. Every other arena field is framed, including
+records, marks and quarantine. A constructed four-slot lifecycle demonstrates
+two normal reuses and the stress build's exclusion of a quarantined slot.
+
+The preconditions require valid bitmap access, matching quarantine length,
+representable word indices, an accurate positive free count and a valid cursor.
+They imply existence of a reusable slot, so the search cannot run off the end.
+These are explicit representation obligations for allocation, growth, sweep and
+shrink, whose implementations are not discharged by this local proof. Six
+source mutants select the highest slot, lose the counter decrement, skip the
+cursor, set the wrong bit, corrupt marks or ignore quarantine; each must fail
+verification. The trailing-zero properties come from the pinned vstd library.
+
 ### Symbol tracing
 
 `scripts/verification/symbol.py` composes the actual `Heap::mark_symbol` body
