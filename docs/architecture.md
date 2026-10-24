@@ -40,6 +40,9 @@ src/
                    module records, debug positions
     value/         the front end's primitives: JsString, JsBigInt, constant
                    values and the Number-to-string conversion
+    ast/           the new front end's syntax tree, and its parser: the same
+                   grammar decisions and early errors as compiler/parser, with
+                   the scopes and declarations it records
     hir/           the HIR schema generated from contracts/spec/hir.ts: its
                    types, binary reader and writer, text dump and strip
     mir/           the middle end's SSA form: the operation table over the
@@ -48,7 +51,7 @@ src/
                    quickjs-oxide-core, `api::error` the front end's diagnostics
 ```
 
-`engine::api` is the only public engine module; `compiler`, `code`, `value`, `hir` and `mir` are crate-private. `scripts/checks/check-source-layout.py` enforces this layout and the API's re-export boundary.
+`engine::api` is the only public engine module; `compiler`, `code`, `value`, `ast`, `hir` and `mir` are crate-private. `scripts/checks/check-source-layout.py` enforces this layout and the API's re-export boundary.
 
 ## Host boundary
 
