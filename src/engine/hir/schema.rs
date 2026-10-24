@@ -905,8 +905,8 @@ pub enum ExprKind {
     TaggedTemplate {
         tag: Box<Expr>,
         site: u32,
-        cooked: Vec<Option<StringRef>>,
-        raw: Vec<StringRef>,
+        cooked: Box<Vec<Option<StringRef>>>,
+        raw: Box<Vec<StringRef>>,
         exprs: Vec<Expr>,
     },
     Array {
@@ -919,7 +919,7 @@ pub enum ExprKind {
         fn_: FunctionRef,
     },
     Class {
-        cls: Class,
+        cls: Box<Class>,
     },
     Decl {
         decl: DeclRef,
@@ -1384,10 +1384,10 @@ pub enum StmtKind {
         e: Box<Expr>,
     },
     Try {
-        body: Block,
+        body: Box<Block>,
         catch_param: Option<Box<Pattern>>,
-        catch_body: Option<Block>,
-        finally: Option<Block>,
+        catch_body: Option<Box<Block>>,
+        finally: Option<Box<Block>>,
         catch_default: Option<Box<Expr>>,
     },
     Labeled {
@@ -1401,7 +1401,7 @@ pub enum StmtKind {
     },
     ClassDecl {
         decl: DeclRef,
-        cls: Class,
+        cls: Box<Class>,
     },
     Debugger,
     Empty,
@@ -1595,7 +1595,7 @@ fn w_unit(w: &mut Writer, out: &mut Vec<u32>, v: &Unit) {
     w.string(out, (&v.name));
     {
         let buf0 = &mut Vec::new();
-        for x1 in (&v.fingerprint_inputs) {
+        for x1 in (&v.fingerprint_inputs).iter() {
             w.string(buf0, x1);
         }
         w.list(out, std::mem::take(buf0), (&v.fingerprint_inputs).len());
@@ -1684,7 +1684,7 @@ fn w_type(w: &mut Writer, out: &mut Vec<u32>, v: &Type) {
             out.push(7);
             {
                 let buf2 = &mut Vec::new();
-                for x3 in fields {
+                for x3 in fields.iter() {
                     w_shape_field(w, buf2, x3);
                 }
                 w.list(out, std::mem::take(buf2), fields.len());
@@ -1703,7 +1703,7 @@ fn w_type(w: &mut Writer, out: &mut Vec<u32>, v: &Type) {
             out.push(9);
             {
                 let buf4 = &mut Vec::new();
-                for x5 in params {
+                for x5 in params.iter() {
                     buf4.push(x5.0);
                 }
                 w.list(out, std::mem::take(buf4), params.len());
@@ -1727,7 +1727,7 @@ fn w_type(w: &mut Writer, out: &mut Vec<u32>, v: &Type) {
             out.push(11);
             {
                 let buf8 = &mut Vec::new();
-                for x9 in members {
+                for x9 in members.iter() {
                     buf8.push(x9.0);
                 }
                 w.list(out, std::mem::take(buf8), members.len());
@@ -1778,7 +1778,7 @@ fn w_layout(w: &mut Writer, out: &mut Vec<u32>, v: &Layout) {
     out.push((&v.name).0);
     {
         let buf11 = &mut Vec::new();
-        for x12 in (&v.fields) {
+        for x12 in (&v.fields).iter() {
             w_layout_field(w, buf11, x12);
         }
         w.list(out, std::mem::take(buf11), (&v.fields).len());
@@ -1851,7 +1851,7 @@ fn w_descriptor(w: &mut Writer, out: &mut Vec<u32>, v: &Descriptor) {
             out.push(layout.0);
             {
                 let buf17 = &mut Vec::new();
-                for x18 in fields {
+                for x18 in fields.iter() {
                     buf17.push(x18.0);
                 }
                 w.list(out, std::mem::take(buf17), fields.len());
@@ -1862,7 +1862,7 @@ fn w_descriptor(w: &mut Writer, out: &mut Vec<u32>, v: &Descriptor) {
             out.push(tag.0);
             {
                 let buf19 = &mut Vec::new();
-                for x20 in variants {
+                for x20 in variants.iter() {
                     w_tagged_variant(w, buf19, x20);
                 }
                 w.list(out, std::mem::take(buf19), variants.len());
@@ -1887,7 +1887,7 @@ fn w_decl(w: &mut Writer, out: &mut Vec<u32>, v: &Decl) {
     out.push((&v.owner).0);
     {
         let buf21 = &mut Vec::new();
-        for x22 in (&v.captured_by) {
+        for x22 in (&v.captured_by).iter() {
             buf21.push(x22.0);
         }
         w.list(out, std::mem::take(buf21), (&v.captured_by).len());
@@ -1911,7 +1911,7 @@ fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
     out.push(u32::from(*(&v.strict)));
     {
         let buf24 = &mut Vec::new();
-        for x25 in (&v.params) {
+        for x25 in (&v.params).iter() {
             w_param(w, buf24, x25);
         }
         w.list(out, std::mem::take(buf24), (&v.params).len());
@@ -1934,21 +1934,21 @@ fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
     w_block(w, out, (&v.body));
     {
         let buf28 = &mut Vec::new();
-        for x29 in (&v.decls) {
+        for x29 in (&v.decls).iter() {
             buf28.push(x29.0);
         }
         w.list(out, std::mem::take(buf28), (&v.decls).len());
     }
     {
         let buf30 = &mut Vec::new();
-        for x31 in (&v.captures) {
+        for x31 in (&v.captures).iter() {
             buf30.push(x31.0);
         }
         w.list(out, std::mem::take(buf30), (&v.captures).len());
     }
     {
         let buf32 = &mut Vec::new();
-        for x33 in (&v.inner) {
+        for x33 in (&v.inner).iter() {
             buf32.push(x33.0);
         }
         w.list(out, std::mem::take(buf32), (&v.inner).len());
@@ -1985,7 +1985,7 @@ fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
     }
     {
         let buf38 = &mut Vec::new();
-        for x39 in (&v.param_copies) {
+        for x39 in (&v.param_copies).iter() {
             w_param_copy(w, buf38, x39);
         }
         w.list(out, std::mem::take(buf38), (&v.param_copies).len());
@@ -2021,7 +2021,7 @@ fn w_param(w: &mut Writer, out: &mut Vec<u32>, v: &Param) {
 fn w_signature(w: &mut Writer, out: &mut Vec<u32>, v: &Signature) {
     {
         let buf41 = &mut Vec::new();
-        for x42 in (&v.params) {
+        for x42 in (&v.params).iter() {
             buf41.push(x42.0);
         }
         w.list(out, std::mem::take(buf41), (&v.params).len());
@@ -2037,14 +2037,14 @@ fn w_signature(w: &mut Writer, out: &mut Vec<u32>, v: &Signature) {
 fn w_effects(w: &mut Writer, out: &mut Vec<u32>, v: &Effects) {
     {
         let buf44 = &mut Vec::new();
-        for x45 in (&v.reads) {
+        for x45 in (&v.reads).iter() {
             buf44.push(x45.0);
         }
         w.list(out, std::mem::take(buf44), (&v.reads).len());
     }
     {
         let buf46 = &mut Vec::new();
-        for x47 in (&v.writes) {
+        for x47 in (&v.writes).iter() {
             buf46.push(x47.0);
         }
         w.list(out, std::mem::take(buf46), (&v.writes).len());
@@ -2062,35 +2062,35 @@ fn w_module(w: &mut Writer, out: &mut Vec<u32>, v: &Module) {
     out.push((&v.top).0);
     {
         let buf48 = &mut Vec::new();
-        for x49 in (&v.requests) {
+        for x49 in (&v.requests).iter() {
             w_module_request(w, buf48, x49);
         }
         w.list(out, std::mem::take(buf48), (&v.requests).len());
     }
     {
         let buf50 = &mut Vec::new();
-        for x51 in (&v.imports) {
+        for x51 in (&v.imports).iter() {
             w_import(w, buf50, x51);
         }
         w.list(out, std::mem::take(buf50), (&v.imports).len());
     }
     {
         let buf52 = &mut Vec::new();
-        for x53 in (&v.exports) {
+        for x53 in (&v.exports).iter() {
             w_export(w, buf52, x53);
         }
         w.list(out, std::mem::take(buf52), (&v.exports).len());
     }
     {
         let buf54 = &mut Vec::new();
-        for x55 in (&v.reexports) {
+        for x55 in (&v.reexports).iter() {
             w_reexport(w, buf54, x55);
         }
         w.list(out, std::mem::take(buf54), (&v.reexports).len());
     }
     {
         let buf56 = &mut Vec::new();
-        for x57 in (&v.star_exports) {
+        for x57 in (&v.star_exports).iter() {
             buf56.push(*x57);
         }
         w.list(out, std::mem::take(buf56), (&v.star_exports).len());
@@ -2105,7 +2105,7 @@ fn w_module_request(w: &mut Writer, out: &mut Vec<u32>, v: &ModuleRequest) {
     out.push(u32::from(*(&v.has_attributes)));
     {
         let buf58 = &mut Vec::new();
-        for x59 in (&v.attributes) {
+        for x59 in (&v.attributes).iter() {
             w_import_attribute(w, buf58, x59);
         }
         w.list(out, std::mem::take(buf58), (&v.attributes).len());
@@ -2166,14 +2166,14 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(261);
             {
                 let buf62 = &mut Vec::new();
-                for x63 in quasis {
+                for x63 in quasis.iter() {
                     buf62.push(x63.0);
                 }
                 w.list(out, std::mem::take(buf62), quasis.len());
             }
             {
                 let buf64 = &mut Vec::new();
-                for x65 in exprs {
+                for x65 in exprs.iter() {
                     {
                         let r = n_expr(w, x65);
                         buf64.push(r);
@@ -2197,7 +2197,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(*site);
             {
                 let buf66 = &mut Vec::new();
-                for x67 in cooked {
+                for x67 in cooked.iter() {
                     match x67 {
                         Some(x68) => buf66.push(x68.0 + 1),
                         None => buf66.push(0),
@@ -2207,14 +2207,14 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             }
             {
                 let buf69 = &mut Vec::new();
-                for x70 in raw {
+                for x70 in raw.iter() {
                     buf69.push(x70.0);
                 }
                 w.list(out, std::mem::take(buf69), raw.len());
             }
             {
                 let buf71 = &mut Vec::new();
-                for x72 in exprs {
+                for x72 in exprs.iter() {
                     {
                         let r = n_expr(w, x72);
                         buf71.push(r);
@@ -2227,7 +2227,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(263);
             {
                 let buf73 = &mut Vec::new();
-                for x74 in items {
+                for x74 in items.iter() {
                     {
                         let r = n_array_item(w, x74);
                         buf73.push(r);
@@ -2240,7 +2240,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(264);
             {
                 let buf75 = &mut Vec::new();
-                for x76 in props {
+                for x76 in props.iter() {
                     {
                         let r = n_obj_prop(w, x76);
                         buf75.push(r);
@@ -2390,7 +2390,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(279);
             {
                 let buf80 = &mut Vec::new();
-                for x81 in exprs {
+                for x81 in exprs.iter() {
                     {
                         let r = n_expr(w, x81);
                         buf80.push(r);
@@ -2414,7 +2414,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             }
             {
                 let buf82 = &mut Vec::new();
-                for x83 in args {
+                for x83 in args.iter() {
                     {
                         let r = n_arg(w, x83);
                         buf82.push(r);
@@ -2445,7 +2445,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             }
             {
                 let buf86 = &mut Vec::new();
-                for x87 in args {
+                for x87 in args.iter() {
                     {
                         let r = n_arg(w, x87);
                         buf86.push(r);
@@ -2468,7 +2468,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(282);
             {
                 let buf89 = &mut Vec::new();
-                for x90 in args {
+                for x90 in args.iter() {
                     {
                         let r = n_arg(w, x90);
                         buf89.push(r);
@@ -2744,7 +2744,7 @@ fn w_class(w: &mut Writer, out: &mut Vec<u32>, v: &Class) {
     out.push((&v.ctor).0);
     {
         let buf97 = &mut Vec::new();
-        for x98 in (&v.members) {
+        for x98 in (&v.members).iter() {
             {
                 let r = n_class_member(w, x98);
                 buf97.push(r);
@@ -2956,7 +2956,7 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
             out.push(*label);
             {
                 let buf108 = &mut Vec::new();
-                for x109 in per_iteration {
+                for x109 in per_iteration.iter() {
                     buf108.push(x109.0);
                 }
                 w.list(out, std::mem::take(buf108), per_iteration.len());
@@ -3029,7 +3029,7 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
             }
             {
                 let buf111 = &mut Vec::new();
-                for x112 in cases {
+                for x112 in cases.iter() {
                     w_switch_case(w, buf111, x112);
                 }
                 w.list(out, std::mem::take(buf111), cases.len());
@@ -3164,7 +3164,7 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
 fn w_block(w: &mut Writer, out: &mut Vec<u32>, v: &Block) {
     {
         let buf121 = &mut Vec::new();
-        for x122 in (&v.stmts) {
+        for x122 in (&v.stmts).iter() {
             {
                 let r = n_stmt(w, x122);
                 buf121.push(r);
@@ -3174,7 +3174,7 @@ fn w_block(w: &mut Writer, out: &mut Vec<u32>, v: &Block) {
     }
     {
         let buf123 = &mut Vec::new();
-        for x124 in (&v.decls) {
+        for x124 in (&v.decls).iter() {
             buf123.push(x124.0);
         }
         w.list(out, std::mem::take(buf123), (&v.decls).len());
@@ -3191,7 +3191,7 @@ fn w_switch_case(w: &mut Writer, out: &mut Vec<u32>, v: &SwitchCase) {
     }
     {
         let buf126 = &mut Vec::new();
-        for x127 in (&v.body) {
+        for x127 in (&v.body).iter() {
             {
                 let r = n_stmt(w, x127);
                 buf126.push(r);
@@ -3246,7 +3246,7 @@ fn n_pattern(w: &mut Writer, v: &Pattern) -> u32 {
             out.push(1026);
             {
                 let buf128 = &mut Vec::new();
-                for x129 in props {
+                for x129 in props.iter() {
                     w_pattern_prop(w, buf128, x129);
                 }
                 w.list(out, std::mem::take(buf128), props.len());
@@ -3264,7 +3264,7 @@ fn n_pattern(w: &mut Writer, v: &Pattern) -> u32 {
             out.push(1027);
             {
                 let buf131 = &mut Vec::new();
-                for x132 in items {
+                for x132 in items.iter() {
                     {
                         let r = n_pattern_item(w, x132);
                         buf131.push(r);
@@ -4400,7 +4400,7 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         262 => {
             let tag = Box::new(rn_expr(r, c.u()?, limit)?);
             let site = c.u()?;
-            let cooked = {
+            let cooked = Box::new({
                 let (mut l160, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -4411,8 +4411,8 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
                     });
                 }
                 v
-            };
-            let raw = {
+            });
+            let raw = Box::new({
                 let (mut l161, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
@@ -4420,7 +4420,7 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
                     v.push(StringRef(c.u()?));
                 }
                 v
-            };
+            });
             let exprs = {
                 let (mut l162, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
@@ -4467,7 +4467,7 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
             ExprKind::Fn { fn_ }
         }
         266 => {
-            let cls = r_class(r, c, limit)?;
+            let cls = Box::new(r_class(r, c, limit)?);
             ExprKind::Class { cls }
         }
         267 => {
@@ -5100,21 +5100,23 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
             StmtKind::Throw { e }
         }
         783 => {
-            let body = r_block(r, c, limit)?;
+            let body = Box::new(r_block(r, c, limit)?);
             let catch_param = match c.u()? {
                 0 => None,
                 n => Some(Box::new(rn_pattern(r, n, limit)?)),
             };
-            let catch_body = {
+            let catch_body = ({
                 let present = c.flag()?;
                 let x = r_block(r, c, limit)?;
                 present.then_some(x)
-            };
-            let finally = {
+            })
+            .map(Box::new);
+            let finally = ({
                 let present = c.flag()?;
                 let x = r_block(r, c, limit)?;
                 present.then_some(x)
-            };
+            })
+            .map(Box::new);
             let catch_default = match c.u()? {
                 0 => None,
                 n => Some(Box::new(rn_expr(r, n, limit)?)),
@@ -5143,7 +5145,7 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
         }
         786 => {
             let decl = DeclRef(c.u()?);
-            let cls = r_class(r, c, limit)?;
+            let cls = Box::new(r_class(r, c, limit)?);
             StmtKind::ClassDecl { decl, cls }
         }
         787 => StmtKind::Debugger,

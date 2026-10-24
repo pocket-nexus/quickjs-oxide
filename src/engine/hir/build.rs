@@ -172,8 +172,9 @@ fn span(start: u32, end: u32) -> Span {
     }
 }
 
-fn ast_span(span: crate::engine::compiler::lexer::Span) -> Span {
-    self::span(span.start.byte_offset as u32, span.end.byte_offset as u32)
+fn ast_span(span: impl Into<ast::Span>) -> Span {
+    let span = span.into();
+    self::span(span.start, span.end)
 }
 
 fn expr(kind: ExprKind, span: Span) -> Expr {
@@ -816,7 +817,7 @@ impl<'a> Builder<'a> {
             S::Class { class, decl } => {
                 let decl = DeclRef(decl.0);
                 let end = pos_end(class.span);
-                let cls = self.class(*class)?;
+                let cls = Box::new(self.class(*class)?);
                 self.set_ready(decl, end);
                 StmtKind::ClassDecl { decl, cls }
             }
@@ -1004,10 +1005,10 @@ impl<'a> Builder<'a> {
             None => None,
         };
         Ok(StmtKind::Try {
-            body,
+            body: Box::new(body),
             catch_param,
-            catch_body,
-            finally,
+            catch_body: catch_body.map(Box::new),
+            finally: finally.map(Box::new),
             catch_default,
         })
     }
@@ -1391,7 +1392,7 @@ impl<'a> Builder<'a> {
                 e: self.boxed(*value)?,
             },
             ast::PropKey::Private(reference) => PropKey::Private {
-                name: self.resolve_private(reference)?,
+                name: self.resolve_private(*reference)?,
             },
         })
     }
@@ -1445,11 +1446,13 @@ impl<'a> Builder<'a> {
                     ExprKind::TaggedTemplate {
                         tag: self.boxed(*tag)?,
                         site,
-                        cooked: cooked
-                            .into_iter()
-                            .map(|part| part.map(|part| self.string(part)))
-                            .collect(),
-                        raw: raw.into_iter().map(|part| self.string(part)).collect(),
+                        cooked: Box::new(
+                            cooked
+                                .into_iter()
+                                .map(|part| part.map(|part| self.string(part)))
+                                .collect(),
+                        ),
+                        raw: Box::new(raw.into_iter().map(|part| self.string(part)).collect()),
                         exprs: self.exprs(exprs)?,
                     },
                     at(pos),
@@ -1505,7 +1508,7 @@ impl<'a> Builder<'a> {
             ),
             E::Class(class) => (
                 ExprKind::Class {
-                    cls: self.class(*class)?,
+                    cls: Box::new(self.class(*class)?),
                 },
                 node_span,
             ),
@@ -2036,12 +2039,12 @@ impl<'a> Builder<'a> {
     }
 }
 
-fn pos(span: crate::engine::compiler::lexer::Span) -> u32 {
-    span.start.byte_offset as u32
+fn pos(span: impl Into<ast::Span>) -> u32 {
+    span.into().start
 }
 
-fn pos_end(span: crate::engine::compiler::lexer::Span) -> u32 {
-    span.end.byte_offset as u32
+fn pos_end(span: impl Into<ast::Span>) -> u32 {
+    span.into().end
 }
 
 fn span_of(value: &ast::Expr) -> Span {

@@ -197,7 +197,7 @@ impl<'source> Parser<'source> {
                         key,
                         value: Ref {
                             name,
-                            span: token.span,
+                            span: token.span.into(),
                             scope: self.current_scope(),
                         },
                     });
@@ -213,7 +213,7 @@ impl<'source> Parser<'source> {
         self.expect_punctuator(Punctuator::RightBrace)?;
         Ok(Expr {
             kind: ExprKind::Object(props),
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         })
     }
 

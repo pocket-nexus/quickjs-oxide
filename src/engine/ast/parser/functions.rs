@@ -71,7 +71,7 @@ impl<'source> Parser<'source> {
         let function = self.parse_function_tail(header, true)?;
         Ok(Expr {
             kind: ExprKind::Function(Box::new(function)),
-            span: self.span_from(span),
+            span: self.span_from(span).into(),
         })
     }
 
@@ -296,7 +296,7 @@ impl<'source> Parser<'source> {
             concise: false,
             default_ctor: false,
             strict,
-            span,
+            span: span.into(),
             source: (pos(span), closing.end.byte_offset as u32),
         })
     }
@@ -472,7 +472,7 @@ impl<'source> Parser<'source> {
         Ok(Pattern {
             kind: PatternKind::Binding(Ref {
                 name,
-                span,
+                span: span.into(),
                 scope: self.current_scope(),
             }),
             span,
@@ -742,12 +742,12 @@ impl<'source> Parser<'source> {
             concise: !block,
             default_ctor: false,
             strict,
-            span,
+            span: span.into(),
             source: (pos(span), end as u32),
         };
         Ok(Expr {
             kind: ExprKind::Function(Box::new(function)),
-            span: self.span_from(span),
+            span: self.span_from(span).into(),
         })
     }
 

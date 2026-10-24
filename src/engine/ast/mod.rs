@@ -12,7 +12,7 @@
 
 pub(crate) mod parser;
 
-use crate::engine::compiler::lexer::Span;
+use crate::engine::compiler::lexer::Span as TokenSpan;
 use crate::engine::compiler::names::{NameId, NameTable};
 use crate::engine::value::JsString;
 use crate::engine::value::bigint::JsBigInt;
@@ -20,6 +20,23 @@ use std::rc::Rc;
 
 /// A byte offset into the source.
 pub(crate) type Pos = u32;
+
+/// A node's extent: the byte offsets of its first token's start and its
+/// last token's end. Lines and columns come from the source when needed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub(crate) struct Span {
+    pub(crate) start: Pos,
+    pub(crate) end: Pos,
+}
+
+impl From<TokenSpan> for Span {
+    fn from(span: TokenSpan) -> Self {
+        Self {
+            start: span.start.byte_offset as Pos,
+            end: span.end.byte_offset as Pos,
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct ScopeId(pub(crate) u32);
@@ -213,7 +230,8 @@ pub(crate) struct Decl {
     /// The scope the declaration was written in (a `var` in a block lives in
     /// the function root but was written in the block).
     pub(crate) written_in: ScopeId,
-    pub(crate) span: Span,
+    /// Where it is written, with its line and column for diagnostics.
+    pub(crate) span: TokenSpan,
 }
 
 /// What a function knows about itself after parsing.
@@ -298,7 +316,7 @@ pub(crate) struct Param {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Ident {
     pub(crate) name: NameId,
-    pub(crate) span: Span,
+    pub(crate) span: TokenSpan,
 }
 
 /// An identifier use: resolved against `scope` and its ancestors.
@@ -314,7 +332,7 @@ pub(crate) enum PropKey {
     /// A fixed key: an identifier name, string or number literal.
     Name(JsString),
     Computed(Box<Expr>),
-    Private(Ref),
+    Private(Box<Ref>),
 }
 
 // ---- expressions ----
@@ -426,8 +444,11 @@ pub(crate) enum ExprKind {
     },
     TaggedTemplate {
         tag: Box<Expr>,
-        cooked: Vec<Option<JsString>>,
-        raw: Vec<JsString>,
+        // Boxed so the rare tagged template does not size every `Expr`.
+        #[allow(clippy::box_collection)]
+        cooked: Box<Vec<Option<JsString>>>,
+        #[allow(clippy::box_collection)]
+        raw: Box<Vec<JsString>>,
         exprs: Vec<Expr>,
         /// The first template token.
         pos: Pos,
@@ -790,7 +811,7 @@ pub(crate) struct TryStmt {
 #[derive(Debug)]
 pub(crate) struct Pattern {
     pub(crate) kind: PatternKind,
-    pub(crate) span: Span,
+    pub(crate) span: TokenSpan,
 }
 
 #[derive(Debug)]
@@ -863,7 +884,7 @@ pub(crate) struct ModuleImport {
 pub(crate) struct LocalExport {
     pub(crate) local: NameId,
     pub(crate) export: JsString,
-    pub(crate) span: Span,
+    pub(crate) span: TokenSpan,
 }
 
 #[derive(Debug)]
@@ -871,5 +892,5 @@ pub(crate) struct IndirectExport {
     pub(crate) export: JsString,
     pub(crate) request: u32,
     pub(crate) import: ImportName,
-    pub(crate) span: Span,
+    pub(crate) span: TokenSpan,
 }

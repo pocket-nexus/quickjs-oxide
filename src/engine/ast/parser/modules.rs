@@ -158,7 +158,7 @@ impl<'source> Parser<'source> {
                 self.consume_statement_terminator()?;
                 let statement = Stmt {
                     kind: StmtKind::Var(VarKind::Var, declarators),
-                    span: self.span_from(start),
+                    span: self.span_from(start).into(),
                 };
                 self.export_declared_names(&statement, ModuleExport::Named)?;
                 return Ok(Some(statement));
@@ -174,7 +174,7 @@ impl<'source> Parser<'source> {
                     self.with_module_export(ModuleExport::Named, Self::parse_class_declaration)?;
                 let statement = Stmt {
                     kind,
-                    span: self.span_from(start),
+                    span: self.span_from(start).into(),
                 };
                 self.export_declared_names(&statement, ModuleExport::Named)?;
                 return Ok(Some(statement));
@@ -183,7 +183,7 @@ impl<'source> Parser<'source> {
         };
         Ok(Some(Stmt {
             kind,
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         }))
     }
 
@@ -196,7 +196,7 @@ impl<'source> Parser<'source> {
                 self.with_module_export(ModuleExport::Default, Self::parse_class_declaration)?;
             let statement = Stmt {
                 kind,
-                span: self.span_from(start),
+                span: self.span_from(start).into(),
             };
             self.export_declared_names(&statement, ModuleExport::Default)?;
             return Ok(Some(statement));
@@ -208,7 +208,7 @@ impl<'source> Parser<'source> {
             let kind = self.parse_module_function_declaration(Some(ModuleExport::Default))?;
             return Ok(Some(Stmt {
                 kind,
-                span: self.span_from(start),
+                span: self.span_from(start).into(),
             }));
         }
         let value = self.parse_assignment_allow_in()?;
@@ -227,7 +227,7 @@ impl<'source> Parser<'source> {
         self.consume_statement_terminator()?;
         Ok(Some(Stmt {
             kind: StmtKind::ExportDefault { value, decl },
-            span: self.span_from(start),
+            span: self.span_from(start).into(),
         }))
     }
 
@@ -527,7 +527,7 @@ impl<'source> Parser<'source> {
 fn collect_bound_names(pattern: &crate::engine::ast::Pattern, out: &mut Vec<(NameId, Span)>) {
     use crate::engine::ast::PatternKind;
     match &pattern.kind {
-        PatternKind::Binding(reference) => out.push((reference.name, reference.span)),
+        PatternKind::Binding(reference) => out.push((reference.name, pattern.span)),
         PatternKind::Target(_) => {}
         PatternKind::Object { props, rest, .. } => {
             for prop in props {

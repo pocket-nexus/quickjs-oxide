@@ -173,8 +173,8 @@ impl Builder<'_, '_> {
                     body,
                     catch_param.as_deref(),
                     catch_default.as_deref(),
-                    catch_body.as_ref(),
-                    finally.as_ref(),
+                    catch_body.as_deref(),
+                    finally.as_deref(),
                 )?;
             }
             StmtKind::Labeled { label, body } => {

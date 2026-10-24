@@ -27,7 +27,10 @@ enum PowerMode {
 const MAX_CALL_ARGUMENTS: usize = 65_535;
 
 fn expr(kind: ExprKind, span: Span) -> Expr {
-    Expr { kind, span }
+    Expr {
+        kind,
+        span: span.into(),
+    }
 }
 
 impl<'source> Parser<'source> {
@@ -314,7 +317,7 @@ impl<'source> Parser<'source> {
             ExprKind::PrivateIn {
                 name: Ref {
                     name,
-                    span: token.span,
+                    span: token.span.into(),
                     scope,
                 },
                 obj: Box::new(object),
@@ -617,11 +620,11 @@ impl<'source> Parser<'source> {
         let prop = match token.kind {
             TokenKind::PrivateIdentifier(identifier) => {
                 let name = self.intern_private_identifier(&identifier);
-                PropKey::Private(Ref {
+                PropKey::Private(Box::new(Ref {
                     name,
-                    span: token.span,
+                    span: token.span.into(),
                     scope: self.current_scope(),
-                })
+                }))
             }
             TokenKind::Identifier(identifier) => {
                 let name = self.intern_identifier(&identifier);
@@ -990,7 +993,7 @@ impl<'source> Parser<'source> {
                 self.advance()?;
                 ExprKind::Ident(Ref {
                     name,
-                    span,
+                    span: span.into(),
                     scope: self.current_scope(),
                 })
             }
@@ -1158,8 +1161,8 @@ impl<'source> Parser<'source> {
                 return Ok(expr(
                     ExprKind::TaggedTemplate {
                         tag: Box::new(tag),
-                        cooked,
-                        raw,
+                        cooked: Box::new(cooked),
+                        raw: Box::new(raw),
                         exprs,
                         pos: pos(first),
                     },
