@@ -303,6 +303,10 @@ pub(crate) struct Builder<'s, 'h> {
     pub(crate) this_values: FxHashSet<Value>,
     /// The module record, for a module's root.
     pub(crate) module: Option<ModuleInfo>,
+    /// The name `MakeClass` gives the next class: `export default class {}`.
+    pub(crate) default_class_name: Option<u32>,
+    /// Whether an optional chain's short circuit gives `true` (`delete`).
+    pub(crate) chain_delete: bool,
 }
 
 impl<'s, 'h> Builder<'s, 'h> {
@@ -336,6 +340,8 @@ impl<'s, 'h> Builder<'s, 'h> {
             this_keys: FxHashSet::default(),
             this_values: FxHashSet::default(),
             module: None,
+            default_class_name: None,
+            chain_delete: false,
         })
     }
 
@@ -505,10 +511,7 @@ impl<'s, 'h> Builder<'s, 'h> {
             return;
         };
         let insn = &mut self.f.blocks[block.index()].insns[index];
-        if matches!(
-            insn.op,
-            Op::Call | Op::CallMethod | Op::CallEval | Op::CallSpread
-        ) {
+        if matches!(insn.op, Op::Call | Op::CallMethod) {
             insn.pos = Pos(at);
             self.site = Pos(at);
         }

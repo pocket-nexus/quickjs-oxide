@@ -67,6 +67,11 @@ impl Builder<'_, '_> {
             unit.name = Some(eval);
             unit.name_atom = Some(eval);
         }
+        if hf.kind == FunctionKind::StaticBlock && hf.name.is_none() {
+            let name = self.cx.static_string("<class_static_block>");
+            unit.name = Some(name);
+            unit.name_atom = Some(name);
+        }
         if !matches!(hf.kind, FunctionKind::Script | FunctionKind::Eval) {
             unit.source = Some((hf.source.start, hf.source.end));
         }

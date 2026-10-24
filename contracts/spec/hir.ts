@@ -361,7 +361,8 @@ export type Expr = (
   // `decl`: the module's `import.meta` binding, an implicit declaration of
   // the module function.
   | { kind: "importMeta"; decl: DeclRef }
-  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef }
+  // `superAt`: the `super` keyword.
+  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef; superAt: u32 }
   | { kind: "member"; obj: Expr; prop: PropKey; optional: boolean; layout: Typed<LayoutRef | null>; field: Typed<u32 | null> }
   | { kind: "unary"; op: UnaryOp; e: Expr }
   | { kind: "update"; op: UpdateOp; prefix: boolean; target: Target }
@@ -372,7 +373,7 @@ export type Expr = (
   | { kind: "seq"; exprs: Expr[] }
   | { kind: "call"; callee: Expr; args: Arg[]; optional: boolean; direct: Typed<FunctionRef | null>; intrinsic: Typed<StringRef | null>; directEval: boolean }
   | { kind: "new"; callee: Expr; args: Arg[]; direct: Typed<FunctionRef | null> }
-  | { kind: "superCall"; args: Arg[]; this: DeclRef; newTarget: DeclRef; func: DeclRef }
+  | { kind: "superCall"; args: Arg[]; this: DeclRef; newTarget: DeclRef; func: DeclRef; superAt: u32 }
   | { kind: "import"; spec: Expr; options: Expr | null }
   | { kind: "yield"; e: Expr | null; delegate: boolean }
   | { kind: "await"; e: Expr }
@@ -407,7 +408,8 @@ export type Target = (
   | { kind: "decl"; decl: DeclRef }
   | { kind: "member"; obj: Expr; prop: PropKey; layout: Typed<LayoutRef | null>; field: Typed<u32 | null> }
   | { kind: "pattern"; p: Pattern }
-  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef }
+  // `superAt`: the `super` keyword.
+  | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef; superAt: u32 }
 ) & { span: Span };
 
 export type MethodRole = "method" | "get" | "set";

@@ -1496,6 +1496,7 @@ impl<'a> Builder<'a> {
                         prop: Box::new(self.prop_key(prop)?),
                         this,
                         home,
+                        super_at: node_span.start,
                     },
                     at(pos),
                 )
@@ -1541,6 +1542,7 @@ impl<'a> Builder<'a> {
                         this,
                         new_target,
                         func,
+                        super_at: node_span.start,
                     },
                     at(pos),
                 )
@@ -1817,6 +1819,7 @@ impl<'a> Builder<'a> {
                         prop: Box::new(self.prop_key(prop)?),
                         this,
                         home,
+                        super_at: node_span.start,
                     },
                     at(pos),
                 )

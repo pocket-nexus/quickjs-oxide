@@ -37,6 +37,9 @@ pub(super) enum Place {
     },
 }
 
+/// An optional chain's short circuit: its block, ended, and its value.
+pub(super) type Short = (Option<BlockId>, Value);
+
 /// The fixed and spread arguments of a call.
 pub(super) enum Args {
     Fixed(Vec<Value>),
@@ -70,8 +73,13 @@ impl Builder<'_, '_> {
             ExprKind::This { decl } => self.read_this(*decl)?,
             ExprKind::NewTarget { decl } => self.read_decl(*decl, None)?,
             ExprKind::ImportMeta { decl } => self.read_decl(*decl, Some(at))?,
-            ExprKind::SuperMember { prop, this, home } => {
-                let place = self.super_place(prop, *this, *home, at)?;
+            ExprKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            } => {
+                let place = self.super_place(prop, *this, *home, at, *super_at)?;
                 self.get_place(place)?
             }
             ExprKind::Member { .. } => {
@@ -120,7 +128,8 @@ impl Builder<'_, '_> {
                 this,
                 new_target,
                 func,
-            } => self.super_call(args, *this, *new_target, *func, at)?,
+                super_at,
+            } => self.super_call(args, *this, *new_target, *func, at, *super_at)?,
             ExprKind::Import { spec, options } => {
                 let spec = self.expr(spec)?;
                 let options = match options {
@@ -321,7 +330,10 @@ impl Builder<'_, '_> {
                 };
                 let at = inner.span.start;
                 let mut shorts = Vec::new();
-                let obj = self.chain_object(obj, *optional, &mut shorts)?;
+                let saved = std::mem::replace(&mut self.chain_delete, true);
+                let obj = self.chain_object(obj, *optional, &mut shorts);
+                self.chain_delete = saved;
+                let obj = obj?;
                 let key = match &**prop {
                     PropKey::Name { name } => {
                         let index = self.string_const(name.0);
@@ -336,11 +348,7 @@ impl Builder<'_, '_> {
                 };
                 let deleted = self.op(Op::DeleteElem, &[obj, key], Imm::None);
                 let mut incoming = vec![(self.branch_end(), deleted)];
-                for short in shorts {
-                    self.start(short);
-                    let value = self.op(Op::True, &[], Imm::None);
-                    incoming.push((self.branch_end(), value));
-                }
+                incoming.extend(shorts);
                 Ok(self.join(incoming))
             }
             ExprKind::Decl { decl } => match self.access(*decl)? {
@@ -353,10 +361,15 @@ impl Builder<'_, '_> {
                     Ok(self.op(Op::False, &[], Imm::None))
                 }
             },
-            ExprKind::SuperMember { prop, this, home } => {
+            ExprKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            } => {
                 // QuickJS evaluates the reference, then throws.
                 let at = operand.span.start;
-                self.super_place(prop, *this, *home, at)?;
+                self.super_place(prop, *this, *home, at, *super_at)?;
                 let message = self.static_key("unsupported reference to 'super'");
                 self.end_at(
                     Terminator::ThrowError {
@@ -426,9 +439,10 @@ impl Builder<'_, '_> {
         this: DeclRef,
         home: DeclRef,
         at: u32,
+        super_at: u32,
     ) -> Result<Place> {
-        let this = self.read_decl(this, None)?;
-        let home = self.read_decl(home, None)?;
+        let this = self.read_decl(this, Some(super_at))?;
+        let home = self.read_decl(home, Some(super_at))?;
         let base = self.op(Op::GetSuper, &[home], Imm::None);
         let key = match prop {
             PropKey::Name { name } => self.string(name.0),
@@ -478,7 +492,7 @@ impl Builder<'_, '_> {
 
     /// A member expression, maybe inside an optional chain: its object and
     /// value.
-    fn member(&mut self, e: &Expr, shorts: &mut Vec<BlockId>) -> Result<(Value, Value)> {
+    fn member(&mut self, e: &Expr, shorts: &mut Vec<Short>) -> Result<(Value, Value)> {
         let ExprKind::Member {
             obj,
             prop,
@@ -498,7 +512,7 @@ impl Builder<'_, '_> {
         &mut self,
         obj: &Expr,
         optional: bool,
-        shorts: &mut Vec<BlockId>,
+        shorts: &mut Vec<Short>,
     ) -> Result<Value> {
         let obj = self.chain_expr(obj, shorts)?;
         if optional {
@@ -509,7 +523,7 @@ impl Builder<'_, '_> {
 
     /// QuickJS's optional-chain test: a nullish value short-circuits the
     /// chain to `undefined`.
-    fn nullish_test(&mut self, value: Value, shorts: &mut Vec<BlockId>) {
+    fn nullish_test(&mut self, value: Value, shorts: &mut Vec<Short>) {
         let nullish = self.op(Op::IsUndefinedOrNull, &[value], Imm::None);
         let short = self.block();
         let cont = self.block();
@@ -518,13 +532,21 @@ impl Builder<'_, '_> {
             then: short,
             else_: cont,
         });
-        shorts.push(short);
+        // The short circuit's value comes here, as QuickJS emits it: in a
+        // `delete`, `true`.
+        self.start(short);
+        let fallback = if self.chain_delete {
+            self.op(Op::True, &[], Imm::None)
+        } else {
+            self.undefined()
+        };
+        shorts.push((self.branch_end(), fallback));
         self.start(cont);
     }
 
     /// An expression inside an optional chain: members and calls continue
     /// the chain.
-    fn chain_expr(&mut self, e: &Expr, shorts: &mut Vec<BlockId>) -> Result<Value> {
+    fn chain_expr(&mut self, e: &Expr, shorts: &mut Vec<Short>) -> Result<Value> {
         match &e.kind {
             ExprKind::Member { .. } => Ok(self.member(e, shorts)?.1),
             ExprKind::Call { .. } => self.call_expr(e, shorts),
@@ -533,19 +555,15 @@ impl Builder<'_, '_> {
     }
 
     /// Ends a chain: its value, or `undefined` from each short circuit.
-    fn end_chain(&mut self, value: Value, shorts: Vec<BlockId>) -> Value {
+    fn end_chain(&mut self, value: Value, shorts: Vec<Short>) -> Value {
         let mut incoming = vec![(self.branch_end(), value)];
-        for short in shorts {
-            self.start(short);
-            let undefined = self.undefined();
-            incoming.push((self.branch_end(), undefined));
-        }
+        incoming.extend(shorts);
         self.join(incoming)
     }
 
     // ---- calls ----
 
-    fn call_expr(&mut self, e: &Expr, shorts: &mut Vec<BlockId>) -> Result<Value> {
+    fn call_expr(&mut self, e: &Expr, shorts: &mut Vec<Short>) -> Result<Value> {
         let at = e.span.start;
         match &e.kind {
             ExprKind::New { callee, args, .. } => {
@@ -575,13 +593,18 @@ impl Builder<'_, '_> {
                         let (obj, function) = self.member(callee, shorts)?;
                         (Some(obj), function)
                     }
-                    ExprKind::SuperMember { prop, this, home } => {
+                    ExprKind::SuperMember {
+                        prop,
+                        this,
+                        home,
+                        super_at,
+                    } => {
                         let Place::Super {
                             this,
                             base,
                             key,
                             at,
-                        } = self.super_place(prop, *this, *home, callee.span.start)?
+                        } = self.super_place(prop, *this, *home, callee.span.start, *super_at)?
                         else {
                             unreachable!("a super place");
                         };
@@ -598,12 +621,8 @@ impl Builder<'_, '_> {
                         let (obj, function) = self.member(inner, &mut inner_shorts)?;
                         let mut objs = vec![(self.cur, obj)];
                         let mut functions = vec![(self.branch_end(), function)];
-                        for short in inner_shorts {
-                            self.start(short);
-                            let undefined = self.undefined();
-                            objs.push((self.cur, undefined));
-                            functions.push((self.branch_end(), undefined));
-                        }
+                        objs.extend(inner_shorts.iter().copied());
+                        functions.extend(inner_shorts);
                         let function = self.join(functions);
                         let obj = self.second_phi(objs);
                         (Some(obj), function)
@@ -943,8 +962,13 @@ impl Builder<'_, '_> {
                 TargetKind::Pattern { p } => {
                     self.destructure_after(p, value, super::pattern::Mode::Assign)
                 }
-                TargetKind::SuperMember { prop, this, home } => {
-                    let place = self.super_place(prop, *this, *home, target_at)?;
+                TargetKind::SuperMember {
+                    prop,
+                    this,
+                    home,
+                    super_at,
+                } => {
+                    let place = self.super_place(prop, *this, *home, target_at, *super_at)?;
                     self.seed(target_at);
                     let value = self.expr(value)?;
                     self.set_place(place, value)?;
@@ -974,8 +998,13 @@ impl Builder<'_, '_> {
                         self.set_place(place, new)?;
                         Ok(new)
                     }
-                    TargetKind::SuperMember { prop, this, home } => {
-                        let place = self.super_place(prop, *this, *home, target_at)?;
+                    TargetKind::SuperMember {
+                        prop,
+                        this,
+                        home,
+                        super_at,
+                    } => {
+                        let place = self.super_place(prop, *this, *home, target_at, *super_at)?;
                         let place = self.convert_key(place);
                         let old = self.get_place(place)?;
                         let rhs = self.expr(value)?;
@@ -1025,8 +1054,13 @@ impl Builder<'_, '_> {
                 let place = self.convert_key(place);
                 (self.get_place(place)?, Some(place))
             }
-            TargetKind::SuperMember { prop, this, home } => {
-                let place = self.super_place(prop, *this, *home, target_at)?;
+            TargetKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            } => {
+                let place = self.super_place(prop, *this, *home, target_at, *super_at)?;
                 let place = self.convert_key(place);
                 (self.get_place(place)?, Some(place))
             }
@@ -1103,8 +1137,13 @@ impl Builder<'_, '_> {
                 self.set_place(place, new)?;
                 Ok(result)
             }
-            TargetKind::SuperMember { prop, this, home } => {
-                let place = self.super_place(prop, *this, *home, target.span.start)?;
+            TargetKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            } => {
+                let place = self.super_place(prop, *this, *home, target.span.start, *super_at)?;
                 let place = self.convert_key(place);
                 let old = self.get_place(place)?;
                 let (result, new) = if prefix {

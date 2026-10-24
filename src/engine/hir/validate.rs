@@ -488,7 +488,9 @@ impl Validator<'_> {
                 self.prop_key(prop)
             }
             TargetKind::Pattern { p } => self.pattern(p),
-            TargetKind::SuperMember { prop, this, home } => {
+            TargetKind::SuperMember {
+                prop, this, home, ..
+            } => {
                 self.use_decl(*this)?;
                 self.use_decl(*home)?;
                 self.prop_key(prop)
@@ -591,7 +593,9 @@ impl Validator<'_> {
             | ExprKind::This { decl }
             | ExprKind::NewTarget { decl }
             | ExprKind::ImportMeta { decl } => self.use_decl(*decl),
-            ExprKind::SuperMember { prop, this, home } => {
+            ExprKind::SuperMember {
+                prop, this, home, ..
+            } => {
                 self.use_decl(*this)?;
                 self.use_decl(*home)?;
                 self.prop_key(prop)
@@ -669,6 +673,7 @@ impl Validator<'_> {
                 this,
                 new_target,
                 func,
+                ..
             } => {
                 for decl in [*this, *new_target, *func] {
                     self.use_decl(decl)?;
