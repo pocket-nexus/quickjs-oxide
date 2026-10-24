@@ -126,6 +126,8 @@ pub(crate) struct Shared<'h> {
     pub(crate) inferred: Vec<Option<u32>>,
     /// The aggregate initializers that brand their receiver.
     pub(crate) brand: Vec<bool>,
+    /// The declarations of the script or module root's body.
+    pub(crate) root_body: FxHashSet<DeclRef>,
 }
 
 impl Shared<'_> {
@@ -194,6 +196,12 @@ pub(crate) fn build(
         parent,
         inferred: vec![None; count],
         brand: vec![false; count],
+        root_body: hir.functions[root.index()]
+            .body
+            .decls
+            .iter()
+            .copied()
+            .collect(),
     };
     let mut functions = Vec::with_capacity(count);
     let mut module = None;
@@ -750,7 +758,7 @@ impl<'s, 'h> Builder<'s, 'h> {
             FunctionKind::Script => match d.kind {
                 DeclKind::Var => true,
                 DeclKind::Let | DeclKind::Const | DeclKind::Class => {
-                    owner.body.decls.contains(&decl)
+                    self.cx.root_body.contains(&decl)
                 }
                 _ => false,
             },

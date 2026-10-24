@@ -19,6 +19,7 @@ use crate::engine::compiler::lexer::{
 };
 use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::engine::value::JsString;
+use oxide_core::FxHashMap;
 
 /// A suspended aggregate field initializer.
 struct Aggregate {
@@ -729,6 +730,6 @@ fn placeholder_state(state: &FunctionState) -> FunctionState {
         parameter_names: Vec::new(),
         pattern_parameter_initialization: false,
         simple_params: true,
-        global_declarations: Vec::new(),
+        global_declarations: FxHashMap::default(),
     }
 }
