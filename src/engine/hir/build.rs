@@ -942,6 +942,8 @@ impl<'a> Builder<'a> {
         Ok(self.scoped(stmt(built, at), scope))
     }
 
+    // Boxed so `statement`'s frame holds only the pointer.
+    #[allow(clippy::boxed_local)]
     #[inline(never)]
     fn switch_statement(&mut self, switch: Box<ast::SwitchStmt>, at: Span) -> Result<Stmt, Error> {
         let ast::SwitchStmt {
@@ -1010,6 +1012,8 @@ impl<'a> Builder<'a> {
         })
     }
 
+    // Boxed so `statement`'s frame holds only the pointer.
+    #[allow(clippy::boxed_local)]
     #[inline(never)]
     fn field_init(&mut self, field: Box<ast::FieldInit>) -> Result<StmtKind, Error> {
         Ok(match *field {

@@ -632,9 +632,9 @@ impl Runtime {
     ) -> Result<String, RuntimeError> {
         let program = parse_new_front_end(source, module)?;
         let has_with = program.has_with;
-        let built =
+        let mut built =
             crate::engine::hir::build::build(program, filename).map_err(RuntimeError::Compile)?;
-        let mir = crate::engine::mir::build::build(&built.program, &built.regexps, has_with)
+        let mir = crate::engine::mir::build::build(&mut built.program, &built.regexps, has_with)
             .map_err(|error| RuntimeError::Internal(error.to_string()))?;
         let mut out = String::new();
         for function in &mir.functions {

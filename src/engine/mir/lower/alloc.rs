@@ -768,10 +768,7 @@ fn fuse(f: &Function, order: &Order, plan: &mut Plan) {
             let mut operands = vec![args[0], args[1]];
             let mut end = index;
             let mut value = insn.results[0].expect("a sum");
-            loop {
-                let (Some(k), Some(add)) = (b.insns.get(end + 1), b.insns.get(end + 2)) else {
-                    break;
-                };
+            while let (Some(k), Some(add)) = (b.insns.get(end + 1), b.insns.get(end + 2)) {
                 let Some(constant) = k.results[0] else { break };
                 if operands.len() == MAX_CHAIN
                     || plan.dead[block.index()][end + 2]
@@ -1023,8 +1020,8 @@ impl<'a> Liveness<'a> {
                     }
                 }
                 if let Some(catch) = catch_of(block) {
-                    for at in 0..live_in[catch.index()].len() {
-                        add(live_in[catch.index()][at], &mut live, &mut set);
+                    for &v in &live_in[catch.index()] {
+                        add(v, &mut live, &mut set);
                     }
                 }
                 for &v in &exposed[block.index()] {
@@ -1176,9 +1173,7 @@ impl<'a> Liveness<'a> {
             }
         }
         offsets.push(data.len() as u32);
-        let ranges = Ranges { offsets, data };
-
-        ranges
+        Ranges { offsets, data }
     }
 }
 
