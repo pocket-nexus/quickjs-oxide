@@ -38,6 +38,47 @@ pub(crate) struct Program {
     /// The HIR's strings, then the builder's own (messages).
     pub(crate) strings: Vec<JsString>,
     pub(crate) root: FunctionRef,
+    /// A module's record tables.
+    pub(crate) module: Option<ModuleInfo>,
+}
+
+/// What a module binding is to the core's module record.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ModuleBinding {
+    /// A named import: the exporter's cell.
+    Import,
+    ImportMeta,
+    Declaration {
+        lexical: bool,
+    },
+}
+
+/// Where an export's value comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ExportTarget {
+    Local(u16),
+    /// An export of a requested module; `None` for its namespace.
+    Indirect {
+        request: u32,
+        name: Option<u32>,
+    },
+}
+
+/// The tables of a module record: strings are indexes into the program's.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct ModuleInfo {
+    /// One per capture of the root function, in order.
+    pub(crate) bindings: Vec<ModuleBinding>,
+    /// Specifier and attributes (key, value).
+    pub(crate) requests: Vec<(u32, Vec<(u32, u32)>)>,
+    /// Request, imported name (`None`: the namespace), binding.
+    pub(crate) imports: Vec<(u32, Option<u32>, u16)>,
+    pub(crate) exports: Vec<(u32, ExportTarget)>,
+    pub(crate) star_exports: Vec<u32>,
+    /// A hoisted binding linking initializes: `undefined`, or a function
+    /// from the root's child (named `default` when it is anonymous).
+    pub(crate) initializers: Vec<(u16, Option<(u32, bool)>)>,
+    pub(crate) has_top_level_await: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -152,9 +193,15 @@ pub(crate) fn build(
         brand: vec![false; count],
     };
     let mut functions = Vec::with_capacity(count);
+    let mut module = None;
     for index in 0..count {
         let id = FunctionRef(index as u32);
-        functions.push(Builder::new(&mut shared, id)?.build()?);
+        let mut builder = Builder::new(&mut shared, id)?;
+        let function = builder.build_into()?;
+        if let Some(info) = builder.module.take() {
+            module = Some(info);
+        }
+        functions.push(function);
     }
     for (index, function) in functions.iter_mut().enumerate() {
         if function.unit.name_atom.is_none() {
@@ -176,6 +223,7 @@ pub(crate) fn build(
         functions,
         strings: shared.strings,
         root,
+        module,
     })
 }
 
@@ -253,6 +301,8 @@ pub(crate) struct Builder<'s, 'h> {
     pub(crate) this_keys: FxHashSet<u32>,
     /// Values read from register 0.
     pub(crate) this_values: FxHashSet<Value>,
+    /// The module record, for a module's root.
+    pub(crate) module: Option<ModuleInfo>,
 }
 
 impl<'s, 'h> Builder<'s, 'h> {
@@ -285,10 +335,11 @@ impl<'s, 'h> Builder<'s, 'h> {
             string_consts: FxHashMap::default(),
             this_keys: FxHashSet::default(),
             this_values: FxHashSet::default(),
+            module: None,
         })
     }
 
-    fn build(mut self) -> Result<Function> {
+    fn build_into(&mut self) -> Result<Function> {
         self.entry()?;
         if self.f.unit.flags & oxide_core::bytecode::flags::CONSTRUCTOR != 0
             && self.f.unit.flags & oxide_core::bytecode::flags::DERIVED == 0
@@ -297,7 +348,7 @@ impl<'s, 'h> Builder<'s, 'h> {
         }
         let stubs = std::mem::take(&mut self.stubs);
         self.f.layout.extend(stubs);
-        let mut f = self.f;
+        let mut f = std::mem::take(&mut self.f);
         f.recompute_preds_keeping_phis();
         Ok(f)
     }
@@ -664,17 +715,16 @@ impl<'s, 'h> Builder<'s, 'h> {
     pub(crate) fn is_global(&self, decl: DeclRef) -> bool {
         let d = self.decl(decl);
         let owner = self.cx.function(d.owner);
+        // A `function` declaration is a block's (top-level ones are vars).
         match owner.kind {
             FunctionKind::Script => match d.kind {
-                DeclKind::Var | DeclKind::Function => true,
+                DeclKind::Var => true,
                 DeclKind::Let | DeclKind::Const | DeclKind::Class => {
                     owner.body.decls.contains(&decl)
                 }
                 _ => false,
             },
-            FunctionKind::Eval => {
-                !owner.strict && matches!(d.kind, DeclKind::Var | DeclKind::Function)
-            }
+            FunctionKind::Eval => !owner.strict && d.kind == DeclKind::Var,
             _ => false,
         }
     }

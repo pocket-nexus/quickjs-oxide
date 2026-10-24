@@ -150,6 +150,8 @@ struct Builder<'a> {
     /// Uses: declaration, using function, position.
     uses: Vec<(DeclRef, FuncId, u32)>,
     globals: FxHashMap<NameId, DeclRef>,
+    /// The module's `import.meta` binding, once used.
+    import_meta: Option<DeclRef>,
     hir_functions: Vec<Option<Function>>,
     facts: Vec<FunctionFacts>,
     /// Declarations each function owns, AST ones first.
@@ -208,6 +210,7 @@ impl<'a> Builder<'a> {
             readiness: Vec::new(),
             uses: Vec::new(),
             globals: FxHashMap::default(),
+            import_meta: None,
             hir_functions: (0..ast_functions.len()).map(|_| None).collect(),
             facts: (0..ast_functions.len())
                 .map(|_| FunctionFacts::default())
@@ -1552,7 +1555,23 @@ impl<'a> Builder<'a> {
                 },
                 at(pos),
             ),
-            E::ImportMeta => (ExprKind::ImportMeta, node_span),
+            E::ImportMeta => {
+                let decl = match self.import_meta {
+                    Some(decl) => decl,
+                    None => {
+                        let name = self.string(JsString::from_static("import.meta"));
+                        let decl = self.new_decl(name, DeclKind::Implicit, FuncId(0), span(0, 0));
+                        self.import_meta = Some(decl);
+                        decl
+                    }
+                };
+                (
+                    ExprKind::ImportMeta {
+                        decl: self.use_decl(decl, node_span.start),
+                    },
+                    node_span,
+                )
+            }
             E::NewTarget => (
                 ExprKind::NewTarget {
                     decl: self.implicit(DeclKind::NewTarget, node_span.start),
