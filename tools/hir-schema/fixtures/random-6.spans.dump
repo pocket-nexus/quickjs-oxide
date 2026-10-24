@@ -29,45 +29,19 @@ descriptor #1 literal
   value:
     const value:#2
 descriptor #2 array elem:#1
-decl #0 name:"" kind:const owner:#2 capturedBy:[#3 #4] assigned:true tdz:false ty:#2 span:3:0-0
-decl #1 name:"" kind:global owner:#1 capturedBy:[#2 #4] assigned:false tdz:true ty:#1 span:2:7-0
-decl #2 name:"" kind:class owner:#0 capturedBy:[#3 #0] assigned:false tdz:true ty:#4 span:2:823-1
-fn #0 kind:setter async:false generator:true strict:false params:[] simpleParams:true decls:[#4 #2 #2] captures:[#1 #1 #1] inner:[#3 #4] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:true homeObject:true span:1:1-7
-  body:
-    Block stmts:[] decls:[#2 #2 #1]
-  sig:
-    Signature params:[#4 #0] rest:#1 ret:#2 thisTy:#2
-fn #1 name:#3? kind:constructor async:false generator:false strict:false params:[] simpleParams:true decls:[#0 #1] captures:[#3 #4 #0] inner:[#2] usesThis:true usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false span:4:65536-1
-  rest:
-    target span:3:1-1
-      t:
-        pattern
-          p:
-            decl decl:#2 span:4:0-65536
-  body:
-    Block decls:[]
-      stmts:
-        declare decl:#4 span:2:65536-272
-module #0 file:#3 top:#1 reexports:[] dynamic:false
+decl #0 name:"" kind:param owner:#2 capturedBy:[#3 #4] assigned:true tdz:false ty:#2 span:3:0-0 isStatic:true
+decl #1 name:"" kind:catch owner:#3 capturedBy:[#4 #3] assigned:true tdz:true ty:#2 span:1:0-0 isStatic:true
+decl #2 name:"" kind:activeFunction owner:#3 capturedBy:[] assigned:false tdz:true ty:#4 span:2:823-1 isStatic:false
+module #0 file:#4 top:#1 starExports:[525 81] dynamic:true usesImportMeta:true hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
   imports:
-    Import from:"" name:"" decl:#2 kind:value
+    Import request:7 decl:#1
+    Import request:962 decl:#2
+    Import request:65536 decl:#1
   exports:
-    Export name:"" decl:#1
-    Export name:#3? decl:#0
-    Export name:#3? decl:#4
-module #1 file:#4 top:#3 dynamic:false
-  imports:
-    Import from:"" name:"" decl:#0 kind:default
-    Import from:"_\\a" name:#3? decl:#2 kind:namespace
-  exports:
-    Export name:#3? decl:#3
-    Export name:"" decl:#0
-    Export name:"_\\a" decl:#1
+    Export name:"_\\a" decl:#2
   reexports:
-    Reexport from:"_\\a"
-    Reexport from:"_\\a"
-module #2 file:#2 top:#0 imports:[] exports:[] dynamic:true
-  reexports:
-    Reexport from:""
-    Reexport from:#3?
-    Reexport from:""
+    Reexport request:0 as:"_\\a"
+    Reexport request:0 as:""

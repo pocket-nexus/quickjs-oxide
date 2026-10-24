@@ -14,24 +14,48 @@ string #4 "\u0000\u001f \n "
 const #0 regexp source:"\\" flags:""
 const #1 bigint digits:"\\"
 const #2 number value:-Infinity
-decl #0 name:"\u0000\u001f \n " kind:newTarget owner:#0 capturedBy:[#3] assigned:false tdz:false
-decl #1 name:"" kind:privateName owner:#1 capturedBy:[#4 #2 #0] assigned:true tdz:true
-fn #0 kind:staticBlock async:false generator:true strict:false simpleParams:true decls:[#2 #4 #3] captures:[#4 #1 #2] inner:[#2 #2] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false
+decl #0 name:"\u0000\u001f \n " kind:privateMethod owner:#0 capturedBy:[#3] assigned:false tdz:false isStatic:true
+decl #1 name:#5? kind:global owner:#4 capturedBy:[#2 #0 #0] assigned:true tdz:true isStatic:true
+fn #0 name:"" kind:classFieldInit role:set async:false generator:false strict:false simpleParams:false decls:[#1 #1 #4] captures:[#1 #0 #3] inner:[] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true length:7 self:#0 concise:true
   params:
     Param
       pattern:
-        decl decl:#3
+        decl decl:#0
     Param
       pattern:
-        decl decl:#0
-  rest:
-    target
-      t:
-        superMember
-          prop:
-            name name:""
+        decl decl:#4
   body:
-    Block decls:[]
+    Block stmts:[] decls:[#3 #2 #2]
+  source:
+    SourceRange start:7 end:7
+  paramCopies:
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#2 to:#3
+fn #1 name:"é" kind:module role:get async:true generator:true strict:false simpleParams:false decls:[#4 #1 #3] captures:[#4] inner:[] usesThis:true usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:false length:65536 self:#0 argumentsDecl:#2 concise:true
+  params:
+    Param
+      pattern:
+        decl decl:#2
+    Param
+      pattern:
+        decl decl:#4
+    Param
+      pattern:
+        decl decl:#4
+  rest:
+    array
+      items:
+        hole
+        hole
+      rest:
+        decl decl:#0
+  body:
+    Block decls:[#1]
       stmts:
-        declare decl:#1
         declare decl:#3
+        declare decl:#3
+  source:
+    SourceRange start:65536 end:0
+  paramCopies:
+    ParamCopy from:#1 to:#2

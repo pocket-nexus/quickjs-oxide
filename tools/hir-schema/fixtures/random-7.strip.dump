@@ -8,19 +8,9 @@ string #0 ""
 const #0 number value:1.7976931348623157e308
 const #1 bigint digits:#1?
 const #2 regexp source:#1? flags:#1?
-decl #0 name:#1? kind:import owner:#4 capturedBy:[#4 #0] assigned:false tdz:false
-decl #1 name:#1? kind:newTarget owner:#0 capturedBy:[#1 #3] assigned:false tdz:false
-fn #0 kind:method async:true generator:true strict:false simpleParams:false decls:[#1 #1 #2] captures:[#2 #4 #2] inner:[#1] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false
-  params:
-    Param
-      pattern:
-        decl decl:#3
-    Param
-      pattern:
-        decl decl:#4
-    Param
-      pattern:
-        decl decl:#2
+decl #0 name:#1? kind:implicit owner:#4 capturedBy:[#4 #0] assigned:false tdz:false isStatic:false
+decl #1 name:#1? kind:var owner:#2 capturedBy:[#3] assigned:false tdz:false isStatic:false
+fn #0 kind:normal role:method async:false generator:false strict:false params:[] simpleParams:false decls:[#0] captures:[] inner:[] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:252 self:#1 concise:false
   rest:
     object
       props:
@@ -28,33 +18,40 @@ fn #0 kind:method async:true generator:true strict:false simpleParams:false decl
           key:
             name name:#1?
           value:
-            decl decl:#3
+            decl decl:#1
         PatternProp
           key:
-            name name:""
+            name name:#1?
           value:
             decl decl:#2
-        PatternProp
-          key:
-            name name:""
-          value:
-            decl decl:#0
+      rest:
+        object props:[]
   body:
-    Block decls:[#1]
-      stmts:
-        declare decl:#2
-        declare decl:#3
-fn #1 kind:arrow async:false generator:false strict:false simpleParams:false decls:[#3 #3 #3] captures:[#1 #4] inner:[#0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false
-  params:
-    Param
-      pattern:
-        decl decl:#1
-  body:
-    Block stmts:[] decls:[#1 #3]
-module #0 file:#4 top:#3 reexports:[] dynamic:true
+    Block stmts:[] decls:[#2]
+  source:
+    SourceRange start:65536 end:1
+  paramCopies:
+    ParamCopy from:#4 to:#2
+module #0 file:#2 top:#1 starExports:[784 1 1] dynamic:false usesImportMeta:true hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:"" hasAttributes:false attributes:[]
+    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
   imports:
-    Import from:"" name:#1? decl:#4 kind:default
-    Import from:"" name:"" decl:#3 kind:value
-    Import from:"" name:#1? decl:#1 kind:namespace
+    Import request:7 decl:#3
+    Import request:7 decl:#3
+    Import request:65536 decl:#1
   exports:
-    Export name:#1? decl:#3
+    Export name:#1? decl:#1
+    Export name:"" decl:#0
+  reexports:
+    Reexport request:732 as:""
+    Reexport request:0 as:#1?
+module #1 file:#3 top:#3 reexports:[] starExports:[1] dynamic:false usesImportMeta:false hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
+    ModuleRequest specifier:"" hasAttributes:false attributes:[]
+  imports:
+    Import request:65536 decl:#2
+  exports:
+    Export name:#1? decl:#4
+    Export name:#1? decl:#0

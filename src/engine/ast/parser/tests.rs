@@ -25,9 +25,29 @@ fn old(source: &str, kind: ProgramKind) -> Result<(), (String, Option<usize>)> {
 }
 
 fn new(source: &str, kind: ProgramKind) -> Result<(), (String, Option<usize>)> {
-    Parser::parse_str(source, kind)
-        .map(drop)
-        .map_err(|error| describe(&error))
+    let program = Parser::parse_str(source, kind).map_err(|error| describe(&error))?;
+    if program.has_with {
+        return Ok(());
+    }
+    let built =
+        crate::engine::hir::build::build(program, "s.js").map_err(|error| describe(&error))?;
+    check_hir(&built.program);
+    Ok(())
+}
+
+/// The HIR invariants: it validates, its binary form round-trips byte for
+/// byte, and stripping type information changes nothing.
+fn check_hir(program: &crate::engine::hir::schema::Program) {
+    use crate::engine::hir::schema::{read, strip, write};
+    if let Err(error) = crate::engine::hir::validate::validate(program) {
+        panic!("{error}");
+    }
+    let bytes = write(program);
+    let back = read(&bytes).expect("the HIR reads back");
+    assert!(write(&back) == bytes, "the HIR does not round-trip");
+    let mut stripped = back;
+    strip(&mut stripped);
+    assert!(write(&stripped) == bytes, "strip changed JavaScript HIR");
 }
 
 fn describe(error: &Error) -> (String, Option<usize>) {

@@ -388,7 +388,15 @@ pub enum DeclKind {
     Arguments,
     NewTarget,
     Implicit,
-    PrivateName,
+    FunctionName,
+    Hidden,
+    HomeObject,
+    ActiveFunction,
+    PrivateField,
+    PrivateMethod,
+    PrivateGetter,
+    PrivateSetter,
+    PrivateAccessor,
 }
 
 impl DeclKind {
@@ -406,7 +414,15 @@ impl DeclKind {
         DeclKind::Arguments,
         DeclKind::NewTarget,
         DeclKind::Implicit,
-        DeclKind::PrivateName,
+        DeclKind::FunctionName,
+        DeclKind::Hidden,
+        DeclKind::HomeObject,
+        DeclKind::ActiveFunction,
+        DeclKind::PrivateField,
+        DeclKind::PrivateMethod,
+        DeclKind::PrivateGetter,
+        DeclKind::PrivateSetter,
+        DeclKind::PrivateAccessor,
     ];
 
     #[must_use]
@@ -425,7 +441,15 @@ impl DeclKind {
             DeclKind::Arguments => "arguments",
             DeclKind::NewTarget => "newTarget",
             DeclKind::Implicit => "implicit",
-            DeclKind::PrivateName => "privateName",
+            DeclKind::FunctionName => "functionName",
+            DeclKind::Hidden => "hidden",
+            DeclKind::HomeObject => "homeObject",
+            DeclKind::ActiveFunction => "activeFunction",
+            DeclKind::PrivateField => "privateField",
+            DeclKind::PrivateMethod => "privateMethod",
+            DeclKind::PrivateGetter => "privateGetter",
+            DeclKind::PrivateSetter => "privateSetter",
+            DeclKind::PrivateAccessor => "privateAccessor",
         }
     }
 }
@@ -440,6 +464,7 @@ pub struct Decl {
     pub tdz: bool,
     pub ty: TypeRef,
     pub span: Span,
+    pub is_static: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -497,6 +522,7 @@ impl FunctionKind {
 pub struct Function {
     pub name: Option<StringRef>,
     pub kind: FunctionKind,
+    pub role: MethodRole,
     pub async_: bool,
     pub generator: bool,
     pub strict: bool,
@@ -515,6 +541,24 @@ pub struct Function {
     pub sig: Option<Signature>,
     pub effects: Option<Effects>,
     pub span: Span,
+    pub length: u32,
+    pub source: SourceRange,
+    pub self_: Option<DeclRef>,
+    pub arguments_decl: Option<DeclRef>,
+    pub param_copies: Vec<ParamCopy>,
+    pub concise: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct SourceRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParamCopy {
+    pub from: DeclRef,
+    pub to: DeclRef,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -567,46 +611,38 @@ pub struct Effects {
     pub calls: CallKnowledge,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum ImportKind {
-    Value,
-    Namespace,
-    Default,
-}
-
-impl ImportKind {
-    pub const ALL: &'static [ImportKind] = &[
-        ImportKind::Value,
-        ImportKind::Namespace,
-        ImportKind::Default,
-    ];
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            ImportKind::Value => "value",
-            ImportKind::Namespace => "namespace",
-            ImportKind::Default => "default",
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct Module {
     pub file: FileRef,
     pub top: FunctionRef,
+    pub requests: Vec<ModuleRequest>,
     pub imports: Vec<Import>,
     pub exports: Vec<Export>,
     pub reexports: Vec<Reexport>,
+    pub star_exports: Vec<u32>,
     pub dynamic: bool,
+    pub uses_import_meta: bool,
+    pub has_top_level_await: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ModuleRequest {
+    pub specifier: StringRef,
+    pub has_attributes: bool,
+    pub attributes: Vec<ImportAttribute>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ImportAttribute {
+    pub key: StringRef,
+    pub value: StringRef,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Import {
-    pub from: StringRef,
-    pub name: StringRef,
+    pub request: u32,
+    pub name: Option<StringRef>,
     pub decl: DeclRef,
-    pub kind: ImportKind,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -617,9 +653,9 @@ pub struct Export {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Reexport {
-    pub from: StringRef,
+    pub request: u32,
     pub name: Option<StringRef>,
-    pub as_: Option<StringRef>,
+    pub as_: StringRef,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -895,6 +931,8 @@ pub enum ExprKind {
     ImportMeta,
     SuperMember {
         prop: Box<PropKey>,
+        this: DeclRef,
+        home: DeclRef,
     },
     Member {
         obj: Box<Expr>,
@@ -942,6 +980,7 @@ pub enum ExprKind {
         optional: bool,
         direct: Option<FunctionRef>,
         intrinsic: Option<StringRef>,
+        direct_eval: bool,
     },
     New {
         callee: Box<Expr>,
@@ -950,6 +989,9 @@ pub enum ExprKind {
     },
     SuperCall {
         args: Vec<Arg>,
+        this: DeclRef,
+        new_target: DeclRef,
+        func: DeclRef,
     },
     Import {
         spec: Box<Expr>,
@@ -976,6 +1018,10 @@ pub enum ExprKind {
     PrivateIn {
         name: DeclRef,
         obj: Box<Expr>,
+    },
+    Named {
+        name: StringRef,
+        e: Box<Expr>,
     },
 }
 
@@ -1017,6 +1063,7 @@ impl ExprKind {
             ExprKind::Scratch { .. } => "scratch",
             ExprKind::OptionalChain { .. } => "optionalChain",
             ExprKind::PrivateIn { .. } => "privateIn",
+            ExprKind::Named { .. } => "named",
         }
     }
 }
@@ -1089,6 +1136,8 @@ pub enum Target {
     },
     SuperMember {
         prop: Box<PropKey>,
+        this: DeclRef,
+        home: DeclRef,
     },
 }
 
@@ -1160,8 +1209,10 @@ impl ObjProp {
 pub struct Class {
     pub name: Option<DeclRef>,
     pub extends: Option<Box<Expr>>,
-    pub ctor: Option<FunctionRef>,
+    pub ctor: FunctionRef,
     pub members: Vec<ClassMember>,
+    pub instance_init: Option<FunctionRef>,
+    pub static_init: Option<FunctionRef>,
     pub layout: Option<LayoutRef>,
     pub span: Span,
 }
@@ -1174,17 +1225,19 @@ pub enum ClassMember {
         static_: bool,
         role: MethodRole,
     },
-    Field {
-        key: Box<PropKey>,
-        init: Option<FunctionRef>,
-        static_: bool,
-        ty: TypeRef,
-    },
-    StaticBlock {
+    PrivateMethod {
+        decl: DeclRef,
         fn_: FunctionRef,
+        static_: bool,
+        role: MethodRole,
     },
-    AccessorAuto {
-        key: Box<PropKey>,
+    FieldKey {
+        key: Box<Expr>,
+        decl: DeclRef,
+        static_: bool,
+    },
+    PrivateField {
+        decl: DeclRef,
         static_: bool,
     },
 }
@@ -1194,9 +1247,25 @@ impl ClassMember {
     pub const fn kind_name(&self) -> &'static str {
         match self {
             ClassMember::Method { .. } => "method",
-            ClassMember::Field { .. } => "field",
-            ClassMember::StaticBlock { .. } => "staticBlock",
-            ClassMember::AccessorAuto { .. } => "accessorAuto",
+            ClassMember::PrivateMethod { .. } => "privateMethod",
+            ClassMember::FieldKey { .. } => "fieldKey",
+            ClassMember::PrivateField { .. } => "privateField",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum FieldKey {
+    Name { name: StringRef },
+    Computed { decl: DeclRef },
+}
+
+impl FieldKey {
+    #[must_use]
+    pub const fn kind_name(&self) -> &'static str {
+        match self {
+            FieldKey::Name { .. } => "name",
+            FieldKey::Computed { .. } => "computed",
         }
     }
 }
@@ -1270,6 +1339,7 @@ pub enum StmtKind {
     },
     ForIn {
         target: Box<ForTarget>,
+        init: Option<Box<Expr>>,
         obj: Box<Expr>,
         body: Box<Stmt>,
         label: u32,
@@ -1305,6 +1375,7 @@ pub enum StmtKind {
         catch_param: Option<Box<Pattern>>,
         catch_body: Option<Block>,
         finally: Option<Block>,
+        catch_default: Option<Box<Expr>>,
     },
     Labeled {
         label: u32,
@@ -1313,6 +1384,7 @@ pub enum StmtKind {
     FnDecl {
         decl: DeclRef,
         fn_: FunctionRef,
+        annex_b: Option<DeclRef>,
     },
     ClassDecl {
         decl: DeclRef,
@@ -1320,6 +1392,17 @@ pub enum StmtKind {
     },
     Debugger,
     Empty,
+    DefineField {
+        key: Box<FieldKey>,
+        value: Option<Box<Expr>>,
+    },
+    DefinePrivate {
+        decl: DeclRef,
+        value: Option<Box<Expr>>,
+    },
+    StaticBlock {
+        fn_: FunctionRef,
+    },
 }
 
 impl StmtKind {
@@ -1347,6 +1430,9 @@ impl StmtKind {
             StmtKind::ClassDecl { .. } => "classDecl",
             StmtKind::Debugger => "debugger",
             StmtKind::Empty => "empty",
+            StmtKind::DefineField { .. } => "defineField",
+            StmtKind::DefinePrivate { .. } => "definePrivate",
+            StmtKind::StaticBlock { .. } => "staticBlock",
         }
     }
 }
@@ -1795,6 +1881,7 @@ fn w_decl(w: &mut Writer, out: &mut Vec<u32>, v: &Decl) {
     out.push(u32::from(*(&v.tdz)));
     out.push((&v.ty).0);
     w_span(w, out, (&v.span));
+    out.push(u32::from(*(&v.is_static)));
 }
 
 fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
@@ -1803,6 +1890,7 @@ fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
         None => out.push(0),
     }
     out.push((*(&v.kind) as u32));
+    out.push((*(&v.role) as u32));
     out.push(u32::from(*(&v.async_)));
     out.push(u32::from(*(&v.generator)));
     out.push(u32::from(*(&v.strict)));
@@ -1863,6 +1951,34 @@ fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
         None => out.extend([0; 11]),
     }
     w_span(w, out, (&v.span));
+    out.push(*(&v.length));
+    w_source_range(w, out, (&v.source));
+    match (&v.self_) {
+        Some(x35) => out.push(x35.0 + 1),
+        None => out.push(0),
+    }
+    match (&v.arguments_decl) {
+        Some(x36) => out.push(x36.0 + 1),
+        None => out.push(0),
+    }
+    {
+        let buf37 = &mut Vec::new();
+        for x38 in (&v.param_copies) {
+            w_param_copy(w, buf37, x38);
+        }
+        w.list(out, std::mem::take(buf37), (&v.param_copies).len());
+    }
+    out.push(u32::from(*(&v.concise)));
+}
+
+fn w_source_range(w: &mut Writer, out: &mut Vec<u32>, v: &SourceRange) {
+    out.push(*(&v.start));
+    out.push(*(&v.end));
+}
+
+fn w_param_copy(w: &mut Writer, out: &mut Vec<u32>, v: &ParamCopy) {
+    out.push((&v.from).0);
+    out.push((&v.to).0);
 }
 
 fn w_param(w: &mut Writer, out: &mut Vec<u32>, v: &Param) {
@@ -1871,8 +1987,8 @@ fn w_param(w: &mut Writer, out: &mut Vec<u32>, v: &Param) {
         out.push(r);
     }
     match (&v.default) {
-        Some(x35) => {
-            let r = n_expr(w, x35);
+        Some(x39) => {
+            let r = n_expr(w, x39);
             out.push(r);
         }
         None => out.push(0),
@@ -1881,14 +1997,14 @@ fn w_param(w: &mut Writer, out: &mut Vec<u32>, v: &Param) {
 
 fn w_signature(w: &mut Writer, out: &mut Vec<u32>, v: &Signature) {
     {
-        let buf36 = &mut Vec::new();
-        for x37 in (&v.params) {
-            buf36.push(x37.0);
+        let buf40 = &mut Vec::new();
+        for x41 in (&v.params) {
+            buf40.push(x41.0);
         }
-        w.list(out, std::mem::take(buf36), (&v.params).len());
+        w.list(out, std::mem::take(buf40), (&v.params).len());
     }
     match (&v.rest) {
-        Some(x38) => out.push(x38.0 + 1),
+        Some(x42) => out.push(x42.0 + 1),
         None => out.push(0),
     }
     out.push((&v.ret).0);
@@ -1897,18 +2013,18 @@ fn w_signature(w: &mut Writer, out: &mut Vec<u32>, v: &Signature) {
 
 fn w_effects(w: &mut Writer, out: &mut Vec<u32>, v: &Effects) {
     {
-        let buf39 = &mut Vec::new();
-        for x40 in (&v.reads) {
-            buf39.push(x40.0);
+        let buf43 = &mut Vec::new();
+        for x44 in (&v.reads) {
+            buf43.push(x44.0);
         }
-        w.list(out, std::mem::take(buf39), (&v.reads).len());
+        w.list(out, std::mem::take(buf43), (&v.reads).len());
     }
     {
-        let buf41 = &mut Vec::new();
-        for x42 in (&v.writes) {
-            buf41.push(x42.0);
+        let buf45 = &mut Vec::new();
+        for x46 in (&v.writes) {
+            buf45.push(x46.0);
         }
-        w.list(out, std::mem::take(buf41), (&v.writes).len());
+        w.list(out, std::mem::take(buf45), (&v.writes).len());
     }
     out.push(u32::from(*(&v.heap_reads)));
     out.push(u32::from(*(&v.heap_writes)));
@@ -1922,34 +2038,69 @@ fn w_module(w: &mut Writer, out: &mut Vec<u32>, v: &Module) {
     out.push((&v.file).0);
     out.push((&v.top).0);
     {
-        let buf43 = &mut Vec::new();
-        for x44 in (&v.imports) {
-            w_import(w, buf43, x44);
-        }
-        w.list(out, std::mem::take(buf43), (&v.imports).len());
-    }
-    {
-        let buf45 = &mut Vec::new();
-        for x46 in (&v.exports) {
-            w_export(w, buf45, x46);
-        }
-        w.list(out, std::mem::take(buf45), (&v.exports).len());
-    }
-    {
         let buf47 = &mut Vec::new();
-        for x48 in (&v.reexports) {
-            w_reexport(w, buf47, x48);
+        for x48 in (&v.requests) {
+            w_module_request(w, buf47, x48);
         }
-        w.list(out, std::mem::take(buf47), (&v.reexports).len());
+        w.list(out, std::mem::take(buf47), (&v.requests).len());
+    }
+    {
+        let buf49 = &mut Vec::new();
+        for x50 in (&v.imports) {
+            w_import(w, buf49, x50);
+        }
+        w.list(out, std::mem::take(buf49), (&v.imports).len());
+    }
+    {
+        let buf51 = &mut Vec::new();
+        for x52 in (&v.exports) {
+            w_export(w, buf51, x52);
+        }
+        w.list(out, std::mem::take(buf51), (&v.exports).len());
+    }
+    {
+        let buf53 = &mut Vec::new();
+        for x54 in (&v.reexports) {
+            w_reexport(w, buf53, x54);
+        }
+        w.list(out, std::mem::take(buf53), (&v.reexports).len());
+    }
+    {
+        let buf55 = &mut Vec::new();
+        for x56 in (&v.star_exports) {
+            buf55.push(*x56);
+        }
+        w.list(out, std::mem::take(buf55), (&v.star_exports).len());
     }
     out.push(u32::from(*(&v.dynamic)));
+    out.push(u32::from(*(&v.uses_import_meta)));
+    out.push(u32::from(*(&v.has_top_level_await)));
+}
+
+fn w_module_request(w: &mut Writer, out: &mut Vec<u32>, v: &ModuleRequest) {
+    out.push((&v.specifier).0);
+    out.push(u32::from(*(&v.has_attributes)));
+    {
+        let buf57 = &mut Vec::new();
+        for x58 in (&v.attributes) {
+            w_import_attribute(w, buf57, x58);
+        }
+        w.list(out, std::mem::take(buf57), (&v.attributes).len());
+    }
+}
+
+fn w_import_attribute(w: &mut Writer, out: &mut Vec<u32>, v: &ImportAttribute) {
+    out.push((&v.key).0);
+    out.push((&v.value).0);
 }
 
 fn w_import(w: &mut Writer, out: &mut Vec<u32>, v: &Import) {
-    out.push((&v.from).0);
-    out.push((&v.name).0);
+    out.push(*(&v.request));
+    match (&v.name) {
+        Some(x59) => out.push(x59.0 + 1),
+        None => out.push(0),
+    }
     out.push((&v.decl).0);
-    out.push((*(&v.kind) as u32));
 }
 
 fn w_export(w: &mut Writer, out: &mut Vec<u32>, v: &Export) {
@@ -1958,15 +2109,12 @@ fn w_export(w: &mut Writer, out: &mut Vec<u32>, v: &Export) {
 }
 
 fn w_reexport(w: &mut Writer, out: &mut Vec<u32>, v: &Reexport) {
-    out.push((&v.from).0);
+    out.push(*(&v.request));
     match (&v.name) {
-        Some(x49) => out.push(x49.0 + 1),
+        Some(x60) => out.push(x60.0 + 1),
         None => out.push(0),
     }
-    match (&v.as_) {
-        Some(x50) => out.push(x50.0 + 1),
-        None => out.push(0),
-    }
+    out.push((&v.as_).0);
 }
 
 fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
@@ -1994,21 +2142,21 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
         ExprKind::Template { quasis, exprs } => {
             out.push(261);
             {
-                let buf51 = &mut Vec::new();
-                for x52 in quasis {
-                    buf51.push(x52.0);
+                let buf61 = &mut Vec::new();
+                for x62 in quasis {
+                    buf61.push(x62.0);
                 }
-                w.list(out, std::mem::take(buf51), quasis.len());
+                w.list(out, std::mem::take(buf61), quasis.len());
             }
             {
-                let buf53 = &mut Vec::new();
-                for x54 in exprs {
+                let buf63 = &mut Vec::new();
+                for x64 in exprs {
                     {
-                        let r = n_expr(w, x54);
-                        buf53.push(r);
+                        let r = n_expr(w, x64);
+                        buf63.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf53), exprs.len());
+                w.list(out, std::mem::take(buf63), exprs.len());
             }
         }
         ExprKind::TaggedTemplate {
@@ -2025,57 +2173,57 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             }
             out.push(*site);
             {
-                let buf55 = &mut Vec::new();
-                for x56 in cooked {
-                    match x56 {
-                        Some(x57) => buf55.push(x57.0 + 1),
-                        None => buf55.push(0),
+                let buf65 = &mut Vec::new();
+                for x66 in cooked {
+                    match x66 {
+                        Some(x67) => buf65.push(x67.0 + 1),
+                        None => buf65.push(0),
                     }
                 }
-                w.list(out, std::mem::take(buf55), cooked.len());
+                w.list(out, std::mem::take(buf65), cooked.len());
             }
             {
-                let buf58 = &mut Vec::new();
-                for x59 in raw {
-                    buf58.push(x59.0);
+                let buf68 = &mut Vec::new();
+                for x69 in raw {
+                    buf68.push(x69.0);
                 }
-                w.list(out, std::mem::take(buf58), raw.len());
+                w.list(out, std::mem::take(buf68), raw.len());
             }
             {
-                let buf60 = &mut Vec::new();
-                for x61 in exprs {
+                let buf70 = &mut Vec::new();
+                for x71 in exprs {
                     {
-                        let r = n_expr(w, x61);
-                        buf60.push(r);
+                        let r = n_expr(w, x71);
+                        buf70.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf60), exprs.len());
+                w.list(out, std::mem::take(buf70), exprs.len());
             }
         }
         ExprKind::Array { items } => {
             out.push(263);
             {
-                let buf62 = &mut Vec::new();
-                for x63 in items {
+                let buf72 = &mut Vec::new();
+                for x73 in items {
                     {
-                        let r = n_array_item(w, x63);
-                        buf62.push(r);
+                        let r = n_array_item(w, x73);
+                        buf72.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf62), items.len());
+                w.list(out, std::mem::take(buf72), items.len());
             }
         }
         ExprKind::Object { props } => {
             out.push(264);
             {
-                let buf64 = &mut Vec::new();
-                for x65 in props {
+                let buf74 = &mut Vec::new();
+                for x75 in props {
                     {
-                        let r = n_obj_prop(w, x65);
-                        buf64.push(r);
+                        let r = n_obj_prop(w, x75);
+                        buf74.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf64), props.len());
+                w.list(out, std::mem::take(buf74), props.len());
             }
         }
         ExprKind::Fn { fn_ } => {
@@ -2101,12 +2249,14 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
         ExprKind::ImportMeta => {
             out.push(270);
         }
-        ExprKind::SuperMember { prop } => {
+        ExprKind::SuperMember { prop, this, home } => {
             out.push(271);
             {
                 let r = n_prop_key(w, prop);
                 out.push(r);
             }
+            out.push(this.0);
+            out.push(home.0);
         }
         ExprKind::Member {
             obj,
@@ -2126,11 +2276,11 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             }
             out.push(u32::from(*optional));
             match layout {
-                Some(x66) => out.push(x66.0 + 1),
+                Some(x76) => out.push(x76.0 + 1),
                 None => out.push(0),
             }
             match field {
-                Some(x67) => out.push(*x67 + 1),
+                Some(x77) => out.push(*x77 + 1),
                 None => out.push(0),
             }
         }
@@ -2163,7 +2313,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
                 out.push(r);
             }
             match numeric {
-                Some(x68) => out.push((*x68 as u32) + 1),
+                Some(x78) => out.push((*x78 as u32) + 1),
                 None => out.push(0),
             }
         }
@@ -2209,14 +2359,14 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
         ExprKind::Seq { exprs } => {
             out.push(279);
             {
-                let buf69 = &mut Vec::new();
-                for x70 in exprs {
+                let buf79 = &mut Vec::new();
+                for x80 in exprs {
                     {
-                        let r = n_expr(w, x70);
-                        buf69.push(r);
+                        let r = n_expr(w, x80);
+                        buf79.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf69), exprs.len());
+                w.list(out, std::mem::take(buf79), exprs.len());
             }
         }
         ExprKind::Call {
@@ -2225,6 +2375,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             optional,
             direct,
             intrinsic,
+            direct_eval,
         } => {
             out.push(280);
             {
@@ -2232,24 +2383,25 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
                 out.push(r);
             }
             {
-                let buf71 = &mut Vec::new();
-                for x72 in args {
+                let buf81 = &mut Vec::new();
+                for x82 in args {
                     {
-                        let r = n_arg(w, x72);
-                        buf71.push(r);
+                        let r = n_arg(w, x82);
+                        buf81.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf71), args.len());
+                w.list(out, std::mem::take(buf81), args.len());
             }
             out.push(u32::from(*optional));
             match direct {
-                Some(x73) => out.push(x73.0 + 1),
+                Some(x83) => out.push(x83.0 + 1),
                 None => out.push(0),
             }
             match intrinsic {
-                Some(x74) => out.push(x74.0 + 1),
+                Some(x84) => out.push(x84.0 + 1),
                 None => out.push(0),
             }
+            out.push(u32::from(*direct_eval));
         }
         ExprKind::New {
             callee,
@@ -2262,32 +2414,40 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
                 out.push(r);
             }
             {
-                let buf75 = &mut Vec::new();
-                for x76 in args {
+                let buf85 = &mut Vec::new();
+                for x86 in args {
                     {
-                        let r = n_arg(w, x76);
-                        buf75.push(r);
+                        let r = n_arg(w, x86);
+                        buf85.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf75), args.len());
+                w.list(out, std::mem::take(buf85), args.len());
             }
             match direct {
-                Some(x77) => out.push(x77.0 + 1),
+                Some(x87) => out.push(x87.0 + 1),
                 None => out.push(0),
             }
         }
-        ExprKind::SuperCall { args } => {
+        ExprKind::SuperCall {
+            args,
+            this,
+            new_target,
+            func,
+        } => {
             out.push(282);
             {
-                let buf78 = &mut Vec::new();
-                for x79 in args {
+                let buf88 = &mut Vec::new();
+                for x89 in args {
                     {
-                        let r = n_arg(w, x79);
-                        buf78.push(r);
+                        let r = n_arg(w, x89);
+                        buf88.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf78), args.len());
+                w.list(out, std::mem::take(buf88), args.len());
             }
+            out.push(this.0);
+            out.push(new_target.0);
+            out.push(func.0);
         }
         ExprKind::Import { spec, options } => {
             out.push(283);
@@ -2296,8 +2456,8 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
                 out.push(r);
             }
             match options {
-                Some(x80) => {
-                    let r = n_expr(w, x80);
+                Some(x90) => {
+                    let r = n_expr(w, x90);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2306,8 +2466,8 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
         ExprKind::Yield { e, delegate } => {
             out.push(284);
             match e {
-                Some(x81) => {
-                    let r = n_expr(w, x81);
+                Some(x91) => {
+                    let r = n_expr(w, x91);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2346,6 +2506,14 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(name.0);
             {
                 let r = n_expr(w, obj);
+                out.push(r);
+            }
+        }
+        ExprKind::Named { name, e } => {
+            out.push(290);
+            out.push(name.0);
+            {
+                let r = n_expr(w, e);
                 out.push(r);
             }
         }
@@ -2448,11 +2616,11 @@ fn n_target(w: &mut Writer, v: &Target) -> u32 {
                 out.push(r);
             }
             match layout {
-                Some(x82) => out.push(x82.0 + 1),
+                Some(x92) => out.push(x92.0 + 1),
                 None => out.push(0),
             }
             match field {
-                Some(x83) => out.push(*x83 + 1),
+                Some(x93) => out.push(*x93 + 1),
                 None => out.push(0),
             }
         }
@@ -2463,12 +2631,14 @@ fn n_target(w: &mut Writer, v: &Target) -> u32 {
                 out.push(r);
             }
         }
-        Target::SuperMember { prop } => {
+        Target::SuperMember { prop, this, home } => {
             out.push(563);
             {
                 let r = n_prop_key(w, prop);
                 out.push(r);
             }
+            out.push(this.0);
+            out.push(home.0);
         }
     }
     w.node(words, None)
@@ -2523,32 +2693,37 @@ fn n_obj_prop(w: &mut Writer, v: &ObjProp) -> u32 {
 
 fn w_class(w: &mut Writer, out: &mut Vec<u32>, v: &Class) {
     match (&v.name) {
-        Some(x84) => out.push(x84.0 + 1),
+        Some(x94) => out.push(x94.0 + 1),
         None => out.push(0),
     }
     match (&v.extends) {
-        Some(x85) => {
-            let r = n_expr(w, x85);
+        Some(x95) => {
+            let r = n_expr(w, x95);
             out.push(r);
         }
         None => out.push(0),
     }
-    match (&v.ctor) {
-        Some(x86) => out.push(x86.0 + 1),
-        None => out.push(0),
-    }
+    out.push((&v.ctor).0);
     {
-        let buf87 = &mut Vec::new();
-        for x88 in (&v.members) {
+        let buf96 = &mut Vec::new();
+        for x97 in (&v.members) {
             {
-                let r = n_class_member(w, x88);
-                buf87.push(r);
+                let r = n_class_member(w, x97);
+                buf96.push(r);
             }
         }
-        w.list(out, std::mem::take(buf87), (&v.members).len());
+        w.list(out, std::mem::take(buf96), (&v.members).len());
+    }
+    match (&v.instance_init) {
+        Some(x98) => out.push(x98.0 + 1),
+        None => out.push(0),
+    }
+    match (&v.static_init) {
+        Some(x99) => out.push(x99.0 + 1),
+        None => out.push(0),
     }
     match (&v.layout) {
-        Some(x89) => out.push(x89.0 + 1),
+        Some(x100) => out.push(x100.0 + 1),
         None => out.push(0),
     }
     w_span(w, out, (&v.span));
@@ -2573,35 +2748,47 @@ fn n_class_member(w: &mut Writer, v: &ClassMember) -> u32 {
             out.push(u32::from(*static_));
             out.push((*role as u32));
         }
-        ClassMember::Field {
-            key,
-            init,
+        ClassMember::PrivateMethod {
+            decl,
+            fn_,
             static_,
-            ty,
+            role,
         } => {
             out.push(593);
-            {
-                let r = n_prop_key(w, key);
-                out.push(r);
-            }
-            match init {
-                Some(x90) => out.push(x90.0 + 1),
-                None => out.push(0),
-            }
-            out.push(u32::from(*static_));
-            out.push(ty.0);
-        }
-        ClassMember::StaticBlock { fn_ } => {
-            out.push(594);
+            out.push(decl.0);
             out.push(fn_.0);
+            out.push(u32::from(*static_));
+            out.push((*role as u32));
         }
-        ClassMember::AccessorAuto { key, static_ } => {
-            out.push(595);
+        ClassMember::FieldKey { key, decl, static_ } => {
+            out.push(594);
             {
-                let r = n_prop_key(w, key);
+                let r = n_expr(w, key);
                 out.push(r);
             }
+            out.push(decl.0);
             out.push(u32::from(*static_));
+        }
+        ClassMember::PrivateField { decl, static_ } => {
+            out.push(595);
+            out.push(decl.0);
+            out.push(u32::from(*static_));
+        }
+    }
+    w.node(words, None)
+}
+
+fn n_field_key(w: &mut Writer, v: &FieldKey) -> u32 {
+    let mut words = Vec::new();
+    let out = &mut words;
+    match v {
+        FieldKey::Name { name } => {
+            out.push(608);
+            out.push(name.0);
+        }
+        FieldKey::Computed { decl } => {
+            out.push(609);
+            out.push(decl.0);
         }
     }
     w.node(words, None)
@@ -2622,8 +2809,8 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
             out.push(769);
             out.push(decl.0);
             match init {
-                Some(x91) => {
-                    let r = n_expr(w, x91);
+                Some(x101) => {
+                    let r = n_expr(w, x101);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2644,7 +2831,7 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
                 out.push(r);
             }
             match declaring {
-                Some(x92) => out.push((*x92 as u32) + 1),
+                Some(x102) => out.push((*x102 as u32) + 1),
                 None => out.push(0),
             }
         }
@@ -2663,8 +2850,8 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
                 out.push(r);
             }
             match else_ {
-                Some(x93) => {
-                    let r = n_stmt(w, x93);
+                Some(x103) => {
+                    let r = n_stmt(w, x103);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2704,22 +2891,22 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
         } => {
             out.push(775);
             match init {
-                Some(x94) => {
-                    let r = n_stmt(w, x94);
+                Some(x104) => {
+                    let r = n_stmt(w, x104);
                     out.push(r);
                 }
                 None => out.push(0),
             }
             match test {
-                Some(x95) => {
-                    let r = n_expr(w, x95);
+                Some(x105) => {
+                    let r = n_expr(w, x105);
                     out.push(r);
                 }
                 None => out.push(0),
             }
             match update {
-                Some(x96) => {
-                    let r = n_expr(w, x96);
+                Some(x106) => {
+                    let r = n_expr(w, x106);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2730,15 +2917,16 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
             }
             out.push(*label);
             {
-                let buf97 = &mut Vec::new();
-                for x98 in per_iteration {
-                    buf97.push(x98.0);
+                let buf107 = &mut Vec::new();
+                for x108 in per_iteration {
+                    buf107.push(x108.0);
                 }
-                w.list(out, std::mem::take(buf97), per_iteration.len());
+                w.list(out, std::mem::take(buf107), per_iteration.len());
             }
         }
         StmtKind::ForIn {
             target,
+            init,
             obj,
             body,
             label,
@@ -2747,6 +2935,13 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
             {
                 let r = n_for_target(w, target);
                 out.push(r);
+            }
+            match init {
+                Some(x109) => {
+                    let r = n_expr(w, x109);
+                    out.push(r);
+                }
+                None => out.push(0),
             }
             {
                 let r = n_expr(w, obj);
@@ -2795,11 +2990,11 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
                 out.push(r);
             }
             {
-                let buf99 = &mut Vec::new();
-                for x100 in cases {
-                    w_switch_case(w, buf99, x100);
+                let buf110 = &mut Vec::new();
+                for x111 in cases {
+                    w_switch_case(w, buf110, x111);
                 }
-                w.list(out, std::mem::take(buf99), cases.len());
+                w.list(out, std::mem::take(buf110), cases.len());
             }
             out.push(*label);
             out.push(u32::from(*exhaustive));
@@ -2815,8 +3010,8 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
         StmtKind::Return { e } => {
             out.push(781);
             match e {
-                Some(x101) => {
-                    let r = n_expr(w, x101);
+                Some(x112) => {
+                    let r = n_expr(w, x112);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2834,29 +3029,37 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
             catch_param,
             catch_body,
             finally,
+            catch_default,
         } => {
             out.push(783);
             w_block(w, out, body);
             match catch_param {
-                Some(x102) => {
-                    let r = n_pattern(w, x102);
+                Some(x113) => {
+                    let r = n_pattern(w, x113);
                     out.push(r);
                 }
                 None => out.push(0),
             }
             match catch_body {
-                Some(x103) => {
+                Some(x114) => {
                     out.push(1);
-                    w_block(w, out, x103);
+                    w_block(w, out, x114);
                 }
                 None => out.extend([0; 5]),
             }
             match finally {
-                Some(x104) => {
+                Some(x115) => {
                     out.push(1);
-                    w_block(w, out, x104);
+                    w_block(w, out, x115);
                 }
                 None => out.extend([0; 5]),
+            }
+            match catch_default {
+                Some(x116) => {
+                    let r = n_expr(w, x116);
+                    out.push(r);
+                }
+                None => out.push(0),
             }
         }
         StmtKind::Labeled { label, body } => {
@@ -2867,10 +3070,14 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
                 out.push(r);
             }
         }
-        StmtKind::FnDecl { decl, fn_ } => {
+        StmtKind::FnDecl { decl, fn_, annex_b } => {
             out.push(785);
             out.push(decl.0);
             out.push(fn_.0);
+            match annex_b {
+                Some(x117) => out.push(x117.0 + 1),
+                None => out.push(0),
+            }
         }
         StmtKind::ClassDecl { decl, cls } => {
             out.push(786);
@@ -2883,47 +3090,76 @@ fn n_stmt(w: &mut Writer, v: &Stmt) -> u32 {
         StmtKind::Empty => {
             out.push(788);
         }
+        StmtKind::DefineField { key, value } => {
+            out.push(789);
+            {
+                let r = n_field_key(w, key);
+                out.push(r);
+            }
+            match value {
+                Some(x118) => {
+                    let r = n_expr(w, x118);
+                    out.push(r);
+                }
+                None => out.push(0),
+            }
+        }
+        StmtKind::DefinePrivate { decl, value } => {
+            out.push(790);
+            out.push(decl.0);
+            match value {
+                Some(x119) => {
+                    let r = n_expr(w, x119);
+                    out.push(r);
+                }
+                None => out.push(0),
+            }
+        }
+        StmtKind::StaticBlock { fn_ } => {
+            out.push(791);
+            out.push(fn_.0);
+        }
     }
     w.node(words, Some(&v.span))
 }
 
 fn w_block(w: &mut Writer, out: &mut Vec<u32>, v: &Block) {
     {
-        let buf105 = &mut Vec::new();
-        for x106 in (&v.stmts) {
+        let buf120 = &mut Vec::new();
+        for x121 in (&v.stmts) {
             {
-                let r = n_stmt(w, x106);
-                buf105.push(r);
+                let r = n_stmt(w, x121);
+                buf120.push(r);
             }
         }
-        w.list(out, std::mem::take(buf105), (&v.stmts).len());
+        w.list(out, std::mem::take(buf120), (&v.stmts).len());
     }
     {
-        let buf107 = &mut Vec::new();
-        for x108 in (&v.decls) {
-            buf107.push(x108.0);
+        let buf122 = &mut Vec::new();
+        for x123 in (&v.decls) {
+            buf122.push(x123.0);
         }
-        w.list(out, std::mem::take(buf107), (&v.decls).len());
+        w.list(out, std::mem::take(buf122), (&v.decls).len());
     }
 }
 
 fn w_switch_case(w: &mut Writer, out: &mut Vec<u32>, v: &SwitchCase) {
     match (&v.test) {
-        Some(x109) => {
-            let r = n_expr(w, x109);
+        Some(x124) => {
+            let r = n_expr(w, x124);
             out.push(r);
         }
         None => out.push(0),
     }
     {
-        let buf110 = &mut Vec::new();
-        for x111 in (&v.body) {
+        let buf125 = &mut Vec::new();
+        for x126 in (&v.body) {
             {
-                let r = n_stmt(w, x111);
-                buf110.push(r);
+                let r = n_stmt(w, x126);
+                buf125.push(r);
             }
         }
-        w.list(out, std::mem::take(buf110), (&v.body).len());
+        w.list(out, std::mem::take(buf125), (&v.body).len());
     }
 }
 
@@ -2967,15 +3203,15 @@ fn n_pattern(w: &mut Writer, v: &Pattern) -> u32 {
         PatternKind::Object { props, rest } => {
             out.push(1026);
             {
-                let buf112 = &mut Vec::new();
-                for x113 in props {
-                    w_pattern_prop(w, buf112, x113);
+                let buf127 = &mut Vec::new();
+                for x128 in props {
+                    w_pattern_prop(w, buf127, x128);
                 }
-                w.list(out, std::mem::take(buf112), props.len());
+                w.list(out, std::mem::take(buf127), props.len());
             }
             match rest {
-                Some(x114) => {
-                    let r = n_pattern(w, x114);
+                Some(x129) => {
+                    let r = n_pattern(w, x129);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -2984,18 +3220,18 @@ fn n_pattern(w: &mut Writer, v: &Pattern) -> u32 {
         PatternKind::Array { items, rest } => {
             out.push(1027);
             {
-                let buf115 = &mut Vec::new();
-                for x116 in items {
+                let buf130 = &mut Vec::new();
+                for x131 in items {
                     {
-                        let r = n_pattern_item(w, x116);
-                        buf115.push(r);
+                        let r = n_pattern_item(w, x131);
+                        buf130.push(r);
                     }
                 }
-                w.list(out, std::mem::take(buf115), items.len());
+                w.list(out, std::mem::take(buf130), items.len());
             }
             match rest {
-                Some(x117) => {
-                    let r = n_pattern(w, x117);
+                Some(x132) => {
+                    let r = n_pattern(w, x132);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -3016,8 +3252,8 @@ fn w_pattern_prop(w: &mut Writer, out: &mut Vec<u32>, v: &PatternProp) {
         out.push(r);
     }
     match (&v.default) {
-        Some(x118) => {
-            let r = n_expr(w, x118);
+        Some(x133) => {
+            let r = n_expr(w, x133);
             out.push(r);
         }
         None => out.push(0),
@@ -3035,8 +3271,8 @@ fn n_pattern_item(w: &mut Writer, v: &PatternItem) -> u32 {
                 out.push(r);
             }
             match default {
-                Some(x119) => {
-                    let r = n_expr(w, x119);
+                Some(x134) => {
+                    let r = n_expr(w, x134);
                     out.push(r);
                 }
                 None => out.push(0),
@@ -3331,12 +3567,12 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         263 => Some(4),
         264 => Some(4),
         265 => Some(3),
-        266 => Some(11),
+        266 => Some(13),
         267 => Some(3),
         268 => Some(3),
         269 => Some(3),
         270 => Some(2),
-        271 => Some(3),
+        271 => Some(5),
         272 => Some(7),
         273 => Some(4),
         274 => Some(5),
@@ -3345,9 +3581,9 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         277 => Some(5),
         278 => Some(5),
         279 => Some(4),
-        280 => Some(8),
+        280 => Some(9),
         281 => Some(6),
-        282 => Some(4),
+        282 => Some(7),
         283 => Some(4),
         284 => Some(4),
         285 => Some(3),
@@ -3355,6 +3591,7 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         287 => Some(4),
         288 => Some(3),
         289 => Some(4),
+        290 => Some(4),
         512 => Some(2),
         513 => Some(2),
         514 => Some(2),
@@ -3366,15 +3603,17 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         560 => Some(2),
         561 => Some(5),
         562 => Some(2),
-        563 => Some(2),
+        563 => Some(4),
         576 => Some(4),
         577 => Some(4),
         578 => Some(2),
         579 => Some(2),
         592 => Some(5),
         593 => Some(5),
-        594 => Some(2),
+        594 => Some(4),
         595 => Some(3),
+        608 => Some(2),
+        609 => Some(2),
         768 => Some(2),
         769 => Some(3),
         770 => Some(4),
@@ -3383,19 +3622,22 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         773 => Some(4),
         774 => Some(4),
         775 => Some(8),
-        776 => Some(5),
+        776 => Some(6),
         777 => Some(7),
         778 => Some(6),
         779 => Some(2),
         780 => Some(2),
         781 => Some(2),
         782 => Some(2),
-        783 => Some(16),
+        783 => Some(17),
         784 => Some(3),
-        785 => Some(3),
-        786 => Some(11),
+        785 => Some(4),
+        786 => Some(13),
         787 => Some(1),
         788 => Some(1),
+        789 => Some(3),
+        790 => Some(3),
+        791 => Some(2),
         800 => Some(2),
         801 => Some(2),
         1024 => Some(3),
@@ -3411,10 +3653,10 @@ pub const fn node_words(kind: u32) -> Option<usize> {
 fn r_unit(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Unit, ReadError> {
     let name = r.string(c)?;
     let fingerprint_inputs = {
-        let (mut l120, n) = r.list(c, 2)?;
+        let (mut l135, n) = r.list(c, 2)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l120;
+            let c = &mut l135;
             v.push(r.string(c)?);
         }
         v
@@ -3498,10 +3740,10 @@ fn r_type(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Type, ReadErr
         }
         7 => {
             let fields = {
-                let (mut l121, n) = r.list(c, 3)?;
+                let (mut l136, n) = r.list(c, 3)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l121;
+                    let c = &mut l136;
                     v.push(r_shape_field(r, c, limit)?);
                 }
                 v
@@ -3514,10 +3756,10 @@ fn r_type(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Type, ReadErr
         }
         9 => {
             let params = {
-                let (mut l122, n) = r.list(c, 1)?;
+                let (mut l137, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l122;
+                    let c = &mut l137;
                     v.push(TypeRef(c.u()?));
                 }
                 v
@@ -3545,10 +3787,10 @@ fn r_type(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Type, ReadErr
         }
         11 => {
             let members = {
-                let (mut l123, n) = r.list(c, 1)?;
+                let (mut l138, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l123;
+                    let c = &mut l138;
                     v.push(TypeRef(c.u()?));
                 }
                 v
@@ -3600,10 +3842,10 @@ fn r_shape_field(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<ShapeF
 fn r_layout(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Layout, ReadError> {
     let name = StringRef(c.u()?);
     let fields = {
-        let (mut l124, n) = r.list(c, 3)?;
+        let (mut l139, n) = r.list(c, 3)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l124;
+            let c = &mut l139;
             v.push(r_layout_field(r, c, limit)?);
         }
         v
@@ -3663,10 +3905,10 @@ fn r_descriptor(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Descrip
         8 => {
             let layout = LayoutRef(c.u()?);
             let fields = {
-                let (mut l125, n) = r.list(c, 1)?;
+                let (mut l140, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l125;
+                    let c = &mut l140;
                     v.push(DescriptorRef(c.u()?));
                 }
                 v
@@ -3676,10 +3918,10 @@ fn r_descriptor(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Descrip
         9 => {
             let tag = StringRef(c.u()?);
             let variants = {
-                let (mut l126, n) = r.list(c, 2)?;
+                let (mut l141, n) = r.list(c, 2)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l126;
+                    let c = &mut l141;
                     v.push(r_tagged_variant(r, c, limit)?);
                 }
                 v
@@ -3710,10 +3952,10 @@ fn r_decl(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Decl, ReadErr
     let kind = enum_at(DeclKind::ALL, c.u()?)?;
     let owner = FunctionRef(c.u()?);
     let captured_by = {
-        let (mut l127, n) = r.list(c, 1)?;
+        let (mut l142, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l127;
+            let c = &mut l142;
             v.push(FunctionRef(c.u()?));
         }
         v
@@ -3722,6 +3964,7 @@ fn r_decl(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Decl, ReadErr
     let tdz = c.flag()?;
     let ty = TypeRef(c.u()?);
     let span = r_span(r, c, limit)?;
+    let is_static = c.flag()?;
     Ok(Decl {
         name,
         kind,
@@ -3731,6 +3974,7 @@ fn r_decl(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Decl, ReadErr
         tdz,
         ty,
         span,
+        is_static,
     })
 }
 
@@ -3740,14 +3984,15 @@ fn r_function(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Function,
         n => Some(StringRef((n - 1))),
     };
     let kind = enum_at(FunctionKind::ALL, c.u()?)?;
+    let role = enum_at(MethodRole::ALL, c.u()?)?;
     let async_ = c.flag()?;
     let generator = c.flag()?;
     let strict = c.flag()?;
     let params = {
-        let (mut l128, n) = r.list(c, 2)?;
+        let (mut l143, n) = r.list(c, 2)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l128;
+            let c = &mut l143;
             v.push(r_param(r, c, limit)?);
         }
         v
@@ -3759,28 +4004,28 @@ fn r_function(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Function,
     let simple_params = c.flag()?;
     let body = r_block(r, c, limit)?;
     let decls = {
-        let (mut l129, n) = r.list(c, 1)?;
+        let (mut l144, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l129;
+            let c = &mut l144;
             v.push(DeclRef(c.u()?));
         }
         v
     };
     let captures = {
-        let (mut l130, n) = r.list(c, 1)?;
+        let (mut l145, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l130;
+            let c = &mut l145;
             v.push(DeclRef(c.u()?));
         }
         v
     };
     let inner = {
-        let (mut l131, n) = r.list(c, 1)?;
+        let (mut l146, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l131;
+            let c = &mut l146;
             v.push(FunctionRef(c.u()?));
         }
         v
@@ -3801,9 +4046,30 @@ fn r_function(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Function,
         present.then_some(x)
     };
     let span = r_span(r, c, limit)?;
+    let length = c.u()?;
+    let source = r_source_range(r, c, limit)?;
+    let self_ = match c.u()? {
+        0 => None,
+        n => Some(DeclRef((n - 1))),
+    };
+    let arguments_decl = match c.u()? {
+        0 => None,
+        n => Some(DeclRef((n - 1))),
+    };
+    let param_copies = {
+        let (mut l147, n) = r.list(c, 2)?;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            let c = &mut l147;
+            v.push(r_param_copy(r, c, limit)?);
+        }
+        v
+    };
+    let concise = c.flag()?;
     Ok(Function {
         name,
         kind,
+        role,
         async_,
         generator,
         strict,
@@ -3822,7 +4088,25 @@ fn r_function(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Function,
         sig,
         effects,
         span,
+        length,
+        source,
+        self_,
+        arguments_decl,
+        param_copies,
+        concise,
     })
+}
+
+fn r_source_range(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<SourceRange, ReadError> {
+    let start = c.u()?;
+    let end = c.u()?;
+    Ok(SourceRange { start, end })
+}
+
+fn r_param_copy(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<ParamCopy, ReadError> {
+    let from = DeclRef(c.u()?);
+    let to = DeclRef(c.u()?);
+    Ok(ParamCopy { from, to })
 }
 
 fn r_param(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Param, ReadError> {
@@ -3836,10 +4120,10 @@ fn r_param(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Param, ReadE
 
 fn r_signature(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Signature, ReadError> {
     let params = {
-        let (mut l132, n) = r.list(c, 1)?;
+        let (mut l148, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l132;
+            let c = &mut l148;
             v.push(TypeRef(c.u()?));
         }
         v
@@ -3860,19 +4144,19 @@ fn r_signature(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Signatur
 
 fn r_effects(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Effects, ReadError> {
     let reads = {
-        let (mut l133, n) = r.list(c, 1)?;
+        let (mut l149, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l133;
+            let c = &mut l149;
             v.push(DeclRef(c.u()?));
         }
         v
     };
     let writes = {
-        let (mut l134, n) = r.list(c, 1)?;
+        let (mut l150, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l134;
+            let c = &mut l150;
             v.push(DeclRef(c.u()?));
         }
         v
@@ -3898,54 +4182,112 @@ fn r_effects(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Effects, R
 fn r_module(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Module, ReadError> {
     let file = FileRef(c.u()?);
     let top = FunctionRef(c.u()?);
-    let imports = {
-        let (mut l135, n) = r.list(c, 4)?;
+    let requests = {
+        let (mut l151, n) = r.list(c, 4)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l135;
+            let c = &mut l151;
+            v.push(r_module_request(r, c, limit)?);
+        }
+        v
+    };
+    let imports = {
+        let (mut l152, n) = r.list(c, 3)?;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            let c = &mut l152;
             v.push(r_import(r, c, limit)?);
         }
         v
     };
     let exports = {
-        let (mut l136, n) = r.list(c, 2)?;
+        let (mut l153, n) = r.list(c, 2)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l136;
+            let c = &mut l153;
             v.push(r_export(r, c, limit)?);
         }
         v
     };
     let reexports = {
-        let (mut l137, n) = r.list(c, 3)?;
+        let (mut l154, n) = r.list(c, 3)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l137;
+            let c = &mut l154;
             v.push(r_reexport(r, c, limit)?);
         }
         v
     };
+    let star_exports = {
+        let (mut l155, n) = r.list(c, 1)?;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            let c = &mut l155;
+            v.push(c.u()?);
+        }
+        v
+    };
     let dynamic = c.flag()?;
+    let uses_import_meta = c.flag()?;
+    let has_top_level_await = c.flag()?;
     Ok(Module {
         file,
         top,
+        requests,
         imports,
         exports,
         reexports,
+        star_exports,
         dynamic,
+        uses_import_meta,
+        has_top_level_await,
     })
 }
 
+fn r_module_request(
+    r: &Reader<'_>,
+    c: &mut Cur<'_>,
+    limit: usize,
+) -> Result<ModuleRequest, ReadError> {
+    let specifier = StringRef(c.u()?);
+    let has_attributes = c.flag()?;
+    let attributes = {
+        let (mut l156, n) = r.list(c, 2)?;
+        let mut v = Vec::with_capacity(n);
+        for _ in 0..n {
+            let c = &mut l156;
+            v.push(r_import_attribute(r, c, limit)?);
+        }
+        v
+    };
+    Ok(ModuleRequest {
+        specifier,
+        has_attributes,
+        attributes,
+    })
+}
+
+fn r_import_attribute(
+    r: &Reader<'_>,
+    c: &mut Cur<'_>,
+    limit: usize,
+) -> Result<ImportAttribute, ReadError> {
+    let key = StringRef(c.u()?);
+    let value = StringRef(c.u()?);
+    Ok(ImportAttribute { key, value })
+}
+
 fn r_import(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Import, ReadError> {
-    let from = StringRef(c.u()?);
-    let name = StringRef(c.u()?);
+    let request = c.u()?;
+    let name = match c.u()? {
+        0 => None,
+        n => Some(StringRef((n - 1))),
+    };
     let decl = DeclRef(c.u()?);
-    let kind = enum_at(ImportKind::ALL, c.u()?)?;
     Ok(Import {
-        from,
+        request,
         name,
         decl,
-        kind,
     })
 }
 
@@ -3956,16 +4298,13 @@ fn r_export(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Export, Rea
 }
 
 fn r_reexport(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Reexport, ReadError> {
-    let from = StringRef(c.u()?);
+    let request = c.u()?;
     let name = match c.u()? {
         0 => None,
         n => Some(StringRef((n - 1))),
     };
-    let as_ = match c.u()? {
-        0 => None,
-        n => Some(StringRef((n - 1))),
-    };
-    Ok(Reexport { from, name, as_ })
+    let as_ = StringRef(c.u()?);
+    Ok(Reexport { request, name, as_ })
 }
 
 fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
@@ -3988,19 +4327,19 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         260 => ExprKind::Undefined,
         261 => {
             let quasis = {
-                let (mut l138, n) = r.list(c, 1)?;
+                let (mut l157, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l138;
+                    let c = &mut l157;
                     v.push(StringRef(c.u()?));
                 }
                 v
             };
             let exprs = {
-                let (mut l139, n) = r.list(c, 1)?;
+                let (mut l158, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l139;
+                    let c = &mut l158;
                     v.push(rn_expr(r, c.u()?, limit)?);
                 }
                 v
@@ -4011,10 +4350,10 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
             let tag = Box::new(rn_expr(r, c.u()?, limit)?);
             let site = c.u()?;
             let cooked = {
-                let (mut l140, n) = r.list(c, 1)?;
+                let (mut l159, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l140;
+                    let c = &mut l159;
                     v.push(match c.u()? {
                         0 => None,
                         n => Some(StringRef((n - 1))),
@@ -4023,19 +4362,19 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
                 v
             };
             let raw = {
-                let (mut l141, n) = r.list(c, 1)?;
+                let (mut l160, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l141;
+                    let c = &mut l160;
                     v.push(StringRef(c.u()?));
                 }
                 v
             };
             let exprs = {
-                let (mut l142, n) = r.list(c, 1)?;
+                let (mut l161, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l142;
+                    let c = &mut l161;
                     v.push(rn_expr(r, c.u()?, limit)?);
                 }
                 v
@@ -4050,10 +4389,10 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         }
         263 => {
             let items = {
-                let (mut l143, n) = r.list(c, 1)?;
+                let (mut l162, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l143;
+                    let c = &mut l162;
                     v.push(rn_array_item(r, c.u()?, limit)?);
                 }
                 v
@@ -4062,10 +4401,10 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         }
         264 => {
             let props = {
-                let (mut l144, n) = r.list(c, 1)?;
+                let (mut l163, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l144;
+                    let c = &mut l163;
                     v.push(rn_obj_prop(r, c.u()?, limit)?);
                 }
                 v
@@ -4095,7 +4434,9 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         270 => ExprKind::ImportMeta,
         271 => {
             let prop = Box::new(rn_prop_key(r, c.u()?, limit)?);
-            ExprKind::SuperMember { prop }
+            let this = DeclRef(c.u()?);
+            let home = DeclRef(c.u()?);
+            ExprKind::SuperMember { prop, this, home }
         }
         272 => {
             let obj = Box::new(rn_expr(r, c.u()?, limit)?);
@@ -4158,10 +4499,10 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         }
         279 => {
             let exprs = {
-                let (mut l145, n) = r.list(c, 1)?;
+                let (mut l164, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l145;
+                    let c = &mut l164;
                     v.push(rn_expr(r, c.u()?, limit)?);
                 }
                 v
@@ -4171,10 +4512,10 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         280 => {
             let callee = Box::new(rn_expr(r, c.u()?, limit)?);
             let args = {
-                let (mut l146, n) = r.list(c, 1)?;
+                let (mut l165, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l146;
+                    let c = &mut l165;
                     v.push(rn_arg(r, c.u()?, limit)?);
                 }
                 v
@@ -4188,21 +4529,23 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
                 0 => None,
                 n => Some(StringRef((n - 1))),
             };
+            let direct_eval = c.flag()?;
             ExprKind::Call {
                 callee,
                 args,
                 optional,
                 direct,
                 intrinsic,
+                direct_eval,
             }
         }
         281 => {
             let callee = Box::new(rn_expr(r, c.u()?, limit)?);
             let args = {
-                let (mut l147, n) = r.list(c, 1)?;
+                let (mut l166, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l147;
+                    let c = &mut l166;
                     v.push(rn_arg(r, c.u()?, limit)?);
                 }
                 v
@@ -4219,15 +4562,23 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
         }
         282 => {
             let args = {
-                let (mut l148, n) = r.list(c, 1)?;
+                let (mut l167, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l148;
+                    let c = &mut l167;
                     v.push(rn_arg(r, c.u()?, limit)?);
                 }
                 v
             };
-            ExprKind::SuperCall { args }
+            let this = DeclRef(c.u()?);
+            let new_target = DeclRef(c.u()?);
+            let func = DeclRef(c.u()?);
+            ExprKind::SuperCall {
+                args,
+                this,
+                new_target,
+                func,
+            }
         }
         283 => {
             let spec = Box::new(rn_expr(r, c.u()?, limit)?);
@@ -4267,6 +4618,11 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
             let name = DeclRef(c.u()?);
             let obj = Box::new(rn_expr(r, c.u()?, limit)?);
             ExprKind::PrivateIn { name, obj }
+        }
+        290 => {
+            let name = StringRef(c.u()?);
+            let e = Box::new(rn_expr(r, c.u()?, limit)?);
+            ExprKind::Named { name, e }
         }
         _ => return Err(ReadError("a node is not a Expr")),
     };
@@ -4366,7 +4722,9 @@ fn rn_target(r: &Reader<'_>, n: u32, limit: usize) -> Result<Target, ReadError> 
         }
         563 => {
             let prop = Box::new(rn_prop_key(r, c.u()?, limit)?);
-            Target::SuperMember { prop }
+            let this = DeclRef(c.u()?);
+            let home = DeclRef(c.u()?);
+            Target::SuperMember { prop, this, home }
         }
         _ => return Err(ReadError("a node is not a Target")),
     };
@@ -4415,18 +4773,23 @@ fn r_class(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Class, ReadE
         0 => None,
         n => Some(Box::new(rn_expr(r, n, limit)?)),
     };
-    let ctor = match c.u()? {
-        0 => None,
-        n => Some(FunctionRef((n - 1))),
-    };
+    let ctor = FunctionRef(c.u()?);
     let members = {
-        let (mut l149, n) = r.list(c, 1)?;
+        let (mut l168, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l149;
+            let c = &mut l168;
             v.push(rn_class_member(r, c.u()?, limit)?);
         }
         v
+    };
+    let instance_init = match c.u()? {
+        0 => None,
+        n => Some(FunctionRef((n - 1))),
+    };
+    let static_init = match c.u()? {
+        0 => None,
+        n => Some(FunctionRef((n - 1))),
     };
     let layout = match c.u()? {
         0 => None,
@@ -4438,6 +4801,8 @@ fn r_class(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Class, ReadE
         extends,
         ctor,
         members,
+        instance_init,
+        static_init,
         layout,
         span,
     })
@@ -4460,30 +4825,46 @@ fn rn_class_member(r: &Reader<'_>, n: u32, limit: usize) -> Result<ClassMember, 
             }
         }
         593 => {
-            let key = Box::new(rn_prop_key(r, c.u()?, limit)?);
-            let init = match c.u()? {
-                0 => None,
-                n => Some(FunctionRef((n - 1))),
-            };
+            let decl = DeclRef(c.u()?);
+            let fn_ = FunctionRef(c.u()?);
             let static_ = c.flag()?;
-            let ty = TypeRef(c.u()?);
-            ClassMember::Field {
-                key,
-                init,
+            let role = enum_at(MethodRole::ALL, c.u()?)?;
+            ClassMember::PrivateMethod {
+                decl,
+                fn_,
                 static_,
-                ty,
+                role,
             }
         }
         594 => {
-            let fn_ = FunctionRef(c.u()?);
-            ClassMember::StaticBlock { fn_ }
+            let key = Box::new(rn_expr(r, c.u()?, limit)?);
+            let decl = DeclRef(c.u()?);
+            let static_ = c.flag()?;
+            ClassMember::FieldKey { key, decl, static_ }
         }
         595 => {
-            let key = Box::new(rn_prop_key(r, c.u()?, limit)?);
+            let decl = DeclRef(c.u()?);
             let static_ = c.flag()?;
-            ClassMember::AccessorAuto { key, static_ }
+            ClassMember::PrivateField { decl, static_ }
         }
         _ => return Err(ReadError("a node is not a ClassMember")),
+    };
+    Ok(value)
+}
+
+fn rn_field_key(r: &Reader<'_>, n: u32, limit: usize) -> Result<FieldKey, ReadError> {
+    let (index, kind, mut cur) = r.node(n, limit)?;
+    let (c, limit) = (&mut cur, index);
+    let value = match kind {
+        608 => {
+            let name = StringRef(c.u()?);
+            FieldKey::Name { name }
+        }
+        609 => {
+            let decl = DeclRef(c.u()?);
+            FieldKey::Computed { decl }
+        }
+        _ => return Err(ReadError("a node is not a FieldKey")),
     };
     Ok(value)
 }
@@ -4558,10 +4939,10 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
             let body = Box::new(rn_stmt(r, c.u()?, limit)?);
             let label = c.u()?;
             let per_iteration = {
-                let (mut l150, n) = r.list(c, 1)?;
+                let (mut l169, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l150;
+                    let c = &mut l169;
                     v.push(DeclRef(c.u()?));
                 }
                 v
@@ -4577,11 +4958,16 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
         }
         776 => {
             let target = Box::new(rn_for_target(r, c.u()?, limit)?);
+            let init = match c.u()? {
+                0 => None,
+                n => Some(Box::new(rn_expr(r, n, limit)?)),
+            };
             let obj = Box::new(rn_expr(r, c.u()?, limit)?);
             let body = Box::new(rn_stmt(r, c.u()?, limit)?);
             let label = c.u()?;
             StmtKind::ForIn {
                 target,
+                init,
                 obj,
                 body,
                 label,
@@ -4606,10 +4992,10 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
         778 => {
             let disc = Box::new(rn_expr(r, c.u()?, limit)?);
             let cases = {
-                let (mut l151, n) = r.list(c, 3)?;
+                let (mut l170, n) = r.list(c, 3)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l151;
+                    let c = &mut l170;
                     v.push(r_switch_case(r, c, limit)?);
                 }
                 v
@@ -4658,11 +5044,16 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
                 let x = r_block(r, c, limit)?;
                 present.then_some(x)
             };
+            let catch_default = match c.u()? {
+                0 => None,
+                n => Some(Box::new(rn_expr(r, n, limit)?)),
+            };
             StmtKind::Try {
                 body,
                 catch_param,
                 catch_body,
                 finally,
+                catch_default,
             }
         }
         784 => {
@@ -4673,7 +5064,11 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
         785 => {
             let decl = DeclRef(c.u()?);
             let fn_ = FunctionRef(c.u()?);
-            StmtKind::FnDecl { decl, fn_ }
+            let annex_b = match c.u()? {
+                0 => None,
+                n => Some(DeclRef((n - 1))),
+            };
+            StmtKind::FnDecl { decl, fn_, annex_b }
         }
         786 => {
             let decl = DeclRef(c.u()?);
@@ -4682,6 +5077,26 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
         }
         787 => StmtKind::Debugger,
         788 => StmtKind::Empty,
+        789 => {
+            let key = Box::new(rn_field_key(r, c.u()?, limit)?);
+            let value = match c.u()? {
+                0 => None,
+                n => Some(Box::new(rn_expr(r, n, limit)?)),
+            };
+            StmtKind::DefineField { key, value }
+        }
+        790 => {
+            let decl = DeclRef(c.u()?);
+            let value = match c.u()? {
+                0 => None,
+                n => Some(Box::new(rn_expr(r, n, limit)?)),
+            };
+            StmtKind::DefinePrivate { decl, value }
+        }
+        791 => {
+            let fn_ = FunctionRef(c.u()?);
+            StmtKind::StaticBlock { fn_ }
+        }
         _ => return Err(ReadError("a node is not a Stmt")),
     };
     Ok(Stmt {
@@ -4692,19 +5107,19 @@ fn rn_stmt(r: &Reader<'_>, n: u32, limit: usize) -> Result<Stmt, ReadError> {
 
 fn r_block(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Block, ReadError> {
     let stmts = {
-        let (mut l152, n) = r.list(c, 1)?;
+        let (mut l171, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l152;
+            let c = &mut l171;
             v.push(rn_stmt(r, c.u()?, limit)?);
         }
         v
     };
     let decls = {
-        let (mut l153, n) = r.list(c, 1)?;
+        let (mut l172, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l153;
+            let c = &mut l172;
             v.push(DeclRef(c.u()?));
         }
         v
@@ -4718,10 +5133,10 @@ fn r_switch_case(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Switch
         n => Some(Box::new(rn_expr(r, n, limit)?)),
     };
     let body = {
-        let (mut l154, n) = r.list(c, 1)?;
+        let (mut l173, n) = r.list(c, 1)?;
         let mut v = Vec::with_capacity(n);
         for _ in 0..n {
-            let c = &mut l154;
+            let c = &mut l173;
             v.push(rn_stmt(r, c.u()?, limit)?);
         }
         v
@@ -4760,10 +5175,10 @@ fn rn_pattern(r: &Reader<'_>, n: u32, limit: usize) -> Result<Pattern, ReadError
         }
         1026 => {
             let props = {
-                let (mut l155, n) = r.list(c, 3)?;
+                let (mut l174, n) = r.list(c, 3)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l155;
+                    let c = &mut l174;
                     v.push(r_pattern_prop(r, c, limit)?);
                 }
                 v
@@ -4776,10 +5191,10 @@ fn rn_pattern(r: &Reader<'_>, n: u32, limit: usize) -> Result<Pattern, ReadError
         }
         1027 => {
             let items = {
-                let (mut l156, n) = r.list(c, 1)?;
+                let (mut l175, n) = r.list(c, 1)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
-                    let c = &mut l156;
+                    let c = &mut l175;
                     v.push(rn_pattern_item(r, c.u()?, limit)?);
                 }
                 v
@@ -5581,6 +5996,7 @@ fn d_decl(d: &mut Dumper<'_>, v: &Decl, ind: usize, head: String) {
             format!("{}:{}-{}", (&v.span).file.0, (&v.span).start, (&v.span).end)
         ));
     }
+    parts.push(format!("isStatic:{}", (&v.is_static).to_string()));
     d.record(
         ind,
         if head.is_empty() {
@@ -5600,6 +6016,7 @@ fn d_function(d: &mut Dumper<'_>, v: &Function, ind: usize, head: String) {
         parts.push(format!("name:{}", d.string(*x)));
     }
     parts.push(format!("kind:{}", (&v.kind).as_str().to_string()));
+    parts.push(format!("role:{}", (&v.role).as_str().to_string()));
     parts.push(format!("async:{}", (&v.async_).to_string()));
     parts.push(format!("generator:{}", (&v.generator).to_string()));
     parts.push(format!("strict:{}", (&v.strict).to_string()));
@@ -5705,10 +6122,75 @@ fn d_function(d: &mut Dumper<'_>, v: &Function, ind: usize, head: String) {
             format!("{}:{}-{}", (&v.span).file.0, (&v.span).start, (&v.span).end)
         ));
     }
+    parts.push(format!("length:{}", (&v.length).to_string()));
+    children.push((
+        "source",
+        Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+            d_source_range(d, (&v.source), ind, String::new())
+        })),
+    ));
+    if let Some(x) = (&v.self_) {
+        parts.push(format!("self:{}", format!("#{}", x.0)));
+    }
+    if let Some(x) = (&v.arguments_decl) {
+        parts.push(format!("argumentsDecl:{}", format!("#{}", x.0)));
+    }
+    if (&v.param_copies).is_empty() {
+        parts.push("paramCopies:[]".to_string());
+    } else {
+        children.push((
+            "paramCopies",
+            Child::Many(
+                (&v.param_copies)
+                    .iter()
+                    .map(|x| -> Box<dyn Fn(&mut Dumper<'_>, usize) + '_> {
+                        Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                            d_param_copy(d, x, ind, String::new())
+                        })
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    parts.push(format!("concise:{}", (&v.concise).to_string()));
     d.record(
         ind,
         if head.is_empty() {
             "Function".to_string()
+        } else {
+            head
+        },
+        parts,
+        children,
+    );
+}
+
+fn d_source_range(d: &mut Dumper<'_>, v: &SourceRange, ind: usize, head: String) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut children: Vec<(&str, Child<'_>)> = Vec::new();
+    parts.push(format!("start:{}", (&v.start).to_string()));
+    parts.push(format!("end:{}", (&v.end).to_string()));
+    d.record(
+        ind,
+        if head.is_empty() {
+            "SourceRange".to_string()
+        } else {
+            head
+        },
+        parts,
+        children,
+    );
+}
+
+fn d_param_copy(d: &mut Dumper<'_>, v: &ParamCopy, ind: usize, head: String) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut children: Vec<(&str, Child<'_>)> = Vec::new();
+    parts.push(format!("from:{}", format!("#{}", (&v.from).0)));
+    parts.push(format!("to:{}", format!("#{}", (&v.to).0)));
+    d.record(
+        ind,
+        if head.is_empty() {
+            "ParamCopy".to_string()
         } else {
             head
         },
@@ -5825,6 +6307,23 @@ fn d_module(d: &mut Dumper<'_>, v: &Module, ind: usize, head: String) {
     let mut children: Vec<(&str, Child<'_>)> = Vec::new();
     parts.push(format!("file:{}", format!("#{}", (&v.file).0)));
     parts.push(format!("top:{}", format!("#{}", (&v.top).0)));
+    if (&v.requests).is_empty() {
+        parts.push("requests:[]".to_string());
+    } else {
+        children.push((
+            "requests",
+            Child::Many(
+                (&v.requests)
+                    .iter()
+                    .map(|x| -> Box<dyn Fn(&mut Dumper<'_>, usize) + '_> {
+                        Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                            d_module_request(d, x, ind, String::new())
+                        })
+                    })
+                    .collect(),
+            ),
+        ));
+    }
     if (&v.imports).is_empty() {
         parts.push("imports:[]".to_string());
     } else {
@@ -5876,7 +6375,26 @@ fn d_module(d: &mut Dumper<'_>, v: &Module, ind: usize, head: String) {
             ),
         ));
     }
+    parts.push(format!(
+        "starExports:{}",
+        format!(
+            "[{}]",
+            (&v.star_exports)
+                .iter()
+                .map(|x| x.to_string())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+    ));
     parts.push(format!("dynamic:{}", (&v.dynamic).to_string()));
+    parts.push(format!(
+        "usesImportMeta:{}",
+        (&v.uses_import_meta).to_string()
+    ));
+    parts.push(format!(
+        "hasTopLevelAwait:{}",
+        (&v.has_top_level_await).to_string()
+    ));
     d.record(
         ind,
         if head.is_empty() {
@@ -5889,13 +6407,65 @@ fn d_module(d: &mut Dumper<'_>, v: &Module, ind: usize, head: String) {
     );
 }
 
+fn d_module_request(d: &mut Dumper<'_>, v: &ModuleRequest, ind: usize, head: String) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut children: Vec<(&str, Child<'_>)> = Vec::new();
+    parts.push(format!("specifier:{}", d.string(*(&v.specifier))));
+    parts.push(format!("hasAttributes:{}", (&v.has_attributes).to_string()));
+    if (&v.attributes).is_empty() {
+        parts.push("attributes:[]".to_string());
+    } else {
+        children.push((
+            "attributes",
+            Child::Many(
+                (&v.attributes)
+                    .iter()
+                    .map(|x| -> Box<dyn Fn(&mut Dumper<'_>, usize) + '_> {
+                        Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                            d_import_attribute(d, x, ind, String::new())
+                        })
+                    })
+                    .collect(),
+            ),
+        ));
+    }
+    d.record(
+        ind,
+        if head.is_empty() {
+            "ModuleRequest".to_string()
+        } else {
+            head
+        },
+        parts,
+        children,
+    );
+}
+
+fn d_import_attribute(d: &mut Dumper<'_>, v: &ImportAttribute, ind: usize, head: String) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut children: Vec<(&str, Child<'_>)> = Vec::new();
+    parts.push(format!("key:{}", d.string(*(&v.key))));
+    parts.push(format!("value:{}", d.string(*(&v.value))));
+    d.record(
+        ind,
+        if head.is_empty() {
+            "ImportAttribute".to_string()
+        } else {
+            head
+        },
+        parts,
+        children,
+    );
+}
+
 fn d_import(d: &mut Dumper<'_>, v: &Import, ind: usize, head: String) {
     let mut parts: Vec<String> = Vec::new();
     let mut children: Vec<(&str, Child<'_>)> = Vec::new();
-    parts.push(format!("from:{}", d.string(*(&v.from))));
-    parts.push(format!("name:{}", d.string(*(&v.name))));
+    parts.push(format!("request:{}", (&v.request).to_string()));
+    if let Some(x) = (&v.name) {
+        parts.push(format!("name:{}", d.string(*x)));
+    }
     parts.push(format!("decl:{}", format!("#{}", (&v.decl).0)));
-    parts.push(format!("kind:{}", (&v.kind).as_str().to_string()));
     d.record(
         ind,
         if head.is_empty() {
@@ -5928,13 +6498,11 @@ fn d_export(d: &mut Dumper<'_>, v: &Export, ind: usize, head: String) {
 fn d_reexport(d: &mut Dumper<'_>, v: &Reexport, ind: usize, head: String) {
     let mut parts: Vec<String> = Vec::new();
     let mut children: Vec<(&str, Child<'_>)> = Vec::new();
-    parts.push(format!("from:{}", d.string(*(&v.from))));
+    parts.push(format!("request:{}", (&v.request).to_string()));
     if let Some(x) = (&v.name) {
         parts.push(format!("name:{}", d.string(*x)));
     }
-    if let Some(x) = (&v.as_) {
-        parts.push(format!("as:{}", d.string(*x)));
-    }
+    parts.push(format!("as:{}", d.string(*(&v.as_))));
     d.record(
         ind,
         if head.is_empty() {
@@ -6118,13 +6686,15 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             "newTarget"
         }
         ExprKind::ImportMeta => "importMeta",
-        ExprKind::SuperMember { prop } => {
+        ExprKind::SuperMember { prop, this, home } => {
             children.push((
                 "prop",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
                     d_prop_key(d, prop, ind, String::new())
                 })),
             ));
+            parts.push(format!("this:{}", format!("#{}", this.0)));
+            parts.push(format!("home:{}", format!("#{}", home.0)));
             "superMember"
         }
         ExprKind::Member {
@@ -6280,6 +6850,7 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             optional,
             direct,
             intrinsic,
+            direct_eval,
         } => {
             children.push((
                 "callee",
@@ -6314,6 +6885,7 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
                     parts.push(format!("intrinsic:{}", d.string(*x)));
                 }
             }
+            parts.push(format!("directEval:{}", direct_eval.to_string()));
             "call"
         }
         ExprKind::New {
@@ -6350,7 +6922,12 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             }
             "new"
         }
-        ExprKind::SuperCall { args } => {
+        ExprKind::SuperCall {
+            args,
+            this,
+            new_target,
+            func,
+        } => {
             if args.is_empty() {
                 parts.push("args:[]".to_string());
             } else {
@@ -6367,6 +6944,9 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
                     ),
                 ));
             }
+            parts.push(format!("this:{}", format!("#{}", this.0)));
+            parts.push(format!("newTarget:{}", format!("#{}", new_target.0)));
+            parts.push(format!("func:{}", format!("#{}", func.0)));
             "superCall"
         }
         ExprKind::Import { spec, options } => {
@@ -6440,6 +7020,16 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
                 })),
             ));
             "privateIn"
+        }
+        ExprKind::Named { name, e } => {
+            parts.push(format!("name:{}", d.string(*name)));
+            children.push((
+                "e",
+                Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                    d_expr(d, e, ind, String::new())
+                })),
+            ));
+            "named"
         }
     };
     if !((&v.ty).0 == 0) {
@@ -6599,13 +7189,15 @@ fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
             ));
             "pattern"
         }
-        Target::SuperMember { prop } => {
+        Target::SuperMember { prop, this, home } => {
             children.push((
                 "prop",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
                     d_prop_key(d, prop, ind, String::new())
                 })),
             ));
+            parts.push(format!("this:{}", format!("#{}", this.0)));
+            parts.push(format!("home:{}", format!("#{}", home.0)));
             "superMember"
         }
     };
@@ -6693,9 +7285,7 @@ fn d_class(d: &mut Dumper<'_>, v: &Class, ind: usize, head: String) {
             })),
         ));
     }
-    if let Some(x) = (&v.ctor) {
-        parts.push(format!("ctor:{}", format!("#{}", x.0)));
-    }
+    parts.push(format!("ctor:{}", format!("#{}", (&v.ctor).0)));
     if (&v.members).is_empty() {
         parts.push("members:[]".to_string());
     } else {
@@ -6712,6 +7302,12 @@ fn d_class(d: &mut Dumper<'_>, v: &Class, ind: usize, head: String) {
                     .collect(),
             ),
         ));
+    }
+    if let Some(x) = (&v.instance_init) {
+        parts.push(format!("instanceInit:{}", format!("#{}", x.0)));
+    }
+    if let Some(x) = (&v.static_init) {
+        parts.push(format!("staticInit:{}", format!("#{}", x.0)));
     }
     if !((&v.layout).is_none()) {
         if let Some(x) = (&v.layout) {
@@ -6757,40 +7353,54 @@ fn d_class_member(d: &mut Dumper<'_>, v: &ClassMember, ind: usize, head: String)
             parts.push(format!("role:{}", role.as_str().to_string()));
             "method"
         }
-        ClassMember::Field {
-            key,
-            init,
+        ClassMember::PrivateMethod {
+            decl,
+            fn_,
             static_,
-            ty,
+            role,
         } => {
-            children.push((
-                "key",
-                Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
-                    d_prop_key(d, key, ind, String::new())
-                })),
-            ));
-            if let Some(x) = init {
-                parts.push(format!("init:{}", format!("#{}", x.0)));
-            }
-            parts.push(format!("static:{}", static_.to_string()));
-            if !(ty.0 == 0) {
-                parts.push(format!("ty:{}", format!("#{}", ty.0)));
-            }
-            "field"
-        }
-        ClassMember::StaticBlock { fn_ } => {
+            parts.push(format!("decl:{}", format!("#{}", decl.0)));
             parts.push(format!("fn:{}", format!("#{}", fn_.0)));
-            "staticBlock"
+            parts.push(format!("static:{}", static_.to_string()));
+            parts.push(format!("role:{}", role.as_str().to_string()));
+            "privateMethod"
         }
-        ClassMember::AccessorAuto { key, static_ } => {
+        ClassMember::FieldKey { key, decl, static_ } => {
             children.push((
                 "key",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
-                    d_prop_key(d, key, ind, String::new())
+                    d_expr(d, key, ind, String::new())
                 })),
             ));
+            parts.push(format!("decl:{}", format!("#{}", decl.0)));
             parts.push(format!("static:{}", static_.to_string()));
-            "accessorAuto"
+            "fieldKey"
+        }
+        ClassMember::PrivateField { decl, static_ } => {
+            parts.push(format!("decl:{}", format!("#{}", decl.0)));
+            parts.push(format!("static:{}", static_.to_string()));
+            "privateField"
+        }
+    };
+    let head = if head.is_empty() {
+        kind.to_string()
+    } else {
+        format!("{head} {kind}")
+    };
+    d.record(ind, head, parts, children);
+}
+
+fn d_field_key(d: &mut Dumper<'_>, v: &FieldKey, ind: usize, head: String) {
+    let mut parts: Vec<String> = Vec::new();
+    let mut children: Vec<(&str, Child<'_>)> = Vec::new();
+    let kind = match v {
+        FieldKey::Name { name } => {
+            parts.push(format!("name:{}", d.string(*name)));
+            "name"
+        }
+        FieldKey::Computed { decl } => {
+            parts.push(format!("decl:{}", format!("#{}", decl.0)));
+            "computed"
         }
     };
     let head = if head.is_empty() {
@@ -6966,6 +7576,7 @@ fn d_stmt(d: &mut Dumper<'_>, v: &Stmt, ind: usize, head: String) {
         }
         StmtKind::ForIn {
             target,
+            init,
             obj,
             body,
             label,
@@ -6976,6 +7587,14 @@ fn d_stmt(d: &mut Dumper<'_>, v: &Stmt, ind: usize, head: String) {
                     d_for_target(d, target, ind, String::new())
                 })),
             ));
+            if let Some(x) = init {
+                children.push((
+                    "init",
+                    Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                        d_expr(d, x, ind, String::new())
+                    })),
+                ));
+            }
             children.push((
                 "obj",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
@@ -7092,6 +7711,7 @@ fn d_stmt(d: &mut Dumper<'_>, v: &Stmt, ind: usize, head: String) {
             catch_param,
             catch_body,
             finally,
+            catch_default,
         } => {
             children.push((
                 "body",
@@ -7123,6 +7743,14 @@ fn d_stmt(d: &mut Dumper<'_>, v: &Stmt, ind: usize, head: String) {
                     })),
                 ));
             }
+            if let Some(x) = catch_default {
+                children.push((
+                    "catchDefault",
+                    Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                        d_expr(d, x, ind, String::new())
+                    })),
+                ));
+            }
             "try"
         }
         StmtKind::Labeled { label, body } => {
@@ -7135,9 +7763,12 @@ fn d_stmt(d: &mut Dumper<'_>, v: &Stmt, ind: usize, head: String) {
             ));
             "labeled"
         }
-        StmtKind::FnDecl { decl, fn_ } => {
+        StmtKind::FnDecl { decl, fn_, annex_b } => {
             parts.push(format!("decl:{}", format!("#{}", decl.0)));
             parts.push(format!("fn:{}", format!("#{}", fn_.0)));
+            if let Some(x) = annex_b {
+                parts.push(format!("annexB:{}", format!("#{}", x.0)));
+            }
             "fnDecl"
         }
         StmtKind::ClassDecl { decl, cls } => {
@@ -7152,6 +7783,39 @@ fn d_stmt(d: &mut Dumper<'_>, v: &Stmt, ind: usize, head: String) {
         }
         StmtKind::Debugger => "debugger",
         StmtKind::Empty => "empty",
+        StmtKind::DefineField { key, value } => {
+            children.push((
+                "key",
+                Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                    d_field_key(d, key, ind, String::new())
+                })),
+            ));
+            if let Some(x) = value {
+                children.push((
+                    "value",
+                    Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                        d_expr(d, x, ind, String::new())
+                    })),
+                ));
+            }
+            "defineField"
+        }
+        StmtKind::DefinePrivate { decl, value } => {
+            parts.push(format!("decl:{}", format!("#{}", decl.0)));
+            if let Some(x) = value {
+                children.push((
+                    "value",
+                    Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
+                        d_expr(d, x, ind, String::new())
+                    })),
+                ));
+            }
+            "definePrivate"
+        }
+        StmtKind::StaticBlock { fn_ } => {
+            parts.push(format!("fn:{}", format!("#{}", fn_.0)));
+            "staticBlock"
+        }
     };
     if d.spans {
         parts.push(format!(
@@ -7569,7 +8233,7 @@ fn s_expr(v: &mut Expr) {
         ExprKind::This { decl } => {}
         ExprKind::NewTarget { decl } => {}
         ExprKind::ImportMeta => {}
-        ExprKind::SuperMember { prop } => {
+        ExprKind::SuperMember { prop, this, home } => {
             s_prop_key(prop);
         }
         ExprKind::Member {
@@ -7619,6 +8283,7 @@ fn s_expr(v: &mut Expr) {
             optional,
             direct,
             intrinsic,
+            direct_eval,
         } => {
             s_expr(callee);
             for x in args.iter_mut() {
@@ -7638,7 +8303,12 @@ fn s_expr(v: &mut Expr) {
             }
             *direct = None;
         }
-        ExprKind::SuperCall { args } => {
+        ExprKind::SuperCall {
+            args,
+            this,
+            new_target,
+            func,
+        } => {
             for x in args.iter_mut() {
                 s_arg(x);
             }
@@ -7666,6 +8336,9 @@ fn s_expr(v: &mut Expr) {
         }
         ExprKind::PrivateIn { name, obj } => {
             s_expr(obj);
+        }
+        ExprKind::Named { name, e } => {
+            s_expr(e);
         }
     }
     *(&mut v.ty) = TypeRef(0);
@@ -7721,7 +8394,7 @@ fn s_target(v: &mut Target) {
         Target::Pattern { p } => {
             s_pattern(p);
         }
-        Target::SuperMember { prop } => {
+        Target::SuperMember { prop, this, home } => {
             s_prop_key(prop);
         }
     }
@@ -7769,19 +8442,16 @@ fn s_class_member(v: &mut ClassMember) {
         } => {
             s_prop_key(key);
         }
-        ClassMember::Field {
-            key,
-            init,
+        ClassMember::PrivateMethod {
+            decl,
+            fn_,
             static_,
-            ty,
-        } => {
-            s_prop_key(key);
-            *ty = TypeRef(0);
+            role,
+        } => {}
+        ClassMember::FieldKey { key, decl, static_ } => {
+            s_expr(key);
         }
-        ClassMember::StaticBlock { fn_ } => {}
-        ClassMember::AccessorAuto { key, static_ } => {
-            s_prop_key(key);
-        }
+        ClassMember::PrivateField { decl, static_ } => {}
     }
 }
 
@@ -7842,11 +8512,15 @@ fn s_stmt(v: &mut Stmt) {
         }
         StmtKind::ForIn {
             target,
+            init,
             obj,
             body,
             label,
         } => {
             s_for_target(target);
+            if let Some(x) = init.as_mut() {
+                s_expr(x);
+            }
             s_expr(obj);
             s_stmt(body);
         }
@@ -7890,6 +8564,7 @@ fn s_stmt(v: &mut Stmt) {
             catch_param,
             catch_body,
             finally,
+            catch_default,
         } => {
             s_block(body);
             if let Some(x) = catch_param.as_mut() {
@@ -7901,16 +8576,30 @@ fn s_stmt(v: &mut Stmt) {
             if let Some(x) = finally.as_mut() {
                 s_block(x);
             }
+            if let Some(x) = catch_default.as_mut() {
+                s_expr(x);
+            }
         }
         StmtKind::Labeled { label, body } => {
             s_stmt(body);
         }
-        StmtKind::FnDecl { decl, fn_ } => {}
+        StmtKind::FnDecl { decl, fn_, annex_b } => {}
         StmtKind::ClassDecl { decl, cls } => {
             s_class(cls);
         }
         StmtKind::Debugger => {}
         StmtKind::Empty => {}
+        StmtKind::DefineField { key, value } => {
+            if let Some(x) = value.as_mut() {
+                s_expr(x);
+            }
+        }
+        StmtKind::DefinePrivate { decl, value } => {
+            if let Some(x) = value.as_mut() {
+                s_expr(x);
+            }
+        }
+        StmtKind::StaticBlock { fn_ } => {}
     }
 }
 

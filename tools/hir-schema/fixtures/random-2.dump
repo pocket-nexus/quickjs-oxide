@@ -26,24 +26,27 @@ layout #2 name:#4?
     LayoutField name:"\udfff\u0000\"" ty:#3 readonly:false
 descriptor #0 nominal base:#1 name:"\udfff\u0000\""
 descriptor #1 null
-decl #0 name:"é" kind:function owner:#4 capturedBy:[] assigned:false tdz:true ty:#2
-decl #1 name:"é" kind:this owner:#0 capturedBy:[#3 #3] assigned:true tdz:true ty:#3
-module #0 file:#4 top:#0 exports:[] dynamic:false
+decl #0 name:"é" kind:catch owner:#4 capturedBy:[] assigned:false tdz:true ty:#2 isStatic:true
+decl #1 name:"_\n\ud800\u0000" kind:var owner:#3 capturedBy:[#3 #1 #1] assigned:false tdz:true isStatic:false
+module #0 file:#2 top:#3 starExports:[821] dynamic:true usesImportMeta:true hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:" Z" hasAttributes:false attributes:[]
+    ModuleRequest specifier:"é" hasAttributes:false attributes:[]
+    ModuleRequest specifier:" Z" hasAttributes:true attributes:[]
   imports:
-    Import from:" Z" name:"_\n\ud800\u0000" decl:#4 kind:namespace
-    Import from:" Z" name:"é" decl:#4 kind:namespace
-  reexports:
-    Reexport from:" Z"
-    Reexport from:" Z"
-module #1 file:#1 top:#1 dynamic:false
-  imports:
-    Import from:" Z" name:" Z" decl:#1 kind:value
-    Import from:"\udfff\u0000\"" name:#4? decl:#0 kind:default
-    Import from:"\udfff\u0000\"" name:#4? decl:#1 kind:value
+    Import request:7 decl:#2
+    Import request:1 decl:#4
   exports:
-    Export name:#4? decl:#1
-    Export name:" Z" decl:#4
+    Export name:" Z" decl:#1
+    Export name:"é" decl:#1
   reexports:
-    Reexport from:"\udfff\u0000\""
-    Reexport from:" Z"
-    Reexport from:#4?
+    Reexport request:189 as:"\udfff\u0000\""
+    Reexport request:1 as:"\udfff\u0000\""
+    Reexport request:739 as:"\udfff\u0000\""
+module #1 file:#4 top:#2 exports:[] reexports:[] starExports:[7 1] dynamic:false usesImportMeta:true hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:"é" hasAttributes:true attributes:[]
+    ModuleRequest specifier:"\udfff\u0000\"" hasAttributes:true attributes:[]
+    ModuleRequest specifier:"\udfff\u0000\"" hasAttributes:false attributes:[]
+  imports:
+    Import request:282 decl:#0

@@ -26,5 +26,59 @@ layout #2 name:#4?
 descriptor #0 tagged tag:#4? variants:[]
 descriptor #1 number repr:i8 max:9.007199254740994e15
 descriptor #2 nominal base:#3 name:""
-decl #0 name:#4? kind:let owner:#4 capturedBy:[] assigned:true tdz:true ty:#2 span:1:7-0
-decl #1 name:#4? kind:newTarget owner:#1 capturedBy:[] assigned:true tdz:false ty:#1 span:0:7-0
+decl #0 name:#4? kind:const owner:#4 capturedBy:[] assigned:true tdz:true ty:#2 span:1:7-0 isStatic:false
+decl #1 name:#4? kind:catch owner:#0 capturedBy:[#4] assigned:true tdz:true ty:#3 span:2:0-0 isStatic:true
+fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:false decls:[#1 #1 #0] captures:[#1 #4 #2] inner:[#3] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false span:3:0-7 length:65536 self:#2 argumentsDecl:#3 paramCopies:[] concise:true
+  params:
+    Param
+      pattern:
+        decl decl:#4 ty:#4 span:0:0-1
+    Param
+      pattern:
+        decl decl:#3 ty:#4 span:0:250-65536
+    Param
+      pattern:
+        decl decl:#1 span:0:7-287
+  body:
+    Block decls:[]
+      stmts:
+        declare decl:#3 span:3:1-1
+        declare decl:#1 span:4:0-0
+  source:
+    SourceRange start:1 end:0
+fn #1 name:"" kind:staticBlock role:method async:false generator:true strict:false simpleParams:false decls:[] captures:[] inner:[#3] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false span:3:7-0 length:65536 argumentsDecl:#0 concise:false
+  params:
+    Param
+      pattern:
+        decl decl:#0 span:0:0-1
+    Param
+      pattern:
+        decl decl:#3 ty:#1 span:0:998-14
+    Param
+      pattern:
+        decl decl:#0 ty:#1 span:3:1-0
+  body:
+    Block decls:[#3 #0]
+      stmts:
+        declare decl:#2 span:0:65536-0
+  effects:
+    Effects reads:[#0 #4 #2] writes:[#1 #0] heapReads:true heapWrites:false allocates:true mayThrow:true maySuspend:false calls:known
+  source:
+    SourceRange start:203 end:0
+  paramCopies:
+    ParamCopy from:#4 to:#1
+    ParamCopy from:#4 to:#4
+    ParamCopy from:#3 to:#2
+module #0 file:#1 top:#0 exports:[] starExports:[1 65536 0] dynamic:false usesImportMeta:true hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:"\"Z" hasAttributes:true attributes:[]
+    ModuleRequest specifier:" \n " hasAttributes:false attributes:[]
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
+  imports:
+    Import request:0 decl:#2
+    Import request:327 decl:#3
+    Import request:0 decl:#3
+  reexports:
+    Reexport request:0 as:"\"Z"
+    Reexport request:7 as:" \n "
+    Reexport request:65536 as:" \n "

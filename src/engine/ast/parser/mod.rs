@@ -17,6 +17,7 @@ mod objects;
 mod patterns;
 mod statements;
 mod support;
+pub(crate) use support::syntax_atom_error_without_span;
 #[cfg(test)]
 mod tests;
 
