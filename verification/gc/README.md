@@ -249,6 +249,27 @@ The production for-loop uses a positive WeakMap branch instead of `continue`,
 which the pinned verifier cannot translate in a for-loop. Ghost snapshots,
 invariants and proof blocks leave the selected executable statements unchanged.
 
+### Symbol tracing
+
+`scripts/verification/symbol.py` composes the actual `Heap::mark_symbol` body
+with the verified arena, Value and waiting-table operations. For either value
+of `EPHEMERONS`, in both normal and stress configurations, first marking appends
+exactly the activated waiting values followed by the description String value
+(unless there is no description). Repeated marking appends nothing. Only the
+selected symbol mark and, when enabled, its waiting bucket may change; symbol
+records and all remaining heap fields are preserved. The contract requires a
+live symbol, valid arena bitmaps and a valid waiting table. It does not yet
+establish the caller's graph invariant or verify the entire drain dispatch.
+
+The source uses `Vec::append` for activation, whose library specification is
+supported by the pinned verifier. Mutations lose the description, lose activated
+values, repeat outgoing edges, use the wrong description kind, or directly mark
+the description instead of queueing it. The last mutation reproduces the
+previous rope bug's marking shape and must fail even when the description's
+string index is assumed live. All are rejected by proof failures, not compiler
+errors. The runner reads the Rust edition from the workspace manifest and
+records it and the manifest hash in the receipt.
+
 The runner rejects local `assume`, `assume_specification`, `admit`, external
 body/type/trait/function specifications, and uninterpreted/axiomatic escapes.
 This does not eliminate the trusted base: Verus, its

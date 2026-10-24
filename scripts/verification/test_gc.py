@@ -144,6 +144,11 @@ class ProofSourceTests(unittest.TestCase):
             heap, (gc.ROOT / "core/src/heap/object.rs").read_text(),
             gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()), scan)
         gc.reject_trust_escapes(weakpass)
+        symbol = gc.symbol_proofs.proof((gc.ROOT / "core/src/heap/mod.rs").read_text(),
+            heap, (gc.ROOT / "core/src/heap/object.rs").read_text(),
+            (gc.ROOT / "core/src/heap/symbol.rs").read_text(),
+            gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()), scan)
+        gc.reject_trust_escapes(symbol)
 
     def test_completeness_does_not_count_conditional_or_tested_code(self):
         obligations = [

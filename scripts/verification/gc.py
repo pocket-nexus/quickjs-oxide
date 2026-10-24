@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import tomllib
 import urllib.request
 import zipfile
 
@@ -18,6 +19,7 @@ import arena as arena_proofs
 import roots as root_proofs
 import scan as scan_proofs
 import source as source_frontend
+import symbol as symbol_proofs
 import value as value_proofs
 import waiters as waiter_proofs
 import weakpass as weakpass_proofs
@@ -25,6 +27,7 @@ import weakpass as weakpass_proofs
 ROOT = Path(__file__).resolve().parents[2]
 PROOFS = ROOT / "verification/gc"
 PIN = json.loads((PROOFS / "toolchain.json").read_text())
+EDITION = str(tomllib.loads((ROOT / "Cargo.toml").read_text())["workspace"]["package"]["edition"])
 
 
 def function(source, name):
@@ -134,7 +137,7 @@ def install(directory):
 
 def checked_run(verus, path, timeout, expect_failure=False, flags=()):
     started = time.monotonic()
-    result = subprocess.run([str(verus), str(path), "--triggers-mode", "silent", *flags],
+    result = subprocess.run([str(verus), str(path), "--edition", EDITION, "--triggers-mode", "silent", *flags],
                             text=True, capture_output=True, timeout=timeout)
     output = result.stdout + result.stderr
     match = re.search(r"verification results:: (\d+) verified, (\d+) errors", output)
@@ -188,7 +191,7 @@ def main():
     version = subprocess.check_output([str(binary), "--version"], text=True)
     if f"Version: {PIN['version']}" not in version:
         parser.error(f"expected pinned Verus {PIN['version']}, got {version}")
-    receipt = {"version": version, "source_commit": subprocess.check_output(
+    receipt = {"version": version, "edition": EDITION, "source_commit": subprocess.check_output(
         ["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(), "checks": [], "sha256": {}}
     receipt["obligations"] = json.loads((PROOFS / "obligations.json").read_text())
     receipt["open_obligations"] = open_obligations(receipt["obligations"])
@@ -196,8 +199,9 @@ def main():
     receipt["dirty"] = bool(subprocess.check_output(
         ["git", "status", "--porcelain"], cwd=ROOT, text=True).strip())
     paths = {item["implementation"] for item in receipt["obligations"]}
-    paths.update(["core/src/heap/gc_audit.rs", "core/src/heap/gc_tests.rs",
+    paths.update(["Cargo.toml", "core/src/heap/gc_audit.rs", "core/src/heap/gc_tests.rs",
                   "core/src/heap/mod.rs", "core/src/heap/object.rs",
+                  "core/src/heap/symbol.rs",
                   "core/src/vm/regexp.rs", "verification/gc/driver.rs.in",
                   "verification/gc/obligations.json", "verification/gc/toolchain.json",
                   "scripts/verification/gc.py"])
@@ -233,8 +237,12 @@ def main():
         weakpass = directory / "weakpass.rs"
         weakpass.write_text(weakpass_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
             gc_source, (ROOT / "core/src/heap/object.rs").read_text(), arena.read_text(), scan.read_text()))
+        symbol = directory / "symbol.rs"
+        symbol.write_text(symbol_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
+            gc_source, (ROOT / "core/src/heap/object.rs").read_text(),
+            (ROOT / "core/src/heap/symbol.rs").read_text(), arena.read_text(), scan.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
-                   generated, driver, roots, value, arena, waiters, scan, weakpass]
+                   generated, driver, roots, value, arena, waiters, scan, weakpass, symbol]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -245,6 +253,8 @@ def main():
         receipt["checks"].append(checked_run(binary, waiters, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["checks"].append(checked_run(binary, scan, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
+        receipt["checks"].append(checked_run(binary, symbol, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["sha256"]["gc_kernel.rs"] = hashlib.sha256(kernel.encode()).hexdigest()
         if args.mutations:
@@ -265,6 +275,13 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "symbol_lost_description": (symbol,
+                    "stack.push(Value::string(crate::StringId(description)));", ""),
+                "symbol_lost_activation": (symbol, "stack.append(&mut values);", "values.clear();"),
+                "symbol_repeats_edges": (symbol, "if self.symbols.mark(index) {",
+                    "self.symbols.mark(index); if true {"),
+                "symbol_wrong_description_kind": (symbol,
+                    "Value::string(crate::StringId(description))", "Value::symbol(SymbolId(description))"),
                 "weakpass_skips_maps": (weakpass,
                     "for position in self.scanned..heap.gc.weak.len()",
                     "for position in heap.gc.weak.len()..heap.gc.weak.len()"),
@@ -307,6 +324,23 @@ def main():
                 path.write_text(content.replace(before, after))
                 flags = ("--cfg", 'feature="gc-stress"') if name == "unchecked_live_access" else ()
                 receipt["checks"].append(checked_run(binary, path, args.timeout, True, flags))
+            # Recreate the old description-marking mistake on an explicitly
+            # live description. Rejection must not depend only on a missing
+            # liveness premise for the newly introduced string-arena access.
+            content = symbol.read_text()
+            statement = "stack.push(Value::string(crate::StringId(description)));"
+            premise = "old(self).symbols.valid_marks(), old(self).symbols.live_at(value.0 as u32),"
+            if content.count(statement) != 1 or content.count(premise) != 1:
+                raise RuntimeError("early description marking mutation lost its unique target")
+            content = content.replace(statement, "self.strings.mark(description);")
+            content = content.replace(premise, premise + """
+                old(self).strings.valid_marks(),
+                old(self).symbols.records@[(value.0 as u32) as int].description != NONE ==>
+                    old(self).strings.live_at(old(self).symbols.records@[(value.0 as u32) as int].description),
+            """)
+            path = directory / "mutant_symbol_early_description_mark.rs"
+            path.write_text(content)
+            receipt["checks"].append(checked_run(binary, path, args.timeout, True))
             content = (PROOFS / "worklist.rs").read_text()
             before = "decreases g.nodes.difference(q.state.marked).len(), q.queue.len(),"
             if content.count(before) != 1:

@@ -639,22 +639,7 @@ impl Heap {
                     }
                 }
                 Kind::Symbol => {
-                    let index = value.as_symbol().unwrap().0;
-                    if self.symbols.mark(index) {
-                        if EPHEMERONS
-                            && !self.gc.ephemerons.is_empty()
-                            && let Some(values) = self.gc.ephemerons.activate(value)
-                        {
-                            stack.extend(values);
-                        }
-                        let description = self.symbols.get(index).description;
-                        if description != NONE {
-                            // A description can be an unflattened rope. Visiting
-                            // it also retains its halves; marking just the record
-                            // would leave those halves available for recycling.
-                            stack.push(Value::string(crate::StringId(description)));
-                        }
-                    }
+                    self.mark_symbol::<EPHEMERONS>(value, stack);
                 }
                 Kind::BigInt => {
                     self.bigints.mark(value.as_bigint().unwrap().0);
@@ -663,6 +648,27 @@ impl Heap {
             }
         }
         self.gc.shape_stack = shapes;
+    }
+
+    #[inline]
+    fn mark_symbol<const EPHEMERONS: bool>(&mut self, value: Value, stack: &mut Vec<Value>) {
+        let index = value.as_symbol().unwrap().0;
+        if self.symbols.mark(index) {
+            let waiting = if EPHEMERONS && !self.gc.ephemerons.is_empty() {
+                self.gc.ephemerons.activate(value)
+            } else {
+                None
+            };
+            if let Some(mut values) = waiting {
+                stack.append(&mut values);
+            }
+            let description = self.symbols.get(index).description;
+            if description != NONE {
+                // A description can be an unflattened rope. Visiting it also
+                // retains its halves; marking only the record would not.
+                stack.push(Value::string(crate::StringId(description)));
+            }
+        }
     }
 
     /// Marks a bytecode record and the records of its children; pushes their

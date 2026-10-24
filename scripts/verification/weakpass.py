@@ -4,7 +4,8 @@ from records import record
 from source import item, masked, method
 
 
-def proof(heap_source, gc_source, object_source, arena_code, scan_code):
+def proof(heap_source, gc_source, object_source, arena_code, scan_code, symbol_source=None,
+          extra_heap="", include_scan=True):
     declarations = []
 
     def declare(source, name, prefix, retained, dependencies=()):
@@ -27,10 +28,13 @@ def proof(heap_source, gc_source, object_source, arena_code, scan_code):
     heap, hp = declare(heap_source, "Heap", "H", {
         "objects": ("Arena<ObjectHeader>", "Arena<O>"),
         "strings": ("Arena<StringRecord>", "Arena<S>"),
-        "symbols": ("Arena<SymbolRecord>", "Arena<Y>"),
+        "symbols": ("Arena<SymbolRecord>", "Arena<SymbolRecord>" if symbol_source is not None else "Arena<Y>"),
         "bigints": ("Arena<BigIntRecord>", "Arena<B>"),
         "payloads": ("PayloadArenas", payloads), "gc": ("GcState", state),
-    }, ["O", "S", "Y", "B", *pp, *gp])
+    }, ["O", "S", *([] if symbol_source is not None else ["Y"]), "B", *pp, *gp])
+    if symbol_source is not None:
+        declarations.append(item(symbol_source, r"pub struct SymbolRecord\b"))
+        declarations.append(item(object_source, r"pub const NONE\b"))
     parameters = ", ".join(hp)
     weak = item(gc_source, r"struct WeakPass<'a>")
     if weak.count("mut Heap,") != 1:
@@ -50,7 +54,11 @@ def proof(heap_source, gc_source, object_source, arena_code, scan_code):
                    for name in ("valid_marks", "live_at", "marked_at")]
     arena_items += [item(arena_scope, rf"fn {name}\b")
                     for name in ("mark_bits", "is_live", "is_marked", "check", "get")]
-    declarations.append("impl<T> Arena<T> {\n" + "\n".join(arena_items) + "\n}")
+    if symbol_source is None:
+        declarations.append("impl<T> Arena<T> {\n" + "\n".join(arena_items) + "\n}")
+    else:
+        declarations.extend([item(arena_code, r"proof fn fresh_single_bit\b"),
+                             item(arena_code, r"proof fn preserve_other_bit\b"), arena_scope])
     declarations.append("impl<" + ", ".join(gp) + "> " + state + " {\n" + """
         spec fn same_except_waiters(&self, previous: &Self) -> bool {
             *self == Self { ephemerons: self.ephemerons, ..*previous }
@@ -108,7 +116,7 @@ def proof(heap_source, gc_source, object_source, arena_code, scan_code):
     """
     heap_marked = method(item(gc_source, r"impl Heap\b"), "value_marked",
                          "ensures result == self.live(value),", "result")
-    declarations.append("impl<" + parameters + "> " + heap + " {\n" + heap_specs + heap_marked + "\n}")
+    declarations.append("impl<" + parameters + "> " + heap + " {\n" + heap_specs + heap_marked + extra_heap + "\n}")
     weak_scope = item(gc_source, r"impl EphemeronTrace for WeakPass<'_>")
     scan = method(weak_scope, "scan", """
         requires old(self).heap.scan_valid(), old(self).stack@.len() == 0,
@@ -242,7 +250,7 @@ def proof(heap_source, gc_source, object_source, arena_code, scan_code):
             final(self).scanned == old(self).scanned,
     """)
     declarations.append("impl<" + parameters + "> WeakPass<'_, " + parameters + "> {\n"
-                        + scan + "\n" + clear + "\n}")
+                        + (scan if include_scan else "") + "\n" + clear + "\n}")
     marker = "pub fn main() {}"
     if scan_code.count(marker) != 1:
         raise ValueError("scan proof no longer has a unique composition point")
