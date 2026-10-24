@@ -19,7 +19,8 @@ def proof(source, template, gc_source):
         declarations.append("#[derive(Clone, Copy, PartialEq, Eq)]\n" + record.replace("$name", name))
     declarations.append(method(source, "boxed", """
         requires tag <= 0xFFFF,
-        ensures result >> TAG_SHIFT == tag, result as u32 == payload,
+        ensures result == (tag << TAG_SHIFT) | payload as u64,
+            result >> TAG_SHIFT == tag, result as u32 == payload,
     """, "result", before={"(tag << TAG_SHIFT) | payload as u64": """
         assert((((tag << 48) | payload as u64) >> 48) == tag
             && (((tag << 48) | payload as u64) as u32) == payload) by(bit_vector)

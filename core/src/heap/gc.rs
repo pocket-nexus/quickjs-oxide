@@ -8,8 +8,9 @@
 use std::mem;
 use std::time::Duration;
 
-use super::gc_kernel::{EphemeronTrace, close_ephemerons, ephemeron_action};
-use super::hash::FxHashMap;
+use super::gc_kernel::{EphemeronTrace, close_ephemerons};
+use super::gc_scan::{ValueMarks, scan_entries};
+use super::gc_waiters::Waiters;
 use super::object::{InternalTag, NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
 use crate::shape::STATIC_CELL;
@@ -241,7 +242,7 @@ pub struct GcState {
     weak: Vec<u32>,
     /// The values of weak map entries whose key is not yet marked, by key:
     /// marking the key pushes them (the ephemeron fixpoint in one pass).
-    ephemerons: FxHashMap<Value, Vec<Value>>,
+    ephemerons: Waiters,
     bytecode_stack: Vec<u32>,
     #[cfg(feature = "gc-stress")]
     pub stress: bool,
@@ -269,7 +270,7 @@ impl GcState {
             pauses: Vec::new(),
             mark_stack: Vec::new(),
             weak: Vec::new(),
-            ephemerons: FxHashMap::default(),
+            ephemerons: Waiters::new(),
             shape_stack: Vec::new(),
             bytecode_stack: Vec::new(),
             #[cfg(feature = "gc-stress")]
@@ -561,7 +562,7 @@ impl Heap {
                     }
                     if EPHEMERONS
                         && !self.gc.ephemerons.is_empty()
-                        && let Some(values) = self.gc.ephemerons.remove(&value)
+                        && let Some(values) = self.gc.ephemerons.activate(value)
                     {
                         stack.extend(values);
                     }
@@ -642,7 +643,7 @@ impl Heap {
                     if self.symbols.mark(index) {
                         if EPHEMERONS
                             && !self.gc.ephemerons.is_empty()
-                            && let Some(values) = self.gc.ephemerons.remove(&value)
+                            && let Some(values) = self.gc.ephemerons.activate(value)
                         {
                             stack.extend(values);
                         }
@@ -730,13 +731,13 @@ impl Heap {
     /// prototype infos drop entries whose target died.
     /// Whether `value` survives this collection (a primitive always does).
     fn value_marked(&self, value: Value) -> bool {
-        match value.kind() {
-            Kind::Object => self.objects.is_marked(value.as_object().unwrap().0),
-            Kind::Symbol => self.symbols.is_marked(value.as_symbol().unwrap().0),
-            Kind::String => self.strings.is_marked(value.as_string().unwrap().0),
-            Kind::BigInt => self.bigints.is_marked(value.as_bigint().unwrap().0),
-            _ => true,
+        ValueMarks {
+            objects: self.objects.mark_bits(),
+            strings: self.strings.mark_bits(),
+            symbols: self.symbols.mark_bits(),
+            bigints: self.bigints.mark_bits(),
         }
+        .contains(value)
     }
 
     /// Clears the weak references to records about to be swept: dead keys
@@ -1015,7 +1016,6 @@ impl EphemeronTrace for WeakPass<'_> {
             self.stack.is_empty(),
             "gc adapter: scan requires an empty queue"
         );
-        let mut ephemerons = mem::take(&mut heap.gc.ephemerons);
         for position in self.scanned..heap.gc.weak.len() {
             let payload = heap.gc.weak[position];
             #[cfg(any(test, feature = "gc-stress"))]
@@ -1027,19 +1027,15 @@ impl EphemeronTrace for WeakPass<'_> {
             if internal.tag != InternalTag::WeakMap {
                 continue;
             }
-            for entry in internal.slots.chunks(2) {
-                let empty = entry[0].is_empty();
-                let value_live = empty || heap.value_marked(entry[1]);
-                let key_live = !value_live && heap.value_marked(entry[0]);
-                match ephemeron_action(empty, value_live, key_live) {
-                    0 => {}
-                    1 => self.stack.push(entry[1]),
-                    _ => ephemerons.entry(entry[0]).or_default().push(entry[1]),
-                }
-            }
+            let marks = ValueMarks {
+                objects: heap.objects.mark_bits(),
+                strings: heap.strings.mark_bits(),
+                symbols: heap.symbols.mark_bits(),
+                bigints: heap.bigints.mark_bits(),
+            };
+            scan_entries(&internal.slots, &marks, self.stack, &mut heap.gc.ephemerons);
         }
         self.scanned = heap.gc.weak.len();
-        heap.gc.ephemerons = ephemerons;
         #[cfg(any(test, feature = "gc-stress"))]
         {
             assert!(
@@ -1047,10 +1043,7 @@ impl EphemeronTrace for WeakPass<'_> {
                 "gc adapter: drain would make no marking progress"
             );
             assert!(
-                heap.gc
-                    .ephemerons
-                    .keys()
-                    .all(|&key| !heap.value_marked(key)),
+                heap.gc.ephemerons.keys().all(|key| !heap.value_marked(key)),
                 "gc adapter: waiting key is already marked"
             );
         }
@@ -1073,7 +1066,7 @@ impl EphemeronTrace for WeakPass<'_> {
                     .gc
                     .ephemerons
                     .keys()
-                    .all(|&key| !self.heap.value_marked(key)),
+                    .all(|key| !self.heap.value_marked(key)),
                 "gc adapter: activation left waiters behind"
             );
         }

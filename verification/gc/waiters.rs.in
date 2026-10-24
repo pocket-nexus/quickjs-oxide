@@ -1,0 +1,59 @@
+//! Exact production waiting-table methods; standard HashMap is in the vstd TCB.
+use vstd::prelude::*;
+use std::collections::HashMap;
+
+verus! {
+// TYPES
+
+impl Value {
+    // METHOD bits
+}
+
+impl Waiting {
+    #[cfg(not(feature = "gc-stress"))]
+    spec fn valid_key(&self, key: u64) -> bool { true }
+
+    #[cfg(feature = "gc-stress")]
+    spec fn valid_key(&self, key: u64) -> bool { self.key.0 == key }
+}
+
+impl Waiters {
+    spec fn queued(&self, key: u64) -> Seq<Value> {
+        if self.by_key@.contains_key(key) { self.by_key@[key].values@ }
+        else { Seq::empty() }
+    }
+
+    spec fn valid(&self) -> bool {
+        forall|key: u64| self.by_key@.contains_key(key) ==>
+            self.by_key@[key].valid_key(key) && self.queued(key).len() > 0
+    }
+
+    // METHOD new
+    // METHOD is_empty
+    // METHOD defer
+    // METHOD activate
+    // METHOD clear
+}
+
+// Repeated deferral preserves order and multiplicity; activation empties only
+// the selected bucket, even when values or keys are otherwise identical.
+fn round_trip(key: Value, other: Value, first: Value, second: Value)
+    requires key.0 != other.0,
+{
+    let mut waiters = Waiters::new();
+    waiters.defer(key, first);
+    waiters.defer(other, second);
+    waiters.defer(key, first);
+    waiters.defer(key, second);
+    let activated = waiters.activate(key);
+    assert(activated.is_some());
+    assert(activated.unwrap()@ =~= seq![first, first, second]);
+    assert(waiters.queued(other.0) =~= seq![second]);
+    let again = waiters.activate(key);
+    assert(again.is_none());
+    waiters.clear();
+    assert(waiters.by_key@.is_empty());
+}
+
+pub fn main() {}
+}

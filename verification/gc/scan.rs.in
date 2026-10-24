@@ -1,0 +1,104 @@
+broadcast use vstd::seq_lib::group_seq_properties;
+// MARK_TYPES
+
+spec fn bit_at(words: Seq<u64>, index: u32) -> bool {
+    (index / 64) < words.len()
+        && words[(index / 64) as int] & (1u64 << (index % 64)) != 0
+}
+
+// MARKED
+
+impl ValueMarks<'_> {
+    spec fn live(&self, value: Value) -> bool {
+        match kind_of(value.0) {
+            Kind::Object => bit_at(self.objects@, value.0 as u32),
+            Kind::String => bit_at(self.strings@, value.0 as u32),
+            Kind::Symbol => bit_at(self.symbols@, value.0 as u32),
+            Kind::BigInt => bit_at(self.bigints@, value.0 as u32),
+            _ => true,
+        }
+    }
+
+    // CONTAINS
+}
+
+spec fn ready(slots: Seq<Value>, marks: &ValueMarks, upto: nat) -> Seq<Value>
+    decreases upto,
+{
+    if upto < 2 { Seq::empty() }
+    else {
+        let prefix = ready(slots, marks, (upto - 2) as nat);
+        let key = slots[upto - 2];
+        let value = slots[upto - 1];
+        if key.0 != Value::EMPTY.0 && !marks.live(value) && marks.live(key) {
+            prefix.push(value)
+        } else { prefix }
+    }
+}
+
+spec fn deferred(slots: Seq<Value>, marks: &ValueMarks, upto: nat, k: u64) -> Seq<Value>
+    decreases upto,
+{
+    if upto < 2 { Seq::empty() }
+    else {
+        let prefix = deferred(slots, marks, (upto - 2) as nat, k);
+        let key = slots[upto - 2];
+        let value = slots[upto - 1];
+        if key.0 == k && key.0 != Value::EMPTY.0 && !marks.live(value) && !marks.live(key) {
+            prefix.push(value)
+        } else { prefix }
+    }
+}
+
+proof fn entry_covered(slots: Seq<Value>, marks: &ValueMarks, upto: nat, position: nat)
+    requires upto <= slots.len(), upto % 2 == 0,
+        position % 2 == 0, position + 2 <= upto,
+        slots[position as int].0 != Value::EMPTY.0,
+        !marks.live(slots[position as int + 1]),
+    ensures marks.live(slots[position as int]) ==>
+            ready(slots, marks, upto).contains(slots[position as int + 1]),
+        !marks.live(slots[position as int]) ==>
+            deferred(slots, marks, upto, slots[position as int].0).contains(slots[position as int + 1]),
+    decreases upto,
+{
+    reveal_with_fuel(ready, 2);
+    reveal_with_fuel(deferred, 2);
+    if position + 2 < upto {
+        entry_covered(slots, marks, (upto - 2) as nat, position);
+    }
+}
+
+proof fn ready_has_origin(slots: Seq<Value>, marks: &ValueMarks, upto: nat, value: Value)
+    requires upto <= slots.len(), upto % 2 == 0, ready(slots, marks, upto).contains(value),
+    ensures exists|position: int| 0 <= position && position % 2 == 0 && position + 2 <= upto
+        && slots[position].0 != Value::EMPTY.0 && slots[position + 1] == value
+        && marks.live(slots[position]) && !marks.live(value),
+    decreases upto,
+{
+    reveal_with_fuel(ready, 2);
+    if ready(slots, marks, (upto - 2) as nat).contains(value) {
+        ready_has_origin(slots, marks, (upto - 2) as nat, value);
+    } else {
+        assert(slots[upto - 1] == value);
+        assert((upto - 2) % 2 == 0);
+    }
+}
+
+proof fn deferred_has_origin(slots: Seq<Value>, marks: &ValueMarks, upto: nat, key: u64, value: Value)
+    requires upto <= slots.len(), upto % 2 == 0,
+        deferred(slots, marks, upto, key).contains(value),
+    ensures exists|position: int| 0 <= position && position % 2 == 0 && position + 2 <= upto
+        && slots[position].0 == key && key != Value::EMPTY.0 && slots[position + 1] == value
+        && !marks.live(slots[position]) && !marks.live(value),
+    decreases upto,
+{
+    reveal_with_fuel(deferred, 2);
+    if deferred(slots, marks, (upto - 2) as nat, key).contains(value) {
+        deferred_has_origin(slots, marks, (upto - 2) as nat, key, value);
+    } else {
+        assert(slots[upto - 1] == value);
+        assert((upto - 2) % 2 == 0);
+    }
+}
+
+// SCAN_ENTRIES

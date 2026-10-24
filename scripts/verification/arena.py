@@ -14,6 +14,7 @@ def proof(source, template):
         assert(index % 64 < 64 && (1u64 << (index % 64)) != 0) by(bit_vector);
     """}))
     contracts = {
+        "mark_bits": ("ensures result@ == self.marks@,", "result", {}),
         "new": ("""
             ensures result.valid_marks(), result.records@.len() == 0,
                 result.live@.len() == 0, result.marks@.len() == 0,

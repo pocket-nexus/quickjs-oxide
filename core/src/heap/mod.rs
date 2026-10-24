@@ -13,6 +13,8 @@ pub mod buffer;
 pub mod code;
 pub mod gc;
 mod gc_kernel;
+mod gc_scan;
+mod gc_waiters;
 pub(crate) mod hash;
 pub mod object;
 pub mod report;

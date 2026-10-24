@@ -16,8 +16,10 @@ import zipfile
 
 import arena as arena_proofs
 import roots as root_proofs
+import scan as scan_proofs
 import source as source_frontend
 import value as value_proofs
+import waiters as waiter_proofs
 
 ROOT = Path(__file__).resolve().parents[2]
 PROOFS = ROOT / "verification/gc"
@@ -88,8 +90,13 @@ def driver_proof(source):
         invariant trace.graph().valid(), trace.graph() == old(trace).graph(),
             trace.work().valid(trace.graph()), trace.work().pending.is_empty(),
         ensures trace.work().marked == trace.graph().reachable(),
-        decreases trace.remaining(),
+        decreases remaining(trace),
         {""")
+    if body.count("trace.drain();") != 1:
+        raise ValueError("driver drain no longer has a unique annotation point")
+    body = body.replace("trace.drain();", """let ghost before_drain = trace.work();
+            trace.drain();
+            proof { drain_progress(trace.graph(), before_drain, trace.work()); }""")
     contract = """
         requires old(trace).graph().valid(), old(trace).work().valid(old(trace).graph()),
             old(trace).work().pending.is_empty(),
@@ -207,19 +214,32 @@ def main():
         gc_source = (ROOT / "core/src/heap/gc.rs").read_text()
         value_source = (ROOT / "core/src/value.rs").read_text()
         arena_source = (ROOT / "core/src/heap/arena.rs").read_text()
+        waiters_source = (ROOT / "core/src/heap/gc_waiters.rs").read_text()
         roots = directory / "roots.rs"
         roots.write_text(root_proofs.proof(gc_source, value_source, (PROOFS / "roots.rs.in").read_text()))
         value = directory / "value.rs"
         value.write_text(value_proofs.proof(value_source, (PROOFS / "value.rs.in").read_text(), gc_source))
         arena = directory / "arena.rs"
         arena.write_text(arena_proofs.proof(arena_source, (PROOFS / "arena.rs.in").read_text()))
-        sources = [PROOFS / "model.rs", PROOFS / "storage.rs", generated, driver, roots, value, arena]
+        waiters = directory / "waiters.rs"
+        waiters.write_text(waiter_proofs.proof(waiters_source, value_source,
+                                              (PROOFS / "waiters.rs.in").read_text()))
+        scan = directory / "scan.rs"
+        scan.write_text(scan_proofs.proof((ROOT / "core/src/heap/gc_scan.rs").read_text(),
+            (PROOFS / "scan.rs.in").read_text(), value.read_text(), waiters.read_text(),
+            generated.read_text(), roots.read_text()))
+        sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
+                   generated, driver, roots, value, arena, waiters, scan]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
             receipt["sha256"][path.name] = hashlib.sha256(source.encode()).hexdigest()
             receipt["checks"].append(checked_run(binary, path, args.timeout))
         receipt["checks"].append(checked_run(binary, arena, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
+        receipt["checks"].append(checked_run(binary, waiters, args.timeout,
+                                             flags=("--cfg", 'feature="gc-stress"')))
+        receipt["checks"].append(checked_run(binary, scan, args.timeout,
                                              flags=("--cfg", 'feature="gc-stress"')))
         receipt["sha256"]["gc_kernel.rs"] = hashlib.sha256(kernel.encode()).hexdigest()
         if args.mutations:
@@ -240,6 +260,18 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "scan_lost_ready": (scan, "1 => stack.push(value),", "1 => {},"),
+                "scan_lost_waiter": (scan, "_ => waiters.defer(key, value),", "_ => {},"),
+                "scan_skips_entry": (scan, "position += 2;", "position += 4;"),
+                "scan_wrong_arena": (scan, "Kind::Symbol => marked(self.symbols, value.as_symbol().unwrap().0)",
+                    "Kind::Symbol => marked(self.objects, value.as_symbol().unwrap().0)"),
+                "waiter_value_lost": (waiters, "waiting.values.push(value);", "let _ = value;"),
+                "waiter_wrong_key": (waiters, "self.by_key.remove(&key.bits())", "self.by_key.remove(&0u64)"),
+                "waiter_values_lost": (waiters, "Some(waiting) => Some(waiting.values)", "Some(waiting) => Some(Vec::new())"),
+                "waiters_not_cleared": (waiters, "self.by_key.clear();", ""),
+                "scan_without_freshness": (driver,
+                    "more ==> !final(self).work().pending.difference(final(self).work().marked).is_empty();",
+                    "more ==> !final(self).work().pending.is_empty();"),
                 "root_prefix_lost": (roots, "self.values.truncate(mark.0);", "self.values.truncate(0);"),
                 "handle_not_released": (roots, "*slot = Value::EMPTY;", "*slot = *slot;"),
                 "symbol_not_heap": (value, "tag >= TAG_OBJECT && tag <= TAG_BIGINT", "tag >= TAG_OBJECT && tag < TAG_SYMBOL"),
@@ -256,16 +288,25 @@ def main():
                 path.write_text(content.replace(before, after))
                 flags = ("--cfg", 'feature="gc-stress"') if name == "unchecked_live_access" else ()
                 receipt["checks"].append(checked_run(binary, path, args.timeout, True, flags))
+            content = (PROOFS / "worklist.rs").read_text()
+            before = "decreases g.nodes.difference(q.state.marked).len(), q.queue.len(),"
+            if content.count(before) != 1:
+                raise RuntimeError("queue rank mutation no longer has a unique target")
+            path = directory / "mutant_queue_set_rank.rs"
+            path.write_text(content.replace(before,
+                "decreases g.nodes.difference(q.state.marked).len(), q.state.pending.len(),"))
+            receipt["checks"].append(checked_run(binary, path, args.timeout, True))
             broken = kernel.replace("live & !marked", "live & marked")
             path = directory / "mutant_sweep.rs"
             path.write_text(kernel_proof(broken))
             receipt["checks"].append(checked_run(binary, path, args.timeout, True))
             for name, statement in (("driver_no_drain", "trace.drain();"),
                                     ("driver_no_clear", "trace.clear();")):
-                if kernel.count(statement) != 1:
+                content = driver.read_text()
+                if content.count(statement) != 1:
                     raise RuntimeError(f"mutation {name} no longer has a unique target")
                 path = directory / f"mutant_{name}.rs"
-                path.write_text(driver_proof(kernel.replace(statement, "")))
+                path.write_text(content.replace(statement, ""))
                 receipt["checks"].append(checked_run(binary, path, args.timeout, True))
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

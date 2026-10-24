@@ -101,6 +101,10 @@ pub proof fn discover(g: Graph, w: Work, n: int) -> (next: Work)
     requires g.valid(), w.valid(g), w.pending.contains(n), !w.marked.contains(n),
     ensures next.valid(g), next.marked == w.marked.insert(n),
         next.expanded == w.expanded.insert(n), next.scanned == w.scanned,
+        next.pending == w.pending.remove(n)
+            .union(g.nodes.filter(|v: int| g.strong.contains((n, v))))
+            .union(g.nodes.filter(|v: int| exists|m: int| w.waiting.contains((m, n, v)))),
+        next.waiting == w.waiting.filter(|e: (int, int, int)| e.1 != n),
 {
     least_fixed_point(g);
     let children = g.nodes.filter(|v: int| g.strong.contains((n, v)));
@@ -157,7 +161,8 @@ pub proof fn finish(g: Graph, w: Work)
 // Total abstract execution. No fixed heap size or iteration bound. A fresh
 // discovery decreases unmarked nodes; scanning decreases unscanned nodes;
 // discarding a duplicate decreases pending work. The production implementation
-// additionally uses sequence multiplicities, which the audit checks dynamically.
+// additionally uses sequence multiplicities, refined separately in worklist.rs;
+// linking those sequence transitions to the production tracer remains open.
 pub proof fn run(g: Graph, w: Work) -> (done: Work)
     requires g.valid(), w.valid(g),
     ensures done.valid(g), done.marked == g.reachable(), done.pending.is_empty(),

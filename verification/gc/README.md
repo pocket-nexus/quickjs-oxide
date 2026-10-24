@@ -60,8 +60,7 @@ The proved obligations are:
 - Empty pending work and complete map scanning imply exact reachability.
 - Abstract execution terminates with a lexicographic measure: unmarked nodes,
   unscanned nodes, then pending work. This is an unbounded finite-heap theorem,
-  not an enumeration of small heaps. Queue multiplicities and real container
-  operations are representation obligations.
+  not an enumeration of small heaps.
 - Sweep intersection retains exactly that reachable set; adding finalization
   roots already in it does not change the fixed point; pruned references cannot
   name subsequently reused slots.
@@ -76,6 +75,16 @@ prefix. It does **not** prove the complete `Arena` or `ValueHeap` implementation
 Root completeness is an explicit precondition of `safepoint_preserves_needed`;
 the lemma must not be presented as proof that all engine callers root correctly.
 
+`worklist.rs` refines the pending set to a finite sequence. Removing one already
+marked duplicate preserves the graph invariant even when another copy remains.
+Fresh discovery permits any ordering and multiplicity of the strong children
+and activated waiters, provided their set is exactly the specified outgoing
+set. Sequence draining terminates by unmarked-node count followed by **sequence
+length**, preserves marks, and marks every initially queued node. Its executable
+container operations and edge enumeration are still adapter obligations; this
+file does not extract or prove `Heap::drain`. A negative proof replacing sequence
+length with pending-set cardinality must fail.
+
 ## Connection to production code
 
 `core/src/heap/gc_kernel.rs` is compiled normally by Cargo. The proof runner
@@ -89,8 +98,8 @@ The driver's three adapter obligations are:
 
 | Operation | Obligation |
 | --- | --- |
-| `scan` | Preserve the graph and work invariant. Either queue new marking work, or establish complete closure with no pending work. |
-| `drain` | Preserve graph and invariant, empty the queue, and strictly decrease the remaining-work rank. |
+| `scan` | Preserve the graph, marked set and work invariant. Either queue at least one unmarked node, or establish complete closure with no pending work. |
+| `drain` | Require at least one unmarked queued node. Preserve graph and invariant, empty the queue, preserve old marks and mark every initially queued node. |
 | `clear` | Preserve marked nodes and graph, empty the pending and waiting state. |
 
 `WeakPass` in `gc.rs` implements the production operations. Its complete
@@ -99,6 +108,13 @@ an explicit assumption at that boundary. The model's semantic operations and
 the checks below provide evidence, not a replacement for that missing proof.
 The driver also assumes its adapter calls terminate; its decreases clause does
 not prove termination of arbitrary trait implementations.
+
+The phase rank is explicitly the number of unmarked graph nodes. `drain_progress`
+derives its strict decrease from the mark-preservation and queue-coverage
+postconditions; an adapter cannot supply an unrelated rank. Nonempty pending
+work alone is insufficient: the checked duplicate-only example drains three
+copies of an already marked node without changing the marked set. A negative
+proof weakening scan's freshness guarantee to mere nonemptiness must fail.
 
 ### Additional production-source proofs
 
@@ -121,12 +137,13 @@ collection of test heaps:
   covers every `u64` bit pattern, including primitive and reserved tags.
 - `push_heap_values` terminates and appends exactly the heap-valued subsequence,
   retaining the previous queue and preserving order and multiplicity.
-- `Arena::new`, `is_live`, `check`, `get`, `get_mut`, `mark`, `is_marked` and
+- `Arena::new`, `is_live`, `check`, `get`, `get_mut`, `mark`, `is_marked`, `mark_bits` and
   `clear_marks` have source proofs. Marking is fresh exactly when its one bit
   was clear; every other bit, all record contents and metadata are preserved.
   Clearing terminates and clears all marks. Mutable access frames the one
   selected record. Both normal and `gc-stress` layouts are verified, including
-  preservation of the quarantine vector.
+  preservation of the quarantine vector. `mark_bits` returns the exact borrowed
+  mark bitmap for read-only entry scanning.
 
 The contracts state their remaining premises. Marks must belong to an adequate
 root prefix; handles must be active and nonempty, and table lengths must remain
@@ -153,6 +170,50 @@ lookups with explicit matches, bitmap fill and heap-value filtering with explici
 loops, and a Boolean-to-integer `From` call with a cast. This avoids unsupported
 standard-library specifications without adding local axioms. The loop proofs
 cover bounds, overflow, termination and their complete output sequences.
+
+### Deferred ephemeron storage
+
+`gc_waiters.rs` contains the production `Waiters` table. Its exact `new`,
+`is_empty`, `defer`, `activate` and `clear` methods are checked using
+`waiters.rs.in`. Deferral appends to exactly one key's value sequence; activation
+removes that bucket, returns its full sequence, and leaves other buckets intact.
+Order and duplicate values are preserved. Both release and `gc-stress` layouts
+are checked. The stress-only stored key agrees with its raw-bit table key.
+A composition witness defers repeated values under two distinct arbitrary keys,
+activates one twice, checks the untouched key, and clears the table.
+
+The table now uses `HashMap<u64, Waiting>` with the standard hasher. A Value's
+complete bit pattern is the key, preserving arena tags as well as indices.
+Pinned vstd already supplies key/hasher specifications for `u64` and
+`RandomState`; this avoids adding local assumptions for `Value`/`FxHasher`.
+The standard HashMap implementation itself remains in the trusted library base,
+just as Vec does. Other engine hash tables are unchanged. `scan` accesses this
+table in place, so it no longer constructs a temporary map for every scan.
+
+These contracts prove table contents, not that the caller defers only entries
+from live WeakMaps, activates every newly marked key, or enumerates every entry.
+The diagnostic `keys` iterator is not part of the source proof. Those boundaries
+remain open under `GC-WEAKPASS-ADAPTER`; table proofs alone do not close it.
+
+### WeakMap entry scanning
+
+`gc_scan.rs` contains the actual read-only mark view and pair-scanning loop used
+by `WeakPass`. `scan.rs.in` composes the extracted Value methods, bitmap lookup,
+entry decision and waiting table, checking both ordinary and stress layouts.
+Each new queued value is unmarked and comes from a nonempty pair with a marked
+key. Each nonempty pair's value is already marked, queued, or deferred under its
+key. Exact ready/deferred sequence specifications preserve input queues, other
+buckets, order and multiplicities; origin and coverage lemmas connect those
+sequences to the input pairs. The scan terminates without changing the borrowed
+mark bitmaps. Waiting keys remain unmarked.
+
+The entry loop requires an even slot count, a valid waiting table and initially
+unmarked waiting keys. Its caller must additionally establish live-map
+provenance, the correct heap bitmap snapshot, and complete outer-cursor coverage.
+Those premises and the complete `Heap::drain` refinement remain open. The scan
+does not prove that WeakMap mutators maintain the paired-slot representation.
+Negative proofs remove ready/deferred output, skip a pair, or consult the object
+bitmap for a symbol; each must fail a proof obligation.
 
 The runner rejects local `assume`, `assume_specification`, `admit`, external
 body/type/trait/function specifications, and uninterpreted/axiomatic escapes.

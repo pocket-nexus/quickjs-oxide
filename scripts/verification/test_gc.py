@@ -23,7 +23,7 @@ class ProofSourceTests(unittest.TestCase):
         self.assertIn("trace.scan()", generated)
         self.assertIn("trace.drain();", generated)
         self.assertIn("trace.clear();", generated)
-        self.assertIn("decreases trace.remaining()", generated)
+        self.assertIn("decreases remaining(trace)", generated)
 
     def test_missing_or_unbalanced_kernel_is_rejected(self):
         for source in ("", "pub(crate) fn mark_word() { loop {"):
@@ -98,9 +98,21 @@ class ProofSourceTests(unittest.TestCase):
             gc.root_proofs.proof(heap, value, (gc.PROOFS / "roots.rs.in").read_text()),
             gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap),
             gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()),
+            gc.waiter_proofs.proof((gc.ROOT / "core/src/heap/gc_waiters.rs").read_text(),
+                                  value, (gc.PROOFS / "waiters.rs.in").read_text()),
         ):
             self.assertNotIn("// METHOD", code)
             gc.reject_trust_escapes(code)
+        scan = gc.scan_proofs.proof((gc.ROOT / "core/src/heap/gc_scan.rs").read_text(),
+            (gc.PROOFS / "scan.rs.in").read_text(),
+            gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap),
+            gc.waiter_proofs.proof((gc.ROOT / "core/src/heap/gc_waiters.rs").read_text(),
+                                  value, (gc.PROOFS / "waiters.rs.in").read_text()),
+            gc.kernel_proof((gc.ROOT / "core/src/heap/gc_kernel.rs").read_text()),
+            gc.root_proofs.proof(heap, value, (gc.PROOFS / "roots.rs.in").read_text()))
+        self.assertNotIn("// SCAN_ENTRIES", scan)
+        self.assertNotIn("// METHOD", scan)
+        gc.reject_trust_escapes(scan)
 
     def test_completeness_does_not_count_conditional_or_tested_code(self):
         obligations = [

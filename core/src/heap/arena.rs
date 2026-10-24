@@ -82,6 +82,10 @@ impl<T: Record> Default for Arena<T> {
 }
 
 impl<T: Record> Arena<T> {
+    pub(super) fn mark_bits(&self) -> &[u64] {
+        &self.marks
+    }
+
     pub fn new() -> Self {
         Arena {
             records: Vec::new(),

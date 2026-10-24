@@ -58,6 +58,7 @@ impl<T> Arena<T> {
     #[cfg(not(feature = "gc-stress"))]
     spec fn quarantine_unchanged(&self, previous: &Self) -> bool { true }
 
+    // METHOD mark_bits
     // METHOD new
     // METHOD is_live
     // METHOD check
