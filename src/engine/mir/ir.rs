@@ -413,6 +413,9 @@ pub enum VarKind {
 pub struct Var {
     pub kind: VarKind,
     pub decl: Option<DeclRef>,
+    /// The setter of a private accessor pair, whose getter is the
+    /// declaration's other variable.
+    pub setter: bool,
 }
 
 /// A constant-pool entry; strings are indexes into the program's strings.
@@ -469,6 +472,9 @@ pub struct Function {
     /// The HIR functions its `MakeClosure` instructions create, by child index.
     pub children: Vec<FunctionRef>,
     pub vars: Vec<Var>,
+    /// The bindings `LoadCaptured` indexes: a private accessor pair takes
+    /// two, its setter second.
+    pub captures: Vec<(DeclRef, bool)>,
     pub consts: Vec<Constant>,
     pub unit: UnitInfo,
     /// The blocks in the order the builder emitted them, which the lowering
@@ -479,7 +485,11 @@ pub struct Function {
 impl Function {
     pub fn new_var(&mut self, kind: VarKind, decl: Option<DeclRef>) -> u32 {
         let index = u32::try_from(self.vars.len()).expect("MIR variables are indexed by u32");
-        self.vars.push(Var { kind, decl });
+        self.vars.push(Var {
+            kind,
+            decl,
+            setter: false,
+        });
         index
     }
 

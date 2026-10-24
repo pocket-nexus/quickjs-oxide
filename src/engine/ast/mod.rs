@@ -276,6 +276,8 @@ pub(crate) struct Function {
     pub(crate) body: Vec<Stmt>,
     /// An arrow whose body is one expression (`body` is its `return`).
     pub(crate) concise: bool,
+    /// A class's synthesized constructor.
+    pub(crate) default_ctor: bool,
     pub(crate) strict: bool,
     /// The token that starts the definition (its debug position).
     pub(crate) span: Span,
@@ -798,6 +800,8 @@ pub(crate) enum PatternKind {
     Object {
         props: Vec<PatternProp>,
         rest: Option<Box<Pattern>>,
+        /// The rest's `...`.
+        rest_pos: Pos,
     },
     Array {
         items: Vec<Option<PatternItem>>,

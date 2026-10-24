@@ -547,6 +547,7 @@ pub struct Function {
     pub arguments_decl: Option<DeclRef>,
     pub param_copies: Vec<ParamCopy>,
     pub concise: bool,
+    pub default_ctor: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1489,6 +1490,7 @@ pub enum PatternKind {
     Object {
         props: Vec<PatternProp>,
         rest: Option<Box<Pattern>>,
+        rest_at: u32,
     },
     Array {
         items: Vec<PatternItem>,
@@ -1513,6 +1515,7 @@ pub struct PatternProp {
     pub key: Box<PropKey>,
     pub value: Box<Pattern>,
     pub default: Option<Box<Expr>>,
+    pub key_at: u32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1975,6 +1978,7 @@ fn w_function(w: &mut Writer, out: &mut Vec<u32>, v: &Function) {
         w.list(out, std::mem::take(buf37), (&v.param_copies).len());
     }
     out.push(u32::from(*(&v.concise)));
+    out.push(u32::from(*(&v.default_ctor)));
 }
 
 fn w_source_range(w: &mut Writer, out: &mut Vec<u32>, v: &SourceRange) {
@@ -3206,7 +3210,11 @@ fn n_pattern(w: &mut Writer, v: &Pattern) -> u32 {
                 out.push(r);
             }
         }
-        PatternKind::Object { props, rest } => {
+        PatternKind::Object {
+            props,
+            rest,
+            rest_at,
+        } => {
             out.push(1026);
             {
                 let buf127 = &mut Vec::new();
@@ -3222,6 +3230,7 @@ fn n_pattern(w: &mut Writer, v: &Pattern) -> u32 {
                 }
                 None => out.push(0),
             }
+            out.push(*rest_at);
         }
         PatternKind::Array { items, rest } => {
             out.push(1027);
@@ -3264,6 +3273,7 @@ fn w_pattern_prop(w: &mut Writer, out: &mut Vec<u32>, v: &PatternProp) {
         }
         None => out.push(0),
     }
+    out.push(*(&v.key_at));
 }
 
 fn n_pattern_item(w: &mut Writer, v: &PatternItem) -> u32 {
@@ -3648,7 +3658,7 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         801 => Some(2),
         1024 => Some(3),
         1025 => Some(3),
-        1026 => Some(5),
+        1026 => Some(6),
         1027 => Some(5),
         1040 => Some(3),
         1041 => Some(1),
@@ -4072,6 +4082,7 @@ fn r_function(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Function,
         v
     };
     let concise = c.flag()?;
+    let default_ctor = c.flag()?;
     Ok(Function {
         name,
         kind,
@@ -4100,6 +4111,7 @@ fn r_function(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Function,
         arguments_decl,
         param_copies,
         concise,
+        default_ctor,
     })
 }
 
@@ -5184,7 +5196,7 @@ fn rn_pattern(r: &Reader<'_>, n: u32, limit: usize) -> Result<Pattern, ReadError
         }
         1026 => {
             let props = {
-                let (mut l174, n) = r.list(c, 3)?;
+                let (mut l174, n) = r.list(c, 4)?;
                 let mut v = Vec::with_capacity(n);
                 for _ in 0..n {
                     let c = &mut l174;
@@ -5196,7 +5208,12 @@ fn rn_pattern(r: &Reader<'_>, n: u32, limit: usize) -> Result<Pattern, ReadError
                 0 => None,
                 n => Some(Box::new(rn_pattern(r, n, limit)?)),
             };
-            PatternKind::Object { props, rest }
+            let rest_at = c.u()?;
+            PatternKind::Object {
+                props,
+                rest,
+                rest_at,
+            }
         }
         1027 => {
             let items = {
@@ -5231,10 +5248,12 @@ fn r_pattern_prop(r: &Reader<'_>, c: &mut Cur<'_>, limit: usize) -> Result<Patte
         0 => None,
         n => Some(Box::new(rn_expr(r, n, limit)?)),
     };
+    let key_at = c.u()?;
     Ok(PatternProp {
         key,
         value,
         default,
+        key_at,
     })
 }
 
@@ -6162,6 +6181,7 @@ fn d_function(d: &mut Dumper<'_>, v: &Function, ind: usize, head: String) {
         ));
     }
     parts.push(format!("concise:{}", (&v.concise).to_string()));
+    parts.push(format!("defaultCtor:{}", (&v.default_ctor).to_string()));
     d.record(
         ind,
         if head.is_empty() {
@@ -7977,7 +7997,11 @@ fn d_pattern(d: &mut Dumper<'_>, v: &Pattern, ind: usize, head: String) {
             ));
             "target"
         }
-        PatternKind::Object { props, rest } => {
+        PatternKind::Object {
+            props,
+            rest,
+            rest_at,
+        } => {
             if props.is_empty() {
                 parts.push("props:[]".to_string());
             } else {
@@ -8003,6 +8027,7 @@ fn d_pattern(d: &mut Dumper<'_>, v: &Pattern, ind: usize, head: String) {
                     })),
                 ));
             }
+            parts.push(format!("restAt:{}", rest_at.to_string()));
             "object"
         }
         PatternKind::Array { items, rest } => {
@@ -8074,6 +8099,7 @@ fn d_pattern_prop(d: &mut Dumper<'_>, v: &PatternProp, ind: usize, head: String)
             })),
         ));
     }
+    parts.push(format!("keyAt:{}", (&v.key_at).to_string()));
     d.record(
         ind,
         if head.is_empty() {
@@ -8650,7 +8676,11 @@ fn s_pattern(v: &mut Pattern) {
         PatternKind::Target { t } => {
             s_target(t);
         }
-        PatternKind::Object { props, rest } => {
+        PatternKind::Object {
+            props,
+            rest,
+            rest_at,
+        } => {
             for x in props.iter_mut() {
                 s_pattern_prop(x);
             }

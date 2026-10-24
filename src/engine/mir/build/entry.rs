@@ -1,9 +1,10 @@
 //! A function's entry: its variables, QuickJS's prologue, the parameters,
 //! and the body with its implicit return.
 
+use super::pattern::Mode;
 use super::{Builder, Result, internal, unsupported};
 use crate::engine::hir::schema::{self as hir, DeclKind, DeclRef, FunctionKind, PatternKind};
-use crate::engine::mir::ir::{Imm, SuspendKind, Terminator, VarKind};
+use crate::engine::mir::ir::{Imm, SuspendKind, Terminator, Value, VarKind};
 use crate::engine::mir::op::Op;
 use oxide_core::bytecode::flags;
 use oxide_core::bytecode::opcode::global;
@@ -74,8 +75,13 @@ impl Builder<'_, '_> {
     /// A variable for every binding this function owns that is not global.
     fn allocate_vars(&mut self) -> Result<()> {
         let hf = self.hf;
-        for (index, &decl) in hf.captures.iter().enumerate() {
-            self.captures.insert(decl, index as u32);
+        for &decl in &hf.captures {
+            let pair = self.decl(decl).kind == DeclKind::PrivateAccessor;
+            for setter in [false, true].into_iter().take(1 + usize::from(pair)) {
+                let index = self.f.captures.len() as u32;
+                self.f.captures.push((decl, setter));
+                self.captures.insert((decl, setter), index);
+            }
         }
         // The parameters' registers: a simple parameter's binding lives in
         // its argument's register; with a parameter environment the
@@ -117,8 +123,13 @@ impl Builder<'_, '_> {
                 continue;
             }
             let d = self.decl(decl);
-            if d.kind.is_private() || d.kind == DeclKind::Global {
+            if d.kind == DeclKind::Global {
                 continue;
+            }
+            if d.kind == DeclKind::PrivateAccessor {
+                let setter = self.new_var(VarKind::Local, Some(decl));
+                self.f.vars[setter as usize].setter = true;
+                self.setter_vars.insert(decl, setter);
             }
             let kind = match d.kind {
                 // The receiver's own register, unless a closure captures it
@@ -226,6 +237,20 @@ impl Builder<'_, '_> {
         if hf.async_ && !hf.generator {
             self.effect(Op::AsyncStart, &[], Imm::None);
         }
+        // Captured parameters and the parameters a mapped `arguments`
+        // aliases hold cells in their own registers.
+        for index in 0..self.f.vars.len() {
+            let var = self.f.vars[index];
+            if let (VarKind::Param(_), Some(decl)) = (var.kind, var.decl)
+                && self.var_is_cell(decl)
+            {
+                let value = self.get_var(index as u32);
+                let cell = self.op(Op::NewCell, &[value], Imm::None);
+                self.set_var(index as u32, cell);
+            }
+        }
+        let decls = hf.decls.clone();
+        self.cells_and_tdz(&decls)?;
         // The implicit bindings QuickJS keeps in locals.
         let mut implicit = Vec::new();
         for &decl in &hf.decls {
@@ -241,20 +266,6 @@ impl Builder<'_, '_> {
             let value = self.op(op, &[], Imm::None);
             self.init_decl_value(decl, value)?;
         }
-        // Captured parameters and the parameters a mapped `arguments`
-        // aliases hold cells in their own registers.
-        for index in 0..self.f.vars.len() {
-            let var = self.f.vars[index];
-            if let (VarKind::Param(_), Some(decl)) = (var.kind, var.decl)
-                && self.var_is_cell(decl)
-            {
-                let value = self.get_var(index as u32);
-                let cell = self.op(Op::NewCell, &[value], Imm::None);
-                self.set_var(index as u32, cell);
-            }
-        }
-        let decls = hf.decls.clone();
-        self.cells_and_tdz(&decls)?;
         self.this_and_new_target()?;
         if let Some(arguments) = hf.arguments_decl
             && self.vars.contains_key(&arguments)
@@ -265,15 +276,15 @@ impl Builder<'_, '_> {
             self.init_decl_value(arguments, value)?;
             self.f.unit.flags |= flags::ARGUMENTS;
         }
-        if matches!(
+        let constructor = matches!(
             hf.kind,
             FunctionKind::Constructor | FunctionKind::DerivedConstructor
-        ) {
-            let new_target = self.new_target_register();
-            let value = self.get_var(new_target);
-            self.effect(Op::CheckCtor, &[], Imm::None);
-            let _ = value;
-            return unsupported("class constructors");
+        );
+        if constructor {
+            self.constructor_entry()?;
+            if hf.default_ctor {
+                return self.default_constructor();
+            }
         }
         self.parameters()?;
         if hf.generator {
@@ -302,7 +313,12 @@ impl Builder<'_, '_> {
         }
         self.statements(&hf.body.stmts)?;
         if self.reachable() {
-            self.end(Terminator::ReturnUndefined);
+            if hf.kind == FunctionKind::DerivedConstructor {
+                let undefined = self.undefined();
+                self.derived_return(undefined, None)?;
+            } else {
+                self.end(Terminator::ReturnUndefined);
+            }
         }
         Ok(())
     }
@@ -376,7 +392,10 @@ impl Builder<'_, '_> {
                 continue;
             }
             let d = self.decl(decl);
-            let lexical = lexical(d.kind);
+            // A derived constructor's `this` waits for `super()`.
+            let unbound_this =
+                d.kind == DeclKind::This && self.hf.kind == FunctionKind::DerivedConstructor;
+            let lexical = lexical(d.kind) || unbound_this;
             if self.captured(decl) {
                 let cell = if lexical {
                     self.op(Op::NewCellEmpty, &[], Imm::None)
@@ -385,9 +404,15 @@ impl Builder<'_, '_> {
                     self.op(Op::NewCell, &[value], Imm::None)
                 };
                 self.set_var(var, cell);
-            } else if lexical && d.tdz {
+            } else if lexical && (d.tdz || unbound_this) {
                 let empty = self.op(Op::Empty, &[], Imm::None);
                 self.set_var(var, empty);
+            }
+            if let Some(&setter) = self.setter_vars.get(&decl)
+                && self.captured(decl)
+            {
+                let cell = self.op(Op::NewCellEmpty, &[], Imm::None);
+                self.set_var(setter, cell);
             }
         }
         Ok(())
@@ -401,30 +426,35 @@ impl Builder<'_, '_> {
             return Ok(());
         }
         let has_environment = !hf.param_copies.is_empty();
+        // A pattern's bindings: the parameter environment's lexicals, or
+        // the function's vars.
+        let mode = Mode::Declare {
+            var: !has_environment,
+            catch: false,
+        };
         for (index, param) in hf.params.iter().enumerate() {
             let argument = index as u32;
             match (&param.pattern.kind, &param.default) {
                 (PatternKind::Decl { decl }, None) => {
                     if has_environment && !self.is_argument_binding(*decl, argument) {
-                        let value = self.get_var(argument);
+                        let value = self.argument_value(argument);
                         self.init_binding(*decl, value)?;
                     }
                 }
                 (PatternKind::Decl { decl }, Some(default)) => {
-                    let value = self.get_var(argument);
+                    let value = self.argument_value(argument);
                     let undefined = self.undefined();
+                    let is_undefined = self.op(Op::StrictEq, &[value, undefined], Imm::None);
                     let missing = self.block();
                     let present = self.block();
-                    self.end(Terminator::BranchCmp {
-                        op: crate::engine::mir::ir::CmpOp::StrictEq,
-                        l: value,
-                        r: undefined,
+                    self.end(Terminator::Branch {
+                        cond: is_undefined,
                         then: missing,
                         else_: present,
                     });
                     self.start(missing);
                     let defaulted = self.expr(default)?;
-                    self.set_var(argument, defaulted);
+                    self.set_argument(argument, defaulted);
                     let from_default = self.branch_end();
                     self.start(present);
                     let from_argument = self.branch_end();
@@ -433,7 +463,10 @@ impl Builder<'_, '_> {
                         self.init_binding(*decl, value)?;
                     }
                 }
-                _ => return unsupported("destructuring parameters"),
+                (_, default) => {
+                    let value = self.argument_value(argument);
+                    self.nested_element(&param.pattern, value, default.as_deref(), mode)?;
+                }
             }
         }
         if let Some(rest) = &hf.rest {
@@ -442,17 +475,45 @@ impl Builder<'_, '_> {
             self.f.unit.flags |= flags::ARGUMENTS;
             match rest.kind {
                 PatternKind::Decl { decl } => {
-                    if self.is_argument_binding(decl, argument) {
-                        self.set_var(argument, value);
-                    } else {
-                        self.set_var(argument, value);
+                    self.set_argument(argument, value);
+                    if !self.is_argument_binding(decl, argument) {
                         self.init_binding(decl, value)?;
                     }
                 }
-                _ => return unsupported("rest patterns"),
+                _ => self.destructure(rest, value, mode)?,
             }
         }
+        // A parameter environment's pattern bindings reach the body's, last
+        // first.
+        for copy in hf.param_copies.iter().rev() {
+            if self.decl(copy.to).kind == DeclKind::Param {
+                continue;
+            }
+            let value = self.read_decl(copy.from, None)?;
+            self.put_decl(copy.to, value)?;
+        }
         Ok(())
+    }
+
+    /// The value in argument register `argument`, through its cell.
+    fn argument_value(&mut self, argument: u32) -> Value {
+        let var = self.f.vars[argument as usize];
+        let value = self.get_var(argument);
+        match var.decl {
+            Some(decl) if self.var_is_cell(decl) => self.op(Op::LoadCell, &[value], Imm::None),
+            _ => value,
+        }
+    }
+
+    fn set_argument(&mut self, argument: u32, value: Value) {
+        let var = self.f.vars[argument as usize];
+        match var.decl {
+            Some(decl) if self.var_is_cell(decl) => {
+                let cell = self.get_var(argument);
+                self.effect(Op::StoreCell, &[cell, value], Imm::None);
+            }
+            _ => self.set_var(argument, value),
+        }
     }
 
     /// Whether `decl` is the binding in argument register `argument`.

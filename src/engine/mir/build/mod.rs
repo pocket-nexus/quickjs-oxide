@@ -13,8 +13,10 @@
 //! instruction records the position in effect when it was emitted, so the
 //! lowering's block order does not change them.
 
+mod class;
 mod entry;
 mod expr;
+mod pattern;
 mod stmt;
 
 use super::ir::{
@@ -77,6 +79,8 @@ pub(crate) struct Shared<'h> {
     /// site gives it.
     pub(crate) parent: Vec<Option<FunctionRef>>,
     pub(crate) inferred: Vec<Option<u32>>,
+    /// The aggregate initializers that brand their receiver.
+    pub(crate) brand: Vec<bool>,
 }
 
 impl Shared<'_> {
@@ -144,6 +148,7 @@ pub(crate) fn build(
         interned: FxHashMap::default(),
         parent,
         inferred: vec![None; count],
+        brand: vec![false; count],
     };
     let mut functions = Vec::with_capacity(count);
     for index in 0..count {
@@ -153,6 +158,9 @@ pub(crate) fn build(
     for (index, function) in functions.iter_mut().enumerate() {
         if function.unit.name_atom.is_none() {
             function.unit.name_atom = shared.inferred[index];
+        }
+        if shared.brand[index] {
+            function.unit.flags |= oxide_core::bytecode::flags::BRAND;
         }
         if cfg!(debug_assertions)
             && let Err(error) = super::verify::verify(function)
@@ -223,7 +231,9 @@ pub(crate) struct Builder<'s, 'h> {
     /// The last instruction emitted, for QuickJS's `return f()` position.
     pub(crate) last: Option<(BlockId, usize)>,
     pub(crate) vars: FxHashMap<DeclRef, u32>,
-    pub(crate) captures: FxHashMap<DeclRef, u32>,
+    /// The setter variable of each private accessor pair this function owns.
+    pub(crate) setter_vars: FxHashMap<DeclRef, u32>,
+    pub(crate) captures: FxHashMap<(DeclRef, bool), u32>,
     pub(crate) controls: Vec<Control>,
     /// The lexical scopes entered, innermost last: the captured bindings
     /// each closes when left.
@@ -236,8 +246,12 @@ pub(crate) struct Builder<'s, 'h> {
     /// object and active function, when read.
     pub(crate) children: FxHashMap<FunctionRef, u32>,
     pub(crate) consts: FxHashMap<u64, u32>,
+    /// Blocks placed after the function's code (iterator-closing handlers).
+    pub(crate) stubs: Vec<BlockId>,
     pub(crate) string_consts: FxHashMap<u32, u32>,
     pub(crate) this_keys: FxHashSet<u32>,
+    /// Values read from register 0.
+    pub(crate) this_values: FxHashSet<Value>,
 }
 
 impl<'s, 'h> Builder<'s, 'h> {
@@ -258,6 +272,7 @@ impl<'s, 'h> Builder<'s, 'h> {
             pending: None,
             last: None,
             vars: FxHashMap::default(),
+            setter_vars: FxHashMap::default(),
             captures: FxHashMap::default(),
             controls: Vec::new(),
             scopes: Vec::new(),
@@ -265,13 +280,22 @@ impl<'s, 'h> Builder<'s, 'h> {
             checked: FxHashSet::default(),
             children: FxHashMap::default(),
             consts: FxHashMap::default(),
+            stubs: Vec::new(),
             string_consts: FxHashMap::default(),
             this_keys: FxHashSet::default(),
+            this_values: FxHashSet::default(),
         })
     }
 
     fn build(mut self) -> Result<Function> {
         self.entry()?;
+        if self.f.unit.flags & oxide_core::bytecode::flags::CONSTRUCTOR != 0
+            && self.f.unit.flags & oxide_core::bytecode::flags::DERIVED == 0
+        {
+            self.f.unit.this_slots = self.this_keys.len() as u16;
+        }
+        let stubs = std::mem::take(&mut self.stubs);
+        self.f.layout.extend(stubs);
         let mut f = self.f;
         f.recompute_preds_keeping_phis();
         Ok(f)
@@ -326,6 +350,21 @@ impl<'s, 'h> Builder<'s, 'h> {
         self.cur = Some(block);
         self.checked.clear();
         self.f.layout.push(block);
+    }
+
+    /// Fills `block` with `fill` out of line: it goes after the function's
+    /// code, at position `at`, and the current block stays current.
+    pub(crate) fn stub(&mut self, block: BlockId, at: Pos, fill: impl FnOnce(&mut Self)) {
+        let saved = (self.cur, self.site, self.pending, self.handler, self.last);
+        let checked = std::mem::take(&mut self.checked);
+        self.cur = Some(block);
+        self.site = at;
+        self.pending = None;
+        self.handler = self.f.block(block).handler;
+        fill(self);
+        (self.cur, self.site, self.pending, self.handler, self.last) = saved;
+        self.checked = checked;
+        self.stubs.push(block);
     }
 
     pub(crate) fn reachable(&self) -> bool {
@@ -609,7 +648,7 @@ impl<'s, 'h> Builder<'s, 'h> {
         if d.kind == DeclKind::Global || self.is_global(decl) {
             return Ok(Access::Global { name: d.name });
         }
-        if let Some(&index) = self.captures.get(&decl) {
+        if let Some(&index) = self.captures.get(&(decl, false)) {
             return Ok(Access::Captured { index });
         }
         internal(format!(
@@ -670,7 +709,11 @@ impl<'s, 'h> Builder<'s, 'h> {
     }
 
     pub(crate) fn get_var(&mut self, var: u32) -> Value {
-        self.op(Op::GetVar, &[], Imm::Var(var))
+        let value = self.op(Op::GetVar, &[], Imm::Var(var));
+        if self.f.vars[var as usize].kind == VarKind::This {
+            self.this_values.insert(value);
+        }
+        value
     }
 
     pub(crate) fn set_var(&mut self, var: u32, value: Value) {

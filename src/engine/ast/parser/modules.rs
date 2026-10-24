@@ -529,7 +529,7 @@ fn collect_bound_names(pattern: &crate::engine::ast::Pattern, out: &mut Vec<(Nam
     match &pattern.kind {
         PatternKind::Binding(reference) => out.push((reference.name, reference.span)),
         PatternKind::Target(_) => {}
-        PatternKind::Object { props, rest } => {
+        PatternKind::Object { props, rest, .. } => {
             for prop in props {
                 collect_bound_names(&prop.value, out);
             }

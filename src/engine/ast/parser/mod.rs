@@ -258,6 +258,7 @@ impl<'source> Parser<'source> {
             length: 0,
             body,
             concise: false,
+            default_ctor: false,
             strict,
             span: source_span,
             source: (0, end),

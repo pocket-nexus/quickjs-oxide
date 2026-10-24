@@ -328,8 +328,10 @@ impl<'source> Parser<'source> {
         self.expect_punctuator(Punctuator::LeftBrace)?;
         let mut props = Vec::new();
         let mut rest = None;
+        let mut rest_pos = 0;
         while !self.is_punctuator(Punctuator::RightBrace) {
             if self.is_punctuator(Punctuator::Ellipsis) {
+                rest_pos = super::pos(self.current().span);
                 rest = Some(Box::new(self.parse_object_binding_rest(declaring, site)?));
                 break;
             }
@@ -375,7 +377,11 @@ impl<'source> Parser<'source> {
         }
         self.expect_punctuator(Punctuator::RightBrace)?;
         Ok(Pattern {
-            kind: PatternKind::Object { props, rest },
+            kind: PatternKind::Object {
+                props,
+                rest,
+                rest_pos,
+            },
             span: self.span_from(start),
         })
     }
@@ -676,8 +682,10 @@ impl<'source> Parser<'source> {
         self.expect_punctuator(Punctuator::LeftBrace)?;
         let mut props = Vec::new();
         let mut rest = None;
+        let mut rest_pos = 0;
         while !self.is_punctuator(Punctuator::RightBrace) {
             if self.is_punctuator(Punctuator::Ellipsis) {
+                rest_pos = super::pos(self.current().span);
                 self.advance()?;
                 let target = self.parse_destructuring_target()?;
                 if !self.is_punctuator(Punctuator::RightBrace) {
@@ -739,7 +747,11 @@ impl<'source> Parser<'source> {
         }
         self.expect_punctuator(Punctuator::RightBrace)?;
         Ok(Pattern {
-            kind: PatternKind::Object { props, rest },
+            kind: PatternKind::Object {
+                props,
+                rest,
+                rest_pos,
+            },
             span: self.span_from(start),
         })
     }
