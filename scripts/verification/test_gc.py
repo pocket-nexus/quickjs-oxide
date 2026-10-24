@@ -152,6 +152,25 @@ class ProofSourceTests(unittest.TestCase):
         reuse = gc.reuse_proofs.proof(arena,
             gc.arena_proofs.proof(arena, (gc.PROOFS / "arena.rs.in").read_text()))
         gc.reject_trust_escapes(reuse)
+        root_trace = gc.root_trace_proofs.proof(heap,
+            gc.root_proofs.proof(heap, value, (gc.PROOFS / "roots.rs.in").read_text()),
+            gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap))
+        gc.reject_trust_escapes(root_trace)
+        jobs = gc.job_trace_proofs.proof((gc.ROOT / "core/src/vm/jobs.rs").read_text(),
+            gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap))
+        gc.reject_trust_escapes(jobs)
+
+    def test_root_fields_cannot_silently_escape_tracing_policy(self):
+        source = (gc.ROOT / "core/src/heap/gc.rs").read_text()
+        changed = source.replace("pub fixed: Vec<Value>,", "pub fixed: Vec<Value>,\n    extra: Vec<Value>,")
+        with self.assertRaisesRegex(ValueError, "Roots fields changed"):
+            gc.root_trace_proofs.proof(changed, "", "")
+
+    def test_job_fields_cannot_silently_escape_tracing_policy(self):
+        source = (gc.ROOT / "core/src/vm/jobs.rs").read_text()
+        changed = source.replace("rejected: bool,", "rejected: bool,\n        extra: Value,", 1)
+        with self.assertRaisesRegex(ValueError, "Job fields changed"):
+            gc.job_trace_proofs.proof(changed, "")
 
     def test_completeness_does_not_count_conditional_or_tested_code(self):
         obligations = [

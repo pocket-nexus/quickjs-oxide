@@ -106,3 +106,19 @@ proof fn deferred_has_origin(slots: Seq<Value>, marks: &ValueMarks, upto: nat, k
 }
 
 // SCAN_ENTRIES
+
+// Compose the arena identity relation with the actual full-bit-key table.
+// The caller must preserve canonical encoding throughout the heap.
+fn canonical_key_activation(registered: Value, discovered: Value, waiting: Value) -> (result: Vec<Value>)
+    requires canonical_heap(registered.0), canonical_heap(discovered.0),
+        kind_of(registered.0) == kind_of(discovered.0),
+        heap_slot(registered.0) == heap_slot(discovered.0),
+    ensures result@ == seq![waiting],
+{
+    let mut waiters = Waiters::new();
+    waiters.defer(registered, waiting);
+    proof { canonical_identity(registered, discovered); }
+    let values = waiters.activate(discovered).unwrap();
+    assert(waiters.by_key@.is_empty());
+    values
+}

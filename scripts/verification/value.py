@@ -45,7 +45,8 @@ def proof(source, template, gc_source):
     }
     for name, ty, tag in (("object", "ObjectId", "OBJECT"), ("string", "StringId", "STRING"),
                           ("symbol", "SymbolId", "SYMBOL"), ("bigint", "BigIntId", "BIGINT")):
-        contracts[name] = (f"ensures result.0 == (TAG_{tag} << TAG_SHIFT) | id.0 as u64, result.0 >> TAG_SHIFT == TAG_{tag}, result.0 as u32 == id.0,", {})
+        contracts[name] = (f"ensures canonical_heap(result.0), result.0 == (TAG_{tag} << TAG_SHIFT) | id.0 as u64, result.0 >> TAG_SHIFT == TAG_{tag}, result.0 as u32 == id.0,", {
+            "before": {f"Value(boxed(TAG_{tag}, id.0))": f"canonical_box(TAG_{tag}, id.0);"}})
         contracts["as_" + name] = (f"""ensures result == (if kind_of(self.0) == Kind::{ty[:-2]} {{
             Some({ty}(self.0 as u32)) }} else {{ None }}),""", {})
     for name, (contract, options) in contracts.items():

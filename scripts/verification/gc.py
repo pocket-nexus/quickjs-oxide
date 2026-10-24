@@ -16,7 +16,9 @@ import urllib.request
 import zipfile
 
 import arena as arena_proofs
+import job_trace as job_trace_proofs
 import reuse as reuse_proofs
+import root_trace as root_trace_proofs
 import roots as root_proofs
 import scan as scan_proofs
 import source as source_frontend
@@ -244,8 +246,13 @@ def main():
             (ROOT / "core/src/heap/symbol.rs").read_text(), arena.read_text(), scan.read_text()))
         reuse = directory / "reuse.rs"
         reuse.write_text(reuse_proofs.proof((ROOT / "core/src/heap/arena.rs").read_text(), arena.read_text()))
+        root_trace = directory / "root_trace.rs"
+        root_trace.write_text(root_trace_proofs.proof(gc_source, roots.read_text(), value.read_text()))
+        job_trace = directory / "job_trace.rs"
+        job_trace.write_text(job_trace_proofs.proof((ROOT / "core/src/vm/jobs.rs").read_text(), value.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
-                   generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse]
+                   generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse,
+                   root_trace, job_trace]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -280,6 +287,25 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "job_lost_record": (job_trace, "stack.push(Value::object(*record));", ""),
+                "job_lost_argument": (job_trace, "stack.push(*argument);", ""),
+                "job_lost_promise": (job_trace, "stack.push(Value::object(*promise));", ""),
+                "job_lost_thenable": (job_trace, "stack.push(*thenable);", ""),
+                "job_lost_then": (job_trace, "stack.push(*then);", ""),
+                "job_lost_function": (job_trace, "stack.push(*function);", ""),
+                "job_lost_this": (job_trace, "stack.push(*this);", ""),
+                "job_lost_args": (job_trace, "stack.extend_from_slice(args);", ""),
+                "root_trace_lost_stack": (root_trace, "push_heap_values(stack, self.stack.values());", ""),
+                "root_trace_lost_handles": (root_trace, "push_heap_values(stack, &self.handles.slots);", ""),
+                "root_trace_lost_fixed": (root_trace, "push_heap_values(stack, &self.fixed);", ""),
+                "root_trace_lost_prefix": (root_trace, "push_heap_values(stack, self.stack.values());",
+                    "stack.clear(); push_heap_values(stack, self.stack.values());"),
+                "identity_accepts_noncanonical": (value,
+                    "requires canonical_heap(a.0), canonical_heap(b.0),",
+                    "requires heap_kind(kind_of(a.0)), heap_kind(kind_of(b.0)),"),
+                "identity_forgets_namespace": (value,
+                    "ensures (a == b) == (kind_of(a.0) == kind_of(b.0) && a.0 as u32 == b.0 as u32),",
+                    "ensures (a == b) == (a.0 as u32 == b.0 as u32),"),
                 "reuse_highest_slot": (reuse, "(!taken).trailing_zeros()", "63 - (!taken).leading_zeros()"),
                 "reuse_lost_count": (reuse, "self.free_count -= 1;", ""),
                 "reuse_skips_cursor": (reuse, "let mut word = self.cursor;", "let mut word = self.cursor + 1;"),

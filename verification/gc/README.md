@@ -249,6 +249,45 @@ The production for-loop uses a positive WeakMap branch instead of `continue`,
 which the pinned verifier cannot translate in a for-loop. Ghost snapshots,
 invariants and proof blocks leave the selected executable statements unchanged.
 
+### Explicit roots and queued jobs
+
+`scripts/verification/root_trace.py` composes the real `Roots::trace` body,
+`RootStack::values`, and heap-value filtering. It preserves the previous queue
+and appends exactly the heap-valued subsequences of the stack, handle slots and
+fixed roots, in that order, retaining duplicates. Its membership theorem covers
+every heap value in those stores and no other new value. Empty handle slots and
+other primitives are excluded by the same proved heap-kind predicate.
+
+`scripts/verification/job_trace.py` checks the unchanged `Job::trace` body for
+Reaction, Thenable and Call jobs, including the complete argument sequence and
+the source ObjectId constructor. The result is the exact old queue followed by
+the variant's root sequence. Mutants drop each of its eight value-bearing fields
+or sequences; explicit-store mutants drop each store or clear the old queue.
+
+Both frontends enforce closed field policies, with tests that add an untraced
+value field. Changing a root-store field or Job variant/field fails closed until
+the tracing policy is reviewed. This supplements, but does not replace, reviewing
+the specification. The complete `mark_from_roots` driver, job-queue traversal,
+VM registers/frames, atoms, code units, shapes, kept/rejected/module values and
+caller safepoint discipline still need source proofs and composition.
+
+### Value identity across arenas and waiting keys
+
+`value.rs.in` proves that all four production heap constructors return canonical
+boxed values: the 16 payload bits above the u32 index are zero. For canonical
+heap values, equality of `(kind, index)` is equivalent to equality of all 64
+bits. `scan.rs.in` composes this identity lemma with actual `Waiters::defer` and
+`activate` calls, proving that rediscovering a canonical key by arena identity
+activates its waiting value.
+
+The canonicality condition cannot be omitted: a proved witness gives two
+different u64 encodings of the same decoded Symbol index. This is a limitation
+of decoding arbitrary bit patterns, not a demonstrated path to malformed values
+through the production constructors. Source mutations remove canonicality or
+forget the arena namespace and must fail. Complete tracing must still establish
+and preserve canonical encoding for every heap/root value; this component alone
+does not discharge that representation obligation.
+
 ### Arena slot reuse
 
 `scripts/verification/reuse.py` checks the unchanged production `taken` and

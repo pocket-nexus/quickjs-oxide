@@ -141,6 +141,15 @@ pub struct Roots {
     pub fixed: Vec<Value>,
 }
 
+impl Roots {
+    /// Appends every heap value in the explicit root stores, in store order.
+    fn trace(&self, stack: &mut Vec<Value>) {
+        push_heap_values(stack, self.stack.values());
+        push_heap_values(stack, &self.handles.slots);
+        push_heap_values(stack, &self.fixed);
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct HeapLimits {
     /// Reserved bytes the heap may not exceed; `usize::MAX` for no cap.
@@ -488,9 +497,7 @@ impl Heap {
         // weak objects reached by this traversal may contribute ephemerons.
         self.gc.weak.clear();
         let mut stack = mem::take(&mut self.gc.mark_stack);
-        stack.extend_from_slice(self.roots.stack.values());
-        stack.extend(self.roots.handles.values());
-        stack.extend_from_slice(&self.roots.fixed);
+        self.roots.trace(&mut stack);
         for job in &self.jobs {
             job.trace(&mut stack);
         }

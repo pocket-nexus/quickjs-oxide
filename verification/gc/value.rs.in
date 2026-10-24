@@ -24,6 +24,50 @@ spec fn heap_kind(kind: Kind) -> bool {
     kind == Kind::Object || kind == Kind::String || kind == Kind::Symbol || kind == Kind::BigInt
 }
 
+// Heap constructors use only the low 32 payload bits. The waiting table uses
+// all 64 bits, while arena marking uses (kind, low 32 bits); this invariant is
+// therefore required when relating the two representations.
+spec fn canonical_heap(bits: u64) -> bool {
+    heap_kind(kind_of(bits)) && bits == ((bits >> 48) << 48) | (bits as u32) as u64
+}
+
+spec fn heap_slot(bits: u64) -> u32 {
+    #[verifier::truncate] (bits as u32)
+}
+
+proof fn canonical_box(tag: u64, index: u32)
+    requires tag == TAG_OBJECT || tag == TAG_STRING || tag == TAG_SYMBOL || tag == TAG_BIGINT,
+    ensures canonical_heap((tag << TAG_SHIFT) | index as u64),
+{
+    let bits = (tag << TAG_SHIFT) | index as u64;
+    assert(bits >> 48 == tag && bits as u32 == index
+        && bits == ((bits >> 48) << 48) | (bits as u32) as u64) by(bit_vector)
+        requires tag <= 0xFFFF, bits == (tag << 48) | index as u64;
+}
+
+proof fn canonical_identity(a: Value, b: Value)
+    requires canonical_heap(a.0), canonical_heap(b.0),
+    ensures (a == b) == (kind_of(a.0) == kind_of(b.0) && a.0 as u32 == b.0 as u32),
+{
+    if kind_of(a.0) == kind_of(b.0) {
+        assert(a.0 >> 48 == b.0 >> 48);
+    }
+}
+
+// Decoding arbitrary u64s alone is not an injectivity theorem. This witness
+// prevents dropping canonicality from the heap representation obligation.
+proof fn noncanonical_alias_exists()
+    ensures exists|a: u64, b: u64| a != b && heap_kind(kind_of(a))
+        && kind_of(a) == kind_of(b) && heap_slot(a) == heap_slot(b),
+{
+    let a = 0xFFFD_0000_0000_0001u64;
+    let b = 0xFFFD_0001_0000_0001u64;
+    assert(a != b && a >> 48 == 0xFFFD && b >> 48 == 0xFFFD
+        && a as u32 == b as u32) by(bit_vector)
+        requires a == 0xFFFD_0000_0000_0001u64, b == 0xFFFD_0001_0000_0001u64;
+    assert(heap_kind(kind_of(a)) && kind_of(a) == kind_of(b));
+}
+
 impl Value {
     // METHOD bits
     // METHOD kind
