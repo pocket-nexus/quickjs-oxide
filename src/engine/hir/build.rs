@@ -19,7 +19,7 @@ use super::schema::{
     SwitchCase, Target, TypeRef, UnaryOp, Unit, UpdateOp,
 };
 use crate::engine::api::error::Error;
-use crate::engine::ast::{self, DeclId, FuncId, ProgramKind, Ref, ScopeId, ScopeKind, Storage};
+use crate::engine::ast::{self, DeclId, FuncId, ProgramKind, Ref, ScopeId, ScopeKind};
 use crate::engine::compiler::names::{NameId, NameTable};
 use crate::engine::value::JsString;
 use oxide_core::FxHashMap;
