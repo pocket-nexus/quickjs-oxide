@@ -8,6 +8,7 @@
 use std::mem;
 use std::time::Duration;
 
+use super::gc_kernel::{EphemeronTrace, close_ephemerons, ephemeron_action};
 use super::hash::FxHashMap;
 use super::object::{InternalTag, NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
@@ -18,6 +19,10 @@ use crate::vm::ic::Record;
 #[cfg(test)]
 #[path = "gc_tests.rs"]
 mod tests;
+
+#[cfg(any(test, feature = "gc-stress"))]
+#[path = "gc_audit.rs"]
+mod audit;
 
 /// A position on the [`RootStack`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -391,10 +396,18 @@ impl Heap {
     pub fn collect(&mut self) {
         let start = crate::clock::Stopwatch::start();
         let before = self.used_bytes();
+        #[cfg(any(test, feature = "gc-stress"))]
+        let graph = audit::Snapshot::capture(self);
         self.mark_from_roots();
+        #[cfg(any(test, feature = "gc-stress"))]
+        graph.check_marks(self);
         self.process_weak();
         self.prune_caches();
+        #[cfg(any(test, feature = "gc-stress"))]
+        graph.check_retained_references(self);
         let freed = self.sweep();
+        #[cfg(any(test, feature = "gc-stress"))]
+        graph.check_live(self);
         let live = self.used_bytes();
         self.set_budget(live);
         let gc = &mut self.gc;
@@ -410,7 +423,7 @@ impl Heap {
             gc.pauses.push(pause);
         }
         #[cfg(feature = "gc-stress")]
-        self.verify();
+        self.verify_marked_records();
     }
 
     /// Turns the growth trigger off (`manual`) or back on, with the budget
@@ -517,33 +530,11 @@ impl Heap {
         // map is scanned once: a live key's value is pushed, an unmarked
         // key's waits in `ephemerons` until `drain` marks the key. Draining
         // may reach further weak maps, scanned in the next round.
-        let mut scanned = 0;
-        loop {
-            let mut ephemerons = mem::take(&mut self.gc.ephemerons);
-            for position in scanned..self.gc.weak.len() {
-                let internal = self.payloads.internals.get(self.gc.weak[position]);
-                if internal.tag != InternalTag::WeakMap {
-                    continue;
-                }
-                for entry in internal.slots.chunks(2) {
-                    if entry[0].is_empty() || self.value_marked(entry[1]) {
-                        continue;
-                    }
-                    if self.value_marked(entry[0]) {
-                        stack.push(entry[1]);
-                    } else {
-                        ephemerons.entry(entry[0]).or_default().push(entry[1]);
-                    }
-                }
-            }
-            scanned = self.gc.weak.len();
-            self.gc.ephemerons = ephemerons;
-            if stack.is_empty() {
-                break;
-            }
-            self.drain::<true>(&mut stack);
-        }
-        self.gc.ephemerons.clear();
+        close_ephemerons(&mut WeakPass {
+            heap: self,
+            stack: &mut stack,
+            scanned: 0,
+        });
         // Cells owned by live prototypes; the table itself is weak.
         for (object, info) in &self.prototypes {
             if self.objects.is_marked(object.0)
@@ -657,7 +648,10 @@ impl Heap {
                         }
                         let description = self.symbols.get(index).description;
                         if description != NONE {
-                            self.strings.mark(description);
+                            // A description can be an unflattened rope. Visiting
+                            // it also retains its halves; marking just the record
+                            // would leave those halves available for recycling.
+                            stack.push(Value::string(crate::StringId(description)));
                         }
                     }
                 }
@@ -901,7 +895,17 @@ impl Heap {
     /// count agrees with its bitmap; every value-heap slot has exactly one
     /// owner, a live range or the free space.
     pub fn verify(&mut self) {
+        #[cfg(any(test, feature = "gc-stress"))]
+        let graph = audit::Snapshot::capture(self);
         self.mark_from_roots();
+        #[cfg(any(test, feature = "gc-stress"))]
+        graph.check_marks(self);
+        self.verify_marked_records();
+    }
+
+    // collect has already independently checked marks before sweep. Reuse them
+    // for the storage checks, avoiding a second graph snapshot and mark traversal.
+    fn verify_marked_records(&mut self) {
         fn check<T: super::arena::Record>(name: &str, arena: &super::arena::Arena<T>) {
             if let Some(index) = arena.marks_equal_live() {
                 panic!(
@@ -992,6 +996,91 @@ impl Heap {
             assert!(live, "gc verify: a cache entry names freed {record:?}");
         }
         self.clear_marks();
+    }
+}
+
+/// The representation adapter for the verified phase driver. Graph extraction
+/// and the optimized trace paths are intentionally independent in gc_audit.rs.
+struct WeakPass<'a> {
+    heap: &'a mut Heap,
+    stack: &'a mut Vec<Value>,
+    scanned: usize,
+}
+
+impl EphemeronTrace for WeakPass<'_> {
+    fn scan(&mut self) -> bool {
+        let heap = &mut self.heap;
+        #[cfg(any(test, feature = "gc-stress"))]
+        assert!(
+            self.stack.is_empty(),
+            "gc adapter: scan requires an empty queue"
+        );
+        let mut ephemerons = mem::take(&mut heap.gc.ephemerons);
+        for position in self.scanned..heap.gc.weak.len() {
+            let payload = heap.gc.weak[position];
+            #[cfg(any(test, feature = "gc-stress"))]
+            assert!(
+                heap.payloads.internals.is_marked(payload),
+                "gc adapter: dead map provenance"
+            );
+            let internal = heap.payloads.internals.get(payload);
+            if internal.tag != InternalTag::WeakMap {
+                continue;
+            }
+            for entry in internal.slots.chunks(2) {
+                let empty = entry[0].is_empty();
+                let value_live = empty || heap.value_marked(entry[1]);
+                let key_live = !value_live && heap.value_marked(entry[0]);
+                match ephemeron_action(empty, value_live, key_live) {
+                    0 => {}
+                    1 => self.stack.push(entry[1]),
+                    _ => ephemerons.entry(entry[0]).or_default().push(entry[1]),
+                }
+            }
+        }
+        self.scanned = heap.gc.weak.len();
+        heap.gc.ephemerons = ephemerons;
+        #[cfg(any(test, feature = "gc-stress"))]
+        {
+            assert!(
+                self.stack.is_empty() || self.stack.iter().any(|&v| !heap.value_marked(v)),
+                "gc adapter: drain would make no marking progress"
+            );
+            assert!(
+                heap.gc
+                    .ephemerons
+                    .keys()
+                    .all(|&key| !heap.value_marked(key)),
+                "gc adapter: waiting key is already marked"
+            );
+        }
+        !self.stack.is_empty()
+    }
+
+    fn drain(&mut self) {
+        #[cfg(any(test, feature = "gc-stress"))]
+        let pending = self.stack.clone();
+        self.heap.drain::<true>(self.stack);
+        #[cfg(any(test, feature = "gc-stress"))]
+        {
+            assert!(self.stack.is_empty(), "gc adapter: drain left pending work");
+            assert!(
+                pending.iter().all(|&v| self.heap.value_marked(v)),
+                "gc adapter: drain did not mark a queued value"
+            );
+            assert!(
+                self.heap
+                    .gc
+                    .ephemerons
+                    .keys()
+                    .all(|&key| !self.heap.value_marked(key)),
+                "gc adapter: activation left waiters behind"
+            );
+        }
+    }
+
+    fn clear(&mut self) {
+        self.heap.gc.ephemerons.clear();
     }
 }
 

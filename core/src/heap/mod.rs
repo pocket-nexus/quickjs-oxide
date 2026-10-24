@@ -12,6 +12,7 @@ pub mod bigint;
 pub mod buffer;
 pub mod code;
 pub mod gc;
+mod gc_kernel;
 pub(crate) mod hash;
 pub mod object;
 pub mod report;

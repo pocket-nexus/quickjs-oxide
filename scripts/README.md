@@ -9,6 +9,7 @@ Implementations have a single owner:
 | `benchmark/` | External workload runners, profiler experiments and build/result provenance |
 | `quickjs/` | Pinned reference builds, cache tests, differential fixtures and dynamic-import traces |
 | `unicode/` | Unicode table generation and source-fingerprint verification |
+| `verification/` | Pinned GC proofs, source extraction and negative proof checks; see `verification/gc/README.md` |
 | `web/` | Site and docs build, Node/browser checks and Pages deployment tooling |
 | `release/` | Version tagging and GitHub Release packaging; see `docs/release.md` |
 

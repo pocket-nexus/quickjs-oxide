@@ -265,8 +265,8 @@ impl<T: Record> Arena<T> {
         self.check(index);
         let (word, mask) = bit(index);
         let bits = &mut self.marks[word];
-        let fresh = *bits & mask == 0;
-        *bits |= mask;
+        let (marked, fresh) = super::gc_kernel::mark_word(*bits, mask);
+        *bits = marked;
         fresh
     }
 
@@ -289,7 +289,7 @@ impl<T: Record> Arena<T> {
         let mut freed = 0;
         let mut lowest = self.live.len();
         for word in (0..self.live.len()).rev() {
-            let mut garbage = self.live[word] & !self.marks[word];
+            let mut garbage = super::gc_kernel::dead_word(self.live[word], self.marks[word]);
             if garbage == 0 {
                 continue;
             }
@@ -468,6 +468,46 @@ mod tests {
         assert_eq!(arena.alloc(Item(300), &mut room), 2);
         assert_eq!(arena.alloc(Item(301), &mut room), 4);
         assert!(arena.free_count_matches());
+    }
+
+    #[test]
+    fn stateful_mark_sweep_preserves_partition_and_payloads_across_words() {
+        use std::collections::{BTreeMap, BTreeSet};
+        let mut arena = Arena::new();
+        let mut room = Room::unbounded();
+        let mut live = BTreeMap::new();
+        let mut serial = 0;
+        for round in 0..12 {
+            // Cross both 64-bit bitmap boundaries and repeated shrink/grow cycles.
+            for _ in 0..[63, 64, 65, 129][round % 4] {
+                let id = arena.alloc(Item(serial), &mut room);
+                assert!(live.insert(id, serial).is_none(), "allocated an owned slot");
+                serial += 1;
+            }
+            arena.clear_marks();
+            let keep: BTreeSet<_> = live
+                .keys()
+                .copied()
+                .filter(|id| (id + round as u32).is_multiple_of(3))
+                .collect();
+            for &id in &keep {
+                assert!(arena.mark(id));
+                assert!(!arena.mark(id));
+            }
+            let mut freed = BTreeSet::new();
+            let count = arena.sweep(|id, item| {
+                assert!(!keep.contains(&id));
+                assert!(freed.insert(id), "freed twice");
+                assert_eq!(live.remove(&id), Some(item.0));
+            });
+            assert_eq!(count, freed.len());
+            assert_eq!(arena.live_indices().collect::<BTreeSet<_>>(), keep);
+            assert_eq!(arena.live_count(), live.len());
+            assert!(arena.free_count_matches());
+            for (&id, &payload) in &live {
+                assert_eq!(arena.get(id).0, payload);
+            }
+        }
     }
 
     #[test]

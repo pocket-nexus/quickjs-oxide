@@ -1,0 +1,50 @@
+name: GC verification
+
+on:
+  pull_request:
+    paths:
+      - 'core/**'
+      - 'verification/**'
+      - 'scripts/verification/**'
+      - '.github/workflows/gc-verification.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'tests/embedding_api.rs'
+  push:
+    branches: [main]
+    paths:
+      - 'core/**'
+      - 'verification/**'
+      - 'scripts/verification/**'
+      - '.github/workflows/gc-verification.yml'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'tests/embedding_api.rs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install engine toolchain
+        run: rustup toolchain install 1.99.0 --profile minimal
+      - name: Check proof tooling
+        run: python3 -m unittest discover -s scripts/verification -p 'test_*.py'
+      - name: Verify pinned proofs and reject deliberate faults
+        run: python3 scripts/verification/gc.py --install --mutations --output target/verification/proofs.json
+      - name: Verify actual heap adapters and collection protocols
+        run: |
+          cargo test --locked -p quickjs-oxide-core
+          cargo test --locked --release -p quickjs-oxide-core --features gc-stress
+          cargo test --locked --features gc-stress --test embedding_api symbol_rope_description_survives_collection_without_other_string_roots
+      - name: Reject faults in the actual collector
+        run: python3 scripts/verification/gc_mutations.py --output target/verification/runtime-mutations.json

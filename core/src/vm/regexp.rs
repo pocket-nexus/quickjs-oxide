@@ -123,6 +123,18 @@ impl RegExpStore {
         self.live == 0
     }
 
+    #[cfg(any(test, feature = "gc-stress"))]
+    pub(crate) fn audit_records(&self) -> impl Iterator<Item = (u32, RegExpRecord, bool)> + '_ {
+        self.programs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| {
+                entry
+                    .as_ref()
+                    .map(|(record, _)| (index as u32, *record, self.is_marked(index as u32)))
+            })
+    }
+
     /// Bytes the live programs hold.
     pub fn bytes(&self) -> usize {
         self.bytes

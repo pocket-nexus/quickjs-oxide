@@ -14,6 +14,10 @@ The crate has `#![forbid(unsafe_code)]` and one dependency, the
 regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
 crate depends on it; it does not depend on the root crate.
 
+The [GC verification package](../verification/gc/README.md) contains Verus
+proofs, production-source checks, an independent stress-mode heap graph audit,
+and an explicit ledger of the remaining representation and rooting obligations.
+
 ## Layout
 
 | Module | Content |
@@ -69,10 +73,12 @@ cargo test -p quickjs-oxide-core --features gc-stress
 With `gc-stress` every allocating call collects first, sweep poisons freed
 records, freed indices are quarantined for one collection so they are not
 immediately recycled, and every access asserts liveness: a missed root panics
-with `stale … index` at the access that used it. After each collection the
-verifier re-marks from the roots and checks that live and reachable records
-agree, that no free slot is marked, and that every value-heap slot has
-exactly one owner, a live range or the free space. Debug builds assert liveness too; release builds
+with `stale … index` at the access that used it. An independent typed heap graph
+checks the marks before sweeping and the survivors afterward. The post-collection
+verifier checks that no free slot is marked and that every value-heap slot has
+exactly one owner, a live range or the free space. An explicit `verify()` also
+re-marks from the roots and compares with the independent graph in stress builds.
+Debug builds assert liveness too; release builds
 check nothing.
 
 ## Values and the heap
