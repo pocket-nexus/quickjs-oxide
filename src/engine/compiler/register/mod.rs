@@ -287,7 +287,7 @@ pub(crate) fn tree_has_import_call(units: oxide_core::Units<'_>, root: CodeUnitI
 }
 
 /// The compare-jump taken exactly when `op` is not, if there is one.
-fn negated_jump(op: Opcode) -> Option<Opcode> {
+pub(crate) fn negated_jump(op: Opcode) -> Option<Opcode> {
     use Opcode::*;
     Some(match op {
         JTrue => JFalse,
