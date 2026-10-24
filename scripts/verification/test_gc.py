@@ -84,6 +84,16 @@ class ProofSourceTests(unittest.TestCase):
         self.assertEqual(item("const TABLE: [u32; 2] = [1, 2];", r"const TABLE\b"),
                          "const TABLE: [u32; 2] = [1, 2];")
 
+    def test_byte_characters_cannot_change_item_boundaries(self):
+        for literal in ("b'{'", "b'}'", "b';'", "b'\\x7b'", "b'\\n'", "b'\\''", "b'\\\\'"):
+            source = "fn read<'a>(value: &'a u8) { let byte = " + literal + "; }"
+            self.assertEqual(item(source, r"fn read\b"), source)
+            self.assertEqual(len(masked(source)), len(source))
+            self.assertNotIn(literal, masked(source))
+        for literal in ("b'", "b'xx'", "b'\\q'", "b'\\x0'", "b'\u00e9'"):
+            with self.assertRaises(ValueError):
+                masked(literal)
+
     def test_bad_or_unsupported_lexical_input_is_rejected(self):
         for source in ('r#"text"#', "'x'", '"unterminated', '/* missing end'):
             with self.assertRaises(ValueError):
@@ -163,6 +173,10 @@ class ProofSourceTests(unittest.TestCase):
             (gc.ROOT / "core/src/vm/mod.rs").read_text(),
             gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap))
         gc.reject_trust_escapes(vm_roots)
+        vm_resume = gc.vm_resume_proofs.proof((gc.ROOT / "core/src/heap/mod.rs").read_text(),
+            (gc.ROOT / "core/src/vm/mod.rs").read_text(), (gc.ROOT / "core/src/vm/interp.rs").read_text(),
+            value, vm_roots)
+        gc.reject_trust_escapes(vm_resume)
 
     def test_root_fields_cannot_silently_escape_tracing_policy(self):
         source = (gc.ROOT / "core/src/heap/gc.rs").read_text()

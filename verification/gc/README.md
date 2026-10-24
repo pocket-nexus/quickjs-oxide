@@ -279,8 +279,9 @@ The stale boundary becomes `min(old_stale_from, top)`; every other Heap and VM
 field is framed through the full parametric record declarations. Mutations read
 above `top`, omit a function, lose the old stale boundary, use the wrong arena,
 clear the incoming queue, or alter an unrelated heap field. Establishing `top`
-bounds, frame/function graph relationships, and safe register resumption still
-requires proofs of the VM writers and the complete collection driver. Opaque VM
+bounds and frame/function graph relationships still requires proofs of the VM
+writers and the complete collection driver. The local register-restoration
+composition is proved below; it does not establish every caller's discipline. Opaque VM
 metadata being framed does not prove that any references it contains are rooted.
 
 ### Value identity across arenas and waiting keys
@@ -429,3 +430,30 @@ Engine changes also require the repository's Sweep and memory runs from clean,
 committed base/candidate worktrees. Verification results are not performance
 measurements. Retain exact commands, commits, binary hashes and benchmark
 tables outside version control as specified in `AGENTS.md`.
+
+### Register restoration after root scanning
+
+`scripts/verification/vm_resume.py` extracts the actual `clear_registers` and
+`raise_top` bodies from `vm/interp.rs`, together with all `Cx`, `Heap`, `VmStack`
+and `Frame` fields. Uninspected fields remain universally quantified, including
+the context's shared and mutable references. The clearing loop terminates,
+sets exactly the requested interval to `Value::UNDEFINED`, and preserves every
+other field and register. `raise_top` clears precisely the newly exposed stale
+interval and establishes its exact `top`/`stale_from` postconditions.
+
+A checked composition calls the actual `trace_vm_roots` and then `raise_top`:
+for any retained-value set covering the old active register roots, every heap
+value in the restored prefix belongs to that set. This is a local transition
+theorem. It does not execute `collect`, establish the collector's root-retention
+property, or prove every caller maintains the bounds and stale metadata. Opaque
+interior mutable referents remain outside record framing, as for the other
+source proofs. Eight negative checks omit clearing, writes, metadata updates or
+root scanning, choose the wrong interval, skip its first slot, or corrupt an
+unrelated heap field.
+
+The explicit clearing loop replaces `slice::fill`, which the pinned verifier
+does not support; it uses the existing vstd mutable-slice specification without
+adding a local trusted specification. The source lexer masks ASCII byte
+characters because the complete interpreter source contains bracket byte
+literals; malformed or unsupported byte literals fail closed. Unit tests check
+that braces, semicolons, escapes and lifetimes cannot alter item boundaries.

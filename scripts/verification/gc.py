@@ -25,6 +25,7 @@ import source as source_frontend
 import symbol as symbol_proofs
 import value as value_proofs
 import vm_roots as vm_root_proofs
+import vm_resume as vm_resume_proofs
 import waiters as waiter_proofs
 import weakpass as weakpass_proofs
 
@@ -255,9 +256,13 @@ def main():
         vm_roots = directory / "vm_roots.rs"
         vm_roots.write_text(vm_root_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
             gc_source, (ROOT / "core/src/vm/mod.rs").read_text(), value.read_text()))
+        vm_resume = directory / "vm_resume.rs"
+        vm_resume.write_text(vm_resume_proofs.proof((ROOT / "core/src/heap/mod.rs").read_text(),
+            (ROOT / "core/src/vm/mod.rs").read_text(), (ROOT / "core/src/vm/interp.rs").read_text(),
+            value_source, vm_roots.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
                    generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse,
-                   root_trace, job_trace, vm_roots]
+                   root_trace, job_trace, vm_roots, vm_resume]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -292,6 +297,14 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "vm_resume_lost_clear": (vm_resume, "clear_registers(cx, from as usize..end as usize);", ""),
+                "vm_resume_overclear": (vm_resume, "vm.top.max(vm.stale_from)", "vm.top.min(vm.stale_from)"),
+                "vm_resume_lost_boundary": (vm_resume, "cx.heap.vm.stale_from = end;", ""),
+                "vm_resume_lost_top": (vm_resume, "cx.heap.vm.top = end;", ""),
+                "vm_resume_skips_first": (vm_resume, "let mut index = 0;\n    while index < registers.len()", "let mut index = 1;\n    while index < registers.len()"),
+                "vm_resume_lost_write": (vm_resume, "registers[index] = Value::UNDEFINED;", ""),
+                "vm_resume_corrupts_heap": (vm_resume, "let vm = &mut cx.heap.vm;", "cx.heap.html_dda = !cx.heap.html_dda; let vm = &mut cx.heap.vm;"),
+                "vm_resume_without_scan": (vm_resume, "cx.heap.trace_vm_roots(stack);", ""),
                 "vm_roots_stale_registers": (vm_roots, "&self.vm.registers[..top]", "&self.vm.registers[..]"),
                 "vm_roots_lost_function": (vm_roots, "stack.push(Value::object(self.vm.frames[frame].function));", ""),
                 "vm_roots_lost_stale_boundary": (vm_roots,

@@ -10,7 +10,7 @@ import re
 
 
 def masked(source):
-    """Mask comments and ordinary strings, preserving offsets and newlines."""
+    """Mask comments, strings and ASCII byte characters, preserving offsets."""
     chars = list(source)
     i = 0
     while i < len(source):
@@ -41,6 +41,11 @@ def masked(source):
             if i >= len(source):
                 raise ValueError("unterminated Rust string")
             i += 1
+        elif source.startswith("b'", i):
+            literal = re.match(r"b'(?:[\x20-\x26\x28-\x5b\x5d-\x7e]|\\(?:[\\'\"nrt0]|x[0-9a-fA-F]{2}))'", source[i:])
+            if not literal:
+                raise ValueError("unsupported Rust byte character literal")
+            i += literal.end()
         elif source[i] == "'" and re.match(r"'(?:[^'\\]|\\.)'", source[i:]):
             raise ValueError("Rust character literals are not supported")
         else:

@@ -4,7 +4,7 @@ from records import record
 from source import item, method
 
 
-def proof(heap_source, gc_source, vm_source, value_code):
+def types(heap_source, vm_source):
     declarations = []
 
     def declare(source, name, prefix, fields, dependencies=()):
@@ -23,6 +23,11 @@ def proof(heap_source, gc_source, vm_source, value_code):
         "frames": ("Vec<Frame>", "Vec<" + frame + ">"),
     }, fp)
     heap, hp = declare(heap_source, "Heap", "H", {"vm": ("VmStack", vm)}, vp)
+    return declarations, frame, vm, heap, hp
+
+
+def proof(heap_source, gc_source, vm_source, value_code):
+    declarations, frame, _, heap, hp = types(heap_source, vm_source)
     mapper = "|activation: " + frame + "| Value((TAG_OBJECT << TAG_SHIFT) | activation.function.0 as u64)"
     specs = '''
         spec fn vm_frame(&self, previous: &Self) -> bool {
