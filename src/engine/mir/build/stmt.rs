@@ -10,6 +10,29 @@ use crate::engine::hir::schema::{
 use crate::engine::mir::ir::{BlockId, Imm, Terminator, Value, VarKind};
 use crate::engine::mir::op::Op;
 
+/// The function declarations a scope makes on entry: its statements', and
+/// Annex B's in an `if` arm or under a label, which belong to the scope.
+fn scoped_functions(stmt: &Stmt, out: &mut Vec<(DeclRef, hir::FunctionRef)>) {
+    match &stmt.kind {
+        StmtKind::FnDecl { decl, fn_, .. } => out.push((*decl, *fn_)),
+        StmtKind::If { then, else_, .. } => {
+            scoped_functions(then, out);
+            if let Some(else_) = else_ {
+                scoped_functions(else_, out);
+            }
+        }
+        StmtKind::Labeled { body, .. } => scoped_functions(body, out),
+        StmtKind::Switch { cases, .. } => {
+            for case in cases {
+                for stmt in &case.body {
+                    scoped_functions(stmt, out);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// How a `break` or `continue` leaves the statements it crosses.
 enum Exit {
     Break,
@@ -205,13 +228,10 @@ impl Builder<'_, '_> {
     /// Enters a lexical scope: QuickJS resets each lexical binding to the
     /// TDZ (newest first) and makes the scope's function declarations.
     pub(super) fn enter_scope(&mut self, decls: &[DeclRef], stmts: &[Stmt]) -> Result<()> {
-        let functions: Vec<(DeclRef, hir::FunctionRef)> = stmts
-            .iter()
-            .filter_map(|stmt| match stmt.kind {
-                StmtKind::FnDecl { decl, fn_, .. } => Some((decl, fn_)),
-                _ => None,
-            })
-            .collect();
+        let mut functions = Vec::new();
+        for stmt in stmts {
+            scoped_functions(stmt, &mut functions);
+        }
         let mut close = Vec::new();
         for &decl in decls.iter().rev() {
             let Some(&var) = self.vars.get(&decl) else {

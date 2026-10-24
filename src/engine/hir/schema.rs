@@ -929,7 +929,9 @@ pub enum ExprKind {
     NewTarget {
         decl: DeclRef,
     },
-    ImportMeta,
+    ImportMeta {
+        decl: DeclRef,
+    },
     SuperMember {
         prop: Box<PropKey>,
         this: DeclRef,
@@ -1044,7 +1046,7 @@ impl ExprKind {
             ExprKind::Decl { .. } => "decl",
             ExprKind::This { .. } => "this",
             ExprKind::NewTarget { .. } => "newTarget",
-            ExprKind::ImportMeta => "importMeta",
+            ExprKind::ImportMeta { .. } => "importMeta",
             ExprKind::SuperMember { .. } => "superMember",
             ExprKind::Member { .. } => "member",
             ExprKind::Unary { .. } => "unary",
@@ -2256,8 +2258,9 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(269);
             out.push(decl.0);
         }
-        ExprKind::ImportMeta => {
+        ExprKind::ImportMeta { decl } => {
             out.push(270);
+            out.push(decl.0);
         }
         ExprKind::SuperMember { prop, this, home } => {
             out.push(271);
@@ -3587,7 +3590,7 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         267 => Some(3),
         268 => Some(3),
         269 => Some(3),
-        270 => Some(2),
+        270 => Some(3),
         271 => Some(5),
         272 => Some(7),
         273 => Some(4),
@@ -4449,7 +4452,10 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
             let decl = DeclRef(c.u()?);
             ExprKind::NewTarget { decl }
         }
-        270 => ExprKind::ImportMeta,
+        270 => {
+            let decl = DeclRef(c.u()?);
+            ExprKind::ImportMeta { decl }
+        }
         271 => {
             let prop = Box::new(rn_prop_key(r, c.u()?, limit)?);
             let this = DeclRef(c.u()?);
@@ -6714,7 +6720,10 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             parts.push(format!("decl:{}", format!("#{}", decl.0)));
             "newTarget"
         }
-        ExprKind::ImportMeta => "importMeta",
+        ExprKind::ImportMeta { decl } => {
+            parts.push(format!("decl:{}", format!("#{}", decl.0)));
+            "importMeta"
+        }
         ExprKind::SuperMember { prop, this, home } => {
             children.push((
                 "prop",
@@ -8273,7 +8282,7 @@ fn s_expr(v: &mut Expr) {
         ExprKind::Decl { decl } => {}
         ExprKind::This { decl } => {}
         ExprKind::NewTarget { decl } => {}
-        ExprKind::ImportMeta => {}
+        ExprKind::ImportMeta { decl } => {}
         ExprKind::SuperMember { prop, this, home } => {
             s_prop_key(prop);
         }

@@ -69,7 +69,7 @@ impl Builder<'_, '_> {
             ExprKind::Decl { decl } => self.read_decl(*decl, Some(at))?,
             ExprKind::This { decl } => self.read_this(*decl)?,
             ExprKind::NewTarget { decl } => self.read_decl(*decl, None)?,
-            ExprKind::ImportMeta => return unsupported("import.meta"),
+            ExprKind::ImportMeta { decl } => self.read_decl(*decl, Some(at))?,
             ExprKind::SuperMember { prop, this, home } => {
                 let place = self.super_place(prop, *this, *home, at)?;
                 self.get_place(place)?
@@ -121,7 +121,14 @@ impl Builder<'_, '_> {
                 new_target,
                 func,
             } => self.super_call(args, *this, *new_target, *func, at)?,
-            ExprKind::Import { .. } => return unsupported("import()"),
+            ExprKind::Import { spec, options } => {
+                let spec = self.expr(spec)?;
+                let options = match options {
+                    Some(options) => self.expr(options)?,
+                    None => self.undefined(),
+                };
+                self.op_at(Op::ImportCall, &[spec, options], Imm::None, at)
+            }
             ExprKind::Yield { e: value, delegate } => {
                 let value = match value {
                     Some(value) => self.expr(value)?,

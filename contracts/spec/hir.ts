@@ -358,7 +358,9 @@ export type Expr = (
   | { kind: "decl"; decl: DeclRef }
   | { kind: "this"; decl: DeclRef }
   | { kind: "newTarget"; decl: DeclRef }
-  | { kind: "importMeta" }
+  // `decl`: the module's `import.meta` binding, an implicit declaration of
+  // the module function.
+  | { kind: "importMeta"; decl: DeclRef }
   | { kind: "superMember"; prop: PropKey; this: DeclRef; home: DeclRef }
   | { kind: "member"; obj: Expr; prop: PropKey; optional: boolean; layout: Typed<LayoutRef | null>; field: Typed<u32 | null> }
   | { kind: "unary"; op: UnaryOp; e: Expr }

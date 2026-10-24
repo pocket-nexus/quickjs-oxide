@@ -2,7 +2,7 @@
 //! and the body with its implicit return.
 
 use super::pattern::Mode;
-use super::{Builder, Result, internal, unsupported};
+use super::{Builder, Result, internal};
 use crate::engine::hir::schema::{self as hir, DeclKind, DeclRef, FunctionKind, PatternKind};
 use crate::engine::mir::ir::{Imm, SuspendKind, Terminator, Value, VarKind};
 use crate::engine::mir::op::Op;
@@ -16,7 +16,7 @@ impl Builder<'_, '_> {
         self.allocate_vars()?;
         match hf.kind {
             FunctionKind::Script | FunctionKind::Eval => self.program_entry(),
-            FunctionKind::Module => unsupported("modules"),
+            FunctionKind::Module => self.module_entry(),
             _ => self.function_entry(),
         }
     }
@@ -72,9 +72,21 @@ impl Builder<'_, '_> {
         }
     }
 
-    /// A variable for every binding this function owns that is not global.
+    /// A variable for every binding this function owns that is not global
+    /// or a module binding.
     fn allocate_vars(&mut self) -> Result<()> {
         let hf = self.hf;
+        if hf.kind == FunctionKind::Module {
+            // The module's bindings are cells its record supplies: the root's
+            // captures, in declaration order.
+            for &decl in &hf.decls {
+                if self.is_module_binding(decl) {
+                    let index = self.f.captures.len() as u32;
+                    self.f.captures.push((decl, false));
+                    self.captures.insert((decl, false), index);
+                }
+            }
+        }
         for &decl in &hf.captures {
             let pair = self.decl(decl).kind == DeclKind::PrivateAccessor;
             for setter in [false, true].into_iter().take(1 + usize::from(pair)) {
@@ -119,7 +131,10 @@ impl Builder<'_, '_> {
             }
         }
         for &decl in &hf.decls {
-            if self.vars.contains_key(&decl) || self.is_global(decl) {
+            if self.vars.contains_key(&decl)
+                || self.is_global(decl)
+                || self.captures.contains_key(&(decl, false))
+            {
                 continue;
             }
             let d = self.decl(decl);
@@ -155,11 +170,129 @@ impl Builder<'_, '_> {
         self.completion = Some(completion);
         self.global_declarations()?;
         self.cells_and_tdz(&hf.decls.clone())?;
+        self.this_and_new_target()?;
         self.hoist_functions(&hf.body.stmts)?;
         self.statements(&hf.body.stmts)?;
         if self.reachable() {
             let value = self.get_var(completion);
             self.end(Terminator::Return(value));
+        }
+        Ok(())
+    }
+
+    /// Whether `decl`, of the module function, is a binding of the module
+    /// record: an import, `import.meta`, or a top-level declaration.
+    fn is_module_binding(&self, decl: DeclRef) -> bool {
+        let d = self.decl(decl);
+        match d.kind {
+            DeclKind::Import | DeclKind::Var | DeclKind::Implicit => true,
+            DeclKind::Let | DeclKind::Const | DeclKind::Class | DeclKind::Hidden => {
+                self.hf.body.decls.contains(&decl)
+            }
+            _ => false,
+        }
+    }
+
+    /// A module's root: the record's tables, then the body. Linking makes
+    /// the hoisted bindings, so the body does not.
+    fn module_entry(&mut self) -> Result<()> {
+        let hf = self.hf;
+        let Some(module) = self.cx.hir.modules.first() else {
+            return internal("a module function without its module");
+        };
+        let mut info = super::ModuleInfo {
+            has_top_level_await: module.has_top_level_await,
+            ..Default::default()
+        };
+        let binding = |b: &Self, decl: DeclRef| -> Result<u16> {
+            match b.captures.get(&(decl, false)) {
+                Some(&index) => Ok(index as u16),
+                None => internal(format!("decl #{} is not a module binding", decl.0)),
+            }
+        };
+        let imports: Vec<DeclRef> = module.imports.iter().map(|import| import.decl).collect();
+        for &(decl, _) in &self.f.captures {
+            let d = self.decl(decl);
+            info.bindings.push(match d.kind {
+                DeclKind::Import => {
+                    let named = module
+                        .imports
+                        .iter()
+                        .any(|import| import.decl == decl && import.name.is_some());
+                    if named {
+                        super::ModuleBinding::Import
+                    } else {
+                        super::ModuleBinding::Declaration { lexical: true }
+                    }
+                }
+                DeclKind::Implicit => super::ModuleBinding::ImportMeta,
+                DeclKind::Var => super::ModuleBinding::Declaration { lexical: false },
+                _ => super::ModuleBinding::Declaration { lexical: true },
+            });
+        }
+        let _ = imports;
+        for request in &module.requests {
+            info.requests.push((
+                request.specifier.0,
+                request
+                    .attributes
+                    .iter()
+                    .map(|attribute| (attribute.key.0, attribute.value.0))
+                    .collect(),
+            ));
+        }
+        for import in &module.imports {
+            info.imports.push((
+                import.request,
+                import.name.map(|name| name.0),
+                binding(self, import.decl)?,
+            ));
+        }
+        for reexport in &module.reexports {
+            info.exports.push((
+                reexport.as_.0,
+                super::ExportTarget::Indirect {
+                    request: reexport.request,
+                    name: reexport.name.map(|name| name.0),
+                },
+            ));
+        }
+        for export in &module.exports {
+            info.exports.push((
+                export.name.0,
+                super::ExportTarget::Local(binding(self, export.decl)?),
+            ));
+        }
+        info.star_exports = module.star_exports.clone();
+        // Hoisted: vars start as `undefined`, functions as closures.
+        let functions = top_level_functions(hf);
+        for &decl in &hf.decls {
+            let d = self.decl(decl);
+            let Some(&index) = self.captures.get(&(decl, false)) else {
+                continue;
+            };
+            if d.kind != DeclKind::Var {
+                continue;
+            }
+            match functions.iter().rev().find(|(f, _)| *f == decl) {
+                Some(&(_, function)) => {
+                    let child = self.child(function);
+                    let anonymous = self.cx.function(function).name.is_none();
+                    info.initializers
+                        .push((index as u16, Some((child, anonymous))));
+                }
+                None => info.initializers.push((index as u16, None)),
+            }
+        }
+        self.module = Some(info);
+        if hf.async_ {
+            self.effect(Op::AsyncStart, &[], Imm::None);
+        }
+        let decls = hf.decls.clone();
+        self.cells_and_tdz(&decls)?;
+        self.statements(&hf.body.stmts)?;
+        if self.reachable() {
+            self.end(Terminator::ReturnUndefined);
         }
         Ok(())
     }
@@ -175,14 +308,17 @@ impl Builder<'_, '_> {
         };
         // (opcode, flags, key) in declaration order.
         let mut declarations = Vec::new();
+        let functions = top_level_functions(hf);
         for &decl in &hf.decls {
             if !self.is_global(decl) {
                 continue;
             }
             let d = self.decl(decl);
             let (op, flags) = match d.kind {
+                DeclKind::Var if functions.iter().any(|(f, _)| *f == decl) => {
+                    (Op::DeclareGlobal, eval | global::FUNCTION)
+                }
                 DeclKind::Var => (Op::DeclareGlobal, eval),
-                DeclKind::Function => (Op::DeclareGlobal, eval | global::FUNCTION),
                 DeclKind::Let | DeclKind::Class => (Op::DeclareGlobalLet, eval),
                 DeclKind::Const => (Op::DeclareGlobalConst, eval),
                 _ => continue,
@@ -520,6 +656,18 @@ impl Builder<'_, '_> {
     fn is_argument_binding(&self, decl: DeclRef, argument: u32) -> bool {
         self.vars.get(&decl) == Some(&argument)
     }
+}
+
+/// The function declarations of a body's top level, with their bindings.
+fn top_level_functions(hf: &hir::Function) -> Vec<(DeclRef, hir::FunctionRef)> {
+    hf.body
+        .stmts
+        .iter()
+        .filter_map(|stmt| match stmt.kind {
+            hir::StmtKind::FnDecl { decl, fn_, .. } => Some((decl, fn_)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Whether a binding of `kind` starts in the TDZ.

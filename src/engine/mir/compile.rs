@@ -2,7 +2,9 @@
 
 use super::build::BuildError;
 use super::lower::{Debug, lower};
-use crate::engine::api::core::compile::ScriptCompileError;
+use crate::engine::api::core::compile::{
+    ModuleCompileError, ScriptCompileError, lower_compile_error,
+};
 use crate::engine::ast::ProgramKind;
 use crate::engine::ast::parser::Parser;
 use crate::engine::code::debug::DebugInfoMode;
@@ -32,6 +34,11 @@ pub(crate) fn compile_script(
     }
     .map_err(ScriptCompileError::Front)?;
     let has_with = program.has_with;
+    if has_with {
+        return Err(ScriptCompileError::Lower(LowerError::Syntax(
+            "with statements are not supported".into(),
+        )));
+    }
     let built =
         crate::engine::hir::build::build(program, filename).map_err(ScriptCompileError::Front)?;
     let mir = super::build::build(&built.program, &built.regexps, has_with)
@@ -48,6 +55,106 @@ pub(crate) fn compile_script(
         root: lowered.root,
         function: lowered.function,
     })
+}
+
+/// Compiles the module `name` and instantiates its root in `compiler`:
+/// the record's source and the root's unit.
+pub(crate) fn compile_module(
+    compiler: &mut Compiler<'_>,
+    name: &str,
+    source: &[u8],
+    debug_info: DebugInfoMode,
+) -> Result<(oxide_core::vm::module::ModuleSource, oxide_core::CodeUnitId), ModuleCompileError> {
+    use oxide_core::vm::module as core;
+    let lower = |error: LowerError| ModuleCompileError::Core(lower_compile_error(error));
+    crate::engine::compiler::validate_source_length(source.len())
+        .map_err(ModuleCompileError::Front)?;
+    let text = SourceText::try_from_raw_bytes(source)
+        .map_err(|error| ModuleCompileError::Front(error.into()))?;
+    let program = Parser::parse_module(&text).map_err(ModuleCompileError::Front)?;
+    let built =
+        crate::engine::hir::build::build(program, name).map_err(ModuleCompileError::Front)?;
+    let mir = super::build::build(&built.program, &built.regexps, false)
+        .map_err(|error| lower(lower_error(error)))?;
+    let raw = text.raw_bytes();
+    let debug = Debug {
+        source: (debug_info != DebugInfoMode::StripDebug).then_some(raw),
+        keep_source: debug_info == DebugInfoMode::Full,
+        filename: (debug_info != DebugInfoMode::StripDebug).then(|| std::rc::Rc::from(name)),
+    };
+    let lowered = super::lower::lower(compiler, &mir, &built.program, &debug).map_err(lower)?;
+    let Some(info) = &mir.module else {
+        return Err(lower(LowerError::Internal(
+            "a module without its record".into(),
+        )));
+    };
+    let text = |index: u32| mir.strings[index as usize].to_utf8_lossy();
+    let tables = core::ModuleTables {
+        bindings: info
+            .bindings
+            .iter()
+            .map(|binding| match binding {
+                super::build::ModuleBinding::Import => core::ModuleBinding::Import,
+                super::build::ModuleBinding::ImportMeta => core::ModuleBinding::ImportMeta,
+                super::build::ModuleBinding::Declaration { lexical } => {
+                    core::ModuleBinding::Declaration { lexical: *lexical }
+                }
+            })
+            .collect(),
+        requests: info
+            .requests
+            .iter()
+            .map(|(specifier, attributes)| core::ModuleRequest {
+                specifier: text(*specifier),
+                attributes: attributes
+                    .iter()
+                    .map(|&(key, value)| (text(key), text(value)))
+                    .collect(),
+            })
+            .collect(),
+        imports: info
+            .imports
+            .iter()
+            .map(|&(request, name, binding)| core::ModuleImport {
+                request,
+                name: name.map(text),
+                binding,
+            })
+            .collect(),
+        exports: info
+            .exports
+            .iter()
+            .map(|&(name, target)| core::ModuleExport {
+                name: text(name),
+                target: match target {
+                    super::build::ExportTarget::Local(binding) => {
+                        core::ExportTarget::Local(binding)
+                    }
+                    super::build::ExportTarget::Indirect { request, name } => {
+                        core::ExportTarget::Indirect {
+                            request,
+                            name: name.map(text),
+                        }
+                    }
+                },
+            })
+            .collect(),
+        star_exports: info.star_exports.clone(),
+        initializers: info
+            .initializers
+            .iter()
+            .map(|&(binding, function)| core::ModuleInitializer { binding, function })
+            .collect(),
+        has_top_level_await: info.has_top_level_await,
+    };
+    Ok((
+        core::ModuleSource::Compiled {
+            function: lowered.function,
+            tables,
+            import_meta: Vec::new(),
+        },
+        lowered.root,
+    ))
 }
 
 fn lower_error(error: BuildError) -> LowerError {

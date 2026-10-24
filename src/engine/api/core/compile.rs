@@ -220,6 +220,9 @@ pub(crate) fn compile_module(
     source: &[u8],
     debug_info: DebugInfoMode,
 ) -> Result<(ModuleSource, oxide_core::CodeUnitId), ModuleCompileError> {
+    if new_front_end() {
+        return crate::engine::mir::compile::compile_module(compiler, name, source, debug_info);
+    }
     let failure = |kind: oxide_core::ErrorKind, message: String| {
         ModuleCompileError::Core(CompileError::new(kind, message))
     };

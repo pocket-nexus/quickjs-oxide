@@ -548,9 +548,7 @@ impl Validator<'_> {
                 Ok(())
             }
             ExprKind::Str { value } => self.string(*value),
-            ExprKind::Bool { .. } | ExprKind::Null | ExprKind::Undefined | ExprKind::ImportMeta => {
-                Ok(())
-            }
+            ExprKind::Bool { .. } | ExprKind::Null | ExprKind::Undefined => Ok(()),
             ExprKind::Template { quasis, exprs } => {
                 for &quasi in quasis {
                     self.string(quasi)?;
@@ -589,9 +587,10 @@ impl Validator<'_> {
             }
             ExprKind::Fn { fn_ } => self.define(*fn_),
             ExprKind::Class { cls } => self.class(cls),
-            ExprKind::Decl { decl } | ExprKind::This { decl } | ExprKind::NewTarget { decl } => {
-                self.use_decl(*decl)
-            }
+            ExprKind::Decl { decl }
+            | ExprKind::This { decl }
+            | ExprKind::NewTarget { decl }
+            | ExprKind::ImportMeta { decl } => self.use_decl(*decl),
             ExprKind::SuperMember { prop, this, home } => {
                 self.use_decl(*this)?;
                 self.use_decl(*home)?;
