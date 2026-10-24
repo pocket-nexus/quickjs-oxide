@@ -209,6 +209,8 @@ export interface Function {
   strict: boolean;
   params: Param[];
   rest: Pattern | null;
+  // QuickJS lets a rest pattern have a default.
+  restDefault: Expr | null;
   simpleParams: boolean;
   body: Block;
   decls: DeclRef[];

@@ -52,7 +52,7 @@ impl Builder<'_, '_> {
         let at = e.span.start;
         Ok(match &e.kind {
             ExprKind::Const { value } => self.constant_expr(value.0)?,
-            ExprKind::Str { value } => self.string(value.0),
+            ExprKind::Str { value } => self.string_literal(value.0),
             ExprKind::Bool { value: true } => self.op(Op::True, &[], Imm::None),
             ExprKind::Bool { value: false } => self.op(Op::False, &[], Imm::None),
             ExprKind::Null => self.op(Op::Null, &[], Imm::None),
@@ -355,11 +355,8 @@ impl Builder<'_, '_> {
                 Access::Global { name } => {
                     Ok(self.op_at(Op::DeleteGlobal, &[], Imm::Key(name.0), operand.span.start))
                 }
-                // A declared binding is not deletable.
-                _ => {
-                    let _ = self.read_decl(*decl, Some(operand.span.start))?;
-                    Ok(self.op(Op::False, &[], Imm::None))
-                }
+                // A declared binding is not deletable, and is not read.
+                _ => Ok(self.op_at(Op::False, &[], Imm::None, operand.span.start)),
             },
             ExprKind::SuperMember {
                 prop,
@@ -567,6 +564,9 @@ impl Builder<'_, '_> {
         let at = e.span.start;
         match &e.kind {
             ExprKind::New { callee, args, .. } => {
+                if 2 + args.len() > crate::engine::compiler::MAX_BYTECODE_STACK {
+                    return Err(super::BuildError::StackOverflow);
+                }
                 let callee = self.expr(callee)?;
                 let args = self.arguments(args)?;
                 Ok(match args {
@@ -631,6 +631,13 @@ impl Builder<'_, '_> {
                 };
                 if *optional {
                     self.nullish_test(function, shorts);
+                }
+                // QuickJS's operand stack holds the callee, the receiver of
+                // a method call and the arguments.
+                if 1 + usize::from(receiver.is_some()) + args.len()
+                    > crate::engine::compiler::MAX_BYTECODE_STACK
+                {
+                    return Err(super::BuildError::StackOverflow);
                 }
                 let args = self.arguments(args)?;
                 Ok(match (receiver, args) {
@@ -732,7 +739,7 @@ impl Builder<'_, '_> {
         quasis: &[crate::engine::hir::schema::StringRef],
         exprs: &[Expr],
     ) -> Result<Value> {
-        let first = self.string(quasis[0].0);
+        let first = self.string_literal(quasis[0].0);
         if exprs.is_empty() {
             return Ok(first);
         }
@@ -744,7 +751,7 @@ impl Builder<'_, '_> {
             if let Some(quasi) = quasis.get(index + 1)
                 && !self.cx.strings[quasi.index()].is_empty()
             {
-                args.push(self.string(quasi.0));
+                args.push(self.string_literal(quasi.0));
             }
         }
         let mut operands = vec![first, function];

@@ -190,12 +190,13 @@ impl Builder<'_, '_> {
                 self.controls.pop();
                 self.enter(break_to);
             }
-            StmtKind::FnDecl { decl, annex_b, .. } => {
+            StmtKind::FnDecl { annex_b, fn_, .. } => {
                 // The binding was made where its scope starts; Annex B also
-                // sets the function's var when the declaration is evaluated.
+                // sets the function's var, to a closure of its own, when the
+                // declaration is evaluated.
                 if let Some(var) = annex_b {
-                    let value = self.read_decl(*decl, None)?;
-                    self.put_decl(*var, value)?;
+                    let closure = self.closure(*fn_);
+                    self.put_decl(*var, closure)?;
                 }
             }
             StmtKind::ClassDecl { decl, cls } => {
@@ -362,7 +363,9 @@ impl Builder<'_, '_> {
         if d.kind == DeclKind::FunctionName {
             // A named function expression's own name is read-only: a sloppy
             // write is ignored, a strict one throws.
-            if self.hf.strict || self.cx.function(d.owner).strict {
+            // The defining function's strictness decides, as QuickJS's
+            // JS_VAR_FUNCTION_NAME keeps it through closures.
+            if self.cx.function(d.owner).strict {
                 self.end(Terminator::ThrowError {
                     kind: crate::engine::mir::ir::ThrowKind::ConstAssign,
                     key: d.name.0,

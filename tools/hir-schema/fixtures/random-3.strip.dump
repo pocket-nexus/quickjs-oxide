@@ -11,7 +11,7 @@ string #1 "Z "
 string #2 "\"_"
 string #3 "\\"
 const #0 bigint digits:#4?
-fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleParams:true decls:[#1 #4] captures:[] inner:[#0 #1 #2] usesThis:true usesArguments:false usesNewTarget:true hasDirectEval:false homeObject:true length:1 argumentsDecl:#2 concise:false defaultCtor:true
+fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleParams:false decls:[] captures:[] inner:[#3 #2] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:true homeObject:false length:7 self:#0 paramCopies:[] concise:true defaultCtor:false
   params:
     Param
       pattern:
@@ -23,19 +23,39 @@ fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleP
       pattern:
         decl decl:#0
   body:
-    Block decls:[#3 #2]
+    Block decls:[#4 #0]
       stmts:
-        declare decl:#2
-        declare decl:#4
+        declare decl:#0
   source:
-    SourceRange start:0 end:1
-  paramCopies:
-    ParamCopy from:#4 to:#4
-module #0 file:#1 top:#1 imports:[] reexports:[] starExports:[] dynamic:true usesImportMeta:false hasTopLevelAwait:false
-  requests:
-    ModuleRequest specifier:"" hasAttributes:true attributes:[]
-    ModuleRequest specifier:"Z " hasAttributes:false attributes:[]
-    ModuleRequest specifier:"Z " hasAttributes:false attributes:[]
+    SourceRange start:1 end:1
+module #0 file:#4 top:#1 requests:[] starExports:[1] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+  imports:
+    Import request:0 decl:#0
   exports:
-    Export name:#4? decl:#0
-    Export name:#4? decl:#1
+    Export name:"Z " decl:#0
+  reexports:
+    Reexport request:1 as:#4?
+    Reexport request:894 as:"Z "
+module #1 file:#1 top:#4 starExports:[576] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"\"_" hasAttributes:true attributes:[]
+  imports:
+    Import request:0 decl:#4
+    Import request:0 decl:#0
+  exports:
+    Export name:"\\" decl:#4
+  reexports:
+    Reexport request:570 as:"\\"
+    Reexport request:870 as:"\\"
+module #2 file:#2 top:#1 starExports:[879 1 1] dynamic:false usesImportMeta:false hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:#4? hasAttributes:true attributes:[]
+    ModuleRequest specifier:#4? hasAttributes:false attributes:[]
+  imports:
+    Import request:231 decl:#3
+  exports:
+    Export name:#4? decl:#2
+  reexports:
+    Reexport request:1 as:"\\"
+    Reexport request:65536 as:"Z "
+    Reexport request:7 as:"\\"

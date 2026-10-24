@@ -21,7 +21,7 @@ descriptor #1 number repr:u32 min:5e-324
 decl #0 name:"😀\u001f\u0000" kind:implicit owner:#2 capturedBy:[] assigned:true tdz:true isStatic:false
 decl #1 name:#1? kind:global owner:#2 capturedBy:[] assigned:true tdz:true ty:#3 isStatic:false
 decl #2 name:#1? kind:implicit owner:#3 capturedBy:[#1 #0 #2] assigned:true tdz:true ty:#4 isStatic:true
-fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#0 #0] captures:[#0 #2] inner:[#3 #2 #3] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false length:65536 self:#1 argumentsDecl:#0 paramCopies:[] concise:true defaultCtor:true
+fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#2 #3] captures:[#0] inner:[#2 #4] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false length:7 concise:false defaultCtor:true
   rest:
     target ty:#2
       t:
@@ -29,30 +29,41 @@ fn #0 name:#1? kind:module role:get async:true generator:false strict:true param
           prop:
             name name:"😀\u001f\u0000"
   body:
-    Block stmts:[] decls:[#1]
+    Block decls:[#4]
+      stmts:
+        declare decl:#1
+  sig:
+    Signature params:[] ret:#3 thisTy:#2
+  effects:
+    Effects reads:[] writes:[#4] heapReads:true heapWrites:false allocates:true mayThrow:true maySuspend:true calls:known
   source:
-    SourceRange start:65536 end:1
-fn #1 kind:getter role:set async:true generator:true strict:false simpleParams:false decls:[#2 #4 #3] captures:[#1] inner:[#0 #3] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:false length:7 argumentsDecl:#4 paramCopies:[] concise:true defaultCtor:true
+    SourceRange start:712 end:1
+  paramCopies:
+    ParamCopy from:#4 to:#1
+    ParamCopy from:#1 to:#4
+fn #1 kind:setter role:get async:false generator:false strict:false simpleParams:false decls:[#4 #2 #1] captures:[#4] inner:[#3 #3 #0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:65536 self:#0 argumentsDecl:#0 concise:false defaultCtor:true
   params:
     Param
       pattern:
-        decl decl:#3 ty:#4
+        decl decl:#0
     Param
       pattern:
-        decl decl:#4 ty:#1
+        decl decl:#4 ty:#2
+  restDefault:
+    import
+      spec:
+        call args:[] optional:false directEval:false ty:#3
+          callee:
+            const value:#4 ty:#1
+      options:
+        newTarget decl:#2 ty:#4
   body:
-    Block decls:[#0 #1 #2]
+    Block decls:[#3 #2]
       stmts:
-        declare decl:#3
+        declare decl:#1
+        declare decl:#0
   source:
-    SourceRange start:1 end:65536
-module #0 file:#1 top:#0 exports:[] starExports:[779 1] dynamic:true usesImportMeta:false hasTopLevelAwait:false
-  requests:
-    ModuleRequest specifier:"😀\u001f\u0000" hasAttributes:false attributes:[]
-  imports:
-    Import request:65536 decl:#4
-    Import request:0 decl:#3
-    Import request:1 decl:#0
-  reexports:
-    Reexport request:65536 as:#1?
-    Reexport request:65536 as:#1?
+    SourceRange start:0 end:7
+  paramCopies:
+    ParamCopy from:#2 to:#3
+    ParamCopy from:#1 to:#1

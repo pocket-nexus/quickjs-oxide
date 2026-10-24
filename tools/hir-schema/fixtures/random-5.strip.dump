@@ -13,10 +13,13 @@ const #1 bigint digits:"\u001fa\"😀"
 decl #0 name:"\u001fa\"😀" kind:privateAccessor owner:#3 capturedBy:[#0 #1] assigned:false tdz:true isStatic:false
 decl #1 name:"\u001fa\"😀" kind:const owner:#1 capturedBy:[#1 #3 #3] assigned:true tdz:false isStatic:true
 decl #2 name:#4? kind:catch owner:#3 capturedBy:[] assigned:false tdz:true isStatic:false
-fn #0 name:"\"\udfffé " kind:getter role:set async:false generator:true strict:false params:[] simpleParams:true decls:[] captures:[#2 #0 #3] inner:[#1 #4] usesThis:false usesArguments:false usesNewTarget:true hasDirectEval:true homeObject:false length:65536 self:#2 paramCopies:[] concise:true defaultCtor:true
+fn #0 name:"\"\udfffé " kind:getter role:set async:false generator:true strict:false params:[] simpleParams:true decls:[#2 #0 #3] captures:[#1 #4] inner:[#4 #0 #1] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true length:7 concise:false defaultCtor:true
   rest:
     object props:[] restAt:1
   body:
     Block stmts:[] decls:[]
   source:
-    SourceRange start:7 end:65536
+    SourceRange start:1 end:65536
+  paramCopies:
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#4 to:#0

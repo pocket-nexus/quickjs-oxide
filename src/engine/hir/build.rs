@@ -150,6 +150,8 @@ struct Builder<'a> {
     /// Uses: declaration, using function, position.
     uses: Vec<(DeclRef, FuncId, u32)>,
     globals: FxHashMap<NameId, DeclRef>,
+    /// Each scope's declarations by name: the last declared.
+    scope_names: FxHashMap<(u32, NameId), DeclId>,
     /// The module's `import.meta` binding, once used.
     import_meta: Option<DeclRef>,
     hir_functions: Vec<Option<Function>>,
@@ -182,6 +184,17 @@ fn expr(kind: ExprKind, span: Span) -> Expr {
     }
 }
 
+/// Each scope's declarations by name, the last of a name winning.
+fn scope_names(scopes: &[ast::Scope], decls: &[ast::Decl]) -> FxHashMap<(u32, NameId), DeclId> {
+    let mut map = FxHashMap::default();
+    for (index, scope) in scopes.iter().enumerate() {
+        for &decl in &scope.decls {
+            map.insert((index as u32, decls[decl.index()].name), decl);
+        }
+    }
+    map
+}
+
 fn stmt(kind: StmtKind, span: Span) -> Stmt {
     Stmt { kind, span }
 }
@@ -210,6 +223,7 @@ impl<'a> Builder<'a> {
             readiness: Vec::new(),
             uses: Vec::new(),
             globals: FxHashMap::default(),
+            scope_names: scope_names(scopes, ast_decls),
             import_meta: None,
             hir_functions: (0..ast_functions.len()).map(|_| None).collect(),
             facts: (0..ast_functions.len())
@@ -293,7 +307,9 @@ impl<'a> Builder<'a> {
     }
 
     fn number(&mut self, value: f64) -> ConstRef {
-        let bits = value.to_bits();
+        // Byte-swapped: an integer's low bits are zero, and the hasher
+        // buckets by the low bits.
+        let bits = value.to_bits().swap_bytes();
         if let Some(&index) = self.number_index.get(&bits) {
             return ConstRef(index);
         }
@@ -361,12 +377,7 @@ impl<'a> Builder<'a> {
     }
 
     fn lookup_in_scope(&self, scope: ScopeId, name: NameId) -> Option<DeclId> {
-        self.scopes[scope.index()]
-            .decls
-            .iter()
-            .rev()
-            .copied()
-            .find(|decl| self.ast_decls[decl.index()].name == name)
+        self.scope_names.get(&(scope.0, name)).copied()
     }
 
     /// The declaration a binding pattern or declarator declares: resolved
@@ -599,6 +610,7 @@ impl<'a> Builder<'a> {
             self_binding,
             params,
             rest,
+            rest_default,
             simple_params,
             length,
             body,
@@ -626,6 +638,10 @@ impl<'a> Builder<'a> {
         }
         let rest = match rest {
             Some(rest) => Some(Box::new(self.pattern(rest, Some(DeclaringKind::Var))?)),
+            None => None,
+        };
+        let rest_default = match rest_default {
+            Some(default) => Some(self.boxed(default)?),
             None => None,
         };
         let stmts = self.statements(body)?;
@@ -684,6 +700,7 @@ impl<'a> Builder<'a> {
             strict,
             params: hir_params,
             rest,
+            rest_default,
             simple_params,
             body: Block {
                 stmts,
@@ -833,81 +850,9 @@ impl<'a> Builder<'a> {
                 label: label.0,
             },
             S::For(for_statement) => return self.for_statement(*for_statement, at).map(Some),
-            S::ForIn(for_in) => {
-                let ast::ForInStmt {
-                    target,
-                    init,
-                    object,
-                    body,
-                    scope,
-                    label,
-                } = *for_in;
-                let target = self.for_target(target)?;
-                let init = match init {
-                    Some(init) => Some(Box::new(self.expr(init)?)),
-                    None => None,
-                };
-                let object_end = pos_end(object.span);
-                let obj = Box::new(self.expr(object)?);
-                self.ready_scope(scope, object_end);
-                let built = StmtKind::ForIn {
-                    target: Box::new(target),
-                    init,
-                    obj,
-                    body: self.boxed_statement(body)?,
-                    label: label.0,
-                };
-                return Ok(Some(self.scoped(stmt(built, at), scope)));
-            }
-            S::ForOf(for_of) => {
-                let ast::ForOfStmt {
-                    target,
-                    iterable,
-                    body,
-                    scope,
-                    label,
-                    is_await,
-                } = *for_of;
-                let target = self.for_target(target)?;
-                let iterable_end = pos_end(iterable.span);
-                let iter = Box::new(self.expr(iterable)?);
-                self.ready_scope(scope, iterable_end);
-                let built = StmtKind::ForOf {
-                    target: Box::new(target),
-                    iter,
-                    body: self.boxed_statement(body)?,
-                    label: label.0,
-                    await_: is_await,
-                    array_fast: false,
-                };
-                return Ok(Some(self.scoped(stmt(built, at), scope)));
-            }
-            S::Switch(switch) => {
-                let ast::SwitchStmt {
-                    discriminant,
-                    cases,
-                    scope,
-                    label,
-                } = *switch;
-                let disc = Box::new(self.expr(discriminant)?);
-                let mut hir_cases = Vec::with_capacity(cases.len());
-                for case in cases {
-                    hir_cases.push(SwitchCase {
-                        test: match case.test {
-                            Some(test) => Some(Box::new(self.expr(test)?)),
-                            None => None,
-                        },
-                        body: self.statements(case.body)?,
-                    });
-                }
-                let built = StmtKind::Switch {
-                    disc,
-                    cases: hir_cases,
-                    label: label.0,
-                    exhaustive: false,
-                };
-                return Ok(Some(self.scoped(stmt(built, at), scope)));
-            }
+            S::ForIn(for_in) => return self.for_in_statement(for_in, at).map(Some),
+            S::ForOf(for_of) => return self.for_of_statement(for_of, at).map(Some),
+            S::Switch(switch) => return self.switch_statement(switch, at).map(Some),
             S::Break(label) => StmtKind::Break { label: label.0 },
             S::Continue(label) => StmtKind::Continue { label: label.0 },
             S::Return(value) => StmtKind::Return {
@@ -919,46 +864,7 @@ impl<'a> Builder<'a> {
             S::Throw(value) => StmtKind::Throw {
                 e: Box::new(self.expr(value)?),
             },
-            S::Try(try_statement) => {
-                let ast::TryStmt {
-                    block,
-                    block_scope,
-                    catch,
-                    finally,
-                } = *try_statement;
-                let body = self.block(block, block_scope)?;
-                let (catch_param, catch_body, catch_default) = match catch {
-                    Some(catch) => {
-                        let param = match catch.param {
-                            Some(param) => {
-                                Some(Box::new(self.pattern(param, Some(DeclaringKind::Let))?))
-                            }
-                            None => None,
-                        };
-                        let default = match catch.param_default {
-                            Some(default) => Some(Box::new(self.expr(default)?)),
-                            None => None,
-                        };
-                        let mut catch_body = self.block(catch.body, catch.body_scope)?;
-                        let mut decls = self.scope_decls(catch.scope);
-                        decls.append(&mut catch_body.decls);
-                        catch_body.decls = decls;
-                        (param, Some(catch_body), default)
-                    }
-                    None => (None, None, None),
-                };
-                let finally = match finally {
-                    Some((statements, scope)) => Some(self.block(statements, scope)?),
-                    None => None,
-                };
-                StmtKind::Try {
-                    body,
-                    catch_param,
-                    catch_body,
-                    finally,
-                    catch_default,
-                }
-            }
+            S::Try(try_statement) => self.try_statement(try_statement)?,
             S::Labeled { body, label } => StmtKind::Labeled {
                 label: label.0,
                 body: self.boxed_statement(*body)?,
@@ -968,45 +874,7 @@ impl<'a> Builder<'a> {
             }
             S::Debugger => StmtKind::Debugger,
             S::Empty => StmtKind::Empty,
-            S::FieldInit(field) => match *field {
-                ast::FieldInit::Public { key, value, span } => {
-                    let (key, inferred) = match key {
-                        ast::FieldKey::Name(name) => {
-                            let string = self.string(name.clone());
-                            (FieldKey::Name { name: string }, Some(name))
-                        }
-                        ast::FieldKey::Computed(decl) => {
-                            let decl = DeclRef(decl.0);
-                            self.use_decl(decl, pos(span));
-                            (FieldKey::Computed { decl }, None)
-                        }
-                    };
-                    let value = match value {
-                        Some(value) => Some(Box::new(match inferred {
-                            Some(name) => self.named_value_string(value, name)?,
-                            None => self.expr(value)?,
-                        })),
-                        None => None,
-                    };
-                    StmtKind::DefineField {
-                        key: Box::new(key),
-                        value,
-                    }
-                }
-                ast::FieldInit::Private { decl, value, span } => {
-                    let decl = DeclRef(decl.0);
-                    self.use_decl(decl, pos(span));
-                    let name = self.ast_decls[decl.0 as usize].name;
-                    let value = match value {
-                        Some(value) => Some(Box::new(self.named_value(value, Some(name))?)),
-                        None => None,
-                    };
-                    StmtKind::DefinePrivate { decl, value }
-                }
-                ast::FieldInit::StaticBlock(function) => StmtKind::StaticBlock {
-                    fn_: self.function(*function)?,
-                },
-            },
+            S::FieldInit(field) => self.field_init(field)?,
             S::ExportDefault { value, decl } => {
                 let decl = DeclRef(decl.0);
                 let end = pos_end(value.span);
@@ -1019,6 +887,170 @@ impl<'a> Builder<'a> {
             }
         };
         Ok(Some(stmt(kind, at)))
+    }
+
+    #[inline(never)]
+    fn for_in_statement(&mut self, for_in: Box<ast::ForInStmt>, at: Span) -> Result<Stmt, Error> {
+        let ast::ForInStmt {
+            target,
+            init,
+            object,
+            body,
+            scope,
+            label,
+        } = *for_in;
+        let target = self.for_target(target)?;
+        let init = match init {
+            Some(init) => Some(Box::new(self.expr(init)?)),
+            None => None,
+        };
+        let object_end = pos_end(object.span);
+        let obj = Box::new(self.expr(object)?);
+        self.ready_scope(scope, object_end);
+        let built = StmtKind::ForIn {
+            target: Box::new(target),
+            init,
+            obj,
+            body: self.boxed_statement(body)?,
+            label: label.0,
+        };
+        Ok(self.scoped(stmt(built, at), scope))
+    }
+
+    #[inline(never)]
+    fn for_of_statement(&mut self, for_of: Box<ast::ForOfStmt>, at: Span) -> Result<Stmt, Error> {
+        let ast::ForOfStmt {
+            target,
+            iterable,
+            body,
+            scope,
+            label,
+            is_await,
+        } = *for_of;
+        let target = self.for_target(target)?;
+        let iterable_end = pos_end(iterable.span);
+        let iter = Box::new(self.expr(iterable)?);
+        self.ready_scope(scope, iterable_end);
+        let built = StmtKind::ForOf {
+            target: Box::new(target),
+            iter,
+            body: self.boxed_statement(body)?,
+            label: label.0,
+            await_: is_await,
+            array_fast: false,
+        };
+        Ok(self.scoped(stmt(built, at), scope))
+    }
+
+    #[inline(never)]
+    fn switch_statement(&mut self, switch: Box<ast::SwitchStmt>, at: Span) -> Result<Stmt, Error> {
+        let ast::SwitchStmt {
+            discriminant,
+            cases,
+            scope,
+            label,
+        } = *switch;
+        let disc = Box::new(self.expr(discriminant)?);
+        let mut hir_cases = Vec::with_capacity(cases.len());
+        for case in cases {
+            hir_cases.push(SwitchCase {
+                test: match case.test {
+                    Some(test) => Some(Box::new(self.expr(test)?)),
+                    None => None,
+                },
+                body: self.statements(case.body)?,
+            });
+        }
+        let built = StmtKind::Switch {
+            disc,
+            cases: hir_cases,
+            label: label.0,
+            exhaustive: false,
+        };
+        Ok(self.scoped(stmt(built, at), scope))
+    }
+
+    #[inline(never)]
+    fn try_statement(&mut self, try_statement: Box<ast::TryStmt>) -> Result<StmtKind, Error> {
+        let ast::TryStmt {
+            block,
+            block_scope,
+            catch,
+            finally,
+        } = *try_statement;
+        let body = self.block(block, block_scope)?;
+        let (catch_param, catch_body, catch_default) = match catch {
+            Some(catch) => {
+                let param = match catch.param {
+                    Some(param) => Some(Box::new(self.pattern(param, Some(DeclaringKind::Let))?)),
+                    None => None,
+                };
+                let default = match catch.param_default {
+                    Some(default) => Some(Box::new(self.expr(default)?)),
+                    None => None,
+                };
+                let mut catch_body = self.block(catch.body, catch.body_scope)?;
+                let mut decls = self.scope_decls(catch.scope);
+                decls.append(&mut catch_body.decls);
+                catch_body.decls = decls;
+                (param, Some(catch_body), default)
+            }
+            None => (None, None, None),
+        };
+        let finally = match finally {
+            Some((statements, scope)) => Some(self.block(statements, scope)?),
+            None => None,
+        };
+        Ok(StmtKind::Try {
+            body,
+            catch_param,
+            catch_body,
+            finally,
+            catch_default,
+        })
+    }
+
+    #[inline(never)]
+    fn field_init(&mut self, field: Box<ast::FieldInit>) -> Result<StmtKind, Error> {
+        Ok(match *field {
+            ast::FieldInit::Public { key, value, span } => {
+                let (key, inferred) = match key {
+                    ast::FieldKey::Name(name) => {
+                        let string = self.string(name.clone());
+                        (FieldKey::Name { name: string }, Some(name))
+                    }
+                    ast::FieldKey::Computed(decl) => {
+                        let decl = DeclRef(decl.0);
+                        self.use_decl(decl, pos(span));
+                        (FieldKey::Computed { decl }, None)
+                    }
+                };
+                let value = match value {
+                    Some(value) => Some(Box::new(match inferred {
+                        Some(name) => self.named_value_string(value, name)?,
+                        None => self.expr(value)?,
+                    })),
+                    None => None,
+                };
+                StmtKind::DefineField {
+                    key: Box::new(key),
+                    value,
+                }
+            }
+            ast::FieldInit::Private { decl, value, span } => {
+                let decl = DeclRef(decl.0);
+                self.use_decl(decl, pos(span));
+                let name = self.ast_decls[decl.0 as usize].name;
+                let value = match value {
+                    Some(value) => Some(Box::new(self.named_value(value, Some(name))?)),
+                    None => None,
+                };
+                StmtKind::DefinePrivate { decl, value }
+            }
+            ast::FieldInit::StaticBlock(function) => StmtKind::StaticBlock {
+                fn_: self.function(*function)?,
+            },
+        })
     }
 
     /// Marks every declaration of a loop head's scope ready at `at`.

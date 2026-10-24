@@ -240,7 +240,10 @@ pub(crate) struct QuickJsSourceCursor<'index, 'source> {
 }
 
 impl QuickJsSourceCursor<'_, '_> {
-    fn locate_byte_offset(&mut self, byte_offset: usize) -> Result<LineColumn, DebugMetadataError> {
+    pub(crate) fn locate_byte_offset(
+        &mut self,
+        byte_offset: usize,
+    ) -> Result<LineColumn, DebugMetadataError> {
         self.index.validate_byte_offset(byte_offset)?;
         let position = match self.previous {
             Some((previous_offset, position))

@@ -3,6 +3,7 @@
 //! published children first.
 
 mod alloc;
+mod spill;
 
 use self::alloc::{Allocation, Layout, NONE, Order, Plan};
 use super::build::Program;
@@ -53,8 +54,12 @@ pub(crate) fn lower(
             .map(|source| QuickJsSourceLocator::from_bytes(source).index())
             .transpose()
             .map_err(|error| LowerError::Internal(error.to_string()))?;
+        let spilled: Vec<std::cell::OnceCell<Function>> = (0..program.functions.len())
+            .map(|_| std::cell::OnceCell::new())
+            .collect();
         let mut tree = Tree {
             program,
+            spilled: &spilled,
             hir,
             debug,
             locator,
@@ -63,7 +68,7 @@ pub(crate) fn lower(
             layouts: FxHashMap::default(),
             constants: FxHashMap::default(),
         };
-        let root = tree.lower(compiler, program.root)?;
+        let root = tree.lower(compiler, program.root, None)?;
         let order = compiler.units().tree(root);
         let tables: Vec<&[CoreValue]> = order
             .iter()
@@ -79,6 +84,8 @@ pub(crate) fn lower(
 /// What the lowering of one program keeps across its functions.
 struct Tree<'a> {
     program: &'a Program,
+    /// The functions whose values were moved to variables to fit.
+    spilled: &'a [std::cell::OnceCell<Function>],
     hir: &'a hir::Program,
     debug: &'a Debug<'a>,
     locator: Option<crate::source::coordinates::QuickJsSourceIndex<'a>>,
@@ -89,27 +96,40 @@ struct Tree<'a> {
     constants: FxHashMap<CodeUnitId, Vec<CoreValue>>,
 }
 
-impl Tree<'_> {
+impl<'a> Tree<'a> {
+    /// `f` with values moved to variables until it fits, kept for the
+    /// rest of the lowering.
+    fn spill(&self, id: FunctionRef, f: &Function) -> Option<(&'a Function, Fitted)> {
+        for attempt in 0.. {
+            let g = spill::spill(f, attempt)?;
+            if let Ok(fitted) = fit(&g) {
+                let cell = &self.spilled[id.index()];
+                let _ = cell.set(g);
+                return cell.get().map(|g| (g, fitted));
+            }
+        }
+        None
+    }
+
     fn lower(
         &mut self,
         compiler: &mut Compiler<'_>,
         id: FunctionRef,
+        parent: Option<FunctionRef>,
     ) -> Result<CodeUnitId, LowerError> {
-        let f = &self.program.functions[id.index()];
-        let layout = fit(f)?;
-        self.layouts.insert(id.0, layout.clone());
+        let f: &'a Function = &self.program.functions[id.index()];
+        let (f, fitted) = match fit(f) {
+            Ok(fitted) => (f, fitted),
+            Err(error) => self.spill(id, f).ok_or(error)?,
+        };
+        self.layouts.insert(id.0, fitted.layout.clone());
         let mut children = Vec::with_capacity(f.children.len());
         for &child in &f.children {
-            children.push(self.lower(compiler, child)?);
+            children.push(self.lower(compiler, child, Some(id))?);
         }
-        let parent = self
-            .program
-            .functions
-            .iter()
-            .position(|p| p.children.contains(&id));
-        let captures = self.captures(id, parent.map(|p| FunctionRef(p as u32)))?;
+        let captures = self.captures(id, parent)?;
         let (unit, pool) =
-            FunctionLowering::new(self, compiler, f, layout)?.run(children, captures)?;
+            FunctionLowering::new(self, compiler, f, fitted)?.run(children, captures)?;
         let unit_id = compiler.publish(unit)?;
         self.constants.insert(unit_id, pool);
         Ok(unit_id)
@@ -183,9 +203,18 @@ impl Tree<'_> {
     }
 }
 
+/// A layout that fits the register window, with its plan and allocation.
+struct Fitted {
+    layout: Layout,
+    order: Order,
+    plan: Plan,
+    alloc: Allocation,
+    windows: FxHashMap<u32, u32>,
+}
+
 /// The layout of `f` that fits the register window: its local variables
 /// spill to slots from the last until the values fit beside the others.
-fn fit(f: &Function) -> Result<Layout, LowerError> {
+fn fit(f: &Function) -> Result<Fitted, LowerError> {
     let window = oxide_core::bytecode::WINDOW;
     let mut layout = Layout::of(f, None);
     let locals = layout.locals;
@@ -194,12 +223,16 @@ fn fit(f: &Function) -> Result<Layout, LowerError> {
         let order = Order::of(f);
         let plan = alloc::plan(f, &layout, &order);
         let allocation = alloc::allocate(f, &layout, &order, &plan);
-        let needed =
-            allocation
-                .used
-                .max(alloc::windows_top(&allocation, f, &layout, &order, &plan));
+        let (windows, top) = alloc::windows(&allocation, f, &layout, &order, &plan);
+        let needed = allocation.used.max(top);
         if needed <= window {
-            return Ok(layout);
+            return Ok(Fitted {
+                layout,
+                order,
+                plan,
+                alloc: allocation,
+                windows,
+            });
         }
         let temps = needed - layout.temp_base;
         let fixed = layout.first_local() + 1;
@@ -270,17 +303,15 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         tree: &'t mut Tree<'a>,
         compiler: &'c mut Compiler<'d>,
         f: &'a Function,
-        layout: Layout,
+        fitted: Fitted,
     ) -> Result<Self, LowerError> {
-        let order = Order::of(f);
-        let plan = alloc::plan(f, &layout, &order);
-        let alloc = alloc::allocate(f, &layout, &order, &plan);
-        let slots: Vec<u32> = alloc::window_slots(f, &order, &plan)
-            .into_iter()
-            .map(|(slot, _)| slot)
-            .collect();
-        let bases = alloc::window_bases(&alloc, f, &layout, &slots);
-        let windows = slots.into_iter().zip(bases).collect();
+        let Fitted {
+            layout,
+            order,
+            plan,
+            alloc,
+            windows,
+        } = fitted;
         let register_count = alloc.used;
         Ok(Self {
             tree,
@@ -434,6 +465,15 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         self.tree.key(self.compiler, index)
     }
 
+    /// The name a TDZ error gives a binding: none once debug information
+    /// is stripped, as QuickJS drops the names with it.
+    fn binding_key(&mut self, index: u32) -> Result<PropertyKey, LowerError> {
+        if self.tree.debug.source.is_none() {
+            return Ok(self.compiler.heap_mut().property_key("")?);
+        }
+        self.key(index)
+    }
+
     fn block(&mut self, block: BlockId) -> Result<(), LowerError> {
         let b = self.f.block(block);
         self.labels[block.index()] = self.builder.pc();
@@ -467,7 +507,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 continue;
             }
             let slot = entry + 1 + index as u32;
-            self.insn(insn, slot)?;
+            self.insn(insn, slot, block, index)?;
         }
         if let Some((_, (spill, slots))) = spill_at {
             let spill = r8(spill)?;
@@ -479,7 +519,54 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
 
     // ---- instructions ----
 
-    fn insn(&mut self, insn: &Insn, slot: u32) -> Result<(), LowerError> {
+    fn insn(
+        &mut self,
+        insn: &Insn,
+        slot: u32,
+        block: BlockId,
+        index: usize,
+    ) -> Result<(), LowerError> {
+        let key = (block.0, index as u32);
+        if matches!(insn.op, Op::Inc | Op::Dec)
+            && let Some(operand) = self.plan.chains.get(&key).map(|chain| chain[0])
+        {
+            let (dst, src) = (
+                self.reg(insn.results[0].expect("a result"))?,
+                self.reg(operand)?,
+            );
+            let core = insn.op.core()[0];
+            self.emit(|b| b.ab(core, dst, src));
+            return Ok(());
+        }
+        if let Some(chain) = self.plan.chains.get(&key).cloned() {
+            if let Some(&pos) = self.plan.chain_pos.get(&key) {
+                self.pos = pos;
+            }
+            let dst = self.reg(insn.results[0].expect("a sum"))?;
+            let count = chain.len() as u32;
+            let base = self.window(slot, count)?;
+            let moves = self.window_moves(base, &chain)?;
+            self.parallel_move(moves);
+            self.emit(|b| b.ab_range(Opcode::ConcatN, dst, base, count));
+            return Ok(());
+        }
+        if let Some(&value) = self.plan.imm.get(&key) {
+            let dst = self.reg(insn.results[0].expect("a result"))?;
+            let left = self.reg(insn.args.as_slice()[0])?;
+            let core = match insn.op {
+                Op::Add => Opcode::AddI,
+                Op::Sub => Opcode::SubI,
+                Op::Mul => Opcode::MulI,
+                Op::BitAnd => Opcode::BitAndI,
+                Op::BitOr => Opcode::BitOrI,
+                Op::BitXor => Opcode::BitXorI,
+                Op::Shl => Opcode::ShlI,
+                Op::Sar => Opcode::SarI,
+                _ => Opcode::ShrI,
+            };
+            self.emit(|b| b.ab_int(core, dst, left, value));
+            return Ok(());
+        }
         let args = insn.args.as_slice();
         let a = |s: &Self, i: usize| s.reg(args[i]);
         let result = insn.results[0];
@@ -611,7 +698,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let Imm::Key(key) = insn.imm else {
                     unreachable!("a key")
                 };
-                let key = self.key(key)?;
+                let key = self.binding_key(key)?;
                 let value = a(self, 0)?;
                 self.emit(|b| b.a_key(Opcode::CheckInit, value, key));
             }
@@ -619,7 +706,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let Imm::Key(key) = insn.imm else {
                     unreachable!("a key")
                 };
-                let key = self.key(key)?;
+                let key = self.binding_key(key)?;
                 let cell = a(self, 0)?;
                 self.emit(|b| b.a_key(Opcode::CheckCellInit, cell, key));
             }
@@ -1017,6 +1104,17 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 self.phi_moves(block, target)?;
                 self.jump(target);
             }
+            Terminator::Branch { then, else_, .. } if self.plan.constant.contains_key(&block.0) => {
+                self.jump(if self.plan.constant[&block.0] {
+                    then
+                } else {
+                    else_
+                });
+            }
+            Terminator::Branch { then, else_, .. } if self.plan.fused.contains_key(&block.0) => {
+                let fusion = self.plan.fused[&block.0].clone();
+                self.fused_branch(&fusion, then, else_)?;
+            }
             Terminator::Branch { cond, then, else_ } => {
                 let cond = self.reg(cond)?;
                 if Some(then) == self.next_block {
@@ -1141,6 +1239,57 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let _ = message;
                 self.emit(|b| b.op(Opcode::ReturnUndefined));
             }
+        }
+        Ok(())
+    }
+
+    /// A branch on a compare it fuses with: the compare-jump to `then`, or
+    /// its negation to `else_` when `then` is next.
+    fn fused_branch(
+        &mut self,
+        fusion: &alloc::Fusion,
+        then: BlockId,
+        else_: BlockId,
+    ) -> Result<(), LowerError> {
+        let left = self.reg(fusion.left)?;
+        if fusion.op == Op::IsUndefinedOrNull {
+            self.jump_to(|b| b.a_jump(Opcode::JUndefinedOrNull, left, 0), then);
+            self.jump(else_);
+            return Ok(());
+        }
+        let cmp = match fusion.op {
+            Op::Lt => CmpOp::Lt,
+            Op::Lte => CmpOp::Lte,
+            Op::Gt => CmpOp::Gt,
+            Op::Gte => CmpOp::Gte,
+            Op::Eq => CmpOp::Eq,
+            Op::Neq => CmpOp::Neq,
+            Op::StrictEq => CmpOp::StrictEq,
+            _ => CmpOp::StrictNeq,
+        };
+        let (taken, negated) = match fusion.imm {
+            Some(_) => immediate_compare_jumps(cmp),
+            None => compare_jumps(cmp),
+        };
+        let (op, target, other) = if Some(then) == self.next_block {
+            (negated, else_, None)
+        } else {
+            (taken, then, Some(else_))
+        };
+        match (fusion.imm, fusion.right) {
+            (Some(value), _) => self.jump_to(|b| b.a_short_jump(op, left, value, 0), target),
+            (None, Some(right)) => {
+                let right = self.reg(right)?;
+                self.jump_to(|b| b.ab_jump(op, left, right, 0), target);
+            }
+            (None, None) => {
+                return Err(LowerError::Internal(
+                    "a compare without its right side".into(),
+                ));
+            }
+        }
+        if let Some(other) = other {
+            self.jump(other);
         }
         Ok(())
     }
@@ -1393,9 +1542,10 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
 
     /// The position of each emitted instruction, one entry per change.
     fn positions_table(&self) -> Box<[oxide_core::bytecode::SourcePosition]> {
-        if self.tree.locator.is_none() {
+        let Some(locator) = &self.tree.locator else {
             return Box::new([]);
-        }
+        };
+        let mut cursor = locator.cursor();
         let definition = self.f.unit.definition;
         let mut table: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
         let mut last_pos = None;
@@ -1405,7 +1555,12 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 continue;
             }
             last_pos = Some(pos);
-            let Some((line, column)) = self.locate(pos) else {
+            let offset = if pos == Pos::NONE { 0 } else { pos.0 };
+            let Some((line, column)) = cursor
+                .locate_byte_offset(offset as usize)
+                .ok()
+                .and_then(|at| at.one_based())
+            else {
                 continue;
             };
             if table
@@ -1421,6 +1576,20 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             });
         }
         table.into()
+    }
+}
+
+/// [`compare_jumps`] against an `i16` immediate.
+fn immediate_compare_jumps(op: CmpOp) -> (Opcode, Opcode) {
+    match op {
+        CmpOp::Lt => (Opcode::JLtI, Opcode::JNltI),
+        CmpOp::Lte => (Opcode::JLteI, Opcode::JNlteI),
+        CmpOp::Gt => (Opcode::JGtI, Opcode::JNgtI),
+        CmpOp::Gte => (Opcode::JGteI, Opcode::JNgteI),
+        CmpOp::Eq => (Opcode::JEqI, Opcode::JNeqI),
+        CmpOp::Neq => (Opcode::JNeqI, Opcode::JEqI),
+        CmpOp::StrictEq => (Opcode::JStrictEqI, Opcode::JStrictNeqI),
+        CmpOp::StrictNeq => (Opcode::JStrictNeqI, Opcode::JStrictEqI),
     }
 }
 
