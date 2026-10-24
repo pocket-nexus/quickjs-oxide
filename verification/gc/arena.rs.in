@@ -1,0 +1,80 @@
+//! Exact typed-arena marking operations; allocation and sweep remain separate.
+#[path = "kernel.rs"]
+mod gc_kernel;
+mod arena {
+use vstd::prelude::*;
+
+verus! {
+// TYPES
+// BIT
+
+proof fn fresh_single_bit(bits: u64, index: u32)
+    ensures (bits & (1u64 << (index % 64)) != (1u64 << (index % 64)))
+        == (bits & (1u64 << (index % 64)) == 0),
+{
+    assert((bits & (1u64 << (index % 64)) != (1u64 << (index % 64)))
+        == (bits & (1u64 << (index % 64)) == 0)) by(bit_vector);
+}
+
+proof fn preserve_other_bit(bits: u64, i: u32, j: u32)
+    requires i != j, i / 64 == j / 64,
+    ensures (bits | (1u64 << (i % 64))) & (1u64 << (j % 64))
+        == bits & (1u64 << (j % 64)),
+{
+    assert(i % 64 != j % 64);
+    assert((bits | (1u64 << (i % 64))) & (1u64 << (j % 64))
+        == bits & (1u64 << (j % 64))) by(bit_vector)
+        requires i % 64 != j % 64;
+}
+
+impl<T> Arena<T> {
+    spec fn valid_marks(&self) -> bool {
+        self.live@.len() == self.marks@.len()
+        && forall|i: u32| self.live_at(i) ==> (i as int) < self.records@.len()
+    }
+
+    spec fn live_at(&self, i: u32) -> bool {
+        let word = (i / 64) as int;
+        word < self.live@.len() && self.live@[word] & (1u64 << (i % 64)) != 0
+    }
+
+    spec fn marked_at(&self, i: u32) -> bool {
+        let word = (i / 64) as int;
+        word < self.marks@.len() && self.marks@[word] & (1u64 << (i % 64)) != 0
+    }
+
+    spec fn storage_unchanged(&self, previous: &Self) -> bool {
+        *self == Self { marks: self.marks, ..*previous }
+        && self.records@ == previous.records@ && self.live@ == previous.live@
+        && self.free_count == previous.free_count && self.cursor == previous.cursor
+        && self.live_count == previous.live_count && self.extra == previous.extra
+        && self.quarantine_unchanged(previous)
+    }
+
+    #[cfg(feature = "gc-stress")]
+    spec fn quarantine_unchanged(&self, previous: &Self) -> bool {
+        self.quarantine@ == previous.quarantine@
+    }
+
+    #[cfg(not(feature = "gc-stress"))]
+    spec fn quarantine_unchanged(&self, previous: &Self) -> bool { true }
+
+    #[cfg(feature = "gc-stress")]
+    spec fn empty_quarantine(&self) -> bool { self.quarantine@.len() == 0 }
+
+    #[cfg(not(feature = "gc-stress"))]
+    spec fn empty_quarantine(&self) -> bool { true }
+
+    // METHOD mark_bits
+    // METHOD new
+    // METHOD is_live
+    // METHOD check
+    // METHOD get
+    // METHOD get_mut
+    // METHOD mark
+    // METHOD is_marked
+    // METHOD clear_marks
+}
+}
+}
+fn main() {}

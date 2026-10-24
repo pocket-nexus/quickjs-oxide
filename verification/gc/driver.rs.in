@@ -1,0 +1,61 @@
+// The actual generic driver body is inserted from gc_kernel.rs. These are
+// explicit adapter obligations, NOT proofs of WeakPass or Heap::drain.
+use vstd::prelude::*;
+mod model;
+use model::{Graph, Work};
+
+verus! {
+pub trait EphemeronTrace {
+    spec fn graph(&self) -> Graph;
+    spec fn work(&self) -> Work;
+
+    fn scan(&mut self) -> (more: bool)
+        requires old(self).graph().valid(), old(self).work().valid(old(self).graph()),
+            old(self).work().pending.is_empty(),
+        ensures final(self).graph() == old(self).graph(), final(self).work().valid(final(self).graph()),
+            final(self).work().marked == old(self).work().marked,
+            !more ==> final(self).work().marked == final(self).graph().reachable(),
+            !more ==> final(self).work().pending.is_empty(),
+            more ==> !final(self).work().pending.difference(final(self).work().marked).is_empty();
+
+    fn drain(&mut self)
+        requires old(self).graph().valid(), old(self).work().valid(old(self).graph()),
+            !old(self).work().pending.difference(old(self).work().marked).is_empty(),
+        ensures final(self).graph() == old(self).graph(), final(self).work().valid(final(self).graph()),
+            final(self).work().pending.is_empty(),
+            old(self).work().marked.subset_of(final(self).work().marked),
+            old(self).work().pending.subset_of(final(self).work().marked);
+
+    fn clear(&mut self)
+        requires old(self).graph().valid(), old(self).work().valid(old(self).graph()),
+            old(self).work().pending.is_empty(),
+            old(self).work().marked == old(self).graph().reachable(),
+        ensures final(self).graph() == old(self).graph(), final(self).work().marked == old(self).work().marked,
+            final(self).work().pending.is_empty(), final(self).work().waiting.is_empty();
+}
+
+// The rank is fixed by the graph interpretation; adapters cannot choose an
+// unrelated ghost rank. A queue containing only duplicates need not decrease it.
+pub open spec fn remaining<T: EphemeronTrace>(trace: &T) -> nat {
+    trace.graph().nodes.difference(trace.work().marked).len()
+}
+
+pub proof fn drain_progress(g: Graph, before: Work, after: Work)
+    requires g.valid(), before.valid(g), after.valid(g),
+        !before.pending.difference(before.marked).is_empty(),
+        before.marked.subset_of(after.marked), before.pending.subset_of(after.marked),
+    ensures g.nodes.difference(after.marked).len() < g.nodes.difference(before.marked).len(),
+{
+    model::least_fixed_point(g);
+    let fresh = before.pending.difference(before.marked).choose();
+    let old_remaining = g.nodes.difference(before.marked);
+    let new_remaining = g.nodes.difference(after.marked);
+    assert(old_remaining.contains(fresh));
+    assert(!new_remaining.contains(fresh));
+    assert(new_remaining.subset_of(old_remaining));
+    new_remaining.lemma_subset_not_in_lt(old_remaining, fresh);
+}
+
+// DRIVER
+pub fn main() {}
+}

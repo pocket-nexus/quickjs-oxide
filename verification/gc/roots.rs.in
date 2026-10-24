@@ -1,0 +1,111 @@
+//! Source-level proofs of root storage. Caller liveness remains a separate duty.
+use vstd::prelude::*;
+
+verus! {
+broadcast use vstd::seq_lib::group_seq_properties;
+
+// TYPES
+
+impl Value {
+    // SPEC_EMPTY
+    // EMPTY
+    // METHOD Value.is_empty
+}
+
+impl RootStack {
+    // METHOD RootStack.mark
+    // METHOD RootStack.push
+    // METHOD RootStack.pop_one
+    // METHOD RootStack.truncate
+    // METHOD RootStack.get
+    // METHOD RootStack.set
+    // METHOD RootStack.len
+    // METHOD RootStack.is_empty
+    // METHOD RootStack.values
+}
+
+impl Handles {
+    spec fn valid(&self) -> bool {
+        self.slots@.len() <= u32::MAX
+        && self.free@.no_duplicates()
+        && (forall|j: int| 0 <= j < self.free@.len() ==>
+            (self.free@[j] as int) < self.slots@.len())
+        && (forall|i: int| 0 <= i < self.slots@.len() ==>
+            (self.slots@[i].0 == Value::EMPTY.0) == self.free@.contains(i as u32))
+    }
+
+    spec fn active(&self, h: Handle) -> bool {
+        (h.0 as int) < self.slots@.len() && self.slots@[h.0 as int].0 != Value::EMPTY.0
+    }
+
+    spec fn live_indices(&self) -> Set<int> {
+        Set::range(0int, self.slots@.len() as int).filter(
+            |i: int| self.slots@[i].0 != Value::EMPTY.0)
+    }
+
+    proof fn count_partition(&self)
+        requires self.valid(),
+        ensures self.free@.len() <= self.slots@.len(),
+            self.live_indices().len() == self.slots@.len() - self.free@.len(),
+    {
+        broadcast use vstd::set_lib::range_set_properties;
+        let indices = self.free@.map_values(|x: u32| x as int);
+        self.free@.lemma_no_duplicates_injective(|x: u32| x as int);
+        indices.unique_seq_to_set();
+        indices.to_set_ensures();
+        let all = Set::range(0int, self.slots@.len() as int);
+        assert(indices.to_set().subset_of(all));
+        vstd::set_lib::lemma_len_subset(indices.to_set(), all);
+        assert(self.live_indices() =~= all.difference(indices.to_set())) by {
+            assert forall|i: int| all.contains(i) implies
+                indices.to_set().contains(i) == self.free@.contains(i as u32) by {
+                if self.free@.contains(i as u32) {
+                    let j = choose|j: int| 0 <= j < self.free@.len()
+                        && self.free@[j] == i as u32;
+                    assert(indices[j] == i);
+                }
+            }
+        }
+        assert(all.intersect(indices.to_set()) =~= indices.to_set());
+        vstd::set_lib::lemma_set_difference_len(all, indices.to_set());
+    }
+
+    // METHOD Handles.create
+    // METHOD Handles.get
+    // METHOD Handles.set
+    // METHOD Handles.release
+    // METHOD Handles.live_count
+}
+
+// A composition witness over arbitrary nonempty values. This verifies actual
+// calls, demonstrates satisfiable preconditions and checks reuse and framing.
+// Constructing the empty representation here does not verify derive(Default).
+fn handle_lifecycle(first: Value, second: Value)
+    requires first.0 != Value::EMPTY.0, second.0 != Value::EMPTY.0,
+{
+    let mut handles = Handles { slots: Vec::new(), free: Vec::new() };
+    assert(handles.valid());
+    let a = handles.create(first);
+    let b = handles.create(second);
+    assert(a.0 != b.0);
+    handles.release(a);
+    assert(handles.active(b));
+    let replacement = handles.create(second);
+    assert(replacement.0 == a.0);
+    let preserved = handles.get(b);
+    assert(preserved == second);
+    let count = handles.live_count();
+    assert(count == 2);
+}
+
+fn scoped_root_prefix(roots: &mut RootStack, temporary: Value)
+    ensures final(roots).values@ == old(roots).values@,
+{
+    let mark = roots.mark();
+    roots.push(temporary);
+    roots.truncate(mark);
+    assert(roots.values@ =~= old(roots).values@);
+}
+
+pub fn main() {}
+}

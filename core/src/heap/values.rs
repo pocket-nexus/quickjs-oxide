@@ -604,6 +604,62 @@ mod tests {
     }
 
     #[test]
+    fn stateful_ranges_partition_storage_and_keep_payloads() {
+        let mut heap = ValueHeap::new();
+        let mut room = Room::unbounded();
+        let mut owners = Vec::new();
+        for round in 0..24_u32 {
+            for size in [1, 2, 3, 5, 63, 64, 65, 127] {
+                let range = heap.alloc(size, &mut room);
+                let value = Value::int32((round * 1000 + size) as i32);
+                heap.slice_mut(range).fill(value);
+                owners.push((range, value));
+            }
+            heap.begin_sweep();
+            let mut next = Vec::new();
+            for (i, (range, value)) in owners.into_iter().enumerate() {
+                if (i + round as usize).is_multiple_of(3) {
+                    heap.release(range);
+                } else {
+                    next.push((range, value));
+                }
+            }
+            heap.finish_sweep();
+            owners = next;
+            let mut ownership = vec![0_u8; heap.total_slots()];
+            let mut claim = |range: Range| {
+                for index in range.start..range.start + range.len {
+                    ownership[index as usize] += 1;
+                }
+            };
+            let mut used = 0;
+            for &(range, value) in &owners {
+                claim(range);
+                used += range.len as usize;
+                assert!(
+                    heap.slice(range).iter().all(|&v| v == value),
+                    "survivor changed"
+                );
+            }
+            for range in heap.free_blocks() {
+                claim(range);
+            }
+            for (start, end) in heap.free_runs() {
+                claim(Range {
+                    start,
+                    len: end - start,
+                });
+            }
+            assert!(
+                ownership.iter().all(|&count| count == 1),
+                "hole or overlapping allocation"
+            );
+            assert_eq!(heap.used_slots(), used);
+            assert_eq!(heap.free_slots() + used, heap.total_slots());
+        }
+    }
+
+    #[test]
     fn grow_copies_and_frees() {
         let room = &mut Room::unbounded();
         let mut heap = ValueHeap::new();

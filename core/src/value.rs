@@ -165,7 +165,7 @@ impl Value {
         // 0 for every double, 1..=7 for the boxed tags.
         let index = tag.saturating_sub(TAG_INT32 as u32 - 1) as usize;
         // The special tag sits at index 2; move it to 8 + the special payload.
-        let special = usize::from(tag == TAG_SPECIAL as u32) * (6 + (self.0 & 3) as usize);
+        let special = (tag == TAG_SPECIAL as u32) as usize * (6 + (self.0 & 3) as usize);
         KIND_TABLE[(index + special) & 15]
     }
 

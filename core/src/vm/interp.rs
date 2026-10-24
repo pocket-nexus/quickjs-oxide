@@ -156,7 +156,12 @@ fn raise_top(cx: &mut Cx<'_>, end: u32) {
 
 #[inline(never)]
 fn clear_registers(cx: &mut Cx<'_>, range: std::ops::Range<usize>) {
-    cx.heap.vm.registers[range].fill(Value::UNDEFINED);
+    let registers = &mut cx.heap.vm.registers.as_mut_slice()[range];
+    let mut index = 0;
+    while index < registers.len() {
+        registers[index] = Value::UNDEFINED;
+        index += 1;
+    }
 }
 
 /// Moves the arguments past a function's parameters above its registers.
