@@ -936,6 +936,7 @@ pub enum ExprKind {
         prop: Box<PropKey>,
         this: DeclRef,
         home: DeclRef,
+        super_at: u32,
     },
     Member {
         obj: Box<Expr>,
@@ -995,6 +996,7 @@ pub enum ExprKind {
         this: DeclRef,
         new_target: DeclRef,
         func: DeclRef,
+        super_at: u32,
     },
     Import {
         spec: Box<Expr>,
@@ -1147,6 +1149,7 @@ pub enum TargetKind {
         prop: Box<PropKey>,
         this: DeclRef,
         home: DeclRef,
+        super_at: u32,
     },
 }
 
@@ -2262,7 +2265,12 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(270);
             out.push(decl.0);
         }
-        ExprKind::SuperMember { prop, this, home } => {
+        ExprKind::SuperMember {
+            prop,
+            this,
+            home,
+            super_at,
+        } => {
             out.push(271);
             {
                 let r = n_prop_key(w, prop);
@@ -2270,6 +2278,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             }
             out.push(this.0);
             out.push(home.0);
+            out.push(*super_at);
         }
         ExprKind::Member {
             obj,
@@ -2446,6 +2455,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             this,
             new_target,
             func,
+            super_at,
         } => {
             out.push(282);
             {
@@ -2461,6 +2471,7 @@ fn n_expr(w: &mut Writer, v: &Expr) -> u32 {
             out.push(this.0);
             out.push(new_target.0);
             out.push(func.0);
+            out.push(*super_at);
         }
         ExprKind::Import { spec, options } => {
             out.push(283);
@@ -2644,7 +2655,12 @@ fn n_target(w: &mut Writer, v: &Target) -> u32 {
                 out.push(r);
             }
         }
-        TargetKind::SuperMember { prop, this, home } => {
+        TargetKind::SuperMember {
+            prop,
+            this,
+            home,
+            super_at,
+        } => {
             out.push(563);
             {
                 let r = n_prop_key(w, prop);
@@ -2652,6 +2668,7 @@ fn n_target(w: &mut Writer, v: &Target) -> u32 {
             }
             out.push(this.0);
             out.push(home.0);
+            out.push(*super_at);
         }
     }
     w.node(words, Some(&v.span))
@@ -3591,7 +3608,7 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         268 => Some(3),
         269 => Some(3),
         270 => Some(3),
-        271 => Some(5),
+        271 => Some(6),
         272 => Some(7),
         273 => Some(4),
         274 => Some(5),
@@ -3602,7 +3619,7 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         279 => Some(4),
         280 => Some(9),
         281 => Some(6),
-        282 => Some(7),
+        282 => Some(8),
         283 => Some(4),
         284 => Some(4),
         285 => Some(3),
@@ -3622,7 +3639,7 @@ pub const fn node_words(kind: u32) -> Option<usize> {
         560 => Some(2),
         561 => Some(5),
         562 => Some(2),
-        563 => Some(4),
+        563 => Some(5),
         576 => Some(4),
         577 => Some(4),
         578 => Some(2),
@@ -4460,7 +4477,13 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
             let prop = Box::new(rn_prop_key(r, c.u()?, limit)?);
             let this = DeclRef(c.u()?);
             let home = DeclRef(c.u()?);
-            ExprKind::SuperMember { prop, this, home }
+            let super_at = c.u()?;
+            ExprKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            }
         }
         272 => {
             let obj = Box::new(rn_expr(r, c.u()?, limit)?);
@@ -4597,11 +4620,13 @@ fn rn_expr(r: &Reader<'_>, n: u32, limit: usize) -> Result<Expr, ReadError> {
             let this = DeclRef(c.u()?);
             let new_target = DeclRef(c.u()?);
             let func = DeclRef(c.u()?);
+            let super_at = c.u()?;
             ExprKind::SuperCall {
                 args,
                 this,
                 new_target,
                 func,
+                super_at,
             }
         }
         283 => {
@@ -4748,7 +4773,13 @@ fn rn_target(r: &Reader<'_>, n: u32, limit: usize) -> Result<Target, ReadError> 
             let prop = Box::new(rn_prop_key(r, c.u()?, limit)?);
             let this = DeclRef(c.u()?);
             let home = DeclRef(c.u()?);
-            TargetKind::SuperMember { prop, this, home }
+            let super_at = c.u()?;
+            TargetKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            }
         }
         _ => return Err(ReadError("a node is not a Target")),
     };
@@ -6724,7 +6755,12 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             parts.push(format!("decl:{}", format!("#{}", decl.0)));
             "importMeta"
         }
-        ExprKind::SuperMember { prop, this, home } => {
+        ExprKind::SuperMember {
+            prop,
+            this,
+            home,
+            super_at,
+        } => {
             children.push((
                 "prop",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
@@ -6733,6 +6769,7 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             ));
             parts.push(format!("this:{}", format!("#{}", this.0)));
             parts.push(format!("home:{}", format!("#{}", home.0)));
+            parts.push(format!("superAt:{}", super_at.to_string()));
             "superMember"
         }
         ExprKind::Member {
@@ -6965,6 +7002,7 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             this,
             new_target,
             func,
+            super_at,
         } => {
             if args.is_empty() {
                 parts.push("args:[]".to_string());
@@ -6985,6 +7023,7 @@ fn d_expr(d: &mut Dumper<'_>, v: &Expr, ind: usize, head: String) {
             parts.push(format!("this:{}", format!("#{}", this.0)));
             parts.push(format!("newTarget:{}", format!("#{}", new_target.0)));
             parts.push(format!("func:{}", format!("#{}", func.0)));
+            parts.push(format!("superAt:{}", super_at.to_string()));
             "superCall"
         }
         ExprKind::Import { spec, options } => {
@@ -7227,7 +7266,12 @@ fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
             ));
             "pattern"
         }
-        TargetKind::SuperMember { prop, this, home } => {
+        TargetKind::SuperMember {
+            prop,
+            this,
+            home,
+            super_at,
+        } => {
             children.push((
                 "prop",
                 Child::One(Box::new(move |d: &mut Dumper<'_>, ind: usize| {
@@ -7236,6 +7280,7 @@ fn d_target(d: &mut Dumper<'_>, v: &Target, ind: usize, head: String) {
             ));
             parts.push(format!("this:{}", format!("#{}", this.0)));
             parts.push(format!("home:{}", format!("#{}", home.0)));
+            parts.push(format!("superAt:{}", super_at.to_string()));
             "superMember"
         }
     };
@@ -8283,7 +8328,12 @@ fn s_expr(v: &mut Expr) {
         ExprKind::This { decl } => {}
         ExprKind::NewTarget { decl } => {}
         ExprKind::ImportMeta { decl } => {}
-        ExprKind::SuperMember { prop, this, home } => {
+        ExprKind::SuperMember {
+            prop,
+            this,
+            home,
+            super_at,
+        } => {
             s_prop_key(prop);
         }
         ExprKind::Member {
@@ -8358,6 +8408,7 @@ fn s_expr(v: &mut Expr) {
             this,
             new_target,
             func,
+            super_at,
         } => {
             for x in args.iter_mut() {
                 s_arg(x);
@@ -8444,7 +8495,12 @@ fn s_target(v: &mut Target) {
         TargetKind::Pattern { p } => {
             s_pattern(p);
         }
-        TargetKind::SuperMember { prop, this, home } => {
+        TargetKind::SuperMember {
+            prop,
+            this,
+            home,
+            super_at,
+        } => {
             s_prop_key(prop);
         }
     }

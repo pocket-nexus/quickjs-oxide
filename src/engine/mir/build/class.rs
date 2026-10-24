@@ -15,6 +15,7 @@ use oxide_core::bytecode::opcode::method;
 impl Builder<'_, '_> {
     /// Evaluates `cls`; `inferred` names an anonymous class (NamedEvaluation).
     pub(super) fn class(&mut self, cls: &Class, inferred: Option<u32>) -> Result<Value> {
+        let default_name = self.default_class_name.take();
         // The class scope: the inner name, the private names and the
         // computed field keys start in the TDZ each time the class is
         // evaluated.
@@ -45,6 +46,7 @@ impl Builder<'_, '_> {
                 _ => self.static_key(""),
             },
         };
+        let name = default_name.unwrap_or(name);
         let (class, proto) = self.op2(
             Op::MakeClass,
             &[parent, ctor],
@@ -144,6 +146,7 @@ impl Builder<'_, '_> {
             self.effect(Op::InstallFields, &[class, proto, initializer], Imm::None);
         }
         if let Some(decl) = cls.name {
+            self.mark(Some(self.decl(decl).span.start));
             self.init_binding(decl, class)?;
         }
         if cls.name.is_none()
@@ -515,6 +518,9 @@ impl Builder<'_, '_> {
             // Nothing binds `this`: it is still unbound.
             None => self.op(Op::Empty, &[], Imm::None),
         };
+        if let Some(at) = at {
+            self.mark(Some(at));
+        }
         let result = self.op(Op::CheckDerivedReturn, &[value, this], Imm::None);
         let term = crate::engine::mir::ir::Terminator::Return(result);
         match at {
@@ -545,10 +551,11 @@ impl Builder<'_, '_> {
         new_target: DeclRef,
         func: DeclRef,
         at: u32,
+        super_at: u32,
     ) -> Result<Value> {
-        let function = self.read_decl(func, None)?;
+        let function = self.read_decl(func, Some(super_at))?;
         let parent = self.op(Op::GetSuper, &[function], Imm::None);
-        let new_target = self.read_decl(new_target, None)?;
+        let new_target = self.read_decl(new_target, Some(super_at))?;
         let args = self.arguments(args)?;
         let result = match args {
             super::expr::Args::Fixed(args) => {
@@ -560,8 +567,9 @@ impl Builder<'_, '_> {
                 self.op_at(Op::NewSpread, &[parent, new_target, array], Imm::None, at)
             }
         };
+        self.mark(Some(super_at));
         self.bind_this_decl(this, result)?;
-        let function = self.read_decl(func, None)?;
+        let function = self.read_decl(func, Some(super_at))?;
         self.effect(Op::InitFields, &[result, function], Imm::None);
         Ok(result)
     }

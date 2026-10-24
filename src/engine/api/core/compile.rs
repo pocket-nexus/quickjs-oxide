@@ -71,7 +71,7 @@ static FRONT_END: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new
 
 /// Selects the new front end (AST, HIR, MIR) or the stack-code one for
 /// every later compilation; the default is `OXIDE_FRONTEND=new|old`, else
-/// the stack-code one.
+/// the build's `OXIDE_DEFAULT_FRONTEND`, else the stack-code one.
 pub fn use_new_front_end(new: bool) {
     FRONT_END.store(
         if new { 2 } else { 1 },
@@ -84,7 +84,10 @@ pub(crate) fn new_front_end() -> bool {
     use std::sync::atomic::Ordering;
     match FRONT_END.load(Ordering::Relaxed) {
         0 => {
-            let new = std::env::var("OXIDE_FRONTEND").is_ok_and(|value| value == "new");
+            let new = match std::env::var("OXIDE_FRONTEND") {
+                Ok(value) => value == "new",
+                Err(_) => option_env!("OXIDE_DEFAULT_FRONTEND") == Some("new"),
+            };
             FRONT_END.store(if new { 2 } else { 1 }, Ordering::Relaxed);
             new
         }

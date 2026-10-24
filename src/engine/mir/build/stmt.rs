@@ -199,6 +199,10 @@ impl Builder<'_, '_> {
                 }
             }
             StmtKind::ClassDecl { decl, cls } => {
+                // A class declaration without a name is `export default`'s.
+                if cls.name.is_none() {
+                    self.default_class_name = Some(self.static_key("default"));
+                }
                 let class = self.class(cls, None)?;
                 self.mark(Some(self.decl(*decl).span.start));
                 self.init_binding(*decl, class)?;
@@ -813,8 +817,13 @@ impl Builder<'_, '_> {
                 TargetKind::Decl { decl } => self.put_decl(*decl, value),
                 TargetKind::Member { .. } => self.assign_member_value(t, value),
                 TargetKind::Pattern { p } => self.destructure(p, value, Mode::Assign),
-                TargetKind::SuperMember { prop, this, home } => {
-                    let place = self.super_place(prop, *this, *home, t.span.start)?;
+                TargetKind::SuperMember {
+                    prop,
+                    this,
+                    home,
+                    super_at,
+                } => {
+                    let place = self.super_place(prop, *this, *home, t.span.start, *super_at)?;
                     self.set_place(place, value)
                 }
             },

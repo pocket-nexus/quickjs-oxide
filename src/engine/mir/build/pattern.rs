@@ -235,9 +235,12 @@ impl Builder<'_, '_> {
                 }
             }
             TargetKind::Pattern { .. } => return internal("a pattern as a leaf target"),
-            TargetKind::SuperMember { prop, this, home } => {
-                Prepared::Place(self.super_place(prop, *this, *home, at)?)
-            }
+            TargetKind::SuperMember {
+                prop,
+                this,
+                home,
+                super_at,
+            } => Prepared::Place(self.super_place(prop, *this, *home, at, *super_at)?),
         })
     }
 
