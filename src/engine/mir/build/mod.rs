@@ -16,6 +16,7 @@
 mod class;
 mod entry;
 mod expr;
+mod generator;
 mod pattern;
 mod stmt;
 

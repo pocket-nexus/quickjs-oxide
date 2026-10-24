@@ -24,7 +24,7 @@ pub(super) const NONE: u32 = u32::MAX;
 /// Where a function's variables live.
 #[derive(Clone, Debug)]
 pub(super) struct Layout {
-    /// The register of each variable.
+    /// The register of each variable, or [`SLOT`] plus its spill slot.
     pub(super) var_regs: Vec<u32>,
     /// The register that receives `new.target`, when the unit reads it.
     pub(super) new_target: Option<u32>,
@@ -32,16 +32,26 @@ pub(super) struct Layout {
     /// Registers the variables other than `this`, the parameters and
     /// `new.target` take.
     pub(super) locals: u32,
+    /// The register holding the spill scope and its slot count, when some
+    /// variables live past the window.
+    pub(super) spill: Option<(u32, u32)>,
     pub(super) temp_base: u32,
 }
 
+/// A variable in a slot of the spill scope: `SLOT + slot`.
+pub(super) const SLOT: u32 = 1 << 30;
+
 impl Layout {
-    pub(super) fn of(f: &Function) -> Layout {
+    /// The layout keeping the first `budget` local variables in registers
+    /// and the others in the spill scope (`None`: all in registers).
+    pub(super) fn of(f: &Function, budget: Option<u32>) -> Layout {
         let param_count = u32::from(f.unit.param_count);
         let has_new_target = f.vars.iter().any(|var| var.kind == VarKind::NewTarget);
         let new_target = has_new_target.then_some(1 + param_count);
         let first_local = 1 + param_count + u32::from(has_new_target);
         let mut next = first_local;
+        let mut slots = 0;
+        let mut locals_seen = 0;
         let var_regs = f
             .vars
             .iter()
@@ -50,19 +60,39 @@ impl Layout {
                 VarKind::Param(index) => 1 + index,
                 VarKind::NewTarget => 1 + param_count,
                 VarKind::Local => {
-                    let register = next;
-                    next += 1;
-                    register
+                    locals_seen += 1;
+                    if budget.is_some_and(|budget| locals_seen > budget) {
+                        let slot = slots;
+                        slots += 1;
+                        SLOT + slot
+                    } else {
+                        let register = next;
+                        next += 1;
+                        register
+                    }
                 }
             })
             .collect();
+        let locals = next - first_local;
+        let spill = (slots > 0).then_some((next, slots));
+        let temp_base = if spill.is_some() { next + 1 } else { next };
         Layout {
             var_regs,
             new_target,
             param_count,
-            locals: next - first_local,
-            temp_base: next,
+            locals,
+            spill,
+            temp_base,
         }
+    }
+
+    /// The first register of the locals.
+    pub(super) fn first_local(&self) -> u32 {
+        1 + self.param_count + u32::from(self.new_target.is_some())
+    }
+
+    pub(super) fn in_slot(&self, var: u32) -> bool {
+        self.var_regs[var as usize] >= SLOT
     }
 }
 
@@ -261,6 +291,9 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     let crate::engine::mir::ir::Imm::Var(var) = insn.imm else {
                         continue;
                     };
+                    if layout.in_slot(var) {
+                        continue;
+                    }
                     // The variable must not change before the last use.
                     let changed = b.insns[index + 1..last.min(term_index)]
                         .iter()
@@ -281,7 +314,11 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     let crate::engine::mir::ir::Imm::Var(var) = insn.imm else {
                         continue;
                     };
-                    if index == 0 || uses[value.index()] != 1 || fixed.contains_key(&value) {
+                    if layout.in_slot(var)
+                        || index == 0
+                        || uses[value.index()] != 1
+                        || fixed.contains_key(&value)
+                    {
                         continue;
                     }
                     // The previous live instruction defines the value.
@@ -606,6 +643,62 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
         used = used.max((register + width) as u32);
     }
     Allocation { regs, used, ranges }
+}
+
+/// The slot and register count of each instruction or terminator whose
+/// operands or results take a window, in order.
+pub(super) fn window_slots(f: &Function, order: &Order, plan: &Plan) -> Vec<(u32, u32)> {
+    use crate::engine::mir::ir::SuspendKind;
+    let mut slots = Vec::new();
+    for &block in &order.blocks {
+        let b = f.block(block);
+        let entry = order.entry[block.index()];
+        for (index, insn) in b.insns.iter().enumerate() {
+            if plan.dead[block.index()][index] {
+                continue;
+            }
+            let count = match insn.op {
+                Op::GetSuperValue => 3,
+                Op::PutSuperValue => 4,
+                Op::IterCall => 2,
+                op if is_window(op) => insn.args.len() as u32,
+                _ => continue,
+            };
+            slots.push((entry + 1 + index as u32, count));
+        }
+        let count = match b.term {
+            Terminator::Suspend {
+                kind: SuspendKind::Yield | SuspendKind::YieldStar,
+                ..
+            } => 2,
+            Terminator::Suspend {
+                kind: SuspendKind::Await,
+                ..
+            } => 1,
+            _ => continue,
+        };
+        slots.push((order.end[block.index()] - 1, count));
+    }
+    slots
+}
+
+/// The registers the windows reach past.
+pub(super) fn windows_top(
+    alloc: &Allocation,
+    f: &Function,
+    layout: &Layout,
+    order: &Order,
+    plan: &Plan,
+) -> u32 {
+    let slots = window_slots(f, order, plan);
+    let positions: Vec<u32> = slots.iter().map(|&(slot, _)| slot).collect();
+    let bases = window_bases(alloc, f, layout, &positions);
+    slots
+        .iter()
+        .zip(bases)
+        .map(|(&(_, count), base)| base + count)
+        .max()
+        .unwrap_or(0)
 }
 
 /// The first register above every value live across each slot in `slots`

@@ -123,14 +123,15 @@ impl Builder<'_, '_> {
             } => self.super_call(args, *this, *new_target, *func, at)?,
             ExprKind::Import { .. } => return unsupported("import()"),
             ExprKind::Yield { e: value, delegate } => {
-                if *delegate {
-                    return unsupported("yield*");
-                }
                 let value = match value {
                     Some(value) => self.expr(value)?,
                     None => self.undefined(),
                 };
-                self.yield_value(value, at)?
+                if *delegate {
+                    self.yield_star(value, at)?
+                } else {
+                    self.yield_value(value, at)?
+                }
             }
             ExprKind::Await { e: value } => {
                 let value = self.expr(value)?;
@@ -1115,38 +1116,6 @@ impl Builder<'_, '_> {
     }
 
     // ---- suspension ----
-
-    fn yield_value(&mut self, value: Value, at: u32) -> Result<Value> {
-        if self.hf.async_ {
-            return unsupported("async generators");
-        }
-        let resume = self.block();
-        let sent = self.f.new_value(Default::default());
-        let kind = self.f.new_value(Default::default());
-        self.end_at(
-            Terminator::Suspend {
-                kind: SuspendKind::Yield,
-                value: Some(value),
-                sent: Some(sent),
-                resume_kind: Some(kind),
-                resume,
-            },
-            at,
-        );
-        self.start(resume);
-        // A `.return(value)` resumption returns through the finally bodies.
-        let returning = self.block();
-        let next = self.block();
-        self.end(Terminator::Branch {
-            cond: kind,
-            then: returning,
-            else_: next,
-        });
-        self.start(returning);
-        self.return_completion(Some(sent), at, true)?;
-        self.start(next);
-        Ok(sent)
-    }
 
     pub(super) fn await_value(&mut self, value: Value, at: Option<u32>) -> Value {
         let resume = self.block();
