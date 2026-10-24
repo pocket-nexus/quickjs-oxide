@@ -44,7 +44,8 @@ impl<T> Arena<T> {
     }
 
     spec fn storage_unchanged(&self, previous: &Self) -> bool {
-        self.records@ == previous.records@ && self.live@ == previous.live@
+        *self == Self { marks: self.marks, ..*previous }
+        && self.records@ == previous.records@ && self.live@ == previous.live@
         && self.free_count == previous.free_count && self.cursor == previous.cursor
         && self.live_count == previous.live_count && self.extra == previous.extra
         && self.quarantine_unchanged(previous)
