@@ -66,3 +66,47 @@ def record(source, name, prefix, retained):
     for start, end, replacement in reversed(replacements):
         selected = selected[:start] + replacement + selected[end:]
     return selected, parameters, sorted(seen)
+
+
+def tuple_enum(source, name, prefix, retained):
+    """Retain unit/single-field variants; generalize only uninspected types.
+
+    Explicit discriminants, struct variants, multiple tuple fields, conditional
+    attributes and multiline fields fail closed. The default-variant attribute
+    is irrelevant to these projections, which do not select derived Default.
+    """
+    selected = item(source, rf"(?:pub\s+)?enum {name}\b")
+    code = masked(selected)
+    opening = code.index("{")
+    variants = list(re.finditer(r"(?m)^[ \t]*(\w+)(?:\(([^\n]+)\))?,[ \t]*$",
+                               code[opening + 1:-1]))
+    covered = list(code[opening + 1:-1])
+    parameters, replacements, seen = [], [], set()
+    for variant in variants:
+        variant_name, original = variant[1], variant[2]
+        if variant_name in seen:
+            raise ValueError(f"duplicate variant {name}.{variant_name}")
+        seen.add(variant_name)
+        if original is not None:
+            single_type(original)
+            if variant_name in retained:
+                expected, replacement = retained[variant_name]
+                if "".join(original.split()) != "".join(expected.split()):
+                    raise ValueError(f"type changed for {name}.{variant_name}: {original}")
+            else:
+                replacement = prefix + variant_name
+                parameters.append(replacement)
+            replacements.append((opening + 1 + variant.start(2), opening + 1 + variant.end(2), replacement))
+        elif variant_name in retained:
+            raise ValueError(f"missing field in retained variant {name}.{variant_name}")
+        for i in range(variant.start(), variant.end()):
+            covered[i] = " "
+    if set(retained) - seen:
+        raise ValueError(f"missing retained variants in {name}: {set(retained) - seen}")
+    remaining = re.sub(r"(?m)^[ \t]*#\[default\][ \t]*$", "", "".join(covered))
+    if remaining.strip():
+        raise ValueError(f"unsupported variant syntax in {name}: {remaining.strip()}")
+    for start, end, replacement in reversed(replacements):
+        selected = selected[:start] + replacement + selected[end:]
+    selected = re.sub(r"(?m)^[ \t]*#\[default\][ \t]*$", "", selected)
+    return selected, parameters, sorted(seen)

@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 
 from source import item, masked, method
-from records import record
+from records import record, tuple_enum
 
 SPEC = importlib.util.spec_from_file_location("gc_proofs", Path(__file__).with_name("gc.py"))
 gc = importlib.util.module_from_spec(SPEC)
@@ -11,6 +11,27 @@ SPEC.loader.exec_module(gc)
 
 
 class ProofSourceTests(unittest.TestCase):
+    def test_enum_projection_retains_variants_and_rejects_unsupported_forms(self):
+        original = '''pub enum Data {
+            #[default]
+            None,
+            Table(Box<Table>),
+            Bytes(Vec<u8>),
+            Host(Rc<dyn Any>),
+        }'''
+        generated, parameters, variants = tuple_enum(original, "Data", "D", {"Table": ("Box<Table>", "Box<Table<C>>")})
+        self.assertEqual(parameters, ["DBytes", "DHost"])
+        self.assertEqual(variants, ["Bytes", "Host", "None", "Table"])
+        self.assertIn("Table(Box<Table<C>>)", generated)
+        self.assertIn("Bytes(DBytes)", generated)
+        self.assertIn("Host(DHost)", generated)
+        self.assertNotIn("#[default]", generated)
+        for replacement in ("Table(Vec<Table>),", "Table,", "Table(u32, u32),",
+                            "Table { field: u32 },", "Table = 1,", "Table(Box<\nTable>),",
+                            "Table(Box<Table>), Host(u32),", '#[cfg(feature = "x")]\nTable(Box<Table>),'):
+            with self.assertRaises(ValueError):
+                tuple_enum(original.replace("Table(Box<Table>),", replacement), "Data", "D", {"Table": ("Box<Table>", "Box<Table<C>>")})
+
     def test_parametric_records_preserve_every_field_and_reject_drift(self):
         original = """pub struct State {
             known: Vec<u32>,
@@ -201,6 +222,19 @@ class ProofSourceTests(unittest.TestCase):
         self.assertIn("self.index[bucket] = entry as u32 + 1;", generated)
         with self.assertRaises(ValueError):
             gc.table_index_proofs.proof(source.replace("index: Vec<u32>", "index: Vec<u64>"))
+
+    def test_table_deletion_projection_has_no_trust_escapes(self):
+        heap = (gc.ROOT / "core/src/heap/gc.rs").read_text()
+        value = (gc.ROOT / "core/src/value.rs").read_text()
+        table = (gc.ROOT / "core/src/heap/table.rs").read_text()
+        generated = gc.table_delete_proofs.proof(table,
+            (gc.ROOT / "core/src/heap/object.rs").read_text(),
+            gc.value_proofs.proof(value, (gc.PROOFS / "value.rs.in").read_text(), heap),
+            gc.root_proofs.proof(heap, value, (gc.PROOFS / "roots.rs.in").read_text()),
+            gc.table_index_proofs.proof(table))
+        gc.reject_trust_escapes(generated)
+        self.assertIn("table.index[bucket] = DELETED;", generated)
+        self.assertIn("slots[position] = Value::EMPTY;", generated)
 
     def test_root_fields_cannot_silently_escape_tracing_policy(self):
         source = (gc.ROOT / "core/src/heap/gc.rs").read_text()

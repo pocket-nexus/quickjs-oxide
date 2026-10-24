@@ -112,8 +112,11 @@ pub(crate) fn tombstone(internal: &mut super::object::Internal, entry: usize) {
     }
     table.index[bucket] = DELETED;
     table.live -= 1;
-    for slot in &mut internal.slots[entry * width..entry * width + width] {
-        *slot = Value::EMPTY;
+    let slots = &mut internal.slots.as_mut_slice()[entry * width..entry * width + width];
+    let mut position = 0;
+    while position < slots.len() {
+        slots[position] = Value::EMPTY;
+        position += 1;
     }
 }
 

@@ -23,6 +23,7 @@ import roots as root_proofs
 import scan as scan_proofs
 import source as source_frontend
 import symbol as symbol_proofs
+import table_delete as table_delete_proofs
 import table_index as table_index_proofs
 import value as value_proofs
 import vm_roots as vm_root_proofs
@@ -268,9 +269,13 @@ def main():
             arena.read_text(), scan.read_text()))
         table_index = directory / "table_index.rs"
         table_index.write_text(table_index_proofs.proof((ROOT / "core/src/heap/table.rs").read_text()))
+        table_delete = directory / "table_delete.rs"
+        table_delete.write_text(table_delete_proofs.proof((ROOT / "core/src/heap/table.rs").read_text(),
+            (ROOT / "core/src/heap/object.rs").read_text(), value.read_text(), roots.read_text(),
+            table_index.read_text()))
         sources = [PROOFS / "model.rs", PROOFS / "storage.rs", PROOFS / "worklist.rs",
                    generated, driver, roots, value, arena, waiters, scan, weakpass, symbol, reuse,
-                   root_trace, job_trace, vm_roots, vm_resume, weak_cleanup, table_index]
+                   root_trace, job_trace, vm_roots, vm_resume, weak_cleanup, table_index, table_delete]
         for path in sources:
             source = path.read_text()
             reject_trust_escapes(source)
@@ -307,6 +312,17 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "table_delete_lost_bucket": (table_delete, "table.index[bucket] = DELETED;", ""),
+                "table_delete_wrong_sentinel": (table_delete, "table.index[bucket] = DELETED;", "table.index[bucket] = VACANT;"),
+                "table_delete_lost_count": (table_delete, "table.live -= 1;", ""),
+                "table_delete_inverted_search": (table_delete, "while table.index[bucket] != entry as u32 + 1", "while table.index[bucket] == entry as u32 + 1"),
+                "table_delete_lost_slot": (table_delete, "slots[position] = Value::EMPTY;", ""),
+                "table_delete_skips_first": (table_delete, "let mut position = 0;", "let mut position = 1;"),
+                "table_delete_wrong_range": (table_delete, "[entry * width..entry * width + width]", "[0..width]"),
+                "table_delete_corrupts_cursors": (table_delete, "let width = table.width;", "table.cursors.clear(); let width = table.width;"),
+                "table_delete_missing_entry": (table_delete,
+                    "exists|i: int| 0 <= i < (old(internal).data->Table_0).index@.len()\n                && (old(internal).data->Table_0).index@[i] == entry + 1,", "true,"),
+                "table_delete_zero_live": (table_delete, "(old(internal).data->Table_0).live > 0,", "true,"),
                 "table_index_lost_write": (table_index, "self.index[bucket] = entry as u32 + 1;", ""),
                 "table_index_wrong_entry": (table_index, "self.index[bucket] = entry as u32 + 1;", "self.index[bucket] = entry as u32;"),
                 "table_index_ignores_tombstones": (table_index, "while self.index[bucket] != VACANT && self.index[bucket] != DELETED", "while self.index[bucket] != VACANT"),

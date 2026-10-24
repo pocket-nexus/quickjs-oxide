@@ -488,7 +488,37 @@ has an arbitrary element type because this operation does not inspect it.
 
 Nonzero power-of-two capacity, an available bucket, and an entry number below
 the tombstone encoding are explicit premises. Their establishment by rebuild
-and growth, correctness of lookup/deletion, and the full WeakMap cleanup phase
+and growth, correctness of lookup, and the full WeakMap cleanup phase
 remain open. Eight mutations lose or corrupt insertion, skip tombstones, break
 wraparound or the hashed start, clear iterator cursors, or drop the free-bucket
 or representable-entry premises. No engine source is changed for this proof.
+
+### Table tombstoning
+
+`scripts/verification/table_delete.py` checks the complete production `tombstone`
+body. Both search and clearing terminate. Exactly one index bucket naming the
+entry becomes `DELETED`, the live count falls by one, and exactly the entry's
+slot interval becomes `EMPTY`. All other slots and table/internal fields are
+framed, including hashes and iterator cursors. Its dependency on the probing
+cycle lemma and Value constants is composed with their checked source proofs.
+
+The explicit premises are a Table variant, a nonzero power-of-two index size,
+an entry below the sentinel encoding with a hash and an indexed bucket, a
+positive live count, and a positive-width slot interval within the vector.
+These premises do not prove index uniqueness or that the live counter equals
+occupied entries. Rebuild/lookup and the enclosing weak-map loop still need to
+establish the complete representation invariant. This is not yet the whole
+weak-collection cleanup theorem.
+
+The record frontend now also retains every unit/single-field `InternalData`
+variant, generalizing only uninspected field types. Unsupported multi-field,
+struct, conditional or multiline variants fail closed. The default-variant
+attribute is omitted because no derived Default implementation is selected.
+No variant is erased. Tests check preservation and reject unsupported syntax.
+
+The engine's mutable-iterator clearing loop is expressed as an explicit loop
+over a borrowed slice, using the same interval and `Value::EMPTY`. No local
+trusted specification is added. Ten negative checks remove or corrupt bucket
+and slot writes, counters, search and clearing bounds, iterator cursor framing,
+or the indexed-entry/nonzero-count premises. Source and runtime checks must
+pass alongside the required Sweep, memory and table scaling runs.
