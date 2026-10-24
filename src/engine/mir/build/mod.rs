@@ -167,48 +167,134 @@ impl Shared<'_> {
 /// # Errors
 /// A construct outside the builder's surface, or broken HIR.
 pub(crate) fn build(
-    hir: &hir::Program,
+    hir: &mut hir::Program,
     regexps: &FxHashMap<u32, Rc<oxide_regexp::CompiledRegExp>>,
     has_with: bool,
 ) -> Result<Program> {
-    if has_with {
-        return Err(BuildError::Syntax(
-            "with statements are not supported".into(),
-        ));
-    }
-    let root = match *hir.entry {
-        hir::Entry::Script { top } | hir::Entry::Eval { top } => top,
-        hir::Entry::Module { module } => hir.modules[module.index()].top,
-    };
     let count = hir.functions.len();
-    let mut parent = vec![None; count];
-    for (index, function) in hir.functions.iter().enumerate() {
-        for inner in &function.inner {
-            parent[inner.index()] = Some(FunctionRef(index as u32));
+    let mut stream = Stream::new(hir, regexps, has_with)?;
+    // A function's creator names and brands it, so creators go first.
+    let mut functions: Vec<Option<Function>> = (0..count).map(|_| None).collect();
+    let mut pending = vec![stream.root];
+    while let Some(id) = pending.pop() {
+        let function = stream.function(id)?;
+        pending.extend(function.children.iter().rev());
+        functions[id.index()] = Some(function);
+    }
+    for (index, function) in functions.iter_mut().enumerate() {
+        if function.is_none() {
+            *function = Some(stream.function(FunctionRef(index as u32))?);
         }
     }
-    let mut shared = Shared {
-        hir,
-        regexps,
-        strings: hir.strings.clone(),
-        statics: FxHashMap::default(),
-        interned: FxHashMap::default(),
-        parent,
-        inferred: vec![None; count],
-        brand: vec![false; count],
-        root_body: hir.functions[root.index()]
-            .body
-            .decls
-            .iter()
-            .copied()
-            .collect(),
-    };
-    let mut functions = Vec::with_capacity(count);
-    let mut module = None;
-    for index in 0..count {
-        let id = FunctionRef(index as u32);
-        let mut builder = Builder::new(&mut shared, id)?;
-        let function = builder.build_into()?;
+    let root = stream.root;
+    let (strings, module) = stream.finish();
+    Ok(Program {
+        functions: functions.into_iter().flatten().collect(),
+        strings,
+        root,
+        module,
+    })
+}
+
+/// The MIR of a program's functions, built one at a time: the lowering
+/// builds each function when it reaches it and drops it once lowered, so
+/// only the functions it is inside of are held at once. A function is
+/// built after the function that creates it, which names and brands it.
+pub(crate) struct Stream<'h> {
+    shared: Shared<'h>,
+    /// Each function's parameters and statements, taken out of the HIR
+    /// until the function is built and dropped with its builder.
+    bodies: Vec<Option<Body>>,
+    pub(crate) root: FunctionRef,
+    module: Option<ModuleInfo>,
+}
+
+/// The parts of a HIR function only its own builder reads.
+struct Body {
+    params: Vec<hir::Param>,
+    rest: Option<Box<hir::Pattern>>,
+    rest_default: Option<Box<hir::Expr>>,
+    stmts: Vec<hir::Stmt>,
+}
+
+impl<'h> Stream<'h> {
+    /// Takes the functions' bodies out of `hir`; the rest stays shared.
+    ///
+    /// # Errors
+    /// A `with` statement.
+    pub(crate) fn new(
+        hir: &'h mut hir::Program,
+        regexps: &'h FxHashMap<u32, Rc<oxide_regexp::CompiledRegExp>>,
+        has_with: bool,
+    ) -> Result<Self> {
+        let bodies = hir
+            .functions
+            .iter_mut()
+            .map(|function| {
+                Some(Body {
+                    params: std::mem::take(&mut function.params),
+                    rest: function.rest.take(),
+                    rest_default: function.rest_default.take(),
+                    stmts: std::mem::take(&mut function.body.stmts),
+                })
+            })
+            .collect();
+        let hir: &'h hir::Program = hir;
+        if has_with {
+            return Err(BuildError::Syntax(
+                "with statements are not supported".into(),
+            ));
+        }
+        let root = match *hir.entry {
+            hir::Entry::Script { top } | hir::Entry::Eval { top } => top,
+            hir::Entry::Module { module } => hir.modules[module.index()].top,
+        };
+        let count = hir.functions.len();
+        let mut parent = vec![None; count];
+        for (index, function) in hir.functions.iter().enumerate() {
+            for inner in &function.inner {
+                parent[inner.index()] = Some(FunctionRef(index as u32));
+            }
+        }
+        let shared = Shared {
+            hir,
+            regexps,
+            strings: hir.strings.clone(),
+            statics: FxHashMap::default(),
+            interned: FxHashMap::default(),
+            parent,
+            inferred: vec![None; count],
+            brand: vec![false; count],
+            root_body: hir.functions[root.index()]
+                .body
+                .decls
+                .iter()
+                .copied()
+                .collect(),
+        };
+        Ok(Self {
+            shared,
+            bodies,
+            root,
+            module: None,
+        })
+    }
+
+    /// The MIR of function `id`.
+    ///
+    /// # Errors
+    /// A construct outside the builder's surface, or broken HIR.
+    pub(crate) fn function(&mut self, id: FunctionRef) -> Result<Function> {
+        let Some(body) = self.bodies[id.index()].take() else {
+            return internal(format!("function #{} built twice", id.index()));
+        };
+        let mut hf = self.shared.hir.functions[id.index()].clone();
+        hf.params = body.params;
+        hf.rest = body.rest;
+        hf.rest_default = body.rest_default;
+        hf.body.stmts = body.stmts;
+        let mut builder = Builder::new(&mut self.shared, id, &hf)?;
+        let mut function = builder.build_into()?;
         if let Some(mut info) = builder.module.take() {
             // As QuickJS decides it: the module function awaits somewhere,
             // `for await` included.
@@ -221,32 +307,39 @@ pub(crate) fn build(
                     }
                 )
             });
-            module = Some(info);
+            self.module = Some(info);
         }
-        functions.push(function);
-    }
-    for (index, function) in functions.iter_mut().enumerate() {
         if function.unit.name_atom.is_none() {
-            function.unit.name_atom = shared.inferred[index];
+            function.unit.name_atom = self.shared.inferred[id.index()];
         }
-        if shared.brand[index] {
+        if self.shared.brand[id.index()] {
             function.unit.flags |= oxide_core::bytecode::flags::BRAND;
         }
         if cfg!(debug_assertions)
-            && let Err(error) = super::verify::verify(function)
+            && let Err(error) = super::verify::verify(&function)
         {
             return internal(format!(
-                "{error} in function #{index}\n{}",
-                super::dump::dump(function)
+                "{error} in function #{}\n{}",
+                id.index(),
+                super::dump::dump(&function)
             ));
         }
+        Ok(function)
     }
-    Ok(Program {
-        functions,
-        strings: shared.strings,
-        root,
-        module,
-    })
+
+    /// The program's strings: the HIR's, then the builder's own so far.
+    pub(crate) fn strings(&self) -> &[JsString] {
+        &self.shared.strings
+    }
+
+    /// The module's record tables, once its function is built.
+    pub(crate) fn module(&self) -> Option<&ModuleInfo> {
+        self.module.as_ref()
+    }
+
+    pub(crate) fn finish(self) -> (Vec<JsString>, Option<ModuleInfo>) {
+        (self.shared.strings, self.module)
+    }
 }
 
 /// How a function reaches a binding.
@@ -288,7 +381,7 @@ pub(crate) enum Control {
 pub(crate) struct Builder<'s, 'h> {
     pub(crate) cx: &'s mut Shared<'h>,
     pub(crate) id: FunctionRef,
-    pub(crate) hf: &'h hir::Function,
+    pub(crate) hf: &'s hir::Function,
     pub(crate) f: Function,
     /// The block being filled; `None` after a terminator, until the next
     /// reachable block starts.
@@ -332,8 +425,7 @@ pub(crate) struct Builder<'s, 'h> {
 }
 
 impl<'s, 'h> Builder<'s, 'h> {
-    fn new(cx: &'s mut Shared<'h>, id: FunctionRef) -> Result<Self> {
-        let hf: &'h hir::Function = &cx.hir.functions[id.index()];
+    fn new(cx: &'s mut Shared<'h>, id: FunctionRef, hf: &'s hir::Function) -> Result<Self> {
         let mut f = Function::new(id);
         f.unit.definition = Pos(hf.span.start);
         f.layout.push(BlockId::ENTRY);

@@ -1,7 +1,7 @@
 //! The new front end end to end: source to AST, HIR, MIR and register code.
 
 use super::build::BuildError;
-use super::lower::{Debug, lower};
+use super::lower::{Debug, Error, lower};
 use crate::engine::api::core::compile::{
     ModuleCompileError, ScriptCompileError, lower_compile_error,
 };
@@ -39,28 +39,29 @@ pub(crate) fn compile_script(
             "with statements are not supported".into(),
         )));
     }
-    let built =
+    let mut built =
         crate::engine::hir::build::build(program, filename).map_err(ScriptCompileError::Front)?;
-    let mir =
-        super::build::build(&built.program, &built.regexps, has_with).map_err(
-            |error| match error {
-                BuildError::StackOverflow => {
-                    ScriptCompileError::Front(crate::engine::api::error::Error::new(
-                        crate::engine::api::error::ErrorKind::JsInternal,
-                        "stack overflow",
-                    ))
-                }
-                error => ScriptCompileError::Lower(lower_error(error)),
-            },
-        )?;
+    let build_error = |error| match error {
+        BuildError::StackOverflow => {
+            ScriptCompileError::Front(crate::engine::api::error::Error::new(
+                crate::engine::api::error::ErrorKind::JsInternal,
+                "stack overflow",
+            ))
+        }
+        error => ScriptCompileError::Lower(lower_error(error)),
+    };
+    let mut stream = super::build::Stream::new(&mut built.program, &built.regexps, has_with)
+        .map_err(build_error)?;
     let raw = source.raw_bytes();
     let debug = Debug {
         source: (debug_info != DebugInfoMode::StripDebug).then_some(raw),
         keep_source: debug_info == DebugInfoMode::Full,
         filename: (debug_info != DebugInfoMode::StripDebug).then(|| std::rc::Rc::from(filename)),
     };
-    let lowered =
-        lower(compiler, &mir, &built.program, &debug).map_err(ScriptCompileError::Lower)?;
+    let lowered = lower(compiler, &mut stream, &debug).map_err(|error| match error {
+        Error::Build(error) => build_error(error),
+        Error::Lower(error) => ScriptCompileError::Lower(error),
+    })?;
     Ok(LoweredScript {
         root: lowered.root,
         function: lowered.function,
@@ -82,9 +83,9 @@ pub(crate) fn compile_module(
     let text = SourceText::try_from_raw_bytes(source)
         .map_err(|error| ModuleCompileError::Front(error.into()))?;
     let program = Parser::parse_module(&text).map_err(ModuleCompileError::Front)?;
-    let built =
+    let mut built =
         crate::engine::hir::build::build(program, name).map_err(ModuleCompileError::Front)?;
-    let mir = super::build::build(&built.program, &built.regexps, false)
+    let mut stream = super::build::Stream::new(&mut built.program, &built.regexps, false)
         .map_err(|error| lower(lower_error(error)))?;
     let raw = text.raw_bytes();
     let debug = Debug {
@@ -92,13 +93,18 @@ pub(crate) fn compile_module(
         keep_source: debug_info == DebugInfoMode::Full,
         filename: (debug_info != DebugInfoMode::StripDebug).then(|| std::rc::Rc::from(name)),
     };
-    let lowered = super::lower::lower(compiler, &mir, &built.program, &debug).map_err(lower)?;
-    let Some(info) = &mir.module else {
+    let lowered =
+        super::lower::lower(compiler, &mut stream, &debug).map_err(|error| match error {
+            Error::Build(error) => lower(lower_error(error)),
+            Error::Lower(error) => lower(error),
+        })?;
+    let Some(info) = stream.module() else {
         return Err(lower(LowerError::Internal(
             "a module without its record".into(),
         )));
     };
-    let text = |index: u32| mir.strings[index as usize].to_utf8_lossy();
+    let strings = stream.strings();
+    let text = |index: u32| strings[index as usize].to_utf8_lossy();
     let tables = core::ModuleTables {
         bindings: info
             .bindings

@@ -6,16 +6,16 @@ mod alloc;
 mod spill;
 
 use self::alloc::{Allocation, Layout, NONE, Order, Plan};
-use super::build::Program;
+use super::build::{BuildError, Stream};
 use super::ir::{
     BlockId, CmpOp, Constant, Function, Imm, Insn, Pos, SuspendKind, Terminator, ThrowKind, Value,
 };
 use super::op::Op;
 use crate::engine::compiler::register::LowerError;
-use crate::engine::hir::schema::{self as hir, FunctionRef};
+use crate::engine::hir::schema::FunctionRef;
 use crate::engine::value::JsString;
 use crate::source::QuickJsSourceLocator;
-use crate::source::coordinates::SourceOffset;
+use crate::source::coordinates::{QuickJsSourceIndex, SourceOffset};
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{Capture, CodeBuilder, CodeUnit, CodeUnitId, Handler, Opcode};
 use oxide_core::vm::compile::Compiler;
@@ -38,16 +38,37 @@ pub(crate) struct Debug<'a> {
     pub(crate) filename: Option<std::rc::Rc<str>>,
 }
 
-/// Lowers and instantiates `program`.
+/// Why a program did not lower: a function did not build, or did not fit
+/// or publish.
+pub(crate) enum Error {
+    Build(BuildError),
+    Lower(LowerError),
+}
+
+impl From<LowerError> for Error {
+    fn from(error: LowerError) -> Self {
+        Self::Lower(error)
+    }
+}
+
+impl From<BuildError> for Error {
+    fn from(error: BuildError) -> Self {
+        Self::Build(error)
+    }
+}
+
+/// Builds, lowers and instantiates the functions of `stream`, one at a
+/// time: a function's MIR lives while its children lower and is dropped
+/// once it is published.
 ///
 /// # Errors
-/// A function past the register window, or an allocation failure.
+/// A function that does not build, past the register window, or an
+/// allocation failure.
 pub(crate) fn lower(
     compiler: &mut Compiler<'_>,
-    program: &Program,
-    hir: &hir::Program,
+    stream: &mut Stream<'_>,
     debug: &Debug<'_>,
-) -> Result<Lowered, LowerError> {
+) -> Result<Lowered, Error> {
     let mark = compiler.heap_mut().roots().mark();
     let result = (|| {
         let index = debug
@@ -55,50 +76,24 @@ pub(crate) fn lower(
             .map(|source| QuickJsSourceLocator::from_bytes(source).index())
             .transpose()
             .map_err(|error| LowerError::Internal(error.to_string()))?;
-        // Every position the program's instructions carry, located in one
-        // pass over the source.
-        let located = index.as_ref().map(|index| {
-            let mut offsets: Vec<SourceOffset> =
-                SourceOffset::try_from_usize(0).into_iter().collect();
-            for f in &program.functions {
-                let mut add = |pos: Pos| {
-                    if pos != Pos::NONE
-                        && let Ok(offset) = SourceOffset::try_from_usize(pos.0 as usize)
-                    {
-                        offsets.push(offset);
-                    }
-                };
-                add(f.unit.definition);
-                for block in &f.blocks {
-                    add(block.term_pos);
-                    for insn in &block.insns {
-                        add(insn.pos);
-                    }
-                }
-            }
-            index.locate_all(offsets)
-        });
-        let spilled: Vec<std::cell::OnceCell<Function>> = (0..program.functions.len())
-            .map(|_| std::cell::OnceCell::new())
-            .collect();
+        let root_id = stream.root;
         let mut tree = Tree {
-            program,
-            spilled: &spilled,
-            hir,
+            stream,
             debug,
-            located,
+            index: index.as_ref(),
             keys: FxHashMap::default(),
             atoms: FxHashMap::default(),
-            layouts: FxHashMap::default(),
             constants: FxHashMap::default(),
         };
-        let root = tree.lower(compiler, program.root, None)?;
+        let root = tree.lower(compiler, root_id, None)?;
         let order = compiler.units().tree(root);
         let tables: Vec<&[CoreValue]> = order
             .iter()
             .map(|id| tree.constants[id].as_slice())
             .collect();
-        let function = compiler.instantiate(root, &tables)?;
+        let function = compiler
+            .instantiate(root, &tables)
+            .map_err(LowerError::from)?;
         Ok(Lowered { root, function })
     })();
     compiler.heap_mut().roots().truncate(mark);
@@ -106,104 +101,85 @@ pub(crate) fn lower(
 }
 
 /// What the lowering of one program keeps across its functions.
-struct Tree<'a> {
-    program: &'a Program,
-    /// The functions whose values were moved to variables to fit.
-    spilled: &'a [std::cell::OnceCell<Function>],
-    hir: &'a hir::Program,
+struct Tree<'a, 'h> {
+    stream: &'a mut Stream<'h>,
     debug: &'a Debug<'a>,
-    /// The program's positions, located.
-    located: Option<crate::source::coordinates::QuickJsLocatedOffsets<'a, 'a>>,
+    /// The source's line index; `None` strips positions.
+    index: Option<&'a QuickJsSourceIndex<'a>>,
     keys: FxHashMap<u32, PropertyKey>,
     atoms: FxHashMap<u32, StringId>,
-    /// Each lowered function's variable layout, for its children's captures.
-    layouts: FxHashMap<u32, Layout>,
     constants: FxHashMap<CodeUnitId, Vec<CoreValue>>,
 }
 
-impl<'a> Tree<'a> {
-    /// `f` with values moved to variables until it fits, kept for the
-    /// rest of the lowering.
-    fn spill(&self, id: FunctionRef, f: &Function) -> Option<(&'a Function, Fitted)> {
-        for attempt in 0.. {
-            let g = spill::spill(f, attempt)?;
-            if let Ok(fitted) = fit(&g) {
-                let cell = &self.spilled[id.index()];
-                let _ = cell.set(g);
-                return cell.get().map(|g| (g, fitted));
-            }
-        }
-        None
-    }
+/// The coordinates of one function's positions, by source offset.
+struct Located {
+    offsets: Vec<usize>,
+    coordinates: Vec<Option<(u32, u32)>>,
+}
 
+impl Located {
+    /// Every position `f` carries, located in one forward pass.
+    fn of(f: &Function, index: &QuickJsSourceIndex<'_>) -> Self {
+        let mut offsets = vec![0, f.unit.definition.0 as usize];
+        for block in &f.blocks {
+            offsets.push(block.term_pos.0 as usize);
+            offsets.extend(block.insns.iter().map(|insn| insn.pos.0 as usize));
+        }
+        offsets.retain(|&offset| offset != Pos::NONE.0 as usize);
+        offsets.sort_unstable();
+        offsets.dedup();
+        let coordinates = index
+            .locate_ascending(&offsets)
+            .into_iter()
+            .map(|located| located.ok().and_then(|position| position.one_based()))
+            .collect();
+        Self {
+            offsets,
+            coordinates,
+        }
+    }
+}
+
+impl<'a, 'h> Tree<'a, 'h> {
+    /// Builds, fits and publishes function `id`, its children first.
+    /// `parent` is the function that creates it, with its layout.
     fn lower(
         &mut self,
         compiler: &mut Compiler<'_>,
         id: FunctionRef,
-        parent: Option<FunctionRef>,
-    ) -> Result<CodeUnitId, LowerError> {
-        let f: &'a Function = &self.program.functions[id.index()];
-        let (f, fitted) = match fit(f) {
-            Ok(fitted) => (f, fitted),
-            Err(error) => self.spill(id, f).ok_or(error)?,
+        parent: Option<(&Function, &Layout)>,
+    ) -> Result<CodeUnitId, Error> {
+        let built = self.stream.function(id)?;
+        let (spilled, fitted) = match fit(&built) {
+            Ok(fitted) => (None, fitted),
+            Err(error) => {
+                let (g, fitted) = spill_to_fit(&built).ok_or(error)?;
+                (Some(g), fitted)
+            }
         };
-        self.layouts.insert(id.0, fitted.layout.clone());
+        let f = spilled.as_ref().unwrap_or(&built);
         let mut children = Vec::with_capacity(f.children.len());
         for &child in &f.children {
-            children.push(self.lower(compiler, child, Some(id))?);
+            children.push(self.lower(compiler, child, Some((f, &fitted.layout)))?);
         }
-        let captures = self.captures(id, parent)?;
+        let captures = captures(f, parent)?;
+        let located = self.index.map(|index| Located::of(f, index));
         let (unit, pool) =
-            FunctionLowering::new(self, compiler, f, fitted)?.run(children, captures)?;
-        let unit_id = compiler.publish(unit)?;
+            FunctionLowering::new(self, compiler, f, fitted, located)?.run(children, captures)?;
+        let unit_id = compiler.publish(unit).map_err(LowerError::from)?;
         self.constants.insert(unit_id, pool);
         Ok(unit_id)
     }
 
-    /// Where a closure over `id` finds each binding it captures, in the
-    /// frame of `parent` that creates it.
-    fn captures(
-        &self,
-        id: FunctionRef,
-        parent: Option<FunctionRef>,
-    ) -> Result<Vec<Capture>, LowerError> {
-        let f = &self.program.functions[id.index()];
-        let Some(parent) = parent else {
-            return Ok(f.captures.iter().map(|_| Capture::None).collect());
-        };
-        let pf = &self.program.functions[parent.index()];
-        let layout = &self.layouts[&parent.0];
-        f.captures
-            .iter()
-            .map(|&(decl, setter)| {
-                if let Some(var) = pf
-                    .vars
-                    .iter()
-                    .position(|var| var.decl == Some(decl) && var.setter == setter)
-                {
-                    let register = layout.var_regs[var];
-                    if register >= alloc::SLOT {
-                        return Ok(Capture::Slot(register16(register - alloc::SLOT)?));
-                    }
-                    return Ok(Capture::Register(register16(register)?));
-                }
-                if let Some(index) = pf.captures.iter().position(|&c| c == (decl, setter)) {
-                    return Ok(Capture::Outer(index as u16));
-                }
-                Ok(Capture::None)
-            })
-            .collect()
-    }
-
     fn string(&self, index: u32) -> &JsString {
-        &self.program.strings[index as usize]
+        &self.stream.strings()[index as usize]
     }
 
     fn key(&mut self, compiler: &mut Compiler<'_>, index: u32) -> Result<PropertyKey, LowerError> {
         if let Some(&key) = self.keys.get(&index) {
             return Ok(key);
         }
-        let string = self.program.strings[index as usize].clone();
+        let string = self.stream.strings()[index as usize].clone();
         let heap = compiler.heap_mut();
         let key = match string.flat_latin1() {
             Some(bytes) => heap.property_key_latin1(bytes)?,
@@ -217,7 +193,7 @@ impl<'a> Tree<'a> {
         if let Some(&atom) = self.atoms.get(&index) {
             return Ok(atom);
         }
-        let string = self.program.strings[index as usize].clone();
+        let string = self.stream.strings()[index as usize].clone();
         let heap = compiler.heap_mut();
         let atom = match string.flat_latin1() {
             Some(bytes) => heap.intern_latin1(bytes)?,
@@ -226,6 +202,48 @@ impl<'a> Tree<'a> {
         self.atoms.insert(index, atom);
         Ok(atom)
     }
+}
+
+/// `f` with values moved to variables until it fits.
+fn spill_to_fit(f: &Function) -> Option<(Function, Fitted)> {
+    for attempt in 0.. {
+        let g = spill::spill(f, attempt)?;
+        if let Ok(fitted) = fit(&g) {
+            return Some((g, fitted));
+        }
+    }
+    None
+}
+
+/// Where a closure over `f` finds each binding it captures, in the frame
+/// of `parent` that creates it.
+fn captures(
+    f: &Function,
+    parent: Option<(&Function, &Layout)>,
+) -> Result<Vec<Capture>, LowerError> {
+    let Some((pf, layout)) = parent else {
+        return Ok(f.captures.iter().map(|_| Capture::None).collect());
+    };
+    f.captures
+        .iter()
+        .map(|&(decl, setter)| {
+            if let Some(var) = pf
+                .vars
+                .iter()
+                .position(|var| var.decl == Some(decl) && var.setter == setter)
+            {
+                let register = layout.var_regs[var];
+                if register >= alloc::SLOT {
+                    return Ok(Capture::Slot(register16(register - alloc::SLOT)?));
+                }
+                return Ok(Capture::Register(register16(register)?));
+            }
+            if let Some(index) = pf.captures.iter().position(|&c| c == (decl, setter)) {
+                return Ok(Capture::Outer(index as u16));
+            }
+            Ok(Capture::None)
+        })
+        .collect()
 }
 
 /// A layout that fits the register window, with its plan and allocation.
@@ -293,10 +311,11 @@ fn r8(register: u32) -> Result<u8, LowerError> {
 }
 
 /// The lowering of one function.
-struct FunctionLowering<'t, 'a, 'c, 'd> {
-    tree: &'t mut Tree<'a>,
+struct FunctionLowering<'t, 'a, 'h, 'c, 'd> {
+    tree: &'t mut Tree<'a, 'h>,
     compiler: &'c mut Compiler<'d>,
-    f: &'a Function,
+    f: &'t Function,
+    located: Option<Located>,
     layout: Layout,
     order: Order,
     plan: Plan,
@@ -326,12 +345,13 @@ struct FunctionLowering<'t, 'a, 'c, 'd> {
     region: Option<super::ir::HandlerId>,
 }
 
-impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
+impl<'t, 'a, 'h, 'c, 'd> FunctionLowering<'t, 'a, 'h, 'c, 'd> {
     fn new(
-        tree: &'t mut Tree<'a>,
+        tree: &'t mut Tree<'a, 'h>,
         compiler: &'c mut Compiler<'d>,
-        f: &'a Function,
+        f: &'t Function,
         fitted: Fitted,
+        located: Option<Located>,
     ) -> Result<Self, LowerError> {
         let Fitted {
             layout,
@@ -345,6 +365,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             tree,
             compiler,
             f,
+            located,
             layout,
             plan,
             alloc,
@@ -1272,8 +1293,6 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 self.emit(|b| b.a(Opcode::Ret, addr));
             }
             Terminator::Unreachable => {
-                let message = self.tree.program.strings.len();
-                let _ = message;
                 self.emit(|b| b.op(Opcode::ReturnUndefined));
             }
         }
@@ -1640,17 +1659,22 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
     }
 
     fn locate(&self, pos: Pos) -> Option<(u32, u32)> {
-        let located = self.tree.located.as_ref()?;
-        let offset = if pos == Pos::NONE { 0 } else { pos.0 };
-        located
-            .locate(SourceOffset::try_from_usize(offset as usize).ok()?)
-            .ok()?
-            .one_based()
+        let located = self.located.as_ref()?;
+        let offset = if pos == Pos::NONE { 0 } else { pos.0 as usize };
+        match located.offsets.binary_search(&offset) {
+            Ok(at) => located.coordinates[at],
+            Err(_) => self
+                .tree
+                .index?
+                .locate(SourceOffset::try_from_usize(offset).ok()?)
+                .ok()?
+                .one_based(),
+        }
     }
 
     /// The position of each emitted instruction, one entry per change.
     fn positions_table(&self) -> Box<[oxide_core::bytecode::SourcePosition]> {
-        if self.tree.located.is_none() {
+        if self.located.is_none() {
             return Box::new([]);
         }
         let definition = self.f.unit.definition;
