@@ -46,7 +46,11 @@ src/
     hir/           the HIR schema generated from contracts/spec/hir.ts: its
                    types, binary reader and writer, text dump and strip
     mir/           the middle end's SSA form: the operation table over the
-                   core's opcodes with their effects, the verifier and dump
+                   core's opcodes with their effects, the verifier and dump;
+      build/       HIR to MIR, one graph per function
+      lower/       MIR to register code: block layout, liveness and linear
+                   scan, spilling, instruction selection, handler and
+                   position tables
     api/           the public embedding boundary; `api::core` is the API over
                    quickjs-oxide-core, `api::error` the front end's diagnostics
 ```
@@ -79,6 +83,8 @@ A source passes four stages:
 2. **Register lowering** (`src/engine/compiler/register`). `analysis` records the stack depth, the active catch regions and the join points at every reachable instruction. The lowering then walks each function with a symbolic stack: register 0 is `this`, then the parameters, the locals and one temporary per stack depth, so the stack depth is the register allocator. Captured bindings become cells. A function whose locals or operand stack pass the 256-register window keeps the rest in the slots of a spill scope, reached through scratch registers at the top of the window. A `+` chain that starts with a string constant and continues with constants becomes one `ConcatN` over the operands' temporaries. The lowering builds each function as an `oxide_core::bytecode::CodeUnit` with the core's `CodeBuilder`, which numbers the inline-cache sites.
 3. **Publication** (`quickjs-oxide-core`). `Compiler::publish` runs the core's validator over each unit once, children first, and assigns its inline-cache entries. A unit published through `Runtime::compiler()` (the program, its modules, and by default whatever the embedder compiles) goes into the `CodeStore` and lives as long as the runtime; code compiled at run time (`eval`, `new Function`, `$262.evalScript`) and code the embedder compiles through `Runtime::transient_compiler()` (the API's `transient` option) is published into the heap, which frees it once no function, frame or job reaches it ([The heap](heap.md#code-compiled-at-run-time), [code lifetime](../src/engine/api/README.md#code-lifetime)). The loop runs a published unit's instructions as they are.
 4. **Instantiation**. `instantiate` allocates one `FunctionBytecode` record per unit (its constant table and its children) under one safepoint and returns the script's function object, which the API runs with `Runtime::run_script`. A module's tree is described to the core's module records (environment cells, imports, exports) and linked and evaluated by the core.
+
+The engine has a second front end beside stages 1 and 2, selected per runtime with `qjs --frontend=old|new` or the `OXIDE_FRONTEND` variable, and per build with `OXIDE_DEFAULT_FRONTEND` (the default is `old`). `ast::parser` builds a syntax tree over the same lexer; `hir::build` resolves every name to a declaration and records captures and TDZ checks; `mir::build` turns each function into an SSA graph in QuickJS's emission order, with a function's bindings as variables and everything else as values; `mir::lower` lays out the blocks (a loop's test repeats on its back edge), allocates registers by linear scan over live ranges, places call operands directly in their call window, spills the longest-lived values of a function that needs more than 256 registers into variables, and emits the same `CodeUnit`s, handler tables and position tables as stage 2. Stages 3 and 4 are shared. A program prints the same stdout, stderr and `Error.stack` text under either; `scripts/frontend/diff.py` compares them.
 
 Debug positions follow the same path: the front end's pc-to-source table becomes the unit's sparse position table, from which errors take `stack`. `DebugInfoMode` (`Runtime::set_debug_info_mode`) chooses what a newly compiled function keeps: `Full`, `StripSource` (positions without source text) or `StripDebug` (neither). `Runtime::disassemble` (`qjs --disassemble`) prints the register code of a source.
 
