@@ -287,6 +287,8 @@ def main():
             # Ghost assertions/contracts remain unchanged. Rejection must come
             # from failed proof obligations, never from unsupported Rust syntax.
             concrete_mutations = {
+                "arena_initial_cursor": (arena, "cursor: 0,", "cursor: 1,"),
+                "arena_initial_quarantine": (arena, "quarantine: Vec::new(),", "quarantine: vec![0u64],"),
                 "job_lost_record": (job_trace, "stack.push(Value::object(*record));", ""),
                 "job_lost_argument": (job_trace, "stack.push(*argument);", ""),
                 "job_lost_promise": (job_trace, "stack.push(Value::object(*promise));", ""),
@@ -360,7 +362,7 @@ def main():
                 path = directory / f"mutant_{name}.rs"
                 path.write_text(content.replace(before, after))
                 flags = ("--cfg", 'feature="gc-stress"') if name in (
-                    "unchecked_live_access", "reuse_ignores_quarantine") else ()
+                    "unchecked_live_access", "reuse_ignores_quarantine", "arena_initial_quarantine") else ()
                 receipt["checks"].append(checked_run(binary, path, args.timeout, True, flags))
             # Recreate the old description-marking mistake on an explicitly
             # live description. Rejection must not depend only on a missing

@@ -298,6 +298,11 @@ set. The free counter remains equal to that set's cardinality; the updated
 cursor skips no reusable slots. Every other arena field is framed, including
 records, marks and quarantine. A constructed four-slot lifecycle demonstrates
 two normal reuses and the stress build's exclusion of a quarantined slot.
+Composition with the actual `Arena::new` establishes the empty arena's initial
+reuse/count/cursor invariant. Actual `mark` followed by `clear_marks` preserves
+that invariant and the reusable set while zeroing marks; every other arena field
+is framed. Separate source faults in the initial cursor and quarantine layout
+must be rejected.
 
 The preconditions require valid bitmap access, matching quarantine length,
 representable word indices, an accurate positive free count and a valid cursor.

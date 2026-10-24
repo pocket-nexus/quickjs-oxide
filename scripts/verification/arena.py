@@ -19,6 +19,7 @@ def proof(source, template):
             ensures result.valid_marks(), result.records@.len() == 0,
                 result.live@.len() == 0, result.marks@.len() == 0,
                 result.free_count == 0, result.live_count == 0,
+                result.cursor == 0, result.extra == 0, result.empty_quarantine(),
         """, "result", {}),
         "is_live": ("ensures result == self.live_at(index),", "result", {}),
         "check": ("requires self.live_at(index),", None, {"panic_condition": "self.is_live(index)"}),

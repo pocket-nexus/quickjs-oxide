@@ -157,6 +157,40 @@ def proof(source, arena_code):
     code = arena_code.replace(marker, marker + "\n" + specs + taken + take, 1)
     witness = r'''
 
+fn initialized_arena<T>() -> (result: Arena<T>)
+    ensures result.valid_marks(), result.reuse_layout(), result.cursor_valid(),
+        result.reusable_indices().is_empty(), result.free_count == result.reusable_indices().len(),
+        result.records@.len() == 0, result.live_count == 0,
+{
+    let arena = Arena::new();
+    proof {
+        broadcast use vstd::set_lib::range_set_properties;
+        assert(arena.reusable_indices() =~= Set::<int>::empty());
+    }
+    arena
+}
+
+fn marking_preserves_reuse<T>(arena: &mut Arena<T>, index: u32)
+    requires old(arena).valid_marks(), old(arena).reuse_layout(),
+        old(arena).cursor_valid(), old(arena).live_at(index),
+        old(arena).free_count == old(arena).reusable_indices().len(),
+    ensures final(arena).valid_marks(), final(arena).reuse_layout(), final(arena).cursor_valid(),
+        final(arena).free_count == final(arena).reusable_indices().len(),
+        final(arena).reusable_indices() == old(arena).reusable_indices(),
+        *final(arena) == (Arena { marks: final(arena).marks, ..*old(arena) }),
+        forall|i: u32| !final(arena).marked_at(i),
+{
+    arena.mark(index);
+    arena.clear_marks();
+    assert(arena.reusable_indices() =~= old(arena).reusable_indices());
+    assert forall|i: u32| arena.live_at(i) implies i < arena.records@.len() by {
+        assert(old(arena).live_at(i));
+    }
+    assert forall|i: u32| arena.reusable(i) implies i / 64 >= arena.cursor by {
+        assert(old(arena).reusable(i));
+    }
+}
+
 fn reuse_lifecycle() {
     let mut arena = Arena {
         records: vec![10u8, 20u8, 30u8, 40u8], live: vec![5u64], marks: vec![5u64],
