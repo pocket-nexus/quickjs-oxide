@@ -24,7 +24,7 @@ layout #2 name:#1?
     LayoutField name:"" ty:#3 readonly:true
 decl #0 name:#1? kind:implicit owner:#4 capturedBy:[#4 #0] assigned:false tdz:false ty:#4 isStatic:false
 decl #1 name:#1? kind:var owner:#2 capturedBy:[#3] assigned:false tdz:false ty:#4 isStatic:false
-fn #0 kind:normal role:method async:false generator:false strict:false params:[] simpleParams:true decls:[] captures:[#4 #0 #0] inner:[#2] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:false length:356 self:#4 argumentsDecl:#2 concise:false defaultCtor:false
+fn #0 kind:normal role:method async:false generator:false strict:false params:[] simpleParams:true decls:[#4 #0 #0] captures:[#2] inner:[#1 #1] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false length:986 self:#3 concise:true defaultCtor:true
   rest:
     object restAt:7 ty:#2
       props:
@@ -43,41 +43,30 @@ fn #0 kind:normal role:method async:false generator:false strict:false params:[]
   body:
     Block stmts:[] decls:[]
   sig:
-    Signature params:[#3 #2] rest:#1 ret:#2 thisTy:#3
+    Signature params:[#1 #2] rest:#0 ret:#1 thisTy:#4
+  effects:
+    Effects reads:[#2 #1 #4] writes:[#1] heapReads:true heapWrites:false allocates:true mayThrow:false maySuspend:false calls:known
   source:
-    SourceRange start:1 end:476
+    SourceRange start:7 end:697
   paramCopies:
-    ParamCopy from:#2 to:#1
-module #0 file:#4 top:#2 starExports:[784 1 1] dynamic:false usesImportMeta:true hasTopLevelAwait:false
+    ParamCopy from:#1 to:#3
+    ParamCopy from:#4 to:#1
+module #0 file:#3 top:#4 starExports:[0 7 7] dynamic:false usesImportMeta:false hasTopLevelAwait:true
   requests:
-    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
   imports:
-    Import request:0 decl:#3
     Import request:65536 decl:#4
+    Import request:1 decl:#4
   exports:
-    Export name:"" decl:#0
+    Export name:#1? decl:#1
   reexports:
-    Reexport request:732 as:""
-    Reexport request:0 as:#1?
-module #1 file:#3 top:#3 reexports:[] starExports:[1] dynamic:false usesImportMeta:false hasTopLevelAwait:false
+    Reexport request:65536 as:#1?
+    Reexport request:7 as:""
+module #1 file:#0 top:#1 exports:[] reexports:[] starExports:[0 1 1] dynamic:false usesImportMeta:false hasTopLevelAwait:true
   requests:
-    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
     ModuleRequest specifier:"" hasAttributes:false attributes:[]
-  imports:
-    Import request:65536 decl:#2
-  exports:
-    Export name:#1? decl:#4
-    Export name:#1? decl:#0
-module #2 file:#4 top:#1 starExports:[65536] dynamic:true usesImportMeta:true hasTopLevelAwait:true
-  requests:
     ModuleRequest specifier:#1? hasAttributes:false attributes:[]
   imports:
-    Import request:333 decl:#4
-    Import request:0 decl:#0
-    Import request:0 decl:#0
-  exports:
-    Export name:"" decl:#2
-    Export name:"" decl:#3
-    Export name:#1? decl:#0
-  reexports:
-    Reexport request:0 as:""
+    Import request:7 decl:#4
+    Import request:65536 decl:#1
+    Import request:909 decl:#4

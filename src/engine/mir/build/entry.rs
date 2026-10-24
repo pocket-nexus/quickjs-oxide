@@ -60,6 +60,19 @@ impl Builder<'_, '_> {
         unit.flags = unit_flags;
         unit.param_count = hf.params.len() as u16 + u16::from(hf.rest.is_some());
         unit.length = hf.length as u16;
+        // QuickJS counts a rest pattern after plain parameters in `length`,
+        // but publishes the count only for a function with arguments or
+        // variables.
+        if let Some(rest) = &hf.rest
+            && !matches!(rest.kind, PatternKind::Decl { .. })
+        {
+            if hf.rest_default.is_none() && hf.params.iter().all(|param| param.default.is_none()) {
+                unit.length += 1;
+            }
+            if hf.params.is_empty() && hf.decls.is_empty() {
+                unit.length = 0;
+            }
+        }
         unit.name = hf.name.map(|name| name.0);
         unit.name_atom = hf.name.map(|name| name.0);
         if matches!(hf.kind, FunctionKind::Script | FunctionKind::Eval) {
@@ -205,10 +218,7 @@ impl Builder<'_, '_> {
         let Some(module) = self.cx.hir.modules.first() else {
             return internal("a module function without its module");
         };
-        let mut info = super::ModuleInfo {
-            has_top_level_await: module.has_top_level_await,
-            ..Default::default()
-        };
+        let mut info = super::ModuleInfo::default();
         let binding = |b: &Self, decl: DeclRef| -> Result<u16> {
             match b.captures.get(&(decl, false)) {
                 Some(&index) => Ok(index as u16),
@@ -408,9 +418,12 @@ impl Builder<'_, '_> {
             self.init_decl_value(decl, value)?;
         }
         self.this_and_new_target()?;
+        // The arguments object initializes its binding when the function
+        // reads it, or declares a var of that name, as QuickJS's arguments
+        // variable.
         if let Some(arguments) = hf.arguments_decl
             && self.vars.contains_key(&arguments)
-            && hf.uses_arguments
+            && (hf.uses_arguments || self.decl(arguments).kind == DeclKind::Var)
         {
             let mapped = i32::from(self.mapped_arguments());
             let value = self.op(Op::NewArguments, &[], Imm::Int(mapped));
@@ -621,7 +634,7 @@ impl Builder<'_, '_> {
                         self.init_binding(decl, value)?;
                     }
                 }
-                _ => self.destructure(rest, value, mode)?,
+                _ => self.nested_element(rest, value, hf.rest_default.as_deref(), mode)?,
             }
         }
         // A parameter environment's pattern bindings reach the body's, last

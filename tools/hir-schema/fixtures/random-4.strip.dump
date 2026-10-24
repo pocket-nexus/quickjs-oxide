@@ -16,7 +16,7 @@ const #1 bigint digits:"\\"
 const #2 number value:-Infinity
 decl #0 name:"\u0000\u001f \n " kind:privateMethod owner:#0 capturedBy:[#3] assigned:false tdz:false isStatic:true
 decl #1 name:#5? kind:global owner:#4 capturedBy:[#2 #0 #0] assigned:true tdz:true isStatic:true
-fn #0 name:"" kind:classFieldInit role:set async:false generator:false strict:false simpleParams:false decls:[#1 #1 #4] captures:[#1 #0 #3] inner:[] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true length:7 self:#0 concise:true defaultCtor:false
+fn #0 name:"" kind:classFieldInit role:set async:false generator:false strict:false simpleParams:false decls:[#2] captures:[#2 #1] inner:[#2] usesThis:false usesArguments:false usesNewTarget:true hasDirectEval:false homeObject:false length:0 concise:false defaultCtor:false
   params:
     Param
       pattern:
@@ -24,72 +24,68 @@ fn #0 name:"" kind:classFieldInit role:set async:false generator:false strict:fa
     Param
       pattern:
         decl decl:#4
+  restDefault:
+    str value:#5?
   body:
-    Block stmts:[] decls:[#3 #2 #2]
+    Block decls:[#3 #4 #1]
+      stmts:
+        declare decl:#1
+        declare decl:#2
   source:
-    SourceRange start:7 end:7
+    SourceRange start:365 end:0
   paramCopies:
-    ParamCopy from:#0 to:#0
-    ParamCopy from:#0 to:#0
-    ParamCopy from:#2 to:#3
-fn #1 kind:module role:get async:true generator:true strict:false simpleParams:false decls:[#4 #1 #3] captures:[#4] inner:[] usesThis:true usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:false length:65536 self:#0 argumentsDecl:#2 concise:true defaultCtor:true
-  params:
-    Param
-      pattern:
-        decl decl:#2
-    Param
-      pattern:
-        decl decl:#4
-    Param
-      pattern:
-        decl decl:#4
+    ParamCopy from:#3 to:#1
+    ParamCopy from:#3 to:#0
+fn #1 kind:arrow role:get async:false generator:false strict:true params:[] simpleParams:false decls:[#1] captures:[#4 #0] inner:[#4] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false length:0 self:#2 argumentsDecl:#4 concise:true defaultCtor:false
   rest:
-    array
-      items:
-        hole
-        hole
+    object restAt:65536
+      props:
+        PatternProp keyAt:889
+          key:
+            name name:#5?
+          value:
+            decl decl:#4
+        PatternProp keyAt:0
+          key:
+            name name:""
+          value:
+            decl decl:#3
+        PatternProp keyAt:0
+          key:
+            name name:""
+          value:
+            decl decl:#2
       rest:
-        decl decl:#0
+        object props:[] restAt:509
   body:
     Block decls:[#1]
       stmts:
-        declare decl:#3
-        declare decl:#3
+        declare decl:#1
+        declare decl:#4
   source:
-    SourceRange start:65536 end:0
+    SourceRange start:7 end:1
   paramCopies:
-    ParamCopy from:#1 to:#2
-module #0 file:#1 top:#4 requests:[] starExports:[7 896 0] dynamic:true usesImportMeta:false hasTopLevelAwait:true
+    ParamCopy from:#2 to:#1
+    ParamCopy from:#1 to:#3
+module #0 file:#0 top:#4 requests:[] exports:[] starExports:[0 0 1] dynamic:true usesImportMeta:true hasTopLevelAwait:true
   imports:
-    Import request:7 decl:#3
-    Import request:65536 decl:#0
+    Import request:896 decl:#1
+  reexports:
+    Reexport request:0 as:""
+module #1 file:#0 top:#1 requests:[] reexports:[] starExports:[65536 0 510] dynamic:false usesImportMeta:true hasTopLevelAwait:false
+  imports:
+    Import request:7 decl:#0
   exports:
-    Export name:"" decl:#4
-    Export name:"" decl:#4
-    Export name:"\\" decl:#2
-  reexports:
-    Reexport request:7 as:"\\"
-    Reexport request:65536 as:""
-    Reexport request:625 as:"é"
-module #1 file:#2 top:#4 exports:[] starExports:[65536] dynamic:false usesImportMeta:false hasTopLevelAwait:false
+    Export name:#5? decl:#3
+    Export name:"\u0000\u001f \n " decl:#4
+module #2 file:#1 top:#2 imports:[] starExports:[1] dynamic:false usesImportMeta:true hasTopLevelAwait:false
   requests:
-    ModuleRequest specifier:"é" hasAttributes:false attributes:[]
-    ModuleRequest specifier:"é" hasAttributes:false attributes:[]
-  imports:
-    Import request:1 decl:#1
-  reexports:
-    Reexport request:1 as:""
-module #2 file:#4 top:#0 starExports:[1 75 454] dynamic:true usesImportMeta:false hasTopLevelAwait:true
-  requests:
-    ModuleRequest specifier:"\u0000\u001f \n " hasAttributes:false attributes:[]
-    ModuleRequest specifier:"\u0000\u001f \n " hasAttributes:true attributes:[]
-    ModuleRequest specifier:"" hasAttributes:false attributes:[]
-  imports:
-    Import request:65536 decl:#1
-    Import request:65536 decl:#1
-    Import request:0 decl:#0
+    ModuleRequest specifier:"\\" hasAttributes:false attributes:[]
+    ModuleRequest specifier:"é" hasAttributes:true attributes:[]
+    ModuleRequest specifier:"\\" hasAttributes:false attributes:[]
   exports:
-    Export name:"\u0000\u001f \n " decl:#0
+    Export name:#5? decl:#3
+    Export name:"é" decl:#3
   reexports:
-    Reexport request:65536 as:"é"
-    Reexport request:65536 as:""
+    Reexport request:181 as:#5?
+    Reexport request:0 as:#5?

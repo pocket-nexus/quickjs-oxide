@@ -2,7 +2,7 @@
 
 use super::support::{ForHeadDelimiter, IdentifierContext, for_head_regexp_allowed_after};
 use super::{FunctionKind, Parser, StatementPosition, pos};
-use crate::engine::api::error::Error;
+use crate::engine::api::error::{Error, ErrorKind};
 use crate::engine::ast::{
     DeclKind, Expr, ExprKind, Function, Ident, MethodRole, Param, Pattern, PatternKind, Ref,
     ScopeKind, Stmt, StmtKind, Storage,
@@ -250,7 +250,7 @@ impl<'source> Parser<'source> {
             MethodRole::Set => Some(1),
             MethodRole::Method => None,
         };
-        let (params, rest, parameter_tokens, list_end) =
+        let (params, rest, rest_default, parameter_tokens, list_end) =
             self.parse_formal_parameters(options.role == MethodRole::Set)?;
         if accessor_arity.is_some_and(|arity| params.len() + usize::from(rest.is_some()) != arity) {
             return Err(Error::syntax(
@@ -290,6 +290,7 @@ impl<'source> Parser<'source> {
             length: parameter_length(&params, rest.is_some()),
             params,
             rest,
+            rest_default,
             simple_params: state.simple_params,
             body,
             concise: false,
@@ -359,6 +360,7 @@ impl<'source> Parser<'source> {
         (
             Vec<Param>,
             Option<Pattern>,
+            Option<Expr>,
             Vec<(Identifier<'source>, Span)>,
             Span,
         ),
@@ -366,13 +368,19 @@ impl<'source> Parser<'source> {
     > {
         let mut params = Vec::new();
         let mut rest = None;
+        let mut rest_default = None;
         let mut tokens = Vec::new();
         let mut end = self.current().span;
         if self.is_punctuator(Punctuator::RightParen) {
             self.advance()?;
-            return Ok((params, rest, tokens, end));
+            return Ok((params, rest, rest_default, tokens, end));
         }
         loop {
+            // QuickJS's JS_MAX_LOCAL_VARS bounds the argument slots.
+            if params.len() >= crate::engine::compiler::MAX_LOCAL_VARIABLES {
+                return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
+                    .with_span(self.current().span));
+            }
             let is_rest = self.consume_punctuator(Punctuator::Ellipsis)?;
             if is_rest && setter {
                 return Err(Error::syntax(
@@ -387,13 +395,8 @@ impl<'source> Parser<'source> {
                 self.state_mut().simple_params = false;
                 let (pattern, default) = self.parse_parameter_pattern()?;
                 if is_rest {
-                    if default.is_some() {
-                        return Err(Error::syntax(
-                            "rest element cannot have a default value",
-                            pattern.span,
-                        ));
-                    }
                     rest = Some(pattern);
+                    rest_default = default;
                     if !self.is_punctuator(Punctuator::RightParen) {
                         return Err(self.syntax_here("expecting ')'"));
                     }
@@ -457,7 +460,7 @@ impl<'source> Parser<'source> {
                 break;
             }
         }
-        Ok((params, rest, tokens, end))
+        Ok((params, rest, rest_default, tokens, end))
     }
 
     fn identifier_parameter(
@@ -568,6 +571,7 @@ impl<'source> Parser<'source> {
 
         let mut params = Vec::new();
         let mut rest = None;
+        let mut rest_default = None;
         let mut tokens = Vec::new();
         match head {
             ArrowHead::Identifier => {
@@ -602,6 +606,10 @@ impl<'source> Parser<'source> {
                 self.expect_punctuator(Punctuator::LeftParen)?;
                 if !self.consume_punctuator(Punctuator::RightParen)? {
                     loop {
+                        if params.len() >= crate::engine::compiler::MAX_LOCAL_VARIABLES {
+                            return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
+                                .with_span(self.current().span));
+                        }
                         let is_rest = self.consume_punctuator(Punctuator::Ellipsis)?;
                         if self.is_punctuator(Punctuator::LeftBracket)
                             || self.is_punctuator(Punctuator::LeftBrace)
@@ -610,13 +618,8 @@ impl<'source> Parser<'source> {
                             self.state_mut().simple_params = false;
                             let (pattern, default) = self.parse_parameter_pattern()?;
                             if is_rest {
-                                if default.is_some() {
-                                    return Err(Error::syntax(
-                                        "rest element cannot have a default value",
-                                        pattern.span,
-                                    ));
-                                }
                                 rest = Some(pattern);
+                                rest_default = default;
                                 if !self.is_punctuator(Punctuator::RightParen) {
                                     return Err(self.syntax_here("expecting ')'"));
                                 }
@@ -733,6 +736,7 @@ impl<'source> Parser<'source> {
             length: parameter_length(&params, rest.is_some()),
             params,
             rest,
+            rest_default,
             simple_params: state.simple_params,
             body,
             concise: !block,

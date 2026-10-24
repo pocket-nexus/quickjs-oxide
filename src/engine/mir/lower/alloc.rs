@@ -204,11 +204,121 @@ pub(super) struct Plan {
     pub(super) folded: Vec<Vec<bool>>,
     /// The uses of each value.
     pub(super) uses: Vec<u32>,
+    /// Binary operations whose right operand is an immediate, by block and
+    /// instruction.
+    pub(super) imm: FxHashMap<(u32, u32), i32>,
+    /// A block's branch on the compare that is its last instruction, made
+    /// one compare-jump.
+    pub(super) fused: FxHashMap<u32, Fusion>,
+    /// The last `+` of a chain of string concatenations, made one
+    /// `ConcatN` over all the chain's operands.
+    pub(super) chains: FxHashMap<(u32, u32), Vec<Value>>,
+    /// Each chain's position: its first `+`'s.
+    pub(super) chain_pos: FxHashMap<(u32, u32), crate::engine::mir::ir::Pos>,
+    /// Steps whose operand replaces a `ToNumeric` they read: their
+    /// `chains` entry holds the operand, not a concatenation.
+    pub(super) converted: Vec<(u32, u32)>,
+    /// Branches on a constant, by block: the way they always go.
+    pub(super) constant: FxHashMap<u32, bool>,
+}
+
+/// A compare-jump: the compare's operands, the right one maybe an
+/// immediate; `mirrored` when the constant was on the left.
+#[derive(Clone, Debug)]
+pub(super) struct Fusion {
+    pub(super) op: Op,
+    pub(super) left: Value,
+    pub(super) right: Option<Value>,
+    pub(super) imm: Option<i16>,
+}
+
+impl Plan {
+    /// The values instruction `index` of `block` reads as emitted.
+    pub(super) fn args<'a>(
+        &'a self,
+        block: BlockId,
+        index: usize,
+        insn: &'a crate::engine::mir::ir::Insn,
+    ) -> std::borrow::Cow<'a, [Value]> {
+        let key = (block.0, index as u32);
+        if let Some(chain) = self.chains.get(&key) {
+            return std::borrow::Cow::Borrowed(chain);
+        }
+        let args = insn.args.as_slice();
+        if self.imm.contains_key(&key) {
+            return std::borrow::Cow::Borrowed(&args[..1]);
+        }
+        std::borrow::Cow::Borrowed(args)
+    }
+
+    /// The values a block's terminator reads as emitted.
+    pub(super) fn term_uses(&self, block: BlockId, term: &Terminator) -> Vec<Value> {
+        if self.constant.contains_key(&block.0) {
+            return Vec::new();
+        }
+        match self.fused.get(&block.0) {
+            Some(fusion) => std::iter::once(fusion.left).chain(fusion.right).collect(),
+            None => term.uses(),
+        }
+    }
+}
+
+/// The compares a branch can fuse with.
+fn compare(op: Op) -> bool {
+    matches!(
+        op,
+        Op::Lt | Op::Lte | Op::Gt | Op::Gte | Op::Eq | Op::Neq | Op::StrictEq | Op::StrictNeq
+    )
+}
+
+/// The operations with an immediate form for their right operand.
+fn has_immediate(op: Op) -> bool {
+    matches!(
+        op,
+        Op::Add
+            | Op::Sub
+            | Op::Mul
+            | Op::BitAnd
+            | Op::BitOr
+            | Op::BitXor
+            | Op::Shl
+            | Op::Sar
+            | Op::Shr
+    )
+}
+
+/// The same comparison with its operands swapped.
+pub(super) fn mirrored(op: Op) -> Op {
+    match op {
+        Op::Lt => Op::Gt,
+        Op::Lte => Op::Gte,
+        Op::Gt => Op::Lt,
+        Op::Gte => Op::Lte,
+        op => op,
+    }
 }
 
 /// Counts uses, removes unused pure instructions, and binds variable reads
 /// and writes to the variables' registers where that is safe.
 pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
+    // Branches on `true` or `false` in their own block: plain jumps, so a
+    // constant loop test leaves a back edge that polls for interrupts.
+    let mut constant = FxHashMap::default();
+    for &block in &order.blocks {
+        let b = f.block(block);
+        let Terminator::Branch { cond, .. } = b.term else {
+            continue;
+        };
+        let def = b
+            .insns
+            .iter()
+            .find(|insn| insn.results.first().copied().flatten() == Some(cond));
+        match def.map(|insn| insn.op) {
+            Some(Op::True) => constant.insert(block.0, true),
+            Some(Op::False) => constant.insert(block.0, false),
+            _ => None,
+        };
+    }
     let mut uses = vec![0u32; f.values.len()];
     let count = |uses: &mut Vec<u32>, v: Value| uses[v.index()] += 1;
     for &block in &order.blocks {
@@ -218,8 +328,10 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                 count(&mut uses, arg);
             }
         }
-        for v in b.term.uses() {
-            count(&mut uses, v);
+        if !constant.contains_key(&block.0) {
+            for v in b.term.uses() {
+                count(&mut uses, v);
+            }
         }
         for phi in &b.phis {
             for &arg in &phi.args {
@@ -248,14 +360,52 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
             }
         }
     }
+    let mut plan = Plan {
+        dead,
+        fixed: FxHashMap::default(),
+        folded: Vec::new(),
+        uses,
+        imm: FxHashMap::default(),
+        fused: FxHashMap::default(),
+        chains: FxHashMap::default(),
+        chain_pos: FxHashMap::default(),
+        converted: Vec::new(),
+        constant,
+    };
+    fuse(f, order, &mut plan);
+    let Plan {
+        dead,
+        uses,
+        imm,
+        fused,
+        chains,
+        chain_pos,
+        converted,
+        constant,
+        ..
+    } = plan;
     let mut fixed = FxHashMap::default();
     let mut folded: Vec<Vec<bool>> = f
         .blocks
         .iter()
         .map(|b| vec![false; b.insns.len()])
         .collect();
+    let view = Plan {
+        dead,
+        fixed: FxHashMap::default(),
+        folded: Vec::new(),
+        uses,
+        imm,
+        fused,
+        chains,
+        chain_pos,
+        converted,
+        constant,
+    };
     for &block in &order.blocks {
         let b = f.block(block);
+        let dead = &view.dead;
+        let uses = &view.uses;
         // The last instruction index each value is used at in this block,
         // and whether it is used outside (terminator use counts as after
         // every instruction).
@@ -265,13 +415,13 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
             if dead[block.index()][index] {
                 continue;
             }
-            for &arg in insn.args.as_slice() {
+            for &arg in view.args(block, index, insn).iter() {
                 last_use.insert(arg, index);
                 *local_uses.entry(arg).or_default() += 1;
             }
         }
         let term_index = b.insns.len();
-        for v in b.term.uses() {
+        for v in view.term_uses(block, &b.term) {
             last_use.insert(v, term_index);
             *local_uses.entry(v).or_default() += 1;
         }
@@ -329,6 +479,9 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     if def.results[0] != Some(value) || !retargetable(def.op) {
                         continue;
                     }
+                    if view.chains.contains_key(&(block.0, previous as u32)) {
+                        continue;
+                    }
                     let register = layout.var_regs[var as usize];
                     // An operand of the definition may be an alias of a
                     // variable that this write changes while the alias is
@@ -341,10 +494,218 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
         }
     }
     Plan {
-        dead,
         fixed,
         folded,
-        uses,
+        ..view
+    }
+}
+
+/// Finds the compare-jumps, immediate operands and concatenation chains.
+fn fuse(f: &Function, order: &Order, plan: &mut Plan) {
+    use crate::engine::mir::ir::{Constant, Imm};
+    // The instruction defining each value.
+    let mut def: Vec<Option<(BlockId, usize)>> = vec![None; f.values.len()];
+    for &block in &order.blocks {
+        for (index, insn) in f.block(block).insns.iter().enumerate() {
+            for r in insn.results.iter().flatten() {
+                def[r.index()] = Some((block, index));
+            }
+        }
+    }
+    let int_of = |v: Value| -> Option<i32> {
+        let (block, index) = def[v.index()]?;
+        let insn = &f.block(block).insns[index];
+        match (insn.op, insn.imm) {
+            (Op::ConstInt, Imm::Int(value)) => Some(value),
+            _ => None,
+        }
+    };
+    let constant_of = |v: Value| -> Option<&Constant> {
+        let (block, index) = def[v.index()]?;
+        let insn = &f.block(block).insns[index];
+        match (insn.op, insn.imm) {
+            (Op::Const, Imm::Const(c)) => f.consts.get(c as usize),
+            _ => None,
+        }
+    };
+    let kill_constant = |plan: &mut Plan, v: Value| {
+        if let Some((block, index)) = def[v.index()] {
+            plan.dead[block.index()][index] = true;
+        }
+    };
+    // Branches on their block's last compare.
+    for &block in &order.blocks {
+        let b = f.block(block);
+        let Terminator::Branch { cond, .. } = b.term else {
+            continue;
+        };
+        let Some(last) = (0..b.insns.len())
+            .rev()
+            .find(|&i| !plan.dead[block.index()][i])
+        else {
+            continue;
+        };
+        let insn = &b.insns[last];
+        if insn.results[0] != Some(cond) || plan.uses[cond.index()] != 1 {
+            continue;
+        }
+        let args = insn.args.as_slice();
+        let fusion = if compare(insn.op) {
+            let (l, r) = (args[0], args[1]);
+            let short = |v: Value| {
+                int_of(v)
+                    .and_then(|value| i16::try_from(value).ok())
+                    .filter(|_| plan.uses[v.index()] == 1)
+            };
+            match (short(l), short(r)) {
+                (_, Some(value)) => {
+                    kill_constant(plan, r);
+                    Fusion {
+                        op: insn.op,
+                        left: l,
+                        right: None,
+                        imm: Some(value),
+                    }
+                }
+                (Some(value), None) => {
+                    kill_constant(plan, l);
+                    Fusion {
+                        op: mirrored(insn.op),
+                        left: r,
+                        right: None,
+                        imm: Some(value),
+                    }
+                }
+                (None, None) => Fusion {
+                    op: insn.op,
+                    left: l,
+                    right: Some(r),
+                    imm: None,
+                },
+            }
+        } else if insn.op == Op::IsUndefinedOrNull {
+            Fusion {
+                op: Op::IsUndefinedOrNull,
+                left: args[0],
+                right: None,
+                imm: None,
+            }
+        } else {
+            continue;
+        };
+        plan.dead[block.index()][last] = true;
+        plan.fused.insert(block.0, fusion);
+    }
+    // Immediate right operands, when every use of the constant takes one.
+    let mut foldable = vec![0u32; f.values.len()];
+    for &block in &order.blocks {
+        for (index, insn) in f.block(block).insns.iter().enumerate() {
+            if plan.dead[block.index()][index] || !has_immediate(insn.op) {
+                continue;
+            }
+            let right = insn.args.as_slice()[1];
+            if int_of(right).is_some() {
+                foldable[right.index()] += 1;
+            }
+        }
+    }
+    for &block in &order.blocks {
+        for (index, insn) in f.block(block).insns.iter().enumerate() {
+            if plan.dead[block.index()][index] || !has_immediate(insn.op) {
+                continue;
+            }
+            let right = insn.args.as_slice()[1];
+            if let Some(value) = int_of(right)
+                && foldable[right.index()] == plan.uses[right.index()]
+            {
+                plan.imm.insert((block.0, index as u32), value);
+                kill_constant(plan, right);
+            }
+        }
+    }
+    // A postfix update's `ToNumeric` read only by the step: `Inc` and `Dec`
+    // convert their operand themselves, once, as the pair does.
+    for &block in &order.blocks {
+        let b = f.block(block);
+        for index in 0..b.insns.len().saturating_sub(1) {
+            let (convert, step) = (&b.insns[index], &b.insns[index + 1]);
+            if plan.dead[block.index()][index]
+                || convert.op != Op::ToNumeric
+                || !matches!(step.op, Op::Inc | Op::Dec)
+            {
+                continue;
+            }
+            let numeric = convert.results[0].expect("a number");
+            if plan.uses[numeric.index()] == 1 && step.args.as_slice() == [numeric] {
+                plan.dead[block.index()][index] = true;
+                plan.chains.insert(
+                    (block.0, index as u32 + 1),
+                    vec![convert.args.as_slice()[0]],
+                );
+                plan.converted.push((block.0, index as u32 + 1));
+            }
+        }
+    }
+    // Chains of `+` from a string constant: `a + b + k1 + k2 ...` with one
+    // of the first two a string constant and the rest primitive constants,
+    // each `+` right after the constant it adds.
+    const MAX_CHAIN: usize = 16;
+    let primitive = |v: Value| {
+        int_of(v).is_some()
+            || matches!(
+                constant_of(v),
+                Some(Constant::Number(_) | Constant::String(_) | Constant::BigInt(_))
+            )
+    };
+    let string = |v: Value| matches!(constant_of(v), Some(Constant::String(_)));
+    for &block in &order.blocks {
+        let b = f.block(block);
+        let mut index = 0;
+        while index < b.insns.len() {
+            let insn = &b.insns[index];
+            if plan.dead[block.index()][index]
+                || insn.op != Op::Add
+                || plan.imm.contains_key(&(block.0, index as u32))
+            {
+                index += 1;
+                continue;
+            }
+            let args = insn.args.as_slice();
+            if !(string(args[0]) || string(args[1])) {
+                index += 1;
+                continue;
+            }
+            let mut operands = vec![args[0], args[1]];
+            let mut end = index;
+            let mut value = insn.results[0].expect("a sum");
+            loop {
+                let (Some(k), Some(add)) = (b.insns.get(end + 1), b.insns.get(end + 2)) else {
+                    break;
+                };
+                let Some(constant) = k.results[0] else { break };
+                if operands.len() == MAX_CHAIN
+                    || plan.dead[block.index()][end + 2]
+                    || add.op != Op::Add
+                    || plan.imm.contains_key(&(block.0, end as u32 + 2))
+                    || add.args.as_slice() != [value, constant]
+                    || !primitive(constant)
+                    || plan.uses[value.index()] != 1
+                {
+                    break;
+                }
+                operands.push(constant);
+                end += 2;
+                value = add.results[0].expect("a sum");
+            }
+            if end > index {
+                for at in (index..end).step_by(2) {
+                    plan.dead[block.index()][at] = true;
+                }
+                plan.chains.insert((block.0, end as u32), operands);
+                plan.chain_pos.insert((block.0, end as u32), insn.pos);
+            }
+            index = end + 1;
+        }
     }
 }
 
@@ -453,7 +814,7 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
                 add(v, &mut live, &mut set);
             }
             // The terminator's defs are its successors' entry defs.
-            for v in b.term.uses() {
+            for v in plan.term_uses(block, &b.term) {
                 add(v, &mut live, &mut set);
             }
             for (index, insn) in b.insns.iter().enumerate().rev() {
@@ -466,7 +827,7 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
                         live.retain(|v| v != r);
                     }
                 }
-                for &arg in insn.args.as_slice() {
+                for &arg in plan.args(block, index, insn).iter() {
                     add(arg, &mut live, &mut set);
                 }
             }
@@ -540,7 +901,7 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
             set_live(v, block_end, &mut open, &mut live);
         }
         let term_slot = end_slot - 1;
-        for v in b.term.uses() {
+        for v in plan.term_uses(block, &b.term) {
             set_live(v, 2 * term_slot + 1, &mut open, &mut live);
         }
         for (index, insn) in b.insns.iter().enumerate().rev() {
@@ -567,7 +928,7 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
                     live.retain(|v| v != r);
                 }
             }
-            for &arg in insn.args.as_slice() {
+            for &arg in plan.args(block, index, insn).iter() {
                 set_live(arg, 2 * slot + 1, &mut open, &mut live);
             }
         }
@@ -612,16 +973,67 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
         let Some(held) = occupied.get(register) else {
             return true;
         };
+        // Values arrive by start: most begin past all a register holds.
+        if held.last().is_none_or(|&(_, end)| end <= want[0].0) {
+            return true;
+        }
         want.iter().all(|&(start, end)| {
             let at = held.partition_point(|&(_, e)| e <= start);
             held.get(at).is_none_or(|&(s, _)| s >= end)
         })
+    };
+    // A value read once, as a window's operand: its slot and index there,
+    // so it can be computed in place.
+    let mut hints: FxHashMap<Value, (u32, u32)> = FxHashMap::default();
+    for &block in &order.blocks {
+        let b = f.block(block);
+        let entry = order.entry[block.index()];
+        for (index, insn) in b.insns.iter().enumerate() {
+            if plan.dead[block.index()][index] {
+                continue;
+            }
+            let key = (block.0, index as u32);
+            let operands: &[Value] = if let Some(chain) = plan.chains.get(&key) {
+                if plan.converted.contains(&key) {
+                    continue;
+                }
+                chain
+            } else if is_window(insn.op) {
+                insn.args.as_slice()
+            } else {
+                continue;
+            };
+            let slot = entry + 1 + index as u32;
+            for (at, &arg) in operands.iter().enumerate() {
+                if plan.uses[arg.index()] == 1 && needs(arg) {
+                    hints.insert(arg, (slot, at as u32));
+                }
+            }
+        }
+    }
+    // The base a window at `slot` would take over what is allocated.
+    let base_at = |occupied: &Vec<Vec<(u32, u32)>>, slot: u32| -> usize {
+        let mut base = layout.temp_base as usize;
+        for (register, held) in occupied.iter().enumerate().skip(base) {
+            let at = held.partition_point(|&(start, _)| start <= 2 * slot);
+            if at > 0 && held[at - 1].1 > 2 * slot + 1 {
+                base = register + 1;
+            }
+        }
+        base
     };
     let mut used = layout.temp_base;
     for value in values {
         let width = usize::from(f.values[value.index()].width.max(1));
         let want = &ranges[value.index()];
         let mut register = layout.temp_base as usize;
+        let hinted = hints.get(&value).and_then(|&(slot, at)| {
+            let register = base_at(&occupied, slot) + at as usize;
+            (width == 1 && free(&occupied, register, want)).then_some(register)
+        });
+        if let Some(hinted) = hinted {
+            register = hinted;
+        }
         loop {
             if (0..width).all(|w| free(&occupied, register + w, want)) {
                 break;
@@ -635,8 +1047,12 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
             }
             let held = &mut occupied[r];
             for &(start, end) in want {
-                let at = held.partition_point(|&(s, _)| s < start);
-                held.insert(at, (start, end));
+                if held.last().is_none_or(|&(s, _)| s < start) {
+                    held.push((start, end));
+                } else {
+                    let at = held.partition_point(|&(s, _)| s < start);
+                    held.insert(at, (start, end));
+                }
             }
         }
         regs[value.index()] = register as u32;
@@ -658,6 +1074,10 @@ pub(super) fn window_slots(f: &Function, order: &Order, plan: &Plan) -> Vec<(u32
                 continue;
             }
             let count = match insn.op {
+                Op::Inc | Op::Dec => continue,
+                _ if plan.chains.contains_key(&(block.0, index as u32)) => {
+                    plan.chains[&(block.0, index as u32)].len() as u32
+                }
                 Op::GetSuperValue => 3,
                 Op::PutSuperValue => 4,
                 Op::IterCall => 2,
@@ -682,23 +1102,25 @@ pub(super) fn window_slots(f: &Function, order: &Order, plan: &Plan) -> Vec<(u32
     slots
 }
 
-/// The registers the windows reach past.
-pub(super) fn windows_top(
+/// The base of each window, by slot, and the registers the windows
+/// reach past.
+pub(super) fn windows(
     alloc: &Allocation,
     f: &Function,
     layout: &Layout,
     order: &Order,
     plan: &Plan,
-) -> u32 {
+) -> (FxHashMap<u32, u32>, u32) {
     let slots = window_slots(f, order, plan);
     let positions: Vec<u32> = slots.iter().map(|&(slot, _)| slot).collect();
     let bases = window_bases(alloc, f, layout, &positions);
-    slots
+    let top = slots
         .iter()
-        .zip(bases)
+        .zip(&bases)
         .map(|(&(_, count), base)| base + count)
         .max()
-        .unwrap_or(0)
+        .unwrap_or(0);
+    (positions.into_iter().zip(bases).collect(), top)
 }
 
 /// The first register above every value live across each slot in `slots`

@@ -254,6 +254,7 @@ impl<'source> Parser<'source> {
             self_binding: None,
             params: Vec::new(),
             rest: None,
+            rest_default: None,
             simple_params: true,
             length: 0,
             body,

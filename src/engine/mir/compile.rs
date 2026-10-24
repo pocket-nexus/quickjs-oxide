@@ -41,8 +41,18 @@ pub(crate) fn compile_script(
     }
     let built =
         crate::engine::hir::build::build(program, filename).map_err(ScriptCompileError::Front)?;
-    let mir = super::build::build(&built.program, &built.regexps, has_with)
-        .map_err(|error| ScriptCompileError::Lower(lower_error(error)))?;
+    let mir =
+        super::build::build(&built.program, &built.regexps, has_with).map_err(
+            |error| match error {
+                BuildError::StackOverflow => {
+                    ScriptCompileError::Front(crate::engine::api::error::Error::new(
+                        crate::engine::api::error::ErrorKind::JsInternal,
+                        "stack overflow",
+                    ))
+                }
+                error => ScriptCompileError::Lower(lower_error(error)),
+            },
+        )?;
     let raw = source.raw_bytes();
     let debug = Debug {
         source: (debug_info != DebugInfoMode::StripDebug).then_some(raw),
@@ -162,5 +172,6 @@ fn lower_error(error: BuildError) -> LowerError {
         BuildError::Syntax(message) => LowerError::Syntax(message),
         BuildError::Unsupported(what) => LowerError::Unsupported(what),
         BuildError::Internal(message) => LowerError::Internal(message),
+        BuildError::StackOverflow => LowerError::Internal("stack overflow".into()),
     }
 }

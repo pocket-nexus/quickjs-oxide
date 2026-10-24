@@ -293,6 +293,25 @@ impl Terminator {
         }
     }
 
+    /// The values it reads, to rewrite.
+    pub fn uses_mut(&mut self) -> Vec<&mut Value> {
+        match self {
+            Self::Branch { cond, .. } => vec![cond],
+            Self::BranchCmp { l, r, .. } => vec![l, r],
+            Self::BranchNullish { value, .. } | Self::Return(value) | Self::Throw(value) => {
+                vec![value]
+            }
+            Self::ForInNext { iter, .. } => vec![iter],
+            Self::Suspend { value, .. } => value.iter_mut().collect(),
+            Self::Ret(addr) => vec![addr],
+            Self::Jump(_)
+            | Self::ReturnUndefined
+            | Self::ThrowError { .. }
+            | Self::Gosub { .. }
+            | Self::Unreachable => Vec::new(),
+        }
+    }
+
     /// The values it defines, with the successor they are defined for.
     #[must_use]
     pub fn defs(&self) -> Vec<(Value, BlockId)> {

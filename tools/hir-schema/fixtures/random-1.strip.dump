@@ -13,7 +13,7 @@ const #1 bigint digits:" \n "
 const #2 regexp source:"" flags:"\"Z"
 decl #0 name:#4? kind:const owner:#4 capturedBy:[] assigned:true tdz:true isStatic:false
 decl #1 name:#4? kind:catch owner:#0 capturedBy:[#4] assigned:true tdz:true isStatic:true
-fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:false decls:[#1 #1 #0] captures:[#1 #4 #2] inner:[#3] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false length:65536 self:#2 argumentsDecl:#3 paramCopies:[] concise:true defaultCtor:false
+fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:true decls:[#1 #4 #2] captures:[#3] inner:[#1] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true length:0 argumentsDecl:#1 concise:false defaultCtor:true
   params:
     Param
       pattern:
@@ -24,31 +24,37 @@ fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict
     Param
       pattern:
         decl decl:#1
+  restDefault:
+    decode desc:#3
+      e:
+        seq exprs:[]
   body:
-    Block decls:[]
+    Block stmts:[] decls:[]
+  source:
+    SourceRange start:70 end:65536
+  paramCopies:
+    ParamCopy from:#4 to:#0
+    ParamCopy from:#0 to:#0
+fn #1 name:"  é" kind:module role:method async:true generator:false strict:false params:[] simpleParams:false decls:[#1 #0 #2] captures:[#4] inner:[#2 #0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:384 self:#3 argumentsDecl:#0 paramCopies:[] concise:false defaultCtor:false
+  rest:
+    decl decl:#1
+  restDefault:
+    cond
+      test:
+        update op:++ prefix:true
+          target:
+            decl decl:#3
+      then:
+        assign op:&=
+          target:
+            decl decl:#4
+          value:
+            const value:#2
+      else:
+        superCall args:[] this:#0 newTarget:#1 func:#3 superAt:203
+  body:
+    Block decls:[#0 #0]
       stmts:
-        declare decl:#3
         declare decl:#1
   source:
-    SourceRange start:1 end:0
-fn #1 kind:staticBlock role:method async:false generator:true strict:false simpleParams:false decls:[] captures:[] inner:[#3] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false length:65536 argumentsDecl:#0 concise:false defaultCtor:true
-  params:
-    Param
-      pattern:
-        decl decl:#0
-    Param
-      pattern:
-        decl decl:#3
-    Param
-      pattern:
-        decl decl:#0
-  body:
-    Block decls:[#3 #0]
-      stmts:
-        declare decl:#2
-  source:
-    SourceRange start:203 end:0
-  paramCopies:
-    ParamCopy from:#4 to:#1
-    ParamCopy from:#4 to:#4
-    ParamCopy from:#3 to:#2
+    SourceRange start:65536 end:0

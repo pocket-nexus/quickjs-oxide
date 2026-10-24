@@ -21,8 +21,8 @@ mod pattern;
 mod stmt;
 
 use super::ir::{
-    BlockId, Constant, Function, Handler, HandlerId, Imm, Insn, Phi, Pos, Terminator, Value,
-    ValueInfo, VarKind,
+    BlockId, Constant, Function, Handler, HandlerId, Imm, Insn, Phi, Pos, SuspendKind, Terminator,
+    Value, ValueInfo, VarKind,
 };
 use super::op::Op;
 use crate::engine::hir::schema::{
@@ -87,6 +87,8 @@ pub(crate) enum BuildError {
     Syntax(String),
     /// A construct the builder does not lower yet.
     Unsupported(String),
+    /// QuickJS's bytecode stack limit: an `InternalError` at compile time.
+    StackOverflow,
     Internal(String),
 }
 
@@ -95,6 +97,7 @@ impl std::fmt::Display for BuildError {
         match self {
             Self::Syntax(message) => write!(f, "SyntaxError: {message}"),
             Self::Unsupported(what) => write!(f, "the MIR builder does not support {what}"),
+            Self::StackOverflow => write!(f, "stack overflow"),
             Self::Internal(message) => write!(f, "MIR builder: {message}"),
         }
     }
@@ -198,7 +201,18 @@ pub(crate) fn build(
         let id = FunctionRef(index as u32);
         let mut builder = Builder::new(&mut shared, id)?;
         let function = builder.build_into()?;
-        if let Some(info) = builder.module.take() {
+        if let Some(mut info) = builder.module.take() {
+            // As QuickJS decides it: the module function awaits somewhere,
+            // `for await` included.
+            info.has_top_level_await = function.blocks.iter().any(|block| {
+                matches!(
+                    block.term,
+                    Terminator::Suspend {
+                        kind: SuspendKind::Await,
+                        ..
+                    }
+                )
+            });
             module = Some(info);
         }
         functions.push(function);
@@ -599,7 +613,9 @@ impl<'s, 'h> Builder<'s, 'h> {
         {
             return self.int(value as i32);
         }
-        let bits = value.to_bits();
+        // Byte-swapped: an integer's low bits are zero, and the hasher
+        // buckets by the low bits.
+        let bits = value.to_bits().swap_bytes();
         let index = match self.consts.get(&bits) {
             Some(&index) => index,
             None => {
@@ -630,6 +646,17 @@ impl<'s, 'h> Builder<'s, 'h> {
     pub(crate) fn string(&mut self, string: u32) -> Value {
         let index = self.string_const(string);
         self.op(Op::Const, &[], Imm::Const(index))
+    }
+
+    /// A string literal: one spelling an index is a constant of its own,
+    /// since QuickJS keeps it as a distinct string, not an atom.
+    pub(crate) fn string_literal(&mut self, string: u32) -> Value {
+        let text = &self.cx.strings[string as usize];
+        if crate::engine::compiler::register::is_tagged_int_atom(text) {
+            let index = self.constant(Constant::String(string));
+            return self.op(Op::Const, &[], Imm::Const(index));
+        }
+        self.string(string)
     }
 
     pub(crate) fn static_key(&mut self, text: &'static str) -> u32 {

@@ -28,7 +28,7 @@ descriptor #1 number repr:i8 max:9.007199254740994e15
 descriptor #2 nominal base:#3 name:""
 decl #0 name:#4? kind:const owner:#4 capturedBy:[] assigned:true tdz:true ty:#2 isStatic:false
 decl #1 name:#4? kind:catch owner:#0 capturedBy:[#4] assigned:true tdz:true ty:#3 isStatic:true
-fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:false decls:[#1 #1 #0] captures:[#1 #4 #2] inner:[#3] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false length:65536 self:#2 argumentsDecl:#3 paramCopies:[] concise:true defaultCtor:false
+fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:true decls:[#1 #4 #2] captures:[#3] inner:[#1] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true length:0 argumentsDecl:#1 concise:false defaultCtor:true
   params:
     Param
       pattern:
@@ -39,33 +39,41 @@ fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict
     Param
       pattern:
         decl decl:#1
+  restDefault:
+    decode desc:#3 ty:#4
+      e:
+        seq exprs:[] ty:#1
   body:
-    Block decls:[]
-      stmts:
-        declare decl:#3
-        declare decl:#1
+    Block stmts:[] decls:[]
+  sig:
+    Signature params:[#0 #1] rest:#4 ret:#3 thisTy:#1
   source:
-    SourceRange start:1 end:0
-fn #1 kind:staticBlock role:method async:false generator:true strict:false simpleParams:false decls:[] captures:[] inner:[#3] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false length:65536 argumentsDecl:#0 concise:false defaultCtor:true
-  params:
-    Param
-      pattern:
-        decl decl:#0
-    Param
-      pattern:
-        decl decl:#3 ty:#1
-    Param
-      pattern:
-        decl decl:#0 ty:#1
-  body:
-    Block decls:[#3 #0]
-      stmts:
-        declare decl:#2
-  effects:
-    Effects reads:[#0 #4 #2] writes:[#1 #0] heapReads:true heapWrites:false allocates:true mayThrow:true maySuspend:false calls:known
-  source:
-    SourceRange start:203 end:0
+    SourceRange start:70 end:65536
   paramCopies:
-    ParamCopy from:#4 to:#1
-    ParamCopy from:#4 to:#4
-    ParamCopy from:#3 to:#2
+    ParamCopy from:#4 to:#0
+    ParamCopy from:#0 to:#0
+fn #1 name:"  é" kind:module role:method async:true generator:false strict:false params:[] simpleParams:false decls:[#1 #0 #2] captures:[#4] inner:[#2 #0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:384 self:#3 argumentsDecl:#0 paramCopies:[] concise:false defaultCtor:false
+  rest:
+    decl decl:#1 ty:#3
+  restDefault:
+    cond ty:#4
+      test:
+        update op:++ prefix:true
+          target:
+            decl decl:#3
+      then:
+        assign op:&=
+          target:
+            decl decl:#4
+          value:
+            const value:#2 ty:#2
+      else:
+        superCall args:[] this:#0 newTarget:#1 func:#3 superAt:203 ty:#3
+  body:
+    Block decls:[#0 #0]
+      stmts:
+        declare decl:#1
+  sig:
+    Signature params:[#2 #2 #2] rest:#2 ret:#3 thisTy:#4
+  source:
+    SourceRange start:65536 end:0

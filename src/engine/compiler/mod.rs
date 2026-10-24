@@ -271,8 +271,8 @@ pub fn compile_unlinked_eval_source_with_filename(
 // QuickJS 2026-06-04 `JS_MAX_LOCAL_VARS` and `JS_STACK_SIZE_MAX` are both
 // 65,534. Call opcodes encode one more argument count value; the resulting
 // operand stack is checked against the smaller stack limit during lowering.
-const MAX_LOCAL_VARIABLES: usize = MAX_LOCAL_SLOTS as usize;
-const MAX_BYTECODE_STACK: usize = 65_534;
+pub(crate) const MAX_LOCAL_VARIABLES: usize = MAX_LOCAL_SLOTS as usize;
+pub(crate) const MAX_BYTECODE_STACK: usize = 65_534;
 const MAX_CALL_ARGUMENTS: usize = 65_535;
 // QuickJS `js_parse_program` allocates `JS_ATOM__ret_` as the first local of
 // every script. Source text cannot spell this sentinel as an IdentifierName.

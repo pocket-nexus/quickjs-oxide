@@ -103,6 +103,9 @@ pub(crate) fn validate(program: &Program) -> Result<()> {
         if let Some(rest) = &function.rest {
             validator.pattern(rest)?;
         }
+        if let Some(default) = &function.rest_default {
+            validator.expr(default)?;
+        }
         validator.block(&function.body)?;
     }
     for (index, &count) in validator.defined.iter().enumerate() {

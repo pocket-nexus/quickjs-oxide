@@ -270,6 +270,8 @@ pub(crate) struct Function {
     pub(crate) self_binding: Option<DeclId>,
     pub(crate) params: Vec<Param>,
     pub(crate) rest: Option<Pattern>,
+    /// QuickJS lets a rest pattern have a default.
+    pub(crate) rest_default: Option<Expr>,
     pub(crate) simple_params: bool,
     /// The number of formals before the first default or rest (`length`).
     pub(crate) length: u32,
