@@ -77,5 +77,35 @@ impl Handles {
     // METHOD Handles.live_count
 }
 
+// A composition witness over arbitrary nonempty values. This verifies actual
+// calls, demonstrates satisfiable preconditions and checks reuse and framing.
+// Constructing the empty representation here does not verify derive(Default).
+fn handle_lifecycle(first: Value, second: Value)
+    requires first.0 != Value::EMPTY.0, second.0 != Value::EMPTY.0,
+{
+    let mut handles = Handles { slots: Vec::new(), free: Vec::new() };
+    assert(handles.valid());
+    let a = handles.create(first);
+    let b = handles.create(second);
+    assert(a.0 != b.0);
+    handles.release(a);
+    assert(handles.active(b));
+    let replacement = handles.create(second);
+    assert(replacement.0 == a.0);
+    let preserved = handles.get(b);
+    assert(preserved == second);
+    let count = handles.live_count();
+    assert(count == 2);
+}
+
+fn scoped_root_prefix(roots: &mut RootStack, temporary: Value)
+    ensures final(roots).values@ == old(roots).values@,
+{
+    let mark = roots.mark();
+    roots.push(temporary);
+    roots.truncate(mark);
+    assert(roots.values@ =~= old(roots).values@);
+}
+
 pub fn main() {}
 }

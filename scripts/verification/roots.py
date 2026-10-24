@@ -41,6 +41,15 @@ def proof(gc_source, value_source, template):
             ensures final(self).valid(), final(self).active(result),
                 final(self).slots@[result.0 as int] == value,
                 !old(self).active(result),
+                if old(self).free@.len() > 0 {
+                    result.0 == old(self).free@.last()
+                    && final(self).free@ == old(self).free@.drop_last()
+                    && final(self).slots@ == old(self).slots@.update(result.0 as int, value)
+                } else {
+                    result.0 == old(self).slots@.len()
+                    && final(self).free@ == old(self).free@
+                    && final(self).slots@ == old(self).slots@.push(value)
+                },
                 forall|h: Handle| old(self).active(h) ==> final(self).active(h)
                     && final(self).slots@[h.0 as int] == old(self).slots@[h.0 as int],
         """, "result", {"before": {"return Handle(index);": """
@@ -87,6 +96,7 @@ def proof(gc_source, value_source, template):
         "Handles.live_count": ("""
             requires self.valid(),
             ensures result == self.live_indices().len(),
+                result == self.slots@.len() - self.free@.len(),
         """, "result", {"before": {"self.slots.len() - self.free.len()": "self.count_partition();"}}),
     }
     for qualified, (contract, result, options) in contracts.items():

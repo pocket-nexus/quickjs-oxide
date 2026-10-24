@@ -27,7 +27,9 @@ all of the implemented proofs pass. Receipts always include `complete`,
 `open_obligations`, the working-tree dirty flag and source hashes. The explicit
 finite-heap/host-memory/stop-the-world preconditions in `GC-RESOURCES` remain
 part of the theorem's domain; adding an arbitrary `assumption` does not pass
-this gate.
+this gate. This checks the ledger, not automatic coverage: there is still no
+composed source theorem for `Heap::collect`, and relabeling a ledger item would
+not prove it.
 
 An existing pinned verifier can be supplied with `--verus /path/to/verus` or
 `VERUS`. `toolchain.json` pins the official Verus archive by version and SHA-256.
@@ -110,7 +112,10 @@ collection of test heaps:
   mark preserves precisely the preceding prefix. `Handles::create`, `get`,
   `set`, `release` and `live_count` preserve the bijection between empty slots
   and a duplicate-free free list; allocating a handle preserves other active
-  handles and their values. The count equals the number of active slots.
+  handles and their values. Both reuse and append have exact slot/free-list
+  postconditions. The count equals the number of active slots. Composition
+  witnesses exercise create/release/reuse and save/push/restore over arbitrary
+  input values and retained prefixes.
 - `Value::kind`, `is_heap`, the four heap constructors and their decoders agree
   on the arena namespace and the full `u32` payload. The classification proof
   covers every `u64` bit pattern, including primitive and reserved tags.
