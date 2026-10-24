@@ -56,6 +56,10 @@ memory and measurement:
       --ic-stats        print the inline-cache report at exit (ic-stats build)
       --gc-stress=N     collect before every N-th allocation (gc-stress build)
       --disassemble     print the register code of FILE and exit
+      --dump-ast        print the new front end's syntax tree of FILE and exit
+      --dump-hir        print the new front end's HIR of FILE and exit
+      --dump-mir        print the new front end's MIR of FILE and exit
+      --frontend=old|new compile with the stack-code front end or the new one
 Test262:
       --test262         define $262 (test262-host build)
       --cannot-block    forbid Atomics.wait from blocking";
@@ -99,6 +103,7 @@ struct Options {
     ic_stats: bool,
     gc_stress: Option<u32>,
     disassemble: bool,
+    dump: Option<FrontEndDump>,
     test262: bool,
     cannot_block: bool,
 }
@@ -180,6 +185,11 @@ fn parse_and_run(args: &[String]) -> Result<ExitCode, String> {
                 options.ic_stats = true;
             }
             "--disassemble" => options.disassemble = true,
+            "--dump-ast" => options.dump = Some(FrontEndDump::Ast),
+            "--dump-hir" => options.dump = Some(FrontEndDump::Hir),
+            "--dump-mir" => options.dump = Some(FrontEndDump::Mir),
+            "--frontend=new" => quickjs_oxide::engine::api::use_new_front_end(true),
+            "--frontend=old" => quickjs_oxide::engine::api::use_new_front_end(false),
             "--test262" => {
                 if !cfg!(feature = "test262-host") {
                     return Err("--test262 needs a build with the test262-host feature".into());
@@ -308,6 +318,15 @@ fn parse_and_run(args: &[String]) -> Result<ExitCode, String> {
         }
     };
     Ok(run_on_evaluation_stack(move || evaluate(&request)))
+}
+
+/// A layer of the new front end `--dump-ast`, `--dump-hir` or `--dump-mir`
+/// prints.
+#[derive(Clone, Copy, Debug)]
+enum FrontEndDump {
+    Ast,
+    Hir,
+    Mir,
 }
 
 /// Owned evaluation inputs, safe to move onto the evaluation thread.
@@ -442,6 +461,24 @@ fn evaluate(request: &EvaluationRequest) -> ExitCode {
     if let Err(error) = setup {
         eprintln!("qjs: {error}");
         return ExitCode::FAILURE;
+    }
+    if let Some(dump) = options.dump {
+        let module = matches!(request.source_goal, SourceGoal::Module);
+        let text = match dump {
+            FrontEndDump::Ast => runtime.dump_ast(&request.source, module),
+            FrontEndDump::Hir => runtime.dump_hir(&request.source, &request.filename, module),
+            FrontEndDump::Mir => runtime.dump_mir(&request.source, &request.filename, module),
+        };
+        return match text {
+            Ok(text) => {
+                print!("{text}");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("{error}");
+                ExitCode::from(1)
+            }
+        };
     }
     if options.disassemble {
         return match runtime.disassemble(&request.source, &request.filename) {

@@ -85,10 +85,11 @@ root = Path(__file__).resolve().parents[2]
 src = root / "src"
 errors = []
 # The front end (`compiler`, its stack instructions and unlinked records in
-# `code`, its primitive values in `value`) and the embedding API over
-# `quickjs-oxide-core` (`api`); the engine itself is the `quickjs-oxide-core` crate (`core/`)
-# and the regular-expression engine the `quickjs-oxide-regexp` crate (`regexp/`).
-expected = {"compiler", "code", "value", "api"}
+# `code`, its primitive values in `value`), the HIR it hands the middle end
+# (`hir`) and the embedding API over `quickjs-oxide-core` (`api`); the engine
+# itself is the `quickjs-oxide-core` crate (`core/`) and the
+# regular-expression engine the `quickjs-oxide-regexp` crate (`regexp/`).
+expected = {"compiler", "code", "value", "ast", "hir", "mir", "api"}
 if {p.name for p in src.glob("*.rs")} != {"lib.rs"}:
     errors.append("src must contain only lib.rs as a top-level Rust source")
 if {p.name for p in src.iterdir() if p.is_dir()} != {"engine", "source"}:

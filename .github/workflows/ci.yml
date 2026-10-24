@@ -96,6 +96,8 @@ jobs:
           python3 scripts/checks/check-docs-current.py
           python3 scripts/checks/check-source-layout.py
           ./scripts/checks/check-rust-only.sh
+          node tools/hir-schema/gen.ts --check
+          node tools/hir-schema/test.ts
 
       - name: Run fast engine tests
         run: |
@@ -114,6 +116,17 @@ jobs:
           # The driver under stress: the fixed probes at smoke size and the corpus.
           cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
           python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
+
+      - name: Run the new front end
+        run: |
+          # The same tests through the AST, HIR and MIR front end.
+          OXIDE_FRONTEND=new cargo test --locked --workspace --all-targets
+          OXIDE_FRONTEND=new cargo test --locked -p quickjs-oxide --features gc-stress --lib compiler::register
+          OXIDE_FRONTEND=new python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
+          # Both front ends print the same output on the corpus, the probes and the position cases.
+          cargo build --locked --release -p quickjs-oxide-cli --bin qjs
+          python3 scripts/frontend/diff.py --qjs target/release/qjs \
+            core/tests/corpus docs/performance/probes tests/frontend/positions
 
       # The release workflow publishes these; each must build from its
       # packaged sources alone.
@@ -223,6 +236,14 @@ jobs:
           cargo build --locked --release -p quickjs-oxide-cli --features gc-stress --bin qjs
           python3 scripts/checks/check-suite-gc-stress.py \
             --qjs target/release/qjs --suite "$RUNNER_TEMP/suite"
+          OXIDE_FRONTEND=new python3 scripts/checks/check-suite-gc-stress.py \
+            --qjs target/release/qjs --suite "$RUNNER_TEMP/suite"
+
+      - name: Compare the front ends on the suite programs
+        run: |
+          cargo build --locked --release -p quickjs-oxide-cli --bin qjs
+          python3 scripts/frontend/diff.py --qjs target/release/qjs --jobs 2 --timeout 1800 \
+            "$RUNNER_TEMP/suite"
 
   quickjs-differential:
     if: >-

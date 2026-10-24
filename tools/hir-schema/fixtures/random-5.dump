@@ -1,0 +1,43 @@
+program version:1
+  unit:
+    Unit name:"Z" fingerprintInputs:["éZ\ud800😀\n"]
+  entry:
+    eval top:#1
+file #0 path:"\udfff" hash:722
+string #0 "é\u0000Z\u0000"
+string #1 "\"\udfffé "
+string #2 "\u001fa\"😀"
+string #3 "😀  éa"
+const #0 regexp source:"😀  éa" flags:"é\u0000Z\u0000"
+const #1 bigint digits:"\u001fa\"😀"
+type #0 class layout:#3
+layout #0 name:"\"\udfffé "
+  fields:
+    LayoutField name:#4? ty:#1 readonly:true
+layout #1 name:#4?
+  fields:
+    LayoutField name:#4? ty:#0 readonly:true
+layout #2 name:"😀  éa"
+  fields:
+    LayoutField name:"😀  éa" ty:#0 readonly:true
+descriptor #0 literal
+  value:
+    const value:#4
+descriptor #1 number repr:u16 min:1e-1 max:1.23456e2
+decl #0 name:"\u001fa\"😀" kind:privateAccessor owner:#3 capturedBy:[#0 #1] assigned:false tdz:true ty:#1 isStatic:false
+decl #1 name:"\u001fa\"😀" kind:const owner:#1 capturedBy:[#1 #3 #3] assigned:true tdz:false ty:#4 isStatic:true
+decl #2 name:#4? kind:catch owner:#3 capturedBy:[] assigned:false tdz:true ty:#2 isStatic:false
+fn #0 name:"\"\udfffé " kind:getter role:set async:false generator:true strict:false params:[] simpleParams:true decls:[#2 #0 #3] captures:[#1 #4] inner:[#4 #0 #1] usesThis:false usesArguments:true usesNewTarget:true hasDirectEval:false homeObject:true length:7 concise:false defaultCtor:true
+  rest:
+    object props:[] restAt:1 ty:#3
+  body:
+    Block stmts:[] decls:[]
+  sig:
+    Signature params:[#1 #1] rest:#4 ret:#2 thisTy:#3
+  effects:
+    Effects reads:[#2] writes:[] heapReads:true heapWrites:true allocates:true mayThrow:true maySuspend:false calls:known
+  source:
+    SourceRange start:1 end:65536
+  paramCopies:
+    ParamCopy from:#0 to:#0
+    ParamCopy from:#4 to:#0

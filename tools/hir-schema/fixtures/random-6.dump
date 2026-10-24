@@ -1,0 +1,47 @@
+program version:1
+  unit:
+    Unit name:" " fingerprintInputs:[""]
+  entry:
+    script top:#2
+file #0 path:"\"\n_" hash:987
+file #1 path:" " hash:853
+file #2 path:"   é" hash:1
+string #0 ""
+string #1 "_\\a"
+string #2 ""
+const #0 number value:1.23456e2
+type #0 array elem:#2
+layout #0 name:""
+  fields:
+    LayoutField name:"" ty:#2 readonly:true
+    LayoutField name:#3? ty:#4 readonly:true
+    LayoutField name:"_\\a" ty:#1 readonly:false
+layout #1 name:""
+  fields:
+    LayoutField name:"_\\a" ty:#1 readonly:true
+layout #2 name:"_\\a"
+  fields:
+    LayoutField name:"" ty:#1 readonly:true
+descriptor #0 literal
+  value:
+    const value:#2
+descriptor #1 literal
+  value:
+    const value:#2
+descriptor #2 array elem:#1
+decl #0 name:"" kind:param owner:#2 capturedBy:[#3 #4] assigned:true tdz:false ty:#2 isStatic:true
+decl #1 name:"" kind:catch owner:#3 capturedBy:[#4 #3] assigned:true tdz:true ty:#2 isStatic:true
+decl #2 name:"" kind:activeFunction owner:#3 capturedBy:[] assigned:false tdz:true ty:#4 isStatic:false
+module #0 file:#4 top:#1 starExports:[525 81] dynamic:true usesImportMeta:true hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
+  imports:
+    Import request:7 decl:#1
+    Import request:962 decl:#2
+    Import request:65536 decl:#1
+  exports:
+    Export name:"_\\a" decl:#2
+  reexports:
+    Reexport request:0 as:"_\\a"
+    Reexport request:0 as:""

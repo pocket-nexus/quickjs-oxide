@@ -1,0 +1,69 @@
+program version:1
+  unit:
+    Unit name:"\\" fingerprintInputs:[]
+  entry:
+    module module:#0
+file #0 path:"_" hash:65536
+file #1 path:"" hash:0
+string #0 "😀\u001f\u0000"
+const #0 bigint digits:#1?
+const #1 regexp source:"😀\u001f\u0000" flags:"😀\u001f\u0000"
+type #0 shape
+  fields:
+    ShapeField name:#1? ty:#0 optional:false
+layout #0 name:#1?
+  fields:
+    LayoutField name:#1? ty:#3 readonly:false
+    LayoutField name:#1? ty:#1 readonly:true
+    LayoutField name:"😀\u001f\u0000" ty:#1 readonly:false
+descriptor #0 undefined
+descriptor #1 number repr:u32 min:5e-324
+decl #0 name:"😀\u001f\u0000" kind:implicit owner:#2 capturedBy:[] assigned:true tdz:true isStatic:false
+decl #1 name:#1? kind:global owner:#2 capturedBy:[] assigned:true tdz:true ty:#3 isStatic:false
+decl #2 name:#1? kind:implicit owner:#3 capturedBy:[#1 #0 #2] assigned:true tdz:true ty:#4 isStatic:true
+fn #0 name:#1? kind:module role:get async:true generator:false strict:true params:[] simpleParams:true decls:[#2 #3] captures:[#0] inner:[#2 #4] usesThis:true usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:false length:7 concise:false defaultCtor:true
+  rest:
+    target ty:#2
+      t:
+        superMember this:#2 home:#1 superAt:0
+          prop:
+            name name:"😀\u001f\u0000"
+  body:
+    Block decls:[#4]
+      stmts:
+        declare decl:#1
+  sig:
+    Signature params:[] ret:#3 thisTy:#2
+  effects:
+    Effects reads:[] writes:[#4] heapReads:true heapWrites:false allocates:true mayThrow:true maySuspend:true calls:known
+  source:
+    SourceRange start:712 end:1
+  paramCopies:
+    ParamCopy from:#4 to:#1
+    ParamCopy from:#1 to:#4
+fn #1 kind:setter role:get async:false generator:false strict:false simpleParams:false decls:[#4 #2 #1] captures:[#4] inner:[#3 #3 #0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:65536 self:#0 argumentsDecl:#0 concise:false defaultCtor:true
+  params:
+    Param
+      pattern:
+        decl decl:#0
+    Param
+      pattern:
+        decl decl:#4 ty:#2
+  restDefault:
+    import
+      spec:
+        call args:[] optional:false directEval:false ty:#3
+          callee:
+            const value:#4 ty:#1
+      options:
+        newTarget decl:#2 ty:#4
+  body:
+    Block decls:[#3 #2]
+      stmts:
+        declare decl:#1
+        declare decl:#0
+  source:
+    SourceRange start:0 end:7
+  paramCopies:
+    ParamCopy from:#2 to:#3
+    ParamCopy from:#1 to:#1

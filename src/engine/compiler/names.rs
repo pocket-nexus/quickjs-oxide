@@ -11,12 +11,12 @@ use std::rc::Rc;
 use crate::engine::value::{JsString, JsStringError};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub(in crate::engine::compiler) struct NameId(u32);
+pub(crate) struct NameId(u32);
 
 const RECENT_NAMES: usize = 256;
 
 #[derive(Debug)]
-pub(in crate::engine::compiler) struct NameTable {
+pub(crate) struct NameTable {
     names: Vec<Rc<str>>,
     by_name: HashMap<Rc<str>, NameId>,
     ascii_names: [Option<NameId>; 128],
@@ -25,7 +25,7 @@ pub(in crate::engine::compiler) struct NameTable {
 }
 
 impl NameTable {
-    pub(in crate::engine::compiler) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             names: Vec::new(),
             by_name: HashMap::new(),
@@ -35,7 +35,7 @@ impl NameTable {
         }
     }
 
-    pub(in crate::engine::compiler) fn intern(&mut self, name: &str) -> NameId {
+    pub(crate) fn intern(&mut self, name: &str) -> NameId {
         if let Some(id) = self.lookup(name) {
             return id;
         }
@@ -53,12 +53,12 @@ impl NameTable {
         id
     }
 
-    pub(in crate::engine::compiler) fn name(&self, id: NameId) -> &str {
+    pub(crate) fn name(&self, id: NameId) -> &str {
         &self.names[id.0 as usize]
     }
 
     #[inline]
-    pub(in crate::engine::compiler) fn lookup(&self, name: &str) -> Option<NameId> {
+    pub(crate) fn lookup(&self, name: &str) -> Option<NameId> {
         if let [byte @ 0..=127] = name.as_bytes() {
             return self.ascii_names[*byte as usize];
         }
@@ -80,10 +80,7 @@ impl NameTable {
 
     /// Reuse one `JsString` per interned name instead of re-allocating it at
     /// every constant lookup.
-    pub(in crate::engine::compiler) fn js_string(
-        &mut self,
-        id: NameId,
-    ) -> Result<JsString, JsStringError> {
+    pub(crate) fn js_string(&mut self, id: NameId) -> Result<JsString, JsStringError> {
         if let Some(cached) = &self.js_strings[id.0 as usize] {
             return Ok(cached.clone());
         }

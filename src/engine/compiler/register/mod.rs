@@ -287,7 +287,7 @@ pub(crate) fn tree_has_import_call(units: oxide_core::Units<'_>, root: CodeUnitI
 }
 
 /// The compare-jump taken exactly when `op` is not, if there is one.
-fn negated_jump(op: Opcode) -> Option<Opcode> {
+pub(crate) fn negated_jump(op: Opcode) -> Option<Opcode> {
     use Opcode::*;
     Some(match op {
         JTrue => JFalse,
@@ -783,7 +783,7 @@ fn method_flags(kind: DefineMethodKind, enumerable: bool) -> u32 {
 
 /// Whether QuickJS's `JS_NewAtom` makes `string` a tagged integer atom: the
 /// canonical decimal spelling of an integer up to `JS_ATOM_MAX_INT`.
-fn is_tagged_int_atom(string: &JsString) -> bool {
+pub(crate) fn is_tagged_int_atom(string: &JsString) -> bool {
     let len = string.len();
     if len == 0 || len > 10 {
         return false;

@@ -204,6 +204,19 @@ impl<'source> QuickJsSourceIndex<'source> {
         }
     }
 
+    /// Locate `offsets`, in ascending order, with one cursor: offsets
+    /// within one checkpoint scan only the bytes between them.
+    pub(crate) fn locate_ascending(
+        &self,
+        offsets: &[usize],
+    ) -> Vec<Result<LineColumn, DebugMetadataError>> {
+        let mut cursor = self.cursor();
+        offsets
+            .iter()
+            .map(|&offset| cursor.locate_byte_offset(offset))
+            .collect()
+    }
+
     fn validate_byte_offset(&self, byte_offset: usize) -> Result<(), DebugMetadataError> {
         if byte_offset > self.locator.source.len() {
             return Err(DebugMetadataError::OffsetOutOfBounds);
