@@ -294,6 +294,9 @@ struct FunctionLowering<'t, 'a, 'c, 'd> {
     direct_eval_sites: Vec<u32>,
     /// The block being emitted and the next in the layout.
     next_block: Option<BlockId>,
+    /// The block whose code each block's label starts: itself, or past
+    /// the blocks that emit nothing and fall through.
+    resolved: Vec<BlockId>,
     pos: Pos,
     region: Option<super::ir::HandlerId>,
 }
@@ -331,6 +334,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             register_count,
             direct_eval_sites: Vec::new(),
             next_block: None,
+            resolved: Vec::new(),
             order,
             pos: Pos::NONE,
             region: None,
@@ -343,6 +347,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         captures: Vec<Capture>,
     ) -> Result<(CodeUnit, Vec<CoreValue>), LowerError> {
         let blocks = self.order.blocks.clone();
+        self.resolved = self.resolve(&blocks);
         for (index, &block) in blocks.iter().enumerate() {
             self.next_block = blocks.get(index + 1).copied();
             self.block(block)?;
@@ -1102,7 +1107,9 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
         match b.term {
             Terminator::Jump(target) => {
                 self.phi_moves(block, target)?;
-                self.jump(target);
+                if !self.rotate(target) {
+                    self.jump(target);
+                }
             }
             Terminator::Branch { then, else_, .. } if self.plan.constant.contains_key(&block.0) => {
                 self.jump(if self.plan.constant[&block.0] {
@@ -1117,7 +1124,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             }
             Terminator::Branch { cond, then, else_ } => {
                 let cond = self.reg(cond)?;
-                if Some(then) == self.next_block {
+                if self.falls_to(then) {
                     self.jump_to(|b| b.a_jump(Opcode::JFalse, cond, 0), else_);
                 } else {
                     self.jump_to(|b| b.a_jump(Opcode::JTrue, cond, 0), then);
@@ -1133,7 +1140,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             } => {
                 let (l, r) = (self.reg(l)?, self.reg(r)?);
                 let (taken, negated) = compare_jumps(op);
-                if Some(then) == self.next_block {
+                if self.falls_to(then) {
                     self.jump_to(|b| b.ab_jump(negated, l, r, 0), else_);
                 } else {
                     self.jump_to(|b| b.ab_jump(taken, l, r, 0), then);
@@ -1224,7 +1231,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 let addr = self.reg(addr)?;
                 self.jump_to(|b| b.a_jump(Opcode::Gosub, addr, 0), finally);
                 // `Ret` comes back to the instruction after the `Gosub`.
-                if Some(cont) == self.next_block {
+                if self.falls_to(cont) {
                     // Falls through.
                 } else {
                     self.jump_to(|b| b.jump(Opcode::Jmp, 0), cont);
@@ -1271,7 +1278,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
             Some(_) => immediate_compare_jumps(cmp),
             None => compare_jumps(cmp),
         };
-        let (op, target, other) = if Some(then) == self.next_block {
+        let (op, target, other) = if self.falls_to(then) {
             (negated, else_, None)
         } else {
             (taken, then, Some(else_))
@@ -1295,8 +1302,79 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
     }
 
     /// A jump to `target`, left out when it is the next block.
+    /// Whether a jump to `target` from the end of the current block is the
+    /// fall-through.
+    fn falls_to(&self, target: BlockId) -> bool {
+        self.next_block
+            .is_some_and(|next| self.resolved[next.index()] == self.resolved[target.index()])
+    }
+
+    /// [`Self::resolved`] for the blocks in layout order: a block other
+    /// than the entry emits nothing when its instructions are dead and it
+    /// jumps to the next block with no phi moves.
+    fn resolve(&self, blocks: &[BlockId]) -> Vec<BlockId> {
+        let mut resolved: Vec<BlockId> = (0..self.f.blocks.len() as u32).map(BlockId).collect();
+        for (index, &block) in blocks.iter().enumerate().rev() {
+            let b = self.f.block(block);
+            let Terminator::Jump(target) = b.term else {
+                continue;
+            };
+            let empty = block != BlockId::ENTRY
+                && b.catch.is_none()
+                && b.ret_addr.is_none()
+                && self.plan.dead[block.index()].iter().all(|&dead| dead)
+                && blocks.get(index + 1) == Some(&target);
+            if !empty {
+                continue;
+            }
+            let t = self.f.block(target);
+            let moves = t.phis.iter().any(|phi| {
+                let position = t.preds.iter().position(|&p| p == block);
+                let result = self.alloc.regs[phi.result.index()];
+                result != NONE
+                    && position.is_none_or(|at| self.alloc.regs[phi.args[at].index()] != result)
+            });
+            if !moves {
+                resolved[block.index()] = resolved[target.index()];
+            }
+        }
+        resolved
+    }
+
+    /// A back edge to a loop whose first instruction is a conditional jump
+    /// out of it repeats that test, negated, as a jump to the loop's body:
+    /// an iteration runs one branch instead of a jump and the test. The
+    /// test reads registers that hold the same values here, in the same
+    /// catch region; leaving the loop jumps to the test's target.
+    fn rotate(&mut self, target: BlockId) -> bool {
+        let head = self.labels[target.index()];
+        if head == u32::MAX {
+            return false;
+        }
+        let Some(&test) = self.builder.code().get(head as usize) else {
+            return false;
+        };
+        let Some(negated) = crate::engine::compiler::register::negated_jump(test.op) else {
+            return false;
+        };
+        let Some(&(_, exit)) = self.fixups.iter().find(|&&(at, _)| at == head) else {
+            return false;
+        };
+        if self.regions[head as usize] != self.region {
+            return false;
+        }
+        let mut repeat = test;
+        repeat.op = negated;
+        repeat.imm = head + 1;
+        let pos = std::mem::replace(&mut self.pos, self.positions[head as usize]);
+        self.emit(|b| b.raw(repeat));
+        self.pos = pos;
+        self.jump(exit);
+        true
+    }
+
     fn jump(&mut self, target: BlockId) {
-        if Some(target) != self.next_block {
+        if !self.falls_to(target) {
             self.jump_to(|b| b.jump(Opcode::Jmp, 0), target);
         }
     }

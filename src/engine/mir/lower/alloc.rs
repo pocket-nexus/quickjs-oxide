@@ -464,12 +464,32 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     let crate::engine::mir::ir::Imm::Var(var) = insn.imm else {
                         continue;
                     };
-                    if layout.in_slot(var)
-                        || index == 0
-                        || uses[value.index()] != 1
-                        || fixed.contains_key(&value)
-                    {
+                    if layout.in_slot(var) || index == 0 || fixed.contains_key(&value) {
                         continue;
+                    }
+                    // Other uses read the variable's register: they must be
+                    // in this block, before the variable changes again.
+                    if uses[value.index()] != 1 {
+                        if local_uses.get(&value).copied().unwrap_or(0) != uses[value.index()] {
+                            continue;
+                        }
+                        let last = last_use[&value];
+                        if last <= index {
+                            // A use before this write: not the definition
+                            // right before it.
+                            continue;
+                        }
+                        let changed = b.insns[index + 1..last.min(term_index)]
+                            .iter()
+                            .enumerate()
+                            .any(|(offset, later)| {
+                                !dead[block.index()][index + 1 + offset]
+                                    && later.op == Op::SetVar
+                                    && later.imm == crate::engine::mir::ir::Imm::Var(var)
+                            });
+                        if changed {
+                            continue;
+                        }
                     }
                     // The previous live instruction defines the value.
                     let Some(previous) = (0..index).rev().find(|&i| !dead[block.index()][i]) else {
@@ -479,7 +499,8 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     if def.results[0] != Some(value) || !retargetable(def.op) {
                         continue;
                     }
-                    if view.chains.contains_key(&(block.0, previous as u32)) {
+                    let key = (block.0, previous as u32);
+                    if view.chains.contains_key(&key) && !view.converted.contains(&key) {
                         continue;
                     }
                     let register = layout.var_regs[var as usize];
@@ -716,7 +737,6 @@ fn retargetable(op: Op) -> bool {
         && op.results() == 1
         && op.tied() == [None, None]
         && !early_def(op)
-        && !is_window(op)
 }
 
 /// Operations whose results may not share an operand's register.
@@ -982,7 +1002,7 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
             held.get(at).is_none_or(|&(s, _)| s >= end)
         })
     };
-    // A value read once, as a window's operand: its slot and index there,
+    // A value read only as a window's operands: its slot and index there,
     // so it can be computed in place.
     let mut hints: FxHashMap<Value, (u32, u32)> = FxHashMap::default();
     for &block in &order.blocks {
@@ -1004,9 +1024,11 @@ pub(super) fn allocate(f: &Function, layout: &Layout, order: &Order, plan: &Plan
                 continue;
             };
             let slot = entry + 1 + index as u32;
+            // A value read only here takes its first operand's slot.
             for (at, &arg) in operands.iter().enumerate() {
-                if plan.uses[arg.index()] == 1 && needs(arg) {
-                    hints.insert(arg, (slot, at as u32));
+                let here = operands.iter().filter(|&&other| other == arg).count();
+                if plan.uses[arg.index()] as usize == here && needs(arg) {
+                    hints.entry(arg).or_insert((slot, at as u32));
                 }
             }
         }
