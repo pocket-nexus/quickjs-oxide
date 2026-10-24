@@ -210,17 +210,55 @@ impl Ranges {
     }
 }
 
+/// A flag per instruction, indexed `marks[block][insn]`.
+#[derive(Default)]
+pub(super) struct Marks {
+    /// Each block's first flag, and the end.
+    offsets: Vec<u32>,
+    flags: Vec<bool>,
+}
+
+impl Marks {
+    pub(super) fn new(f: &Function) -> Marks {
+        let mut offsets = Vec::with_capacity(f.blocks.len() + 1);
+        let mut total = 0;
+        for block in &f.blocks {
+            offsets.push(total);
+            total += block.insns.len() as u32;
+        }
+        offsets.push(total);
+        Marks {
+            offsets,
+            flags: vec![false; total as usize],
+        }
+    }
+}
+
+impl std::ops::Index<usize> for Marks {
+    type Output = [bool];
+
+    fn index(&self, block: usize) -> &[bool] {
+        &self.flags[self.offsets[block] as usize..self.offsets[block + 1] as usize]
+    }
+}
+
+impl std::ops::IndexMut<usize> for Marks {
+    fn index_mut(&mut self, block: usize) -> &mut [bool] {
+        &mut self.flags[self.offsets[block] as usize..self.offsets[block + 1] as usize]
+    }
+}
+
 /// Which instructions the lowering skips, which values read a variable's
 /// register and which write into one.
 pub(super) struct Plan {
     /// Instructions not emitted: `dead[block][insn]`.
-    pub(super) dead: Vec<Vec<bool>>,
+    pub(super) dead: Marks,
     /// The register each value is bound to, [`NONE`] if any: an unchanged
     /// variable's, or the one a `SetVar` right after the definition
     /// stores to.
     pub(super) fixed: Vec<u32>,
     /// `SetVar`s whose value is already written in place.
-    pub(super) folded: Vec<Vec<bool>>,
+    pub(super) folded: Marks,
     /// The uses of each value.
     pub(super) uses: Vec<u32>,
     /// Binary operations whose right operand is an immediate, by block and
@@ -238,7 +276,7 @@ pub(super) struct Plan {
     /// `chains` entry holds the operand, not a concatenation.
     pub(super) converted: FxHashSet<(u32, u32)>,
     /// The instructions with a `chains` or `imm` entry: `special[block][insn]`.
-    pub(super) special: Vec<Vec<bool>>,
+    pub(super) special: Marks,
     /// Branches on a constant, by block: the way they always go.
     pub(super) constant: FxHashMap<u32, bool>,
 }
@@ -363,11 +401,7 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
             }
         }
     }
-    let mut dead: Vec<Vec<bool>> = f
-        .blocks
-        .iter()
-        .map(|b| vec![false; b.insns.len()])
-        .collect();
+    let mut dead = Marks::new(f);
     // Unused pure results, backwards so a chain goes at once.
     for &block in order.blocks.iter().rev() {
         let b = f.block(block);
@@ -387,7 +421,7 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
     let mut plan = Plan {
         dead,
         fixed: Vec::new(),
-        folded: Vec::new(),
+        folded: Marks::default(),
         uses,
         imm: FxHashMap::default(),
         fused: FxHashMap::default(),
@@ -395,14 +429,10 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
         chain_pos: FxHashMap::default(),
         converted: FxHashSet::default(),
         constant,
-        special: Vec::new(),
+        special: Marks::default(),
     };
     fuse(f, order, &mut plan);
-    let mut special: Vec<Vec<bool>> = f
-        .blocks
-        .iter()
-        .map(|b| vec![false; b.insns.len()])
-        .collect();
+    let mut special = Marks::new(f);
     for &(block, index) in plan.chains.keys().chain(plan.imm.keys()) {
         special[block as usize][index as usize] = true;
     }
@@ -420,15 +450,11 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
         ..
     } = plan;
     let mut fixed = vec![NONE; f.values.len()];
-    let mut folded: Vec<Vec<bool>> = f
-        .blocks
-        .iter()
-        .map(|b| vec![false; b.insns.len()])
-        .collect();
+    let mut folded = Marks::new(f);
     let view = Plan {
         dead,
         fixed: Vec::new(),
-        folded: Vec::new(),
+        folded: Marks::default(),
         uses,
         imm,
         fused,
@@ -832,10 +858,37 @@ struct Liveness<'a> {
     f: &'a Function,
     order: &'a Order,
     plan: &'a Plan,
-    conts: FxHashMap<Value, Vec<BlockId>>,
-    /// Values a terminator defines for a successor are defined at that
-    /// successor's entry.
-    edge_defs: Vec<Vec<Value>>,
+    /// Each block's successors, `finally` returns included.
+    succs: Lists<BlockId>,
+    /// The values defined at each block's entry: its phis, catch value and
+    /// return address, and the values a predecessor's terminator defines
+    /// for it.
+    entry_defs: Lists<Value>,
+    /// The values each block's terminator reads as emitted.
+    term_uses: Lists<Value>,
+}
+
+/// A list per block: one array, with each block's offset into it.
+struct Lists<T> {
+    offsets: Vec<u32>,
+    data: Vec<T>,
+}
+
+impl<T: Copy> Lists<T> {
+    fn build(blocks: usize, mut each: impl FnMut(usize, &mut Vec<T>)) -> Self {
+        let mut offsets = Vec::with_capacity(blocks + 1);
+        let mut data = Vec::new();
+        for block in 0..blocks {
+            offsets.push(data.len() as u32);
+            each(block, &mut data);
+        }
+        offsets.push(data.len() as u32);
+        Lists { offsets, data }
+    }
+
+    fn of(&self, block: BlockId) -> &[T] {
+        &self.data[self.offsets[block.index()] as usize..self.offsets[block.index() + 1] as usize]
+    }
 }
 
 impl<'a> Liveness<'a> {
@@ -846,12 +899,28 @@ impl<'a> Liveness<'a> {
                 edge_defs[succ.index()].push(v);
             }
         }
+        let conts = ret_conts(f);
+        let n = f.blocks.len();
+        let succs = Lists::build(n, |block, out| {
+            out.extend(successors(f, &conts, BlockId(block as u32)));
+        });
+        let entry_defs = Lists::build(n, |block, out| {
+            let b = &f.blocks[block];
+            out.extend(b.phis.iter().map(|phi| phi.result));
+            out.extend(b.catch);
+            out.extend(b.ret_addr);
+            out.extend(edge_defs[block].iter().copied());
+        });
+        let term_uses = Lists::build(n, |block, out| {
+            out.extend(plan.term_uses(BlockId(block as u32), &f.blocks[block].term));
+        });
         Self {
             f,
             order,
             plan,
-            conts: ret_conts(f),
-            edge_defs,
+            succs,
+            entry_defs,
+            term_uses,
         }
     }
 
@@ -866,23 +935,13 @@ impl<'a> Liveness<'a> {
             .map(|h| self.f.handlers[h.index()].catch)
     }
 
-    fn entry_defs(&self, block: BlockId) -> Vec<Value> {
-        let b = self.f.block(block);
-        let mut defs: Vec<Value> = b.phis.iter().map(|phi| phi.result).collect();
-        defs.extend(b.catch);
-        defs.extend(b.ret_addr);
-        defs
-    }
-
     /// Live-in sets by block, as sorted value lists.
     #[inline(never)]
     fn live_in(&self) -> Vec<Vec<Value>> {
-        let (f, order, plan, conts) = (self.f, self.order, self.plan, &self.conts);
+        let (f, order, plan) = (self.f, self.order, self.plan);
         let nvalues = f.values.len();
         let needs = |v: Value| self.needs(v);
         let catch_of = |block: BlockId| self.catch_of(block);
-        let entry_defs = |block: BlockId| self.entry_defs(block);
-        let edge_defs = &self.edge_defs;
         let mut live_in: Vec<Vec<Value>> = vec![Vec::new(); f.blocks.len()];
         // Without an edge back to a block at or before its source, one pass
         // in reverse layout order sees every successor's final set.
@@ -892,17 +951,57 @@ impl<'a> Liveness<'a> {
         }
         let backward = order.blocks.iter().any(|&block| {
             let at = position[block.index()];
-            successors(f, conts, block)
-                .into_iter()
+            self.succs
+                .of(block)
+                .iter()
+                .copied()
                 .chain(catch_of(block))
                 .any(|succ| position[succ.index()] <= at)
         });
+        // Each value's defining block, and each block's reads of values
+        // defined elsewhere: the uses it exposes above its definitions.
+        let mut def_block = vec![u32::MAX; nvalues];
+        for &block in &order.blocks {
+            let b = f.block(block);
+            for (index, insn) in b.insns.iter().enumerate() {
+                if !plan.dead[block.index()][index] {
+                    for r in insn.results.iter().flatten() {
+                        def_block[r.index()] = block.0;
+                    }
+                }
+            }
+            for &v in self.entry_defs.of(block) {
+                def_block[v.index()] = block.0;
+            }
+        }
+        let mut exposed: Vec<Vec<Value>> = vec![Vec::new(); f.blocks.len()];
+        let mut stamp = vec![u32::MAX; nvalues];
+        for &block in &order.blocks {
+            let b = f.block(block);
+            let mut expose = |v: Value, list: &mut Vec<Value>| {
+                if def_block[v.index()] != block.0 && stamp[v.index()] != block.0 && needs(v) {
+                    stamp[v.index()] = block.0;
+                    list.push(v);
+                }
+            };
+            let list = &mut exposed[block.index()];
+            for (index, insn) in b.insns.iter().enumerate() {
+                if plan.dead[block.index()][index] {
+                    continue;
+                }
+                for &arg in plan.args(block, index, insn).iter() {
+                    expose(arg, list);
+                }
+            }
+            for &v in self.term_uses.of(block) {
+                expose(v, list);
+            }
+        }
         let mut changed = true;
         let mut set = vec![false; nvalues];
         while changed {
             changed = false;
             for &block in order.blocks.iter().rev() {
-                let b = f.block(block);
                 let mut live: Vec<Value> = Vec::new();
                 let add = |v: Value, live: &mut Vec<Value>, set: &mut Vec<bool>| {
                     if !set[v.index()] && needs(v) {
@@ -910,7 +1009,7 @@ impl<'a> Liveness<'a> {
                         live.push(v);
                     }
                 };
-                for succ in successors(f, &conts, block) {
+                for &succ in self.succs.of(block) {
                     for &v in &live_in[succ.index()] {
                         add(v, &mut live, &mut set);
                     }
@@ -928,30 +1027,13 @@ impl<'a> Liveness<'a> {
                         add(live_in[catch.index()][at], &mut live, &mut set);
                     }
                 }
-                // The terminator's defs are its successors' entry defs.
-                for v in plan.term_uses(block, &b.term) {
+                for &v in &exposed[block.index()] {
                     add(v, &mut live, &mut set);
                 }
-                for (index, insn) in b.insns.iter().enumerate().rev() {
-                    if plan.dead[block.index()][index] {
-                        continue;
-                    }
-                    // A definition ends the value's liveness; under SSA it is
-                    // not read again above it, so the list drops it at the end.
-                    for r in insn.results.iter().flatten() {
-                        set[r.index()] = false;
-                    }
-                    for &arg in plan.args(block, index, insn).iter() {
-                        add(arg, &mut live, &mut set);
-                    }
-                }
-                for v in entry_defs(block)
-                    .into_iter()
-                    .chain(edge_defs[block.index()].iter().copied())
-                {
-                    set[v.index()] = false;
-                }
-                live.retain(|v| std::mem::take(&mut set[v.index()]));
+                // The block's own definitions are not live into it.
+                live.retain(|v| {
+                    std::mem::take(&mut set[v.index()]) && def_block[v.index()] != block.0
+                });
                 live.sort_unstable();
                 if live != live_in[block.index()] {
                     live_in[block.index()] = live;
@@ -966,12 +1048,10 @@ impl<'a> Liveness<'a> {
     /// The live ranges of the values that need temporaries.
     #[inline(never)]
     fn ranges(&self, live_in: &[Vec<Value>]) -> Ranges {
-        let (f, order, plan, conts) = (self.f, self.order, self.plan, &self.conts);
+        let (f, order, plan) = (self.f, self.order, self.plan);
         let nvalues = f.values.len();
         let needs = |v: Value| self.needs(v);
         let catch_of = |block: BlockId| self.catch_of(block);
-        let entry_defs = |block: BlockId| self.entry_defs(block);
-        let edge_defs = &self.edge_defs;
         // Ranges, block by block, backwards.
         // Built as lists from each value's earliest range, as the walk goes
         // backwards: a pool of (start, end, next) and each value's head.
@@ -1011,7 +1091,7 @@ impl<'a> Liveness<'a> {
                     live.push(v);
                 }
             };
-            for succ in successors(f, &conts, block) {
+            for &succ in self.succs.of(block) {
                 for &v in &live_in[succ.index()] {
                     set_live(v, block_end, &mut open, &mut live);
                 }
@@ -1030,7 +1110,7 @@ impl<'a> Liveness<'a> {
                 catching[v.index()] = true;
             }
             let term_slot = end_slot - 1;
-            for v in plan.term_uses(block, &b.term) {
+            for &v in self.term_uses.of(block) {
                 set_live(v, 2 * term_slot + 1, &mut open, &mut live);
             }
             for (index, insn) in b.insns.iter().enumerate().rev() {
@@ -1060,10 +1140,7 @@ impl<'a> Liveness<'a> {
                     set_live(arg, 2 * slot + 1, &mut open, &mut live);
                 }
             }
-            for v in entry_defs(block)
-                .into_iter()
-                .chain(edge_defs[block.index()].iter().copied())
-            {
+            for &v in self.entry_defs.of(block) {
                 if !needs(v) {
                     continue;
                 }

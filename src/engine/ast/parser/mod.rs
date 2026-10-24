@@ -31,6 +31,7 @@ use crate::engine::compiler::names::{NameId, NameTable};
 use crate::engine::compiler::stack_guard::ParserStackGuard;
 use crate::source::text::SourceText;
 use lookahead::LookaheadCache;
+use oxide_core::FxHashMap;
 use std::cell::RefCell;
 
 /// QuickJS `PF_IN_ACCEPTED`.
@@ -108,9 +109,10 @@ pub(super) struct FunctionState {
     /// Pattern parameters bind in the function root.
     pub(super) pattern_parameter_initialization: bool,
     pub(super) simple_params: bool,
-    /// Script: the order of global declarations, for QuickJS's
-    /// first-global-record rules (name, whether lexical).
-    pub(super) global_declarations: Vec<(NameId, bool)>,
+    /// Script: the global declarations, for QuickJS's first-global-record
+    /// rules: by name, whether the first was lexical and whether any was
+    /// not.
+    pub(super) global_declarations: FxHashMap<NameId, (bool, bool)>,
 }
 
 impl FunctionState {
@@ -120,9 +122,24 @@ impl FunctionState {
 
     pub(super) fn first_global_declaration_is_normal(&self, name: NameId) -> bool {
         self.global_declarations
-            .iter()
-            .find(|(n, _)| *n == name)
-            .is_some_and(|(_, lexical)| !lexical)
+            .get(&name)
+            .is_some_and(|&(lexical, _)| !lexical)
+    }
+
+    /// Whether a declaration of `name` that is not lexical was recorded.
+    pub(super) fn has_normal_global_declaration(&self, name: NameId) -> bool {
+        self.global_declarations
+            .get(&name)
+            .is_some_and(|&(_, normal)| normal)
+    }
+
+    /// Records a global declaration of `name`.
+    pub(super) fn declare_global(&mut self, name: NameId, lexical: bool) {
+        let entry = self
+            .global_declarations
+            .entry(name)
+            .or_insert((lexical, false));
+        entry.1 |= !lexical;
     }
 }
 
@@ -141,6 +158,8 @@ pub(crate) struct Parser<'source> {
     pub(super) stack: Vec<FunctionState>,
     pub(super) scopes: Vec<Scope>,
     pub(super) decls: Vec<super::Decl>,
+    /// Each scope's declarations by name: the last declared.
+    pub(super) scope_names: FxHashMap<(u32, NameId), DeclId>,
     pub(super) functions: Vec<FunctionInfo>,
     pub(super) module: Option<ModuleRecord>,
     /// The scope a module export declaration is parsed in, and its kind.
@@ -214,6 +233,7 @@ impl<'source> Parser<'source> {
             stack: Vec::new(),
             scopes: Vec::new(),
             decls: Vec::new(),
+            scope_names: FxHashMap::default(),
             functions: Vec::new(),
             module: is_module.then(ModuleRecord::default),
             module_export: None,
@@ -353,7 +373,7 @@ impl<'source> Parser<'source> {
             parameter_names: Vec::new(),
             pattern_parameter_initialization: false,
             simple_params: true,
-            global_declarations: Vec::new(),
+            global_declarations: FxHashMap::default(),
         });
         id
     }
@@ -413,12 +433,7 @@ impl<'source> Parser<'source> {
     }
 
     pub(super) fn decl_in_scope(&self, scope: ScopeId, name: NameId) -> Option<DeclId> {
-        self.scopes[scope.index()]
-            .decls
-            .iter()
-            .rev()
-            .copied()
-            .find(|decl| self.decls[decl.index()].name == name)
+        self.scope_names.get(&(scope.0, name)).copied()
     }
 
     /// The nearest declaration of `name` from `scope` up to its function's

@@ -8,6 +8,7 @@ use crate::engine::mir::ir::{Imm, SuspendKind, Terminator, Value, VarKind};
 use crate::engine::mir::op::Op;
 use oxide_core::bytecode::flags;
 use oxide_core::bytecode::opcode::global;
+use oxide_core::{FxHashMap, FxHashSet};
 
 impl Builder<'_, '_> {
     pub(super) fn entry(&mut self) -> Result<()> {
@@ -205,7 +206,7 @@ impl Builder<'_, '_> {
         match d.kind {
             DeclKind::Import | DeclKind::Var | DeclKind::Implicit => true,
             DeclKind::Let | DeclKind::Const | DeclKind::Class | DeclKind::Hidden => {
-                self.hf.body.decls.contains(&decl)
+                self.cx.root_body.contains(&decl)
             }
             _ => false,
         }
@@ -280,7 +281,9 @@ impl Builder<'_, '_> {
         }
         info.star_exports = module.star_exports.clone();
         // Hoisted: vars start as `undefined`, functions as closures.
-        let functions = top_level_functions(hf);
+        // The last declaration of each name wins.
+        let functions: FxHashMap<DeclRef, hir::FunctionRef> =
+            top_level_functions(hf).into_iter().collect();
         for &decl in &hf.decls {
             let d = self.decl(decl);
             let Some(&index) = self.captures.get(&(decl, false)) else {
@@ -289,8 +292,8 @@ impl Builder<'_, '_> {
             if d.kind != DeclKind::Var {
                 continue;
             }
-            match functions.iter().rev().find(|(f, _)| *f == decl) {
-                Some(&(_, function)) => {
+            match functions.get(&decl) {
+                Some(&function) => {
                     let child = self.child(function);
                     let anonymous = self.cx.function(function).name.is_none();
                     info.initializers
@@ -323,14 +326,17 @@ impl Builder<'_, '_> {
         };
         // (opcode, flags, key) in declaration order.
         let mut declarations = Vec::new();
-        let functions = top_level_functions(hf);
+        let functions: FxHashSet<DeclRef> = top_level_functions(hf)
+            .into_iter()
+            .map(|(decl, _)| decl)
+            .collect();
         for &decl in &hf.decls {
             if !self.is_global(decl) {
                 continue;
             }
             let d = self.decl(decl);
             let (op, flags) = match d.kind {
-                DeclKind::Var if functions.iter().any(|(f, _)| *f == decl) => {
+                DeclKind::Var if functions.contains(&decl) => {
                     (Op::DeclareGlobal, eval | global::FUNCTION)
                 }
                 DeclKind::Var => (Op::DeclareGlobal, eval),

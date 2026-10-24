@@ -34,6 +34,7 @@ impl<'source> Parser<'source> {
             span,
         });
         self.scopes[scope.index()].decls.push(id);
+        self.scope_names.insert((scope.0, name), id);
         id
     }
 
@@ -88,7 +89,7 @@ impl<'source> Parser<'source> {
             }
         }
         if matches!(kind, FunctionKind::Script) || (kind == FunctionKind::Eval && !self.strict()) {
-            self.state_mut().global_declarations.push((name, false));
+            self.state_mut().declare_global(name, false);
         }
         if let Some(existing) = self.decl_in_scope(var_scope, name) {
             return Ok(existing);
@@ -158,13 +159,7 @@ impl<'source> Parser<'source> {
             let state = self.state();
             (state.var_scope, state.body_scope)
         };
-        if is_eval_body
-            && self
-                .state()
-                .global_declarations
-                .iter()
-                .any(|(n, lexical)| *n == name && !lexical)
-        {
+        if is_eval_body && self.state().has_normal_global_declaration(name) {
             return Err(Error::syntax(LEXICAL_REDEFINITION, conflict_span));
         }
         // A lexical declaration directly in a catch block may not shadow the
@@ -182,7 +177,7 @@ impl<'source> Parser<'source> {
                 && self.state().first_global_declaration_is_normal(name)
                 && self.decls[existing.index()].kind.is_lexical();
             if masked {
-                self.state_mut().global_declarations.push((name, true));
+                self.state_mut().declare_global(name, true);
                 return Ok(existing);
             }
             return Err(Error::syntax(LEXICAL_REDEFINITION, conflict_span));
@@ -210,7 +205,7 @@ impl<'source> Parser<'source> {
             }
         }
         if is_global {
-            self.state_mut().global_declarations.push((name, true));
+            self.state_mut().declare_global(name, true);
             return Ok(self.add_decl(scope, scope, name, kind, Storage::Global, declaration_span));
         }
         Ok(self.add_decl(scope, scope, name, kind, Storage::Local, declaration_span))
@@ -219,7 +214,7 @@ impl<'source> Parser<'source> {
     /// A function declaration at a script's top level: a global, without the
     /// ordinary conflict check.
     pub(super) fn register_program_function(&mut self, name: NameId, span: Span) -> DeclId {
-        self.state_mut().global_declarations.push((name, false));
+        self.state_mut().declare_global(name, false);
         let (var_scope, current) = (self.state().var_scope, self.current_scope());
         if let Some(existing) = self.decl_in_scope(var_scope, name) {
             return existing;
@@ -371,7 +366,7 @@ impl<'source> Parser<'source> {
         let global =
             matches!(kind, FunctionKind::Script) || (kind == FunctionKind::Eval && !self.strict());
         if global {
-            self.state_mut().global_declarations.push((name, false));
+            self.state_mut().declare_global(name, false);
         }
         let storage = if global {
             Storage::Global

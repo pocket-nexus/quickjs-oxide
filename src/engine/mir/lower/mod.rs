@@ -15,6 +15,7 @@ use crate::engine::compiler::register::LowerError;
 use crate::engine::hir::schema::{self as hir, FunctionRef};
 use crate::engine::value::JsString;
 use crate::source::QuickJsSourceLocator;
+use crate::source::coordinates::SourceOffset;
 use oxide_core::bytecode::builder::UnitLayout;
 use oxide_core::bytecode::{Capture, CodeBuilder, CodeUnit, CodeUnitId, Handler, Opcode};
 use oxide_core::vm::compile::Compiler;
@@ -49,11 +50,34 @@ pub(crate) fn lower(
 ) -> Result<Lowered, LowerError> {
     let mark = compiler.heap_mut().roots().mark();
     let result = (|| {
-        let locator = debug
+        let index = debug
             .source
             .map(|source| QuickJsSourceLocator::from_bytes(source).index())
             .transpose()
             .map_err(|error| LowerError::Internal(error.to_string()))?;
+        // Every position the program's instructions carry, located in one
+        // pass over the source.
+        let located = index.as_ref().map(|index| {
+            let mut offsets: Vec<SourceOffset> =
+                SourceOffset::try_from_usize(0).into_iter().collect();
+            for f in &program.functions {
+                let mut add = |pos: Pos| {
+                    if pos != Pos::NONE
+                        && let Ok(offset) = SourceOffset::try_from_usize(pos.0 as usize)
+                    {
+                        offsets.push(offset);
+                    }
+                };
+                add(f.unit.definition);
+                for block in &f.blocks {
+                    add(block.term_pos);
+                    for insn in &block.insns {
+                        add(insn.pos);
+                    }
+                }
+            }
+            index.locate_all(offsets)
+        });
         let spilled: Vec<std::cell::OnceCell<Function>> = (0..program.functions.len())
             .map(|_| std::cell::OnceCell::new())
             .collect();
@@ -62,7 +86,7 @@ pub(crate) fn lower(
             spilled: &spilled,
             hir,
             debug,
-            locator,
+            located,
             keys: FxHashMap::default(),
             atoms: FxHashMap::default(),
             layouts: FxHashMap::default(),
@@ -88,7 +112,8 @@ struct Tree<'a> {
     spilled: &'a [std::cell::OnceCell<Function>],
     hir: &'a hir::Program,
     debug: &'a Debug<'a>,
-    locator: Option<crate::source::coordinates::QuickJsSourceIndex<'a>>,
+    /// The program's positions, located.
+    located: Option<crate::source::coordinates::QuickJsLocatedOffsets<'a, 'a>>,
     keys: FxHashMap<u32, PropertyKey>,
     atoms: FxHashMap<u32, StringId>,
     /// Each lowered function's variable layout, for its children's captures.
@@ -1615,20 +1640,19 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
     }
 
     fn locate(&self, pos: Pos) -> Option<(u32, u32)> {
-        let locator = self.tree.locator.as_ref()?;
+        let located = self.tree.located.as_ref()?;
         let offset = if pos == Pos::NONE { 0 } else { pos.0 };
-        locator
-            .locate_byte_offset(offset as usize)
+        located
+            .locate(SourceOffset::try_from_usize(offset as usize).ok()?)
             .ok()?
             .one_based()
     }
 
     /// The position of each emitted instruction, one entry per change.
     fn positions_table(&self) -> Box<[oxide_core::bytecode::SourcePosition]> {
-        let Some(locator) = &self.tree.locator else {
+        if self.tree.located.is_none() {
             return Box::new([]);
-        };
-        let mut cursor = locator.cursor();
+        }
         let definition = self.f.unit.definition;
         let mut table: Vec<oxide_core::bytecode::SourcePosition> = Vec::new();
         let mut last_pos = None;
@@ -1638,12 +1662,7 @@ impl<'t, 'a, 'c, 'd> FunctionLowering<'t, 'a, 'c, 'd> {
                 continue;
             }
             last_pos = Some(pos);
-            let offset = if pos == Pos::NONE { 0 } else { pos.0 };
-            let Some((line, column)) = cursor
-                .locate_byte_offset(offset as usize)
-                .ok()
-                .and_then(|at| at.one_based())
-            else {
+            let Some((line, column)) = self.locate(pos) else {
                 continue;
             };
             if table
