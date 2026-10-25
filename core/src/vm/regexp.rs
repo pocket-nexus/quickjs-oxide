@@ -274,6 +274,34 @@ pub(crate) fn regexp_object_with(
 
 #[cfg(test)]
 mod tests {
+    fn assert_owned_payload_bytes(pattern: &str, payload_bytes: usize) {
+        let program =
+            oxide_regexp::compile(&pattern.encode_utf16().collect::<Vec<_>>(), &[]).unwrap();
+        assert!(program.group_names().is_none());
+        let inline_bytes = size_of::<Option<(super::RegExpRecord, oxide_regexp::CompiledRegExp)>>()
+            + std::mem::size_of_val(program.instructions());
+        assert_eq!(
+            super::program_bytes(&program),
+            inline_bytes + payload_bytes,
+            "owned instruction payload missing from byte count for {pattern}"
+        );
+    }
+
+    #[test]
+    fn program_bytes_includes_character_ranges() {
+        assert_owned_payload_bytes("[aceg]", 4 * size_of::<oxide_regexp::CharacterRange>());
+    }
+
+    #[test]
+    fn program_bytes_includes_backreference_captures() {
+        assert_owned_payload_bytes("(a)\\1", 1);
+    }
+
+    #[test]
+    fn program_bytes_includes_backward_backreference_captures() {
+        assert_owned_payload_bytes("(a)(?<=\\1)", 1);
+    }
+
     #[test]
     fn unmarked_programs_are_freed_and_their_keys_forgotten() {
         let mut heap = crate::Heap::default();
