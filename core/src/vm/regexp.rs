@@ -40,10 +40,22 @@ pub struct RegExpStore {
     bytes: usize,
 }
 
-/// Bytes a program holds.
+/// Bytes a program holds, including the arrays its instructions own.
 fn program_bytes(program: &CompiledRegExp) -> usize {
     size_of::<Option<(RegExpRecord, CompiledRegExp)>>()
         + std::mem::size_of_val(program.instructions())
+        + program
+            .instructions()
+            .iter()
+            .map(|instruction| match instruction {
+                oxide_regexp::Instruction::Range { ranges, .. } => std::mem::size_of_val(&**ranges),
+                oxide_regexp::Instruction::BackReference { captures, .. }
+                | oxide_regexp::Instruction::BackwardBackReference { captures, .. } => {
+                    std::mem::size_of_val(&**captures)
+                }
+                _ => 0,
+            })
+            .sum::<usize>()
         + program.group_names().map_or(0, |names| {
             std::mem::size_of_val(names)
                 + names

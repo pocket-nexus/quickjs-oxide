@@ -655,9 +655,11 @@ impl Heap {
                         {
                             stack.extend(values);
                         }
+                        // The description may be a rope whose halves only
+                        // it keeps alive.
                         let description = self.symbols.get(index).description;
                         if description != NONE {
-                            self.strings.mark(description);
+                            stack.push(Value::string(crate::value::StringId(description)));
                         }
                     }
                 }
