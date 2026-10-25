@@ -388,7 +388,9 @@ pub(crate) struct Builder<'s, 'h> {
     pub(crate) cur: Option<BlockId>,
     /// The catch region new blocks belong to.
     pub(crate) handler: Option<HandlerId>,
-    pub(crate) loop_depth: u8,
+    /// Loops enclosing the current block; nesting is bounded only by the
+    /// parser's depth limit, so blocks record it clamped to `u8`.
+    pub(crate) loop_depth: u32,
     /// The position in effect and one an operation without its own takes.
     pub(crate) site: Pos,
     pub(crate) pending: Option<u32>,
@@ -480,7 +482,7 @@ impl<'s, 'h> Builder<'s, 'h> {
         let id = self.f.new_block();
         let block = self.f.block_mut(id);
         block.handler = self.handler;
-        block.loop_depth = self.loop_depth;
+        block.loop_depth = u8::try_from(self.loop_depth).unwrap_or(u8::MAX);
         id
     }
 
