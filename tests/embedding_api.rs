@@ -552,6 +552,20 @@ fn memory_report_counts_a_known_graph() {
 }
 
 #[test]
+fn symbol_rope_description_survives_collection_without_other_string_roots() {
+    let (runtime, context) = runtime();
+    context.eval("var retainedSymbol = (() => { let a = 'a'.repeat(256); let b = 'b'.repeat(256); return Symbol(a + b); })();").unwrap();
+    runtime.run_gc().unwrap();
+    // Read before allocating replacement strings in JS: reusing the freed slots
+    // for identical contents could hide premature collection of the rope halves.
+    let result = context.eval("retainedSymbol.description").unwrap();
+    assert_eq!(
+        text(&result),
+        format!("{}{}", "a".repeat(256), "b".repeat(256))
+    );
+}
+
+#[test]
 fn execution_turns_and_the_stats_entries() {
     let (runtime, context) = runtime();
     context.eval("Promise.resolve().then(() => {})").unwrap();

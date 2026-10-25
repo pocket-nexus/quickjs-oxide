@@ -3,6 +3,37 @@ use super::super::table::Table;
 use super::*;
 
 #[test]
+fn symbol_keeps_an_unflattened_rope_description_and_its_halves() {
+    let mut heap = Heap::default();
+    let left = heap.alloc_string("left").unwrap();
+    heap.roots().push(Value::string(left));
+    let right = heap.alloc_string("right").unwrap();
+    heap.roots().push(Value::string(right));
+    let rope = heap.alloc_rope(left, right).unwrap();
+    heap.roots().push(Value::string(rope));
+    let symbol = heap.alloc_symbol(Some(rope), false).unwrap();
+
+    // Only the Symbol remains rooted; its unflattened description owns both halves.
+    heap.roots().truncate(RootMark(0));
+    heap.roots().push(Value::symbol(symbol));
+    assert!(heap.strings.get(rope.index()).flat().is_none());
+    heap.collect();
+
+    assert_eq!(
+        (
+            heap.is_live(Value::string(left)),
+            heap.is_live(Value::string(right)),
+        ),
+        (true, true),
+        "a live Symbol's rope description must retain both children"
+    );
+    assert_eq!(
+        heap.string_text(heap.symbol_description(symbol).unwrap()),
+        "leftright"
+    );
+}
+
+#[test]
 fn verification_does_not_root_a_dead_weak_map_in_the_next_collection() {
     let mut heap = Heap::default();
     heap.set_gc_manual(true);

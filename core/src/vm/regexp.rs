@@ -40,10 +40,22 @@ pub struct RegExpStore {
     bytes: usize,
 }
 
-/// Bytes a program holds.
+/// Bytes a program holds, including the arrays its instructions own.
 fn program_bytes(program: &CompiledRegExp) -> usize {
     size_of::<Option<(RegExpRecord, CompiledRegExp)>>()
         + std::mem::size_of_val(program.instructions())
+        + program
+            .instructions()
+            .iter()
+            .map(|instruction| match instruction {
+                oxide_regexp::Instruction::Range { ranges, .. } => std::mem::size_of_val(&**ranges),
+                oxide_regexp::Instruction::BackReference { captures, .. }
+                | oxide_regexp::Instruction::BackwardBackReference { captures, .. } => {
+                    std::mem::size_of_val(&**captures)
+                }
+                _ => 0,
+            })
+            .sum::<usize>()
         + program.group_names().map_or(0, |names| {
             std::mem::size_of_val(names)
                 + names
@@ -274,6 +286,34 @@ pub(crate) fn regexp_object_with(
 
 #[cfg(test)]
 mod tests {
+    fn assert_owned_payload_bytes(pattern: &str, payload_bytes: usize) {
+        let program =
+            oxide_regexp::compile(&pattern.encode_utf16().collect::<Vec<_>>(), &[]).unwrap();
+        assert!(program.group_names().is_none());
+        let inline_bytes = size_of::<Option<(super::RegExpRecord, oxide_regexp::CompiledRegExp)>>()
+            + std::mem::size_of_val(program.instructions());
+        assert_eq!(
+            super::program_bytes(&program),
+            inline_bytes + payload_bytes,
+            "owned instruction payload missing from byte count for {pattern}"
+        );
+    }
+
+    #[test]
+    fn program_bytes_includes_character_ranges() {
+        assert_owned_payload_bytes("[aceg]", 4 * size_of::<oxide_regexp::CharacterRange>());
+    }
+
+    #[test]
+    fn program_bytes_includes_backreference_captures() {
+        assert_owned_payload_bytes("(a)\\1", 1);
+    }
+
+    #[test]
+    fn program_bytes_includes_backward_backreference_captures() {
+        assert_owned_payload_bytes("(a)(?<=\\1)", 1);
+    }
+
     #[test]
     fn unmarked_programs_are_freed_and_their_keys_forgotten() {
         let mut heap = crate::Heap::default();
