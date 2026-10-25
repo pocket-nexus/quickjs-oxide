@@ -19,6 +19,7 @@ pub mod string;
 pub mod symbol;
 pub mod table;
 pub mod values;
+mod verify;
 
 use std::fmt;
 

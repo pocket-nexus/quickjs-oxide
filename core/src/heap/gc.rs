@@ -901,7 +901,9 @@ impl Heap {
     /// Post-collection verification: every live record is reachable and every
     /// reachable record is live; no free slot is marked and every arena's free
     /// count agrees with its bitmap; every value-heap slot has exactly one
-    /// owner, a live range or the free space.
+    /// owner, a live range or the free space; and no live record, side table
+    /// or root names a freed record (`verify.rs`, which reads the edges
+    /// without the marking code).
     pub fn verify(&mut self) {
         self.mark_from_roots();
         fn check<T: super::arena::Record>(name: &str, arena: &super::arena::Arena<T>) {
@@ -993,6 +995,7 @@ impl Heap {
             };
             assert!(live, "gc verify: a cache entry names freed {record:?}");
         }
+        self.verify_edges();
         self.clear_marks();
     }
 }

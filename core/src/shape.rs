@@ -151,6 +151,17 @@ impl Transitions {
         }
     }
 
+    /// The child shapes.
+    pub fn children(&self) -> impl Iterator<Item = ShapeId> + '_ {
+        let (entries, map) = match self {
+            Transitions::None => (&[][..], None),
+            Transitions::Small(entries) => (&entries[..], None),
+            Transitions::Map(map) => (&[][..], Some(map)),
+        };
+        let mapped = map.into_iter().flat_map(|map| map.values().copied());
+        entries.iter().map(|entry| entry.2).chain(mapped)
+    }
+
     pub fn len(&self) -> usize {
         match self {
             Transitions::None => 0,

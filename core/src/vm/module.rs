@@ -236,6 +236,18 @@ pub struct ModuleData {
     cycle_root: Option<ObjectId>,
 }
 
+impl ModuleData {
+    /// The module records this one names: its loaded requests, its async
+    /// parents and its cycle root.
+    pub(crate) fn links(&self) -> impl Iterator<Item = ObjectId> + '_ {
+        self.requested
+            .iter()
+            .chain(&self.async_parents)
+            .chain(&self.cycle_root)
+            .copied()
+    }
+}
+
 // Slots of a module record.
 const ENVIRONMENT: usize = 0;
 const FUNCTION: usize = 1;
