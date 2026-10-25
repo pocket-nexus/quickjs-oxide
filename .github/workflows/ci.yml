@@ -122,6 +122,8 @@ jobs:
           # The same tests through the AST, HIR and MIR front end.
           OXIDE_FRONTEND=new cargo test --locked --workspace --all-targets
           OXIDE_FRONTEND=new cargo test --locked -p quickjs-oxide --features gc-stress --lib compiler::register
+          # The workspace tests above rebuilt qjs without the feature.
+          cargo build --locked -p quickjs-oxide-cli --features gc-stress --bin qjs
           OXIDE_FRONTEND=new python3 scripts/checks/check-gc-stress.py --qjs target/debug/qjs
           # Both front ends print the same output on the corpus, the probes and the position cases.
           cargo build --locked --release -p quickjs-oxide-cli --bin qjs
