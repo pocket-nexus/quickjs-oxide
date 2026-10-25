@@ -126,6 +126,28 @@ impl RegExpStore {
         &self.entry(index).1
     }
 
+    pub(crate) fn is_live(&self, index: u32) -> bool {
+        self.programs
+            .get(index as usize)
+            .is_some_and(|entry| entry.is_some())
+    }
+
+    /// The live programs' records, by index.
+    pub(crate) fn records(&self) -> impl Iterator<Item = (u32, RegExpRecord)> + '_ {
+        self.programs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, entry)| Some((index as u32, entry.as_ref()?.0)))
+    }
+
+    /// The lookup table: each `(source, flags)` and the program compiled
+    /// from it.
+    pub(crate) fn interned(&self) -> impl Iterator<Item = (RegExpRecord, u32)> + '_ {
+        self.index
+            .iter()
+            .map(|(&(source, flags), &index)| (RegExpRecord { source, flags }, index))
+    }
+
     /// Live programs.
     pub fn len(&self) -> usize {
         self.live
