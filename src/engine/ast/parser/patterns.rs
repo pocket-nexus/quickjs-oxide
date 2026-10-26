@@ -11,11 +11,11 @@ use super::support::{
     ForHeadDelimiter, IdentifierContext, for_head_regexp_allowed_after, number_key, parse_number,
 };
 use crate::engine::api::error::Error;
+use crate::engine::ast::lexer::{
+    Identifier, LexicalGoal, NumberKind, Punctuator, Span, TemplatePartKind, Token, TokenKind,
+};
 use crate::engine::ast::{
     DeclKind, Expr, ExprKind, Pattern, PatternItem, PatternKind, PatternProp, PropKey, Ref,
-};
-use crate::engine::compiler::lexer::{
-    Identifier, LexicalGoal, NumberKind, Punctuator, Span, TemplatePartKind, Token, TokenKind,
 };
 use crate::engine::value::JsString;
 
@@ -287,7 +287,7 @@ impl<'source> Parser<'source> {
     /// is where a duplicate parameter is reported.
     fn register_binding_leaf(
         &mut self,
-        name: crate::engine::compiler::names::NameId,
+        name: crate::engine::ast::names::NameId,
         span: Span,
         parameter_conflict: Span,
         declaring: Declaring,
@@ -814,7 +814,7 @@ impl<'source> Parser<'source> {
             if of {
                 matches!(&token.kind, TokenKind::Identifier(identifier) if identifier.raw == "of" && !identifier.has_escape)
             } else {
-                matches!(token.kind, TokenKind::Keyword(crate::engine::compiler::lexer::Keyword::In))
+                matches!(token.kind, TokenKind::Keyword(crate::engine::ast::lexer::Keyword::In))
             }
         })
     }
@@ -1018,7 +1018,7 @@ impl<'source> Parser<'source> {
 
 /// What kind of reference an expression is, through parentheses.
 pub(super) enum ReferenceKind {
-    Identifier(crate::engine::compiler::names::NameId),
+    Identifier(crate::engine::ast::names::NameId),
     Member,
 }
 

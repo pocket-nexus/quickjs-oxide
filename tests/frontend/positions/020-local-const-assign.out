@@ -1,0 +1,4 @@
+    at f (020-local-const-assign.js:4:16)
+    at g (020-local-const-assign.js:7:3)
+    at <eval> (020-local-const-assign.js:10:4)
+

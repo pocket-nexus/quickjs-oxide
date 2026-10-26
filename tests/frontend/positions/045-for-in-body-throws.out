@@ -1,0 +1,4 @@
+    at f (045-for-in-body-throws.js:4:28)
+    at g (045-for-in-body-throws.js:7:3)
+    at <eval> (045-for-in-body-throws.js:10:4)
+

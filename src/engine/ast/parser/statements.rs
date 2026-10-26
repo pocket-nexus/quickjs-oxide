@@ -4,13 +4,13 @@ use super::patterns::{BindingSite, Declaring, ReferenceKind};
 use super::support::{ForIterationKind, IdentifierContext};
 use super::{BreakControl, BreakKind, FunctionKind, InMode, Parser, StatementPosition, pos};
 use crate::engine::api::error::Error;
+use crate::engine::ast::lexer::{Keyword, Punctuator, Span, TokenKind};
+use crate::engine::ast::stack_guard::ParserStackFrame;
 use crate::engine::ast::{
     Catch, DeclKind, ForInStmt, ForInit, ForOfStmt, ForStmt, ForTarget, LabelId, Pattern,
     PatternKind, Ref, ScopeId, ScopeKind, Stmt, StmtKind, SwitchCase, SwitchStmt, TryStmt,
     VarDeclarator, VarKind,
 };
-use crate::engine::compiler::lexer::{Keyword, Punctuator, Span, TokenKind};
-use crate::engine::compiler::stack_guard::ParserStackFrame;
 
 impl<'source> Parser<'source> {
     pub(super) fn parse_script_body(&mut self) -> Result<Vec<Stmt>, Error> {
@@ -1016,7 +1016,7 @@ impl<'source> Parser<'source> {
 }
 
 pub(super) fn binding(
-    name: crate::engine::compiler::names::NameId,
+    name: crate::engine::ast::names::NameId,
     span: Span,
     scope: ScopeId,
 ) -> Pattern {

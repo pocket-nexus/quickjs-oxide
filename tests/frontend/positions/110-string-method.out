@@ -1,0 +1,5 @@
+    at repeat (native)
+    at f (110-string-method.js:4:3)
+    at g (110-string-method.js:7:3)
+    at <eval> (110-string-method.js:10:4)
+

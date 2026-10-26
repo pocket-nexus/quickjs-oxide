@@ -1,0 +1,5 @@
+    at call (054-private-method-missing.js:2:44)
+    at f (054-private-method-missing.js:4:9)
+    at g (054-private-method-missing.js:7:3)
+    at <eval> (054-private-method-missing.js:10:4)
+

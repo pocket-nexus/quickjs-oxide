@@ -1,0 +1,5 @@
+    at Array (native)
+    at f (112-array-length.js:4:19)
+    at g (112-array-length.js:7:3)
+    at <eval> (112-array-length.js:10:4)
+

@@ -4,7 +4,7 @@ This page describes how the core (`quickjs-oxide-core`, in [`core/`](../../core/
 
 ## Code
 
-The root crate's front end parses and resolves source into stack code; the register lowering (`src/engine/compiler/register`) turns each function into a `CodeUnit` of the core. An instruction (`Insn`) is 8 bytes: a typed `Opcode`, three 8-bit operands `a`, `b`, `c` and a 32-bit `imm` (a constant index, an absolute jump target, a property key, a scope slot or an `i32` literal, as the opcode's `Format` says). A unit also holds its exception handlers (`start..end`, the target and the register the thrown value lands in, innermost first), its register, parameter and local counts, its flags (`STRICT`, `CONSTRUCTOR`, `ARGUMENTS`, `GENERATOR`, `ASYNC`, …) and the number of its cache sites.
+The root crate's front end parses and resolves source into the HIR; the middle end builds each function's SSA graph and its lowering (`src/engine/mir/lower`) turns it into a `CodeUnit` of the core. An instruction (`Insn`) is 8 bytes: a typed `Opcode`, three 8-bit operands `a`, `b`, `c` and a 32-bit `imm` (a constant index, an absolute jump target, a property key, a scope slot or an `i32` literal, as the opcode's `Format` says). A unit also holds its exception handlers (`start..end`, the target and the register the thrown value lands in, innermost first), its register, parameter and local counts, its flags (`STRICT`, `CONSTRUCTOR`, `ARGUMENTS`, `GENERATOR`, `ASYNC`, …) and the number of its cache sites.
 
 `Runtime::publish` runs the validator (`bytecode/validate.rs`) once per unit and appends it to the `CodeStore`: every register operand is below `register_count`, every call window and `NewArray` range fits, every target, constant, child and capture index is in range. The loop then indexes without further checks of its own; a validator failure is an internal error of the lowering, never a JavaScript exception. `qjs --disassemble FILE` prints the register code.
 
@@ -22,7 +22,7 @@ The register file (`VmStack::registers`) is one `Vec<Value>`; the frame table (`
 | `argc` | the actual argument count |
 | `flags` | `ENTRY` (entered from Rust: its return leaves the loop), `CONSTRUCT`, `TAIL`, and the `VIA_*` backtrace marks of a rewritten `call` or `apply` |
 
-A frame's window is register 0 (`this`), the parameters, a hidden `new.target` local when the function reads it, the locals, then the operand temporaries. A function with the `ARGUMENTS` flag (`arguments` or a rest parameter) keeps the arguments past its parameters above its registers, where `NewArguments` and `Rest` read them. Calls follow the stack code's operand order: `Call a, b, c` has the callee in `b` and `c` arguments from `b + 1`, and the callee's window starts at `b`, where the call writes `this`; `CallMethod` and `New` have the receiver or `new.target` in `b` and start the window at `b + 1`. No argument is copied either way.
+A frame's window is register 0 (`this`), the parameters, a hidden `new.target` local when the function reads it, the locals, then the temporaries. A function with the `ARGUMENTS` flag (`arguments` or a rest parameter) keeps the arguments past its parameters above its registers, where `NewArguments` and `Rest` read them. A call's operands occupy consecutive registers, where the lowering computes them: `Call a, b, c` has the callee in `b` and `c` arguments from `b + 1`, and the callee's window starts at `b`, where the call writes `this`; `CallMethod` and `New` have the receiver or `new.target` in `b` and start the window at `b + 1`. No argument is copied either way.
 
 Entering a frame (`enter_frame`) reserves the window, clears every register past the arguments to `undefined`, coerces a sloppy function's `undefined` or `null` receiver to the global object (a primitive one to its wrapper), pushes the frame and sets `top` to the window's end. `registers[..top]` are roots. Registers above a returned frame are dead; when a frame resumes over registers a collection may have freed since they were last below `top` (`stale_from`), `raise_top` clears them before they become roots again.
 
@@ -30,12 +30,12 @@ Entering a frame (`enter_frame`) reserves the window, clears every register past
 
 ### Past the 256-register window
 
-Register operands address 256 registers (`bytecode::WINDOW`). A function that needs more is laid out by the lowering's `Layout::of`:
+Register operands address 256 registers (`bytecode::WINDOW`). The lowering fits a function that needs more in `fit` (`src/engine/mir/lower/mod.rs`):
 
-- **Locals past the window** live in the slots of a spill scope (`NewSpill`, `LoadSlot`, `StoreSlot`, and `Capture::Slot` for a child that captures one), held in the register after the window's locals, with the temporaries above it. Locals are never placed above the temporaries, where every call's window would overwrite them.
-- **Temporaries past the window** live in slots of the same scope after the spilled locals. The window keeps at most a quarter of itself for locals, then the spill register, the temporaries that fit, and eight scratch registers at the top: one carries a value between a slot and a constant or another slot, the other seven take turns as the operands and results of the instruction being built (`LoadSlot` before, `StoreSlot` after). Iterator records, `yield`'s resumption pair and super references are copied into consecutive scratch registers and back. A call of up to seven operands runs on a scratch run; a larger one becomes `CallSpread` or `NewSpread` over an array of its arguments, and an array literal is built by `DefineElem`. `Gosub`, `ForInNext`, catch handlers and close stubs reach spilled depths through stubs after the code.
+- **Variables past the window** live in the slots of a spill scope (`NewSpill`, `LoadSlot`, `StoreSlot`, and `Capture::Slot` for a child that captures one), held in the register after the window's locals, with the temporaries above it. Locals are never placed above the temporaries, where every call's window would overwrite them. `fit` spills local variables from the last one until the values fit beside the others; a `GetVar` of a spilled variable is a `LoadSlot` and a `SetVar` a `StoreSlot`.
+- **Values past the window.** When the values need more registers than the window holds even with every local variable in the spill scope, `lower/spill.rs` turns the longest-lived instruction results into variables of their own, written once after their definition and read right before each use, and the layout puts them in the spill scope too. It moves as many as the registers overflow, doubling the count until the function fits.
 
-A function inside the window lowers exactly as it would without this path. The `register-stress` feature of the root crate lowers every function with two register temporaries, so the whole corpus and Test262 exercise it. The `LoadWide` and `StoreWide` opcodes (registers above the window by absolute index) exist in the core and its tests; the lowering emits neither.
+A function inside the window lowers exactly as it would without this path. The `LoadWide` and `StoreWide` opcodes (registers above the window by absolute index) exist in the core and its tests; the lowering emits neither.
 
 ## The loop
 
@@ -114,9 +114,9 @@ Builtins are natives: one `Native` enum generated with its table of entry points
 ## Verification
 
 - The loop, frames, calls and suspension: `core/tests/vm.rs` and the corpus in `core/tests/corpus`, also under `cargo test -p quickjs-oxide-core --features gc-stress` and `scripts/checks/check-gc-stress.py`.
-- Caches: `core/tests/ic.rs` and `src/engine/compiler/register/ic_tests.rs`.
+- Caches: `core/tests/ic.rs` and `src/engine/mir/ic_tests.rs`.
 - Instruction encoding and validation: `core/tests/bytecode.rs`.
-- The lowering and the register window: `src/engine/compiler/register/run_tests.rs` and `window_tests.rs`, with `--features register-stress`.
+- The lowering and the register window: `src/engine/mir/run_tests.rs` and `window_tests.rs`, also under `cargo test -p quickjs-oxide --features gc-stress --lib mir::`.
 - Language semantics: `cargo test --locked --workspace --all-targets` and the [Test262 guide](../test262.md).
 - Cost: [Measurement method](measurement.md) and the gates in [Execution principles](principles.md).
 

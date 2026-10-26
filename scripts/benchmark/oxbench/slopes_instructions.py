@@ -5,7 +5,7 @@ one CPU, and reports the per-iteration slope (I(2N) - I(N)) / N, the median
 over the repeats. Startup, compilation and lowering cancel in the slope;
 nothing else is subtracted. The engine is the root crate's measurement hook
 (`run_probe_file`, an ignored test in
-src/engine/compiler/register/run_tests.rs):
+src/engine/mir/run_tests.rs):
 
     cargo test --release --lib --no-run   # prints the binary path
     python3 scripts/benchmark/bench.py slopes instructions \\
@@ -114,7 +114,7 @@ def instructions(command: list, env: dict, cpu: int, path: Path) -> int:
 
 def hook(binary: str) -> tuple:
     """The root crate's measurement hook."""
-    command = [binary, "--exact", "engine::compiler::register::run_tests::run_probe_file",
+    command = [binary, "--exact", "engine::mir::run_tests::run_probe_file",
                "--ignored", "--nocapture", "--test-threads=1"]
     return command, {"PROBE_FILE": "{file}"}
 

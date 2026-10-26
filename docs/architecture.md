@@ -1,6 +1,6 @@
 # Workspace architecture
 
-The engine is three crates. `quickjs-oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `quickjs-oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into QuickJS-shaped stack code, the register lowering that turns that code into the core's register code, and the embedding API over the core. The command line, the WebAssembly build, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
+The engine is three crates. `quickjs-oxide-core` (`core/`) holds the register bytecode, the heap and its collector, the loop that runs the bytecode, the builtins and the runtime that holds them. `quickjs-oxide-regexp` (`regexp/`) is the regular-expression engine and the Unicode tables. The root crate `quickjs-oxide` (`src/`) holds what the core does not: the front end that parses JavaScript into a syntax tree and resolves it into the HIR, the middle end that turns each function into an SSA graph (the MIR) and lowers it to the core's register code, and the embedding API over the core. The command line, the WebAssembly build, the host adapters and the Test262 runner use the engine only through that API. The core's design record, with its rooting rule and its module layout, is [`core/README.md`](../core/README.md).
 
 ## Crates
 
@@ -10,7 +10,7 @@ The three engine crates and the workspace members that consume them:
 | --- | --- | --- | --- |
 | `quickjs-oxide-core` | `core/` | `quickjs-oxide-regexp` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
 | `quickjs-oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
-| `quickjs-oxide` | `src/` | `quickjs-oxide-core`, `quickjs-oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
+| `quickjs-oxide` | `src/` | `quickjs-oxide-core`, `quickjs-oxide-regexp`, `num-bigint`, `num-traits` | the front end, the middle end and its register lowering, the embedding API |
 | `quickjs-oxide-cli` | `apps/cli` | the root crate, `quickjs-oxide-host` | the `qjs` binary |
 | `quickjs-oxide-web` | `apps/web` | the root crate, `quickjs-oxide-web-host` | the WebAssembly bindings the site runs |
 | `quickjs-oxide-host` | `adapters/native` | the root crate | `SystemHost`: the system clock and the TZif/POSIX time-zone rules |
@@ -31,31 +31,28 @@ src/
   source/          exact source bytes, offsets, QuickJS line/column mapping;
                    `unicode` wraps quickjs-oxide-regexp's tables for JsString
   engine/
-    compiler/      the front end: lexer, parser, scopes and name resolution,
-                   closure capture, stack-code emission, local optimizations
-      register/    the lowering: stack code to quickjs-oxide-core register code,
-                   published into the core's code store
-    code/          the front end's output: stack instructions, the opcode
-                   table, stack-size computation, unlinked function and
-                   module records, debug positions
-    value/         the front end's primitives: JsString, JsBigInt, constant
-                   values and the Number-to-string conversion
-    ast/           the new front end's syntax tree, and its parser: the same
-                   grammar decisions and early errors as compiler/parser, with
-                   the scopes and declarations it records
+    ast/           the front end's lexer, name table and parser stack guard,
+                   the parser, and the syntax tree with the scopes and
+                   declarations the parser records
     hir/           the HIR schema generated from contracts/spec/hir.ts: its
-                   types, binary reader and writer, text dump and strip
+                   types, binary reader and writer, text dump and strip;
+                   `hir::build` resolves every name and builds the HIR
     mir/           the middle end's SSA form: the operation table over the
                    core's opcodes with their effects, the verifier and dump;
       build/       HIR to MIR, one graph per function
       lower/       MIR to register code: block layout, liveness and linear
                    scan, spilling, instruction selection, handler and
                    position tables
+      compile.rs   the driver: source to register code for scripts, eval
+                   and modules
+    value/         the front end's primitives: JsString, JsBigInt, constant
+                   values and the Number-to-string conversion
+    limits.rs      the compile-time limits QuickJS sets
     api/           the public embedding boundary; `api::core` is the API over
                    quickjs-oxide-core, `api::error` the front end's diagnostics
 ```
 
-`engine::api` is the only public engine module; `compiler`, `code`, `value`, `ast`, `hir` and `mir` are crate-private. `scripts/checks/check-source-layout.py` enforces this layout and the API's re-export boundary.
+`engine::api` is the only public engine module; `ast`, `hir`, `mir`, `value` and `limits` are crate-private. `scripts/checks/check-source-layout.py` enforces this layout and the API's re-export boundary.
 
 ## Host boundary
 
@@ -79,14 +76,14 @@ Compilation and module loading are function pointers on the core's services, bec
 
 A source passes four stages:
 
-1. **Front end** (`src/engine/compiler`). The parser emits `IrOp`s into a recursive `FunctionIr` tree; identifier resolution runs child-first once every scope is known, as QuickJS's `resolve_scope_var` does; then `lowering` emits QuickJS-shaped stack `Instruction`s, `optimize` applies bounded local rewrites, and `compute_stack_size` (`code/bytecode.rs`) computes each function's maximum operand-stack depth and enforces QuickJS's stack bound. The result is an `UnlinkedFunction` tree (or an `UnlinkedModule` with its request, import and export tables) whose operand-stack depth is static at every instruction.
-2. **Register lowering** (`src/engine/compiler/register`). `analysis` records the stack depth, the active catch regions and the join points at every reachable instruction. The lowering then walks each function with a symbolic stack: register 0 is `this`, then the parameters, the locals and one temporary per stack depth, so the stack depth is the register allocator. Captured bindings become cells. A function whose locals or operand stack pass the 256-register window keeps the rest in the slots of a spill scope, reached through scratch registers at the top of the window. A `+` chain that starts with a string constant and continues with constants becomes one `ConcatN` over the operands' temporaries. The lowering builds each function as an `oxide_core::bytecode::CodeUnit` with the core's `CodeBuilder`, which numbers the inline-cache sites.
+1. **Front end** (`src/engine/ast`, `src/engine/hir`). `ast::parser` builds a syntax tree over the lexer and records every scope and declaration with QuickJS's early errors and positions. `hir::build` resolves every name to a declaration, as QuickJS's `resolve_scope_var` does once all scopes are known, and records closure captures and TDZ checks. The result is the HIR: the bound function tree, or a module with its request, import and export tables.
+2. **Middle end** (`src/engine/mir`). `mir::build` turns each function into an SSA graph in QuickJS's emission order, with the function's bindings as variables (one register each, a captured binding holding its cell) and everything else as values; it enforces QuickJS's operand-stack bound on calls. `mir::lower` lays out the blocks (a loop's test repeats on its back edge), keeps `this` in register 0 with the parameters, `new.target` and the other variables after it, and gives the values the registers above them by linear scan over live ranges, placing call operands directly in their call window. A function whose variables pass the 256-register window keeps the rest in the slots of a spill scope; a function whose values still overflow it moves its longest-lived values into variables. A `+` chain of string concatenations becomes one `ConcatN`. The lowering emits each function as an `oxide_core::bytecode::CodeUnit` with the core's `CodeBuilder`, which numbers the inline-cache sites, together with its handler and position tables. `mir::compile` drives the pipeline for scripts, `eval` and modules.
 3. **Publication** (`quickjs-oxide-core`). `Compiler::publish` runs the core's validator over each unit once, children first, and assigns its inline-cache entries. A unit published through `Runtime::compiler()` (the program, its modules, and by default whatever the embedder compiles) goes into the `CodeStore` and lives as long as the runtime; code compiled at run time (`eval`, `new Function`, `$262.evalScript`) and code the embedder compiles through `Runtime::transient_compiler()` (the API's `transient` option) is published into the heap, which frees it once no function, frame or job reaches it ([The heap](heap.md#code-compiled-at-run-time), [code lifetime](../src/engine/api/README.md#code-lifetime)). The loop runs a published unit's instructions as they are.
 4. **Instantiation**. `instantiate` allocates one `FunctionBytecode` record per unit (its constant table and its children) under one safepoint and returns the script's function object, which the API runs with `Runtime::run_script`. A module's tree is described to the core's module records (environment cells, imports, exports) and linked and evaluated by the core.
 
-The engine has a second front end beside stages 1 and 2, selected per runtime with `qjs --frontend=old|new` or the `OXIDE_FRONTEND` variable, and per build with `OXIDE_DEFAULT_FRONTEND` (the default is `old`). `ast::parser` builds a syntax tree over the same lexer; `hir::build` resolves every name to a declaration and records captures and TDZ checks; `mir::build` turns each function into an SSA graph in QuickJS's emission order, with a function's bindings as variables and everything else as values; `mir::lower` lays out the blocks (a loop's test repeats on its back edge), allocates registers by linear scan over live ranges, places call operands directly in their call window, spills the longest-lived values of a function that needs more than 256 registers into variables, and emits the same `CodeUnit`s, handler tables and position tables as stage 2. Stages 3 and 4 are shared. A program prints the same stdout, stderr and `Error.stack` text under either; `scripts/frontend/diff.py` compares them.
+`qjs --dump-ast`, `--dump-hir` and `--dump-mir` print a source's syntax tree, HIR and MIR.
 
-Debug positions follow the same path: the front end's pc-to-source table becomes the unit's sparse position table, from which errors take `stack`. `DebugInfoMode` (`Runtime::set_debug_info_mode`) chooses what a newly compiled function keeps: `Full`, `StripSource` (positions without source text) or `StripDebug` (neither). `Runtime::disassemble` (`qjs --disassemble`) prints the register code of a source.
+Debug positions follow the same path: the lowering's pc-to-source table becomes the unit's sparse position table, from which errors take `stack`. `DebugInfoMode` (`Runtime::set_debug_info_mode`) chooses what a newly compiled function keeps: `Full`, `StripSource` (positions without source text) or `StripDebug` (neither). `Runtime::disassemble` (`qjs --disassemble`) prints the register code of a source.
 
 ## The loop
 

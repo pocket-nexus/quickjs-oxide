@@ -1,0 +1,4 @@
+    at f (007-call-args-multiline.js:4:3)
+    at g (007-call-args-multiline.js:10:3)
+    at <eval> (007-call-args-multiline.js:13:4)
+

@@ -139,7 +139,7 @@ The additional runs [AGENTS.md](../../AGENTS.md) requires for some areas, base
 against candidate:
 
 ```sh
-# Compilation (src/source/, src/engine/compiler/)
+# Compilation (src/source/, src/engine/ast/, src/engine/hir/, src/engine/mir/)
 python3 scripts/benchmark/bench.py compile corpus --output /tmp/oxide-corpus
 BASE_PROBE=$(python3 scripts/benchmark/bench.py compile probe --repo /tmp/oxide-base --output /tmp/oxide-probe-base | tail -1)
 CANDIDATE_PROBE=$(python3 scripts/benchmark/bench.py compile probe --repo . --output /tmp/oxide-probe-candidate | tail -1)

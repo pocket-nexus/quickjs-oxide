@@ -1,0 +1,5 @@
+    at h (105-rest-param.js:2:35)
+    at f (105-rest-param.js:4:4)
+    at g (105-rest-param.js:7:3)
+    at <eval> (105-rest-param.js:10:4)
+

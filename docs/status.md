@@ -4,7 +4,7 @@ quickjs-oxide is a Rust JavaScript engine available through its command-line app
 
 ## Engine
 
-- The front end (`src/engine/compiler`) parses Script and ECMAScript Module source, resolves bindings and emits stack code; the register lowering (`src/engine/compiler/register`) turns each function into a code unit of `quickjs-oxide-core`. The core validates each unit once when it is published.
+- The front end (`src/engine/ast`, `src/engine/hir`) parses Script and ECMAScript Module source into a syntax tree and resolves its bindings into the HIR; the middle end (`src/engine/mir`) turns each function into an SSA graph and lowers it to a code unit of `quickjs-oxide-core`. The core validates each unit once when it is published.
 - The core runs register bytecode in one loop over register windows, with inline caches for property reads and writes, global accesses and construction, a fast path for iterating ordinary arrays, and suspension for generators and async functions. `qjs --disassemble FILE` prints the register code.
 - The heap holds NaN-boxed values, typed arenas, a value heap, shapes with validity cells and a mark-sweep collector that runs on heap growth. `RuntimeOptions` sets the collection threshold, its growth factor, a heap cap and the register file's limit; `MemoryReport` reports what every part of the runtime holds.
 - The core implements objects, strings, numbers, BigInts, regular expressions (through `quickjs-oxide-regexp`), binary data, collections, weak references, Promises, jobs, modules, `SharedArrayBuffer`/`Atomics` and the corresponding builtins.

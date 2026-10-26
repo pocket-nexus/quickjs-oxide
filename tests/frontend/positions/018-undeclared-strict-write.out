@@ -1,0 +1,4 @@
+    at f (018-undeclared-strict-write.js:4:17)
+    at g (018-undeclared-strict-write.js:7:3)
+    at <eval> (018-undeclared-strict-write.js:10:4)
+

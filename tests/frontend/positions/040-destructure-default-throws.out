@@ -1,0 +1,4 @@
+    at f (040-destructure-default-throws.js:4:12)
+    at g (040-destructure-default-throws.js:7:3)
+    at <eval> (040-destructure-default-throws.js:10:4)
+

@@ -11,8 +11,8 @@ use super::ir::{
     BlockId, CmpOp, Constant, Function, Imm, Insn, Pos, SuspendKind, Terminator, ThrowKind, Value,
 };
 use super::op::Op;
-use crate::engine::compiler::register::LowerError;
 use crate::engine::hir::schema::FunctionRef;
+use crate::engine::mir::compile::LowerError;
 use crate::engine::value::JsString;
 use crate::source::QuickJsSourceLocator;
 use crate::source::coordinates::{QuickJsSourceIndex, SourceOffset};
@@ -638,11 +638,18 @@ impl<'t, 'a, 'h, 'c, 'd> FunctionLowering<'t, 'a, 'h, 'c, 'd> {
                     return Ok(());
                 }
                 let dst = self.reg(r)?;
+                let width = self.f.vars[var as usize].width;
                 if let Some((spill, slot)) = self.slot(var)? {
-                    self.emit(|b| b.ab_int(Opcode::LoadSlot, dst, spill, slot));
+                    for w in 0..width {
+                        self.emit(|b| {
+                            b.ab_int(Opcode::LoadSlot, dst + w, spill, slot + i32::from(w))
+                        });
+                    }
                 } else {
                     let src = self.var_reg(var)?;
-                    self.mov(dst, src);
+                    for w in 0..width {
+                        self.mov(dst + w, src + w);
+                    }
                 }
             }
             Op::SetVar => {
@@ -650,11 +657,18 @@ impl<'t, 'a, 'h, 'c, 'd> FunctionLowering<'t, 'a, 'h, 'c, 'd> {
                     unreachable!("a var")
                 };
                 let src = a(self, 0)?;
+                let width = self.f.vars[var as usize].width;
                 if let Some((spill, slot)) = self.slot(var)? {
-                    self.emit(|b| b.ab_int(Opcode::StoreSlot, src, spill, slot));
+                    for w in 0..width {
+                        self.emit(|b| {
+                            b.ab_int(Opcode::StoreSlot, src + w, spill, slot + i32::from(w))
+                        });
+                    }
                 } else {
                     let dst = self.var_reg(var)?;
-                    self.mov(dst, src);
+                    for w in 0..width {
+                        self.mov(dst + w, src + w);
+                    }
                 }
             }
             Op::Copy | Op::IterIterator => {
@@ -1403,7 +1417,7 @@ impl<'t, 'a, 'h, 'c, 'd> FunctionLowering<'t, 'a, 'h, 'c, 'd> {
         let Some(&test) = self.builder.code().get(head as usize) else {
             return false;
         };
-        let Some(negated) = crate::engine::compiler::register::negated_jump(test.op) else {
+        let Some(negated) = negated_jump(test.op) else {
             return false;
         };
         let Some(&(_, exit)) = self.fixups.iter().find(|&&(at, _)| at == head) else {
@@ -1463,7 +1477,7 @@ impl<'t, 'a, 'h, 'c, 'd> FunctionLowering<'t, 'a, 'h, 'c, 'd> {
             Constant::String(string) => {
                 let string = *string;
                 let text = self.tree.string(string).clone();
-                if crate::engine::compiler::register::is_tagged_int_atom(&text) {
+                if is_tagged_int_atom(&text) {
                     // QuickJS keeps a literal spelling an index as its own
                     // string, not an atom.
                     let heap = self.compiler.heap_mut();
@@ -1732,4 +1746,61 @@ fn compare_jumps(op: CmpOp) -> (Opcode, Opcode) {
         CmpOp::StrictEq => (Opcode::JStrictEq, Opcode::JStrictNeq),
         CmpOp::StrictNeq => (Opcode::JStrictNeq, Opcode::JStrictEq),
     }
+}
+
+/// The compare-jump taken exactly when `op` is not, if there is one.
+fn negated_jump(op: Opcode) -> Option<Opcode> {
+    use Opcode::*;
+    Some(match op {
+        JTrue => JFalse,
+        JFalse => JTrue,
+        JLt => JNlt,
+        JNlt => JLt,
+        JLte => JNlte,
+        JNlte => JLte,
+        JGt => JNgt,
+        JNgt => JGt,
+        JGte => JNgte,
+        JNgte => JGte,
+        JEq => JNeq,
+        JNeq => JEq,
+        JStrictEq => JStrictNeq,
+        JStrictNeq => JStrictEq,
+        JLtI => JNltI,
+        JNltI => JLtI,
+        JLteI => JNlteI,
+        JNlteI => JLteI,
+        JGtI => JNgtI,
+        JNgtI => JGtI,
+        JGteI => JNgteI,
+        JNgteI => JGteI,
+        JEqI => JNeqI,
+        JNeqI => JEqI,
+        JStrictEqI => JStrictNeqI,
+        JStrictNeqI => JStrictEqI,
+        _ => return None,
+    })
+}
+
+/// Whether QuickJS's `JS_NewAtom` makes `string` a tagged integer atom: the
+/// canonical decimal spelling of an integer up to `JS_ATOM_MAX_INT`.
+pub(crate) fn is_tagged_int_atom(string: &JsString) -> bool {
+    let len = string.len();
+    if len == 0 || len > 10 {
+        return false;
+    }
+    let mut value: u64 = 0;
+    for (index, unit) in string.utf16_units().enumerate() {
+        let Some(digit) = unit
+            .checked_sub(u16::from(b'0'))
+            .filter(|digit| *digit <= 9)
+        else {
+            return false;
+        };
+        if index == 0 && digit == 0 && len > 1 {
+            return false;
+        }
+        value = value * 10 + u64::from(digit);
+    }
+    value <= i32::MAX as u64
 }

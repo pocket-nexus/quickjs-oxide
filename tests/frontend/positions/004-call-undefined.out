@@ -1,0 +1,4 @@
+    at f (004-call-undefined.js:4:3)
+    at g (004-call-undefined.js:7:3)
+    at <eval> (004-call-undefined.js:10:4)
+

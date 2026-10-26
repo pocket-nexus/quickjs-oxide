@@ -1,0 +1,5 @@
+    at <anonymous> (102-async-arrow.js:4:19)
+    at f (102-async-arrow.js:4:25)
+    at g (102-async-arrow.js:7:3)
+    at <eval> (102-async-arrow.js:10:4)
+

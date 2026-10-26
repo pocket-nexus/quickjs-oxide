@@ -464,13 +464,6 @@ impl JsString {
         Rc::ptr_eq(&self.0, &other.0)
     }
 
-    /// The address of the representation, which [`Self::same_representation`]
-    /// compares; it identifies the string while a clone of it is alive.
-    #[must_use]
-    pub(crate) fn address(&self) -> usize {
-        Rc::as_ptr(&self.0).addr()
-    }
-
     #[must_use]
     pub fn content_hash(&self) -> u32 {
         if let Some(hash) = self.0.content_hash.get() {
@@ -1695,7 +1688,6 @@ pub enum PrimitiveValue {
     Int(i32),
     Float(f64),
     BigInt(JsBigInt),
-    String(JsString),
 }
 
 impl PrimitiveValue {
@@ -1737,7 +1729,6 @@ impl PrimitiveValue {
                 }
                 value.to_string()
             }
-            Self::String(value) => return Ok(value.linearize()),
         };
         Ok(JsString::try_from_utf8(&text)?)
     }
@@ -1746,7 +1737,6 @@ impl PrimitiveValue {
     #[expect(clippy::float_cmp)]
     pub fn strict_equal(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::String(left), Self::String(right)) => left == right,
             (Self::BigInt(left), Self::BigInt(right)) => left == right,
             (Self::Int(left), Self::Int(right)) => left == right,
             (left, right) => match (left.as_number(), right.as_number()) {

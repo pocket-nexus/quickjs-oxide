@@ -1,0 +1,5 @@
+    at anonymous (<input>:3:8)
+    at f (081-new-function.js:4:3)
+    at g (081-new-function.js:7:3)
+    at <eval> (081-new-function.js:10:4)
+

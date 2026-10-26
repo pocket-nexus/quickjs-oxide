@@ -1,11 +1,10 @@
 //! The parser: source text to [`Program`].
 //!
-//! The grammar decisions follow QuickJS 2026-06-04 as the stack-code parser
-//! in `compiler::parser` did: the same non-committing lookahead probes choose
-//! arrow functions, destructuring assignments, `for` heads and contextual
-//! keywords, the same early errors are reported at the same tokens in the
-//! same order, and the same recursion weights bound nesting. Instead of
-//! emitting code, every production returns its tree.
+//! The grammar decisions follow QuickJS 2026-06-04: non-committing
+//! lookahead probes choose arrow functions, destructuring assignments, `for`
+//! heads and contextual keywords, early errors are reported at QuickJS's
+//! tokens in QuickJS's order, and QuickJS's recursion weights bound nesting.
+//! Every production returns its tree.
 
 mod classes;
 mod declare;
@@ -26,9 +25,9 @@ use super::{
     Program, ProgramKind, Scope, ScopeId, ScopeKind,
 };
 use crate::engine::api::error::Error;
-use crate::engine::compiler::lexer::{LexContext, Lexer, LexerOptions, LexicalGoal, Span, Token};
-use crate::engine::compiler::names::{NameId, NameTable};
-use crate::engine::compiler::stack_guard::ParserStackGuard;
+use crate::engine::ast::lexer::{LexContext, Lexer, LexerOptions, LexicalGoal, Span, Token};
+use crate::engine::ast::names::{NameId, NameTable};
+use crate::engine::ast::stack_guard::ParserStackGuard;
 use crate::source::text::SourceText;
 use lookahead::LookaheadCache;
 use oxide_core::FxHashMap;
@@ -180,7 +179,7 @@ impl<'source> Parser<'source> {
     /// Parses a script.
     ///
     /// # Errors
-    /// Returns the first syntax error, as the stack-code parser reports it.
+    /// Returns the first syntax error, as QuickJS reports it.
     pub(crate) fn parse_script(source: &'source SourceText) -> Result<Program, Error> {
         Self::parse_root(source.carrier(), Some(source), ProgramKind::Script)
     }
@@ -204,7 +203,7 @@ impl<'source> Parser<'source> {
         source_text: Option<&'source SourceText>,
         kind: ProgramKind,
     ) -> Result<Program, Error> {
-        crate::engine::compiler::validate_source_length(source.len())?;
+        crate::engine::limits::validate_source_length(source.len())?;
         let is_module = kind == ProgramKind::Module;
         let options = LexerOptions {
             context: LexContext {

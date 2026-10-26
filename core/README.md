@@ -3,8 +3,9 @@
 The engine of quickjs-oxide: NaN-boxed values, typed arenas and a value
 heap under a non-moving mark-sweep collector, shapes, register bytecode and
 the loop that runs it, the builtins, and the `Runtime` that holds them. The
-root crate compiles JavaScript for it (the front end and the register
-lowering in `src/engine/compiler`) and embeds it (`src/engine/api`);
+root crate compiles JavaScript for it (the front end in `src/engine/ast`
+and `src/engine/hir`, the middle end and its register lowering in
+`src/engine/mir`) and embeds it (`src/engine/api`);
 [workspace architecture](../docs/architecture.md) describes the crates and
 how they fit together. This page is the core's design record: its module
 layout, the rooting rule every heap user follows, and the design decisions
@@ -118,11 +119,11 @@ check nothing.
   carry an `i32` in `imm`.
 - The relational compare-jumps have negated forms (`JNlt`, `JNlte`, `JNgt`,
   `JNgte`): `if (!(a < b))` is not `a >= b` when an operand is NaN.
-- A handler entry stores the register the thrown value lands in (`T(depth)`).
+- A handler entry stores the register the thrown value lands in.
 - `CheckInit` carries the binding's key for the `ReferenceError` message.
 - `NewArray a, b, imm` takes its elements from the `imm` registers starting at
-  `b`, where the stack code's `ArrayFrom` left them.
-- `Swap` exchanges two registers, for cyclic stack shuffles. `DeclareGlobal`,
+  `b`, where the lowering placed them.
+- `Swap` exchanges two registers, for the cycles of a parallel move. `DeclareGlobal`,
   `DeclareGlobalLet` and `DeclareGlobalConst` instantiate a script's global
   declarations; `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal` carry
   `opcode::global` flags in `b` (a function declaration's
@@ -148,12 +149,11 @@ check nothing.
 ## Bindings and cells
 
 - Bindings captured by an inner function live in *cells* (one-slot scope
-  objects). The lowering consumes the front end's finished stack code, where
-  block structure is expanded into QuickJS's `close_loc` discipline; cells
-  reproduce that discipline exactly. The binding's register holds its cell
-  (`NewCell`, `LoadCell`, `StoreCell`), the stack code's `CloseLocal` is
-  `CloseCell` (a fresh cell holding the current value: a `for (let …)`
-  iteration), and a closure holds one cell per captured binding, listed by
+  objects). The MIR builder expands block structure into QuickJS's
+  `close_loc` discipline, and cells reproduce that discipline exactly. The
+  binding's variable register holds its cell (`NewCell`, `LoadCell`,
+  `StoreCell`), `CloseCell` makes a fresh cell holding the current value (a
+  `for (let …)` iteration), and a closure holds one cell per captured binding, listed by
   the child unit's `captures` and read with `LoadCaptured`/`StoreCaptured`.
   A function reaches its captures through its function object; a frame has
   no scope field.
@@ -165,10 +165,9 @@ check nothing.
   `Capture::Slot` for a child capturing one), held in the register after the
   window's locals, with the temporaries above it: a call's window starts at a
   temporary, so a local placed past the temporaries would be overwritten. A
-  function whose operand stack does not fit either keeps its deeper
-  temporaries in slots of the same scope, reached through eight scratch
-  registers above the ones that fit; a call that does not fit in the scratch
-  registers is `CallSpread` over an array of its arguments.
+  function whose values do not fit either moves its longest-lived values
+  into variables of their own, written once after their definition and read
+  right before each use, and keeps those in slots of the same scope.
 - A mapped `arguments` object keeps its parameters' cells in a scope object
   named by its `payload` (slot 0 the mapped count, then one cell per mapped
   parameter, `Value::EMPTY` once unmapped). An unmapped one's payload is
@@ -177,9 +176,10 @@ check nothing.
 
 ## Calls and frames
 
-- Calls follow the stack code's operand order: `Call a, b, c` has the callee
-  in `b` and the arguments from `b + 1`, so the callee's window starts at `b`
-  (its `this`, written by the call); `CallMethod` and `New` have receiver or
+- A call's operands occupy consecutive registers, where the lowering
+  computes them: `Call a, b, c` has the callee in `b` and the arguments from
+  `b + 1`, so the callee's window starts at `b` (its `this`, written by the
+  call); `CallMethod` and `New` have receiver or
   callee and new.target in `b`, `b + 1`, and the window starts at `b + 1`. No
   argument moves either way.
 - A `Frame` is 32 bytes: it keeps the running function's bytecode record next
@@ -274,8 +274,8 @@ check nothing.
   rewrites (an out-of-line `rewrite_call`) into a call of their receiver;
   `vm::via` records the frames QuickJS would show for them in a backtrace.
 - `ForInNext` jumps to the loop body with a key and falls through when the
-  enumeration is exhausted, the shape of the stack code's `ForInNext` and
-  its `IfFalse`. The enumeration is a `ForInIterator` object: the key
+  enumeration is exhausted, the shape of QuickJS's `for_in_next` and the
+  `if_false` after it. The enumeration is a `ForInIterator` object: the key
   snapshot in its elements (index keys as `Int32`, turned into strings as
   they are yielded), the object and the count in two raw slots, the cursor
   in its payload.

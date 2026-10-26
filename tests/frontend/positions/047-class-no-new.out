@@ -1,0 +1,5 @@
+    at C (047-class-no-new.js:2:1)
+    at f (047-class-no-new.js:4:4)
+    at g (047-class-no-new.js:7:3)
+    at <eval> (047-class-no-new.js:10:4)
+

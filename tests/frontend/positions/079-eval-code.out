@@ -1,0 +1,5 @@
+    at <eval> (<input>:1:2)
+    at f (079-eval-code.js:4:14)
+    at g (079-eval-code.js:7:3)
+    at <eval> (079-eval-code.js:10:4)
+

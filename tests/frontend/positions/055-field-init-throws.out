@@ -1,0 +1,6 @@
+    at <class_fields_init> (055-field-init-throws.js:2:23)
+    at C (055-field-init-throws.js:2:8)
+    at f (055-field-init-throws.js:4:8)
+    at g (055-field-init-throws.js:7:3)
+    at <eval> (055-field-init-throws.js:10:4)
+

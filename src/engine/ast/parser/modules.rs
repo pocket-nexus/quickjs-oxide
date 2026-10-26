@@ -3,13 +3,13 @@
 use super::support::IdentifierContext;
 use super::{ModuleExport, Parser, StatementPosition};
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorMessage};
+use crate::engine::ast::MODULE_DEFAULT_BINDING_NAME;
+use crate::engine::ast::lexer::{Keyword, Punctuator, Span, TokenKind};
+use crate::engine::ast::names::NameId;
 use crate::engine::ast::{
     ImportName, IndirectExport, LocalExport, ModuleImport, ModuleRecord, ModuleRequest, Stmt,
     StmtKind, VarKind,
 };
-use crate::engine::code::module::MODULE_DEFAULT_BINDING_NAME;
-use crate::engine::compiler::lexer::{Keyword, Punctuator, Span, TokenKind};
-use crate::engine::compiler::names::NameId;
 use crate::engine::value::JsString;
 
 impl<'source> Parser<'source> {

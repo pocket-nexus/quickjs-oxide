@@ -4,14 +4,12 @@ use super::patterns::ReferenceKind;
 use super::support::{IdentifierContext, Number, parse_number};
 use super::{FunctionKind, InMode, Parser, pos};
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorMessage};
+use crate::engine::ast::lexer::{Keyword, LexicalGoal, NumberKind, Punctuator, Span, TokenKind};
+use crate::engine::ast::stack_guard::ParserStackFrame;
 use crate::engine::ast::{
     Arg, ArrayItem, AssignOp, BinaryOp, Expr, ExprKind, LogicalOp, PropKey, Ref, RegExpLiteral,
     UnaryOp,
 };
-use crate::engine::compiler::lexer::{
-    Keyword, LexicalGoal, NumberKind, Punctuator, Span, TokenKind,
-};
-use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::engine::value::JsString;
 use std::rc::Rc;
 
@@ -1127,7 +1125,7 @@ impl<'source> Parser<'source> {
                 ));
             };
             quasis.push(cooked);
-            use crate::engine::compiler::lexer::TemplatePartKind as Part;
+            use crate::engine::ast::lexer::TemplatePartKind as Part;
             if matches!(part.kind, Part::NoSubstitution | Part::Tail) {
                 self.advance()?;
                 return Ok(expr(
@@ -1155,7 +1153,7 @@ impl<'source> Parser<'source> {
             };
             cooked.push(self.decode_template_cooked(&part, token.span)?);
             raw.push(self.decode_template_raw_value(&part, token.span)?);
-            use crate::engine::compiler::lexer::TemplatePartKind as Part;
+            use crate::engine::ast::lexer::TemplatePartKind as Part;
             if matches!(part.kind, Part::NoSubstitution | Part::Tail) {
                 self.advance()?;
                 return Ok(expr(
@@ -1184,7 +1182,7 @@ impl<'source> Parser<'source> {
 }
 
 /// A callee written `eval` (through parentheses): a direct eval.
-fn is_eval_reference(callee: &Expr, names: &crate::engine::compiler::names::NameTable) -> bool {
+fn is_eval_reference(callee: &Expr, names: &crate::engine::ast::names::NameTable) -> bool {
     match &callee.kind {
         ExprKind::Ident(reference) => names.name(reference.name) == "eval",
         ExprKind::Paren(inner) => is_eval_reference(inner, names),

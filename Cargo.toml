@@ -35,10 +35,6 @@ test-support = []
 gc-stress = ["oxide-core/gc-stress"]
 # `qjs --ic-stats`: the core's inline-cache counters.
 ic-stats = ["oxide-core/ic-stats"]
-# Lowers every function as one whose operand stack passes the register
-# window, with two temporaries in registers, so the corpora run the spill
-# paths.
-register-stress = []
 [dev-dependencies]
 # A path without a version: the host depends on this crate, and Cargo drops
 # the dependency from the published manifest.

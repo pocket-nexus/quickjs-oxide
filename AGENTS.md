@@ -33,7 +33,7 @@ every program whose instructions move by more than 1% in either direction.
 
 | Changed | Also run |
 | --- | --- |
-| `src/source/`, `src/engine/compiler/` (source text, parsing, lowering, compilation) | `compile corpus`, `compile probe` for base and candidate, `compile matrix` |
+| `src/source/`, `src/engine/ast/`, `src/engine/hir/`, `src/engine/mir/` (source text, parsing, lowering, compilation) | `compile corpus`, `compile probe` for base and candidate, `compile matrix` |
 | `core/src/heap/`, `core/src/value.rs`, `core/src/shape.rs`, collector or allocation paths | `memory --engine base=$BASE --engine candidate=$CANDIDATE` |
 | `core/src/builtins/collection.rs`, `array.rs`, `typed_array.rs`, `string.rs`, `object.rs`, property storage | `scaling` with the cases for the changed structure |
 | `regexp/` | `run` on `v8-v7-regexp` and `octane-regexp` with `--linux-counters` |

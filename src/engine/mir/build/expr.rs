@@ -47,6 +47,60 @@ pub(super) enum Args {
     Spread(Value),
 }
 
+/// The most arguments a call passes in its call window. A call with more
+/// passes them in an array, so its operands and the values live across it
+/// fit the 256-register window.
+const WINDOW_ARGUMENTS: usize = 128;
+
+/// The leading arguments an argument array is created with.
+const ARRAY_PREFIX: usize = 32;
+
+/// A call's arguments as they are evaluated, left to right: in the call
+/// window, or past [`WINDOW_ARGUMENTS`] in an array that each argument is
+/// appended to once it is evaluated.
+struct ArgList {
+    wide: bool,
+    values: Vec<Value>,
+    /// The array and the index of its next element, once created.
+    array: Option<(Value, Value)>,
+}
+
+impl ArgList {
+    fn new(count: usize) -> Self {
+        ArgList {
+            wide: count > WINDOW_ARGUMENTS,
+            values: Vec::with_capacity(count.min(WINDOW_ARGUMENTS)),
+            array: None,
+        }
+    }
+
+    fn push(&mut self, b: &mut Builder<'_, '_>, value: Value) {
+        match &mut self.array {
+            Some((array, index)) => {
+                b.effect(Op::DefineElem, &[*array, *index, value], Imm::None);
+                *index = b.op(Op::Inc, &[*index], Imm::None);
+            }
+            None => {
+                self.values.push(value);
+                if self.wide && self.values.len() == ARRAY_PREFIX {
+                    let array = b.op(Op::NewArray, &self.values, Imm::None);
+                    let index = b.int(ARRAY_PREFIX as i32);
+                    self.values.clear();
+                    self.array = Some((array, index));
+                }
+            }
+        }
+    }
+
+    fn finish(self, b: &mut Builder<'_, '_>) -> Args {
+        match self.array {
+            Some((array, _)) => Args::Spread(array),
+            None if self.wide => Args::Spread(b.op(Op::NewArray, &self.values, Imm::None)),
+            None => Args::Fixed(self.values),
+        }
+    }
+}
+
 impl Builder<'_, '_> {
     pub(super) fn expr(&mut self, e: &Expr) -> Result<Value> {
         let at = e.span.start;
@@ -564,7 +618,7 @@ impl Builder<'_, '_> {
         let at = e.span.start;
         match &e.kind {
             ExprKind::New { callee, args, .. } => {
-                if 2 + args.len() > crate::engine::compiler::MAX_BYTECODE_STACK {
+                if 2 + args.len() > crate::engine::limits::MAX_BYTECODE_STACK {
                     return Err(super::BuildError::StackOverflow);
                 }
                 let callee = self.expr(callee)?;
@@ -635,7 +689,7 @@ impl Builder<'_, '_> {
                 // QuickJS's operand stack holds the callee, the receiver of
                 // a method call and the arguments.
                 if 1 + usize::from(receiver.is_some()) + args.len()
-                    > crate::engine::compiler::MAX_BYTECODE_STACK
+                    > crate::engine::limits::MAX_BYTECODE_STACK
                 {
                     return Err(super::BuildError::StackOverflow);
                 }
@@ -691,21 +745,23 @@ impl Builder<'_, '_> {
         result
     }
 
-    /// Evaluates call arguments: fixed ones as values; from the first
-    /// spread on, QuickJS builds an array.
+    /// Evaluates call arguments: fixed ones as values (in an array past
+    /// [`WINDOW_ARGUMENTS`]); from the first spread on, QuickJS builds an
+    /// array.
     pub(super) fn arguments(&mut self, args: &[Arg]) -> Result<Args> {
         let first_spread = args
             .iter()
             .position(|arg| matches!(arg, Arg::Spread { .. }));
         let Some(first_spread) = first_spread else {
-            let mut values = Vec::with_capacity(args.len());
+            let mut list = ArgList::new(args.len());
             for arg in args {
                 let Arg::Arg { e } = arg else {
                     unreachable!("no spread")
                 };
-                values.push(self.expr(e)?);
+                let value = self.expr(e)?;
+                list.push(self, value);
             }
-            return Ok(Args::Fixed(values));
+            return Ok(list.finish(self));
         };
         let mut prefix = Vec::with_capacity(first_spread);
         for arg in &args[..first_spread] {
@@ -745,18 +801,30 @@ impl Builder<'_, '_> {
         }
         let concat = self.static_key("concat");
         let function = self.op(Op::GetField, &[first], Imm::Key(concat));
-        let mut args = Vec::new();
+        let count = exprs.len()
+            + quasis[1..]
+                .iter()
+                .filter(|quasi| !self.cx.strings[quasi.index()].is_empty())
+                .count();
+        let mut list = ArgList::new(count);
         for (index, e) in exprs.iter().enumerate() {
-            args.push(self.expr(e)?);
+            let value = self.expr(e)?;
+            list.push(self, value);
             if let Some(quasi) = quasis.get(index + 1)
                 && !self.cx.strings[quasi.index()].is_empty()
             {
-                args.push(self.string_literal(quasi.0));
+                let value = self.string_literal(quasi.0);
+                list.push(self, value);
             }
         }
-        let mut operands = vec![first, function];
-        operands.extend(args);
-        Ok(self.op(Op::CallMethod, &operands, Imm::None))
+        Ok(match list.finish(self) {
+            Args::Fixed(args) => {
+                let mut operands = vec![first, function];
+                operands.extend(args);
+                self.op(Op::CallMethod, &operands, Imm::None)
+            }
+            Args::Spread(array) => self.op(Op::CallSpread, &[function, first, array], Imm::None),
+        })
     }
 
     fn tagged_template(
@@ -779,20 +847,29 @@ impl Builder<'_, '_> {
             raw: raw.iter().map(|part| part.0).collect(),
         });
         let site = self.op(Op::Const, &[], Imm::Const(constant));
-        let mut args = vec![site];
+        let mut list = ArgList::new(1 + exprs.len());
+        list.push(self, site);
         for e in exprs {
-            args.push(self.expr(e)?);
+            let value = self.expr(e)?;
+            list.push(self, value);
         }
-        Ok(match receiver {
-            Some(receiver) => {
+        Ok(match (receiver, list.finish(self)) {
+            (Some(receiver), Args::Fixed(args)) => {
                 let mut operands = vec![receiver, function];
                 operands.extend(args);
                 self.op_at(Op::CallMethod, &operands, Imm::None, at)
             }
-            None => {
+            (None, Args::Fixed(args)) => {
                 let mut operands = vec![function];
                 operands.extend(args);
                 self.op_at(Op::Call, &operands, Imm::None, at)
+            }
+            (receiver, Args::Spread(array)) => {
+                let receiver = match receiver {
+                    Some(receiver) => receiver,
+                    None => self.undefined(),
+                };
+                self.op_at(Op::CallSpread, &[function, receiver, array], Imm::None, at)
             }
         })
     }

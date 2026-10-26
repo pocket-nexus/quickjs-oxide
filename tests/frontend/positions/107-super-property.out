@@ -1,0 +1,6 @@
+    at m (107-super-property.js:2:30)
+    at m (107-super-property.js:2:64)
+    at f (107-super-property.js:4:3)
+    at g (107-super-property.js:7:3)
+    at <eval> (107-super-property.js:10:4)
+

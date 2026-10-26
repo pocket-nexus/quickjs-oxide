@@ -13,13 +13,12 @@ use oxide_core::vm::module::{ModuleHost, ModulePhase, ModuleSource};
 use oxide_core::{Runtime, RuntimeOptions};
 
 use super::compile::{
-    ModuleCompileError, compile_for_core, compile_module, core_error_kind, run_agent_script,
+    ModuleCompileError, ScriptCompileError, compile_for_core, compile_module, compile_script,
+    core_error_kind, run_agent_script,
 };
+use crate::engine::api::core::compile::DebugInfoMode;
 use crate::engine::api::error::{Error, ErrorKind};
-use crate::engine::code::debug::DebugInfoMode;
-use crate::engine::compiler::compile_unlinked_script_bytes_with_filename;
-use crate::engine::compiler::register::LowerError;
-use crate::engine::compiler::register::{lower_script, tree_has_import_call};
+use crate::engine::mir::compile::LowerError;
 use crate::source::coordinates::QuickJsSourceLocator;
 
 /// A thrown value as the runner records it.
@@ -143,14 +142,16 @@ impl Worker {
 
     /// Compiles and lowers a script; a syntax error carries its position.
     pub fn compile_script(&mut self, source: &str, filename: &str) -> Result<Script, Failure> {
-        let script = compile_unlinked_script_bytes_with_filename(
+        let lowered = compile_script(
+            &mut self.runtime.compiler(),
             source.as_bytes(),
             filename,
             DebugInfoMode::Full,
         )
-        .map_err(|error| compile_failure(&error, source.as_bytes()))?;
-        let lowered = lower_script(&mut self.runtime, &script)
-            .map_err(|error| lower_failure(error, source.as_bytes()))?;
+        .map_err(|error| match error {
+            ScriptCompileError::Front(error) => compile_failure(&error, source.as_bytes()),
+            ScriptCompileError::Lower(error) => lower_failure(error, source.as_bytes()),
+        })?;
         let function = self
             .runtime
             .hold(oxide_core::Value::object(lowered.function));
@@ -403,4 +404,15 @@ fn load_module(
 
 fn reference_error(message: String) -> CompileError {
     CompileError::new(oxide_core::ErrorKind::Reference, message)
+}
+
+/// Whether a unit of the tree under `root` has an `import()` call.
+fn tree_has_import_call(units: oxide_core::Units<'_>, root: oxide_core::CodeUnitId) -> bool {
+    units.tree(root).into_iter().any(|unit| {
+        units
+            .get(unit)
+            .code
+            .iter()
+            .any(|insn| insn.op == oxide_core::bytecode::Opcode::ImportCall)
+    })
 }

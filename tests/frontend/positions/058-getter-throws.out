@@ -1,0 +1,5 @@
+    at get x (058-getter-throws.js:2:36)
+    at f (058-getter-throws.js:4:11)
+    at g (058-getter-throws.js:7:3)
+    at <eval> (058-getter-throws.js:10:4)
+

@@ -1,0 +1,4 @@
+    at f (092-multiline-call.js:4:3)
+    at g (092-multiline-call.js:9:3)
+    at <eval> (092-multiline-call.js:12:4)
+

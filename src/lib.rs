@@ -1,9 +1,9 @@
 //! A pure-Rust rewrite of `QuickJS` aiming at semantic feature parity with the
 //! pinned upstream release.
 //!
-//! The front end compiles source to `QuickJS`-shaped stack bytecode, the
-//! register lowering turns it into `quickjs-oxide-core`'s register bytecode, and the
-//! embedding API runs it on the core.
+//! The front end parses source into a syntax tree, binds it into the HIR,
+//! builds each function's MIR and lowers it to `quickjs-oxide-core`'s register
+//! bytecode; the embedding API runs it on the core.
 
 /// Interpreter implementation; embedders use [`engine::api`].
 ///
@@ -13,7 +13,7 @@
 /// ```
 /// Internal engine modules are not embedding interfaces:
 /// ```compile_fail
-/// use quickjs_oxide::engine::compiler::CompileOptions;
+/// use quickjs_oxide::engine::mir::compile::LowerError;
 /// ```
 pub mod engine;
 pub mod source;

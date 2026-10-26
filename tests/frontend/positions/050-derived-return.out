@@ -1,0 +1,5 @@
+    at C (050-derived-return.js:2:57)
+    at f (050-derived-return.js:4:8)
+    at g (050-derived-return.js:7:3)
+    at <eval> (050-derived-return.js:10:4)
+

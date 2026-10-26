@@ -11,4 +11,10 @@ pub(crate) mod op;
 pub(crate) mod verify;
 
 #[cfg(test)]
+mod ic_tests;
+#[cfg(test)]
+pub(crate) mod run_tests;
+#[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod window_tests;

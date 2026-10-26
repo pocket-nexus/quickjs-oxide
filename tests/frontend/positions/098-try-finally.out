@@ -1,0 +1,4 @@
+    at f (098-try-finally.js:4:10)
+    at g (098-try-finally.js:7:3)
+    at <eval> (098-try-finally.js:10:4)
+

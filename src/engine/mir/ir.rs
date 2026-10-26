@@ -435,6 +435,9 @@ pub struct Var {
     /// The setter of a private accessor pair, whose getter is the
     /// declaration's other variable.
     pub setter: bool,
+    /// The registers it takes: 1, or 3 for an iterator record moved out
+    /// of the window.
+    pub width: u8,
 }
 
 /// A constant-pool entry; strings are indexes into the program's strings.
@@ -508,6 +511,7 @@ impl Function {
             kind,
             decl,
             setter: false,
+            width: 1,
         });
         index
     }

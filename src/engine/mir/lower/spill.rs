@@ -2,7 +2,8 @@
 //! than the window holds even with every variable in the spill scope, the
 //! longest-lived values become variables of their own, written once after
 //! their definition and read right before each use, and the layout puts
-//! them in the spill scope too.
+//! them in the spill scope too. An iterator record, which the iteration
+//! instructions update in place, is written back after each use.
 
 use super::alloc::{self, Layout, Order};
 use crate::engine::mir::ir::{Args, Function, Imm, Insn, Value, VarKind};
@@ -31,9 +32,6 @@ pub(super) fn spill(f: &Function, attempt: u32) -> Option<Function> {
                 continue;
             }
             for &result in insn.results.iter().flatten() {
-                if f.values[result.index()].width > 1 {
-                    continue;
-                }
                 let length: u32 = allocation
                     .ranges
                     .of(result.index())
@@ -54,10 +52,13 @@ pub(super) fn spill(f: &Function, attempt: u32) -> Option<Function> {
     let mut g = f.clone();
     let mut var_of = vec![None; f.values.len()];
     for &(_, value) in &candidates {
-        var_of[value.index()] = Some(g.new_var(VarKind::Local, None));
+        let var = g.new_var(VarKind::Local, None);
+        g.vars[var as usize].width = f.values[value.index()].width.max(1);
+        var_of[value.index()] = Some(var);
     }
     let get = |g: &mut Function, var: u32, pos| {
         let value = g.new_value(Default::default());
+        g.values[value.index()].width = g.vars[var as usize].width;
         let insn = Insn {
             op: Op::GetVar,
             args: Args::default(),
@@ -94,6 +95,19 @@ pub(super) fn spill(f: &Function, attempt: u32) -> Option<Function> {
                 .collect();
             let pos = insn.pos;
             insns.push(insn);
+            // A record the instruction may have updated goes back.
+            for &(from, value) in &loaded {
+                let var = var_of[from.index()].expect("a spilled value");
+                if g.vars[var as usize].width > 1 {
+                    insns.push(Insn {
+                        op: Op::SetVar,
+                        args: Args::from_slice(&[value]),
+                        results: [None, None],
+                        imm: Imm::Var(var),
+                        pos,
+                    });
+                }
+            }
             for (var, value) in stores {
                 insns.push(Insn {
                     op: Op::SetVar,

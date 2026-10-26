@@ -60,14 +60,15 @@ impl Layout {
                 VarKind::Param(index) => 1 + index,
                 VarKind::NewTarget => 1 + param_count,
                 VarKind::Local => {
-                    locals_seen += 1;
+                    let width = u32::from(var.width);
+                    locals_seen += width;
                     if budget.is_some_and(|budget| locals_seen > budget) {
                         let slot = slots;
-                        slots += 1;
+                        slots += width;
                         SLOT + slot
                     } else {
                         let register = next;
-                        next += 1;
+                        next += width;
                         register
                     }
                 }
@@ -144,42 +145,92 @@ impl Order {
     }
 }
 
-/// The successors liveness flows from: the terminator's, the block's catch
-/// region's entry, and for a `finally` subroutine's `Ret` the blocks its
-/// `Gosub`s continue at.
-pub(super) fn successors(
-    f: &Function,
-    conts: &FxHashMap<Value, Vec<BlockId>>,
-    block: BlockId,
-) -> Vec<BlockId> {
-    let b = f.block(block);
-    let mut succs = b.term.successors();
-    if let Terminator::Ret(addr) = b.term
-        && let Some(conts) = conts.get(&addr)
-    {
-        succs.extend(conts.iter().copied());
-    }
-    succs
+/// The `finally` subroutines of a function, for liveness. A `Gosub`
+/// flows to its subroutine and to the block it continues at; a `Ret` flows
+/// nowhere. The values live where a subroutine's `Gosub`s continue are live
+/// across the subroutine: their ranges cover every block of its body (the
+/// blocks its entry reaches that reach its `Ret`, nested subroutines and
+/// catch blocks included), without flowing from the body to the other
+/// `Gosub`s.
+struct Subroutines {
+    /// The continuations of each subroutine's `Gosub`s.
+    conts: Vec<Vec<BlockId>>,
+    /// The subroutines whose bodies hold each block, by block index.
+    inside: Vec<Vec<u32>>,
 }
 
-/// The blocks each `finally` subroutine's return address returns to.
-pub(super) fn ret_conts(f: &Function) -> FxHashMap<Value, Vec<BlockId>> {
-    let mut by_entry: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
-    for block in &f.blocks {
-        if let Terminator::Gosub { finally, cont } = block.term {
-            by_entry.entry(finally).or_default().push(cont);
+impl Subroutines {
+    fn of(f: &Function) -> Self {
+        let n = f.blocks.len();
+        let mut by_entry: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
+        for block in &f.blocks {
+            if let Terminator::Gosub { finally, cont } = block.term {
+                by_entry.entry(finally).or_default().push(cont);
+            }
         }
-    }
-    let mut conts = FxHashMap::default();
-    for (index, block) in f.blocks.iter().enumerate() {
-        if let Some(addr) = block.ret_addr {
-            conts.insert(
-                addr,
-                by_entry.remove(&BlockId(index as u32)).unwrap_or_default(),
-            );
+        let mut entries = Vec::new();
+        let mut conts = Vec::new();
+        let mut by_addr: FxHashMap<Value, usize> = FxHashMap::default();
+        for (index, block) in f.blocks.iter().enumerate() {
+            if let Some(addr) = block.ret_addr {
+                by_addr.insert(addr, entries.len());
+                entries.push(BlockId(index as u32));
+                conts.push(by_entry.remove(&BlockId(index as u32)).unwrap_or_default());
+            }
         }
+        let mut inside = vec![Vec::new(); n];
+        if entries.is_empty() {
+            return Subroutines { conts, inside };
+        }
+        // Control flow with each `Ret` back to every continuation of its
+        // subroutine, and each catch edge.
+        let mut forward: Vec<Vec<BlockId>> = vec![Vec::new(); n];
+        let mut backward: Vec<Vec<BlockId>> = vec![Vec::new(); n];
+        let mut rets: Vec<Vec<BlockId>> = vec![Vec::new(); entries.len()];
+        for (index, block) in f.blocks.iter().enumerate() {
+            let mut succs = block.term.successors();
+            if let Terminator::Ret(addr) = block.term
+                && let Some(&sub) = by_addr.get(&addr)
+            {
+                succs.extend(conts[sub].iter().copied());
+                rets[sub].push(BlockId(index as u32));
+            }
+            if let Some(handler) = block.handler {
+                succs.push(f.handlers[handler.index()].catch);
+            }
+            for succ in succs {
+                forward[index].push(succ);
+                backward[succ.index()].push(BlockId(index as u32));
+            }
+        }
+        let reach = |starts: &[BlockId], edges: &[Vec<BlockId>]| {
+            let mut seen = vec![false; n];
+            let mut stack: Vec<BlockId> = starts.to_vec();
+            while let Some(block) = stack.pop() {
+                if !std::mem::replace(&mut seen[block.index()], true) {
+                    stack.extend(edges[block.index()].iter().copied());
+                }
+            }
+            seen
+        };
+        for (sub, &entry) in entries.iter().enumerate() {
+            let from_entry = reach(&[entry], &forward);
+            let to_ret = reach(&rets[sub], &backward);
+            for block in 0..n {
+                if from_entry[block] && to_ret[block] {
+                    inside[block].push(sub as u32);
+                }
+            }
+        }
+        Subroutines { conts, inside }
     }
-    conts
+
+    /// The continuations whose live values are live throughout `block`.
+    fn across(&self, block: BlockId) -> impl Iterator<Item = BlockId> + '_ {
+        self.inside[block.index()]
+            .iter()
+            .flat_map(|&sub| self.conts[sub as usize].iter().copied())
+    }
 }
 
 /// What the allocation decided.
@@ -510,7 +561,7 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     let crate::engine::mir::ir::Imm::Var(var) = insn.imm else {
                         continue;
                     };
-                    if layout.in_slot(var) {
+                    if layout.in_slot(var) || f.vars[var as usize].width > 1 {
                         continue;
                     }
                     // The variable must not change before the last use.
@@ -533,7 +584,11 @@ pub(super) fn plan(f: &Function, layout: &Layout, order: &Order) -> Plan {
                     let crate::engine::mir::ir::Imm::Var(var) = insn.imm else {
                         continue;
                     };
-                    if layout.in_slot(var) || index == 0 || fixed[value.index()] != NONE {
+                    if layout.in_slot(var)
+                        || f.vars[var as usize].width > 1
+                        || index == 0
+                        || fixed[value.index()] != NONE
+                    {
                         continue;
                     }
                     // Other uses read the variable's register: they must be
@@ -855,8 +910,9 @@ struct Liveness<'a> {
     f: &'a Function,
     order: &'a Order,
     plan: &'a Plan,
-    /// Each block's successors, `finally` returns included.
+    /// Each block's successors.
     succs: Lists<BlockId>,
+    subroutines: Subroutines,
     /// The values defined at each block's entry: its phis, catch value and
     /// return address, and the values a predecessor's terminator defines
     /// for it.
@@ -896,11 +952,11 @@ impl<'a> Liveness<'a> {
                 edge_defs[succ.index()].push(v);
             }
         }
-        let conts = ret_conts(f);
         let n = f.blocks.len();
         let succs = Lists::build(n, |block, out| {
-            out.extend(successors(f, &conts, BlockId(block as u32)));
+            out.extend(f.blocks[block].term.successors());
         });
+        let subroutines = Subroutines::of(f);
         let entry_defs = Lists::build(n, |block, out| {
             let b = &f.blocks[block];
             out.extend(b.phis.iter().map(|phi| phi.result));
@@ -916,6 +972,7 @@ impl<'a> Liveness<'a> {
             order,
             plan,
             succs,
+            subroutines,
             entry_defs,
             term_uses,
         }
@@ -1099,6 +1156,11 @@ impl<'a> Liveness<'a> {
                     for phi in &sb.phis {
                         set_live(phi.args[position], block_end, &mut open, &mut live);
                     }
+                }
+            }
+            for cont in self.subroutines.across(block) {
+                for &v in &live_in[cont.index()] {
+                    set_live(v, block_end, &mut open, &mut live);
                 }
             }
             let catch_live: &[Value] = catch_of(block).map_or(&[], |catch| &live_in[catch.index()]);

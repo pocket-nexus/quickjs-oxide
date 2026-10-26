@@ -23,7 +23,7 @@ use super::property::{
     CompleteOrdinaryPropertyDescriptor, OrdinaryPropertyDescriptor, PropertyKey, WellKnownSymbol,
 };
 use super::value::{CallableRef, ObjectRef, Slot, SymbolRef, Value};
-use crate::engine::code::debug::DebugInfoMode;
+use crate::engine::api::core::compile::DebugInfoMode;
 use crate::engine::value::JsString;
 
 /// Interrupts a runtime's running script from any thread: the script stops
@@ -302,7 +302,7 @@ impl Runtime {
             // its frames reach at the depths its nesting tests pin, takes
             // larger debug frames here.
             // An undeclared thread keeps the default as a ceiling.
-            let (available, declared) = crate::engine::compiler::stack_guard::available_stack();
+            let (available, declared) = crate::engine::ast::stack_guard::available_stack();
             let budget = available
                 .saturating_sub(available / 8)
                 .saturating_sub(NATIVE_RESERVE)
@@ -596,13 +596,13 @@ impl Runtime {
         Ok(text)
     }
 
-    /// The new front end's syntax tree of `source` (`--dump-ast`).
+    /// The front end's syntax tree of `source` (`--dump-ast`).
     pub fn dump_ast(&self, source: &[u8], module: bool) -> Result<String, RuntimeError> {
         let program = parse_new_front_end(source, module)?;
         Ok(format!("{:#?}\n", program.root))
     }
 
-    /// The new front end's HIR of `source` (`--dump-hir`).
+    /// The front end's HIR of `source` (`--dump-hir`).
     pub fn dump_hir(
         &self,
         source: &[u8],
@@ -623,7 +623,7 @@ impl Runtime {
         Ok(crate::engine::hir::schema::dump(&built.program))
     }
 
-    /// The new front end's MIR of `source` (`--dump-mir`).
+    /// The front end's MIR of `source` (`--dump-mir`).
     pub fn dump_mir(
         &self,
         source: &[u8],

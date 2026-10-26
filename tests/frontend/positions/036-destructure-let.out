@@ -1,0 +1,4 @@
+    at f (036-destructure-let.js:3:1)
+    at g (036-destructure-let.js:7:3)
+    at <eval> (036-destructure-let.js:10:4)
+
