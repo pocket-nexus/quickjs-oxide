@@ -596,6 +596,54 @@ impl Runtime {
         Ok(text)
     }
 
+    /// The new front end's syntax tree of `source` (`--dump-ast`).
+    pub fn dump_ast(&self, source: &[u8], module: bool) -> Result<String, RuntimeError> {
+        let program = parse_new_front_end(source, module)?;
+        Ok(format!("{:#?}\n", program.root))
+    }
+
+    /// The new front end's HIR of `source` (`--dump-hir`).
+    pub fn dump_hir(
+        &self,
+        source: &[u8],
+        filename: &str,
+        module: bool,
+    ) -> Result<String, RuntimeError> {
+        let program = parse_new_front_end(source, module)?;
+        if program.has_with {
+            return Err(RuntimeError::Internal(
+                "SyntaxError: with statements are not supported".into(),
+            ));
+        }
+        let built =
+            crate::engine::hir::build::build(program, filename).map_err(RuntimeError::Compile)?;
+        if let Err(error) = crate::engine::hir::validate::validate(&built.program) {
+            return Err(RuntimeError::Internal(error.to_string()));
+        }
+        Ok(crate::engine::hir::schema::dump(&built.program))
+    }
+
+    /// The new front end's MIR of `source` (`--dump-mir`).
+    pub fn dump_mir(
+        &self,
+        source: &[u8],
+        filename: &str,
+        module: bool,
+    ) -> Result<String, RuntimeError> {
+        let program = parse_new_front_end(source, module)?;
+        let has_with = program.has_with;
+        let mut built =
+            crate::engine::hir::build::build(program, filename).map_err(RuntimeError::Compile)?;
+        let mir = crate::engine::mir::build::build(&mut built.program, &built.regexps, has_with)
+            .map_err(|error| RuntimeError::Internal(error.to_string()))?;
+        let mut out = String::new();
+        for function in &mir.functions {
+            out.push_str(&crate::engine::mir::dump::dump(function));
+            out.push('\n');
+        }
+        Ok(out)
+    }
+
     // ---- keys and symbols ----
 
     pub fn intern_property_key(&self, text: &str) -> Result<PropertyKey, RuntimeError> {
@@ -728,4 +776,18 @@ impl Runtime {
     pub fn qjs_print_value_bytes(&self, value: &Value) -> Result<Vec<u8>, RuntimeError> {
         self.enter()?.view().qjs_print_value_bytes(value)
     }
+}
+
+fn parse_new_front_end(
+    source: &[u8],
+    module: bool,
+) -> Result<crate::engine::ast::Program, RuntimeError> {
+    let text = crate::source::text::SourceText::try_from_raw_bytes(source)
+        .map_err(|error| RuntimeError::Compile(error.into()))?;
+    let parsed = if module {
+        crate::engine::ast::parser::Parser::parse_module(&text)
+    } else {
+        crate::engine::ast::parser::Parser::parse_script(&text)
+    };
+    parsed.map_err(RuntimeError::Compile)
 }

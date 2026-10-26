@@ -13,6 +13,7 @@ pub use crate::engine::compiler::lexer::quickjs_detect_module_bytes;
 pub fn declare_thread_stack(size: usize) {
     crate::engine::compiler::stack_guard::declare_thread_stack(size);
 }
+pub use crate::engine::api::core::compile::use_new_front_end;
 /// Formatting and source classification used by embedders.
 pub use crate::engine::value::number_to_string;
 

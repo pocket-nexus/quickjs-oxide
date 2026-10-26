@@ -11,6 +11,7 @@ Implementations have a single owner:
 | `unicode/` | Unicode table generation and source-fingerprint verification |
 | `web/` | Site and docs build, Node/browser checks and Pages deployment tooling |
 | `release/` | Version tagging and GitHub Release packaging; see `docs/release.md` |
+| `frontend/` | Differential runs of the stack-code and the new front end: output, Test262 |
 
 Commands, CI and generated-file headers use these paths directly. `demo-42.sh`
 is a small repository-level example. New tools belong in their owner directory.

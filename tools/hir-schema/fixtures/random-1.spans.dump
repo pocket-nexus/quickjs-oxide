@@ -1,0 +1,79 @@
+program version:1
+  unit:
+    Unit name:"" fingerprintInputs:[""]
+  entry:
+    module module:#3
+file #0 path:"a" hash:7
+string #0 ""
+string #1 "  é"
+string #2 " \n "
+string #3 "\"Z"
+const #0 number value:-1.5e0
+const #1 bigint digits:" \n "
+const #2 regexp source:"" flags:"\"Z"
+type #0 class layout:#4
+layout #0 name:""
+  fields:
+    LayoutField name:" \n " ty:#1 readonly:true
+layout #1 name:"\"Z"
+  fields:
+    LayoutField name:"" ty:#1 readonly:true
+    LayoutField name:"\"Z" ty:#4 readonly:true
+layout #2 name:#4?
+  fields:
+    LayoutField name:" \n " ty:#1 readonly:false
+    LayoutField name:#4? ty:#4 readonly:false
+descriptor #0 tagged tag:#4? variants:[]
+descriptor #1 number repr:i8 max:9.007199254740994e15
+descriptor #2 nominal base:#3 name:""
+decl #0 name:#4? kind:const owner:#4 capturedBy:[] assigned:true tdz:true ty:#2 span:1:7-0 isStatic:false
+decl #1 name:#4? kind:catch owner:#0 capturedBy:[#4] assigned:true tdz:true ty:#3 span:2:0-0 isStatic:true
+fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:true decls:[#1 #4 #2] captures:[#3] inner:[#1] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true span:3:13-7 length:0 argumentsDecl:#1 concise:false defaultCtor:true
+  params:
+    Param
+      pattern:
+        decl decl:#4 ty:#4 span:0:0-1
+    Param
+      pattern:
+        decl decl:#3 ty:#4 span:0:250-65536
+    Param
+      pattern:
+        decl decl:#1 span:0:7-287
+  restDefault:
+    decode desc:#3 ty:#4 span:0:0-65536
+      e:
+        seq exprs:[] ty:#1 span:1:1-264
+  body:
+    Block stmts:[] decls:[]
+  sig:
+    Signature params:[#0 #1] rest:#4 ret:#3 thisTy:#1
+  source:
+    SourceRange start:70 end:65536
+  paramCopies:
+    ParamCopy from:#4 to:#0
+    ParamCopy from:#0 to:#0
+fn #1 name:"  é" kind:module role:method async:true generator:false strict:false params:[] simpleParams:false decls:[#1 #0 #2] captures:[#4] inner:[#2 #0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true span:3:1-159 length:384 self:#3 argumentsDecl:#0 paramCopies:[] concise:false defaultCtor:false
+  rest:
+    decl decl:#1 ty:#3 span:2:65536-1
+  restDefault:
+    cond ty:#4 span:1:910-7
+      test:
+        update op:++ prefix:true span:0:65536-65536
+          target:
+            decl decl:#3 span:1:65536-0
+      then:
+        assign op:&= span:2:65536-7
+          target:
+            decl decl:#4 span:0:867-26
+          value:
+            const value:#2 ty:#2 span:1:0-1
+      else:
+        superCall args:[] this:#0 newTarget:#1 func:#3 superAt:203 ty:#3 span:0:65536-33
+  body:
+    Block decls:[#0 #0]
+      stmts:
+        declare decl:#1 span:0:65536-7
+  sig:
+    Signature params:[#2 #2 #2] rest:#2 ret:#3 thisTy:#4
+  source:
+    SourceRange start:65536 end:0

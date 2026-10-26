@@ -1,0 +1,72 @@
+program version:1
+  unit:
+    Unit name:"\n\"é" fingerprintInputs:["é_ \\" "\n"]
+  entry:
+    script top:#2
+file #0 path:"é\udfff___" hash:7
+string #0 ""
+const #0 number value:1.7976931348623157e308
+const #1 bigint digits:#1?
+const #2 regexp source:#1? flags:#1?
+type #0 union members:[]
+type #1 undefined
+type #2 literal
+  value:
+    const value:#0
+layout #0 name:""
+  fields:
+    LayoutField name:"" ty:#4 readonly:false
+layout #1 name:#1?
+  fields:
+    LayoutField name:"" ty:#0 readonly:true
+layout #2 name:#1?
+  fields:
+    LayoutField name:"" ty:#3 readonly:true
+decl #0 name:#1? kind:implicit owner:#4 capturedBy:[#4 #0] assigned:false tdz:false ty:#4 span:4:7-963 isStatic:false
+decl #1 name:#1? kind:var owner:#2 capturedBy:[#3] assigned:false tdz:false ty:#4 span:2:7-65536 isStatic:false
+fn #0 kind:normal role:method async:false generator:false strict:false params:[] simpleParams:true decls:[#4 #0 #0] captures:[#2] inner:[#1 #1] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:false homeObject:false span:1:1-7 length:986 self:#3 concise:true defaultCtor:true
+  rest:
+    object restAt:7 ty:#2 span:0:7-0
+      props:
+        PatternProp keyAt:7
+          key:
+            name name:#1?
+          value:
+            decl decl:#1 ty:#4 span:3:65536-0
+        PatternProp keyAt:65536
+          key:
+            name name:#1?
+          value:
+            decl decl:#0 ty:#1 span:1:813-65536
+      rest:
+        array items:[] ty:#2 span:1:65536-0
+  body:
+    Block stmts:[] decls:[]
+  sig:
+    Signature params:[#1 #2] rest:#0 ret:#1 thisTy:#4
+  effects:
+    Effects reads:[#2 #1 #4] writes:[#1] heapReads:true heapWrites:false allocates:true mayThrow:false maySuspend:false calls:known
+  source:
+    SourceRange start:7 end:697
+  paramCopies:
+    ParamCopy from:#1 to:#3
+    ParamCopy from:#4 to:#1
+module #0 file:#3 top:#4 starExports:[0 7 7] dynamic:false usesImportMeta:false hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"" hasAttributes:true attributes:[]
+  imports:
+    Import request:65536 decl:#4
+    Import request:1 decl:#4
+  exports:
+    Export name:#1? decl:#1
+  reexports:
+    Reexport request:65536 as:#1?
+    Reexport request:7 as:""
+module #1 file:#0 top:#1 exports:[] reexports:[] starExports:[0 1 1] dynamic:false usesImportMeta:false hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"" hasAttributes:false attributes:[]
+    ModuleRequest specifier:#1? hasAttributes:false attributes:[]
+  imports:
+    Import request:7 decl:#4
+    Import request:65536 decl:#1
+    Import request:909 decl:#4

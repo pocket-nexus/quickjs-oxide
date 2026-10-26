@@ -21,6 +21,12 @@ backup="$(mktemp -d)"
 cp Cargo.toml Cargo.lock "${backup}/"
 trap 'cp "${backup}/Cargo.toml" "${backup}/Cargo.lock" . && rm -rf "${backup}"' EXIT
 
+# Cargo reuses a package's unpacked sources whenever their directory
+# exists, and the pre-release version repeats from commit to commit; a
+# copy unpacked from another commit (a restored Cargo cache) would build
+# in place of the packaged one.
+rm -rf "${CARGO_HOME:-${HOME}/.cargo}"/registry/src/*/quickjs-oxide*-"${unpublished}"
+
 ./scripts/release/set-workspace-version.sh "${unpublished}"
 cargo package --locked --allow-dirty \
   -p quickjs-oxide-regexp -p quickjs-oxide-core -p quickjs-oxide \

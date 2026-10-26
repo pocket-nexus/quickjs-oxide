@@ -1,0 +1,60 @@
+program version:1
+  unit:
+    Unit name:"" fingerprintInputs:[""]
+  entry:
+    module module:#3
+file #0 path:"a" hash:7
+string #0 ""
+string #1 "  é"
+string #2 " \n "
+string #3 "\"Z"
+const #0 number value:-1.5e0
+const #1 bigint digits:" \n "
+const #2 regexp source:"" flags:"\"Z"
+decl #0 name:#4? kind:const owner:#4 capturedBy:[] assigned:true tdz:true isStatic:false
+decl #1 name:#4? kind:catch owner:#0 capturedBy:[#4] assigned:true tdz:true isStatic:true
+fn #0 name:"" kind:derivedConstructor role:get async:true generator:false strict:true simpleParams:true decls:[#1 #4 #2] captures:[#3] inner:[#1] usesThis:false usesArguments:false usesNewTarget:false hasDirectEval:true homeObject:true length:0 argumentsDecl:#1 concise:false defaultCtor:true
+  params:
+    Param
+      pattern:
+        decl decl:#4
+    Param
+      pattern:
+        decl decl:#3
+    Param
+      pattern:
+        decl decl:#1
+  restDefault:
+    decode desc:#3
+      e:
+        seq exprs:[]
+  body:
+    Block stmts:[] decls:[]
+  source:
+    SourceRange start:70 end:65536
+  paramCopies:
+    ParamCopy from:#4 to:#0
+    ParamCopy from:#0 to:#0
+fn #1 name:"  é" kind:module role:method async:true generator:false strict:false params:[] simpleParams:false decls:[#1 #0 #2] captures:[#4] inner:[#2 #0] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:false homeObject:true length:384 self:#3 argumentsDecl:#0 paramCopies:[] concise:false defaultCtor:false
+  rest:
+    decl decl:#1
+  restDefault:
+    cond
+      test:
+        update op:++ prefix:true
+          target:
+            decl decl:#3
+      then:
+        assign op:&=
+          target:
+            decl decl:#4
+          value:
+            const value:#2
+      else:
+        superCall args:[] this:#0 newTarget:#1 func:#3 superAt:203
+  body:
+    Block decls:[#0 #0]
+      stmts:
+        declare decl:#1
+  source:
+    SourceRange start:65536 end:0

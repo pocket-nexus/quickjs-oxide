@@ -1,0 +1,74 @@
+program version:1
+  unit:
+    Unit name:"\"𐏿😀" fingerprintInputs:["\u001f" "\ud800\\a"]
+  entry:
+    eval top:#1
+file #0 path:"\n _\n" hash:0
+file #1 path:"" hash:478
+file #2 path:"\u001f\ud800\u0000" hash:0
+string #0 ""
+string #1 "Z "
+string #2 "\"_"
+string #3 "\\"
+const #0 bigint digits:#4?
+type #0 record layout:#2
+layout #0 name:"\\"
+  fields:
+    LayoutField name:"\\" ty:#1 readonly:false
+    LayoutField name:"\\" ty:#2 readonly:false
+    LayoutField name:#4? ty:#3 readonly:false
+layout #1 name:#4?
+  fields:
+    LayoutField name:"" ty:#0 readonly:false
+    LayoutField name:#4? ty:#1 readonly:false
+    LayoutField name:"Z " ty:#2 readonly:false
+descriptor #0 undefined
+descriptor #1 record layout:#0 fields:[#3 #3 #3]
+fn #0 kind:staticBlock role:set async:false generator:false strict:false simpleParams:false decls:[] captures:[] inner:[#3 #2] usesThis:false usesArguments:true usesNewTarget:false hasDirectEval:true homeObject:false length:7 self:#0 paramCopies:[] concise:true defaultCtor:false
+  params:
+    Param
+      pattern:
+        decl decl:#2 ty:#4
+    Param
+      pattern:
+        decl decl:#1 ty:#2
+    Param
+      pattern:
+        decl decl:#0 ty:#4
+  body:
+    Block decls:[#4 #0]
+      stmts:
+        declare decl:#0
+  source:
+    SourceRange start:1 end:1
+module #0 file:#4 top:#1 requests:[] starExports:[1] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+  imports:
+    Import request:0 decl:#0
+  exports:
+    Export name:"Z " decl:#0
+  reexports:
+    Reexport request:1 as:#4?
+    Reexport request:894 as:"Z "
+module #1 file:#1 top:#4 starExports:[576] dynamic:false usesImportMeta:true hasTopLevelAwait:true
+  requests:
+    ModuleRequest specifier:"\"_" hasAttributes:true attributes:[]
+  imports:
+    Import request:0 decl:#4
+    Import request:0 decl:#0
+  exports:
+    Export name:"\\" decl:#4
+  reexports:
+    Reexport request:570 as:"\\"
+    Reexport request:870 as:"\\"
+module #2 file:#2 top:#1 starExports:[879 1 1] dynamic:false usesImportMeta:false hasTopLevelAwait:false
+  requests:
+    ModuleRequest specifier:#4? hasAttributes:true attributes:[]
+    ModuleRequest specifier:#4? hasAttributes:false attributes:[]
+  imports:
+    Import request:231 decl:#3
+  exports:
+    Export name:#4? decl:#2
+  reexports:
+    Reexport request:1 as:"\\"
+    Reexport request:65536 as:"Z "
+    Reexport request:7 as:"\\"

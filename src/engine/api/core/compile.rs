@@ -65,6 +65,36 @@ pub(crate) enum ScriptCompileError {
     Lower(LowerError),
 }
 
+/// Which front end compiles: 0 not yet decided (from `OXIDE_FRONTEND`), 1
+/// the stack-code one, 2 the new one.
+static FRONT_END: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Selects the new front end (AST, HIR, MIR) or the stack-code one for
+/// every later compilation; the default is `OXIDE_FRONTEND=new|old`, else
+/// the build's `OXIDE_DEFAULT_FRONTEND`, else the stack-code one.
+pub fn use_new_front_end(new: bool) {
+    FRONT_END.store(
+        if new { 2 } else { 1 },
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Whether the new front end compiles.
+pub(crate) fn new_front_end() -> bool {
+    use std::sync::atomic::Ordering;
+    match FRONT_END.load(Ordering::Relaxed) {
+        0 => {
+            let new = match std::env::var("OXIDE_FRONTEND") {
+                Ok(value) => value == "new",
+                Err(_) => option_env!("OXIDE_DEFAULT_FRONTEND") == Some("new"),
+            };
+            FRONT_END.store(if new { 2 } else { 1 }, Ordering::Relaxed);
+            new
+        }
+        value => value == 2,
+    }
+}
+
 /// Compiles and lowers the script `source` into `compiler`.
 pub(crate) fn compile_script(
     compiler: &mut Compiler<'_>,
@@ -72,6 +102,19 @@ pub(crate) fn compile_script(
     filename: &str,
     debug_info: DebugInfoMode,
 ) -> Result<LoweredScript, ScriptCompileError> {
+    if new_front_end() {
+        crate::engine::compiler::validate_source_length(source.len())
+            .map_err(ScriptCompileError::Front)?;
+        let text = SourceText::try_from_raw_bytes(source)
+            .map_err(|error| ScriptCompileError::Front(error.into()))?;
+        return crate::engine::mir::compile::compile_script(
+            compiler,
+            &text,
+            filename,
+            debug_info,
+            crate::engine::ast::ProgramKind::Script,
+        );
+    }
     let script = compile_unlinked_script_bytes_with_filename(source, filename, debug_info)
         .map_err(ScriptCompileError::Front)?;
     lower_owned_script_into(compiler, script).map_err(ScriptCompileError::Lower)
@@ -92,6 +135,26 @@ pub(crate) fn compile_for_core(
     let source = SourceText::try_from_utf16(request.source.iter().copied())
         .map_err(|error| CompileError::new(oxide_core::ErrorKind::Range, error.to_string()))?;
     let debug_info = eval_debug_info();
+    if new_front_end() {
+        let kind = match request.kind {
+            CompileKind::Script => crate::engine::ast::ProgramKind::Script,
+            CompileKind::IndirectEval => crate::engine::ast::ProgramKind::Eval,
+        };
+        let lowered = crate::engine::mir::compile::compile_script(
+            compiler,
+            &source,
+            request.filename,
+            debug_info,
+            kind,
+        )
+        .map_err(|error| match error {
+            ScriptCompileError::Front(error) => {
+                front_compile_error(&error, source.raw_bytes(), request.filename)
+            }
+            ScriptCompileError::Lower(error) => lower_compile_error(error),
+        })?;
+        return Ok(lowered.function);
+    }
     let compiled = match request.kind {
         CompileKind::Script => {
             compile_unlinked_script_source_with_filename(&source, request.filename, debug_info)
@@ -160,6 +223,9 @@ pub(crate) fn compile_module(
     source: &[u8],
     debug_info: DebugInfoMode,
 ) -> Result<(ModuleSource, oxide_core::CodeUnitId), ModuleCompileError> {
+    if new_front_end() {
+        return crate::engine::mir::compile::compile_module(compiler, name, source, debug_info);
+    }
     let failure = |kind: oxide_core::ErrorKind, message: String| {
         ModuleCompileError::Core(CompileError::new(kind, message))
     };
