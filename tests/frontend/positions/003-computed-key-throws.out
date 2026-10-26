@@ -1,0 +1,5 @@
+    at toString (003-computed-key-throws.js:2:50)
+    at f (003-computed-key-throws.js:4:11)
+    at g (003-computed-key-throws.js:7:3)
+    at <eval> (003-computed-key-throws.js:10:4)
+

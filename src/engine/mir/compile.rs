@@ -1,16 +1,64 @@
-//! The new front end end to end: source to AST, HIR, MIR and register code.
+//! The front end end to end: source to AST, HIR, MIR and register code.
 
 use super::build::BuildError;
 use super::lower::{Debug, Error, lower};
+use crate::engine::api::core::compile::DebugInfoMode;
 use crate::engine::api::core::compile::{
     ModuleCompileError, ScriptCompileError, lower_compile_error,
 };
 use crate::engine::ast::ProgramKind;
 use crate::engine::ast::parser::Parser;
-use crate::engine::code::debug::DebugInfoMode;
-use crate::engine::compiler::register::{LowerError, LoweredScript};
 use crate::source::SourceText;
+use oxide_core::bytecode::ValidateError;
 use oxide_core::vm::compile::Compiler;
+use oxide_core::{CodeUnitId, HeapError, ObjectId};
+use std::fmt;
+
+/// Why the middle end or the lowering did not produce code.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum LowerError {
+    /// A construct the lowering does not support.
+    Unsupported(String),
+    /// A dropped feature that is an early `SyntaxError` (`with`).
+    Syntax(String),
+    /// The input broke an invariant an earlier stage guarantees.
+    Internal(String),
+    Heap(HeapError),
+    /// The publication validator rejected a lowered unit.
+    Invalid(ValidateError),
+}
+
+impl fmt::Display for LowerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LowerError::Unsupported(construct) => write!(f, "unsupported: {construct}"),
+            LowerError::Syntax(message) => write!(f, "SyntaxError: {message}"),
+            LowerError::Internal(message) => write!(f, "internal lowering error: {message}"),
+            LowerError::Heap(error) => write!(f, "{error}"),
+            LowerError::Invalid(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+impl From<HeapError> for LowerError {
+    fn from(error: HeapError) -> Self {
+        LowerError::Heap(error)
+    }
+}
+
+impl From<ValidateError> for LowerError {
+    fn from(error: ValidateError) -> Self {
+        LowerError::Invalid(error)
+    }
+}
+
+/// A script lowered and instantiated on the core.
+pub(crate) struct LoweredScript {
+    pub(crate) root: CodeUnitId,
+    /// The script's function object. Unrooted: the caller holds it before
+    /// its next allocation.
+    pub(crate) function: ObjectId,
+}
 
 /// Compiles script or indirect eval code (`kind`) and instantiates it in
 /// `compiler`.
@@ -21,7 +69,7 @@ pub(crate) fn compile_script(
     debug_info: DebugInfoMode,
     kind: ProgramKind,
 ) -> Result<LoweredScript, ScriptCompileError> {
-    crate::engine::compiler::validate_source_length(source.raw_bytes().len())
+    crate::engine::limits::validate_source_length(source.raw_bytes().len())
         .map_err(ScriptCompileError::Front)?;
     let program = match kind {
         ProgramKind::Script => Parser::parse_script(source),
@@ -78,7 +126,7 @@ pub(crate) fn compile_module(
 ) -> Result<(oxide_core::vm::module::ModuleSource, oxide_core::CodeUnitId), ModuleCompileError> {
     use oxide_core::vm::module as core;
     let lower = |error: LowerError| ModuleCompileError::Core(lower_compile_error(error));
-    crate::engine::compiler::validate_source_length(source.len())
+    crate::engine::limits::validate_source_length(source.len())
         .map_err(ModuleCompileError::Front)?;
     let text = SourceText::try_from_raw_bytes(source)
         .map_err(|error| ModuleCompileError::Front(error.into()))?;

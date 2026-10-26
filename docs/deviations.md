@@ -282,7 +282,7 @@ clause.
   one-MiB C stack budget, so its limit depends on C frame sizes and shifts by
   a few percent with the compiler that builds it. The Rust parser charges each
   recursive grammar edge a weight calibrated to one QuickJS reference build
-  (`src/engine/compiler/stack_guard.rs`), and a token-edge stack check stops
+  (`src/engine/ast/stack_guard.rs`), and a token-edge stack check stops
   productions that carry no weight. Single-production chains such as
   parentheses, arrays, blocks or arrows therefore throw within that margin of
   QuickJS. Chains that interleave several productions (a function body inside

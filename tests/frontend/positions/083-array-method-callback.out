@@ -1,0 +1,6 @@
+    at <anonymous> (083-array-method-callback.js:4:40)
+    at map (native)
+    at f (083-array-method-callback.js:4:3)
+    at g (083-array-method-callback.js:7:3)
+    at <eval> (083-array-method-callback.js:10:4)
+

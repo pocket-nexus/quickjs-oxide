@@ -1,0 +1,6 @@
+    at gen (061-generator-throws.js:2:36)
+    at next (native)
+    at f (061-generator-throws.js:4:37)
+    at g (061-generator-throws.js:7:3)
+    at <eval> (061-generator-throws.js:10:4)
+

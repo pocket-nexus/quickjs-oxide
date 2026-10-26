@@ -1,0 +1,5 @@
+    at <anonymous> (native)
+    at f (106-arguments-callee.js:4:33)
+    at g (106-arguments-callee.js:7:3)
+    at <eval> (106-arguments-callee.js:10:4)
+

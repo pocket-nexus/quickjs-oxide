@@ -7,16 +7,22 @@
 //! registered in the scope arena with the parser's early-error checks, so the
 //! HIR builder resolves names without searching the tree again. Positions are
 //! UTF-8 byte offsets of the token an operation reports errors at.
-// Consumed by the HIR builder, which is not wired to the compile host yet.
 #![allow(dead_code)]
 
+pub mod lexer;
+pub(crate) mod names;
 pub(crate) mod parser;
+pub(crate) mod stack_guard;
 
-use crate::engine::compiler::lexer::Span as TokenSpan;
-use crate::engine::compiler::names::{NameId, NameTable};
+use crate::engine::ast::lexer::Span as TokenSpan;
+use crate::engine::ast::names::{NameId, NameTable};
 use crate::engine::value::JsString;
 use crate::engine::value::bigint::JsBigInt;
 use std::rc::Rc;
+
+/// Rust spelling of QuickJS's private `JS_ATOM__default_` module binding,
+/// which holds an anonymous default export. Source text cannot name it.
+pub(crate) const MODULE_DEFAULT_BINDING_NAME: &str = "<module-default>";
 
 /// A byte offset into the source.
 pub(crate) type Pos = u32;

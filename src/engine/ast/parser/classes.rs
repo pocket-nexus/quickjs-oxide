@@ -9,15 +9,15 @@ use super::functions::FunctionOptions;
 use super::support::{IdentifierContext, number_key, parse_number};
 use super::{FunctionState, ModuleExport, Parser, pos};
 use crate::engine::api::error::{Error, ErrorKind};
+use crate::engine::ast::MODULE_DEFAULT_BINDING_NAME;
+use crate::engine::ast::lexer::{
+    Keyword, NumberKind, Punctuator, Span, TokenKind, quickjs_simple_lookahead_has_line_terminator,
+};
+use crate::engine::ast::stack_guard::ParserStackFrame;
 use crate::engine::ast::{
     Class, ClassMember, DeclKind, Expr, ExprKind, FieldInit, FieldKey, Function, FunctionKind,
     Ident, MethodRole, PropKey, ScopeKind, Stmt, StmtKind,
 };
-use crate::engine::code::module::MODULE_DEFAULT_BINDING_NAME;
-use crate::engine::compiler::lexer::{
-    Keyword, NumberKind, Punctuator, Span, TokenKind, quickjs_simple_lookahead_has_line_terminator,
-};
-use crate::engine::compiler::stack_guard::ParserStackFrame;
 use crate::engine::value::JsString;
 use oxide_core::FxHashMap;
 
@@ -41,7 +41,7 @@ struct Elements {
 enum ClassKey {
     Fixed(JsString),
     Computed(Expr, Span),
-    Private(crate::engine::compiler::names::NameId, Span),
+    Private(crate::engine::ast::names::NameId, Span),
 }
 
 impl<'source> Parser<'source> {
@@ -586,7 +586,7 @@ impl<'source> Parser<'source> {
         &mut self,
         elements: &mut Elements,
         is_static: bool,
-        name: crate::engine::compiler::names::NameId,
+        name: crate::engine::ast::names::NameId,
         span: Span,
     ) -> Result<(), Error> {
         if self.names.name(name) == "#constructor" {

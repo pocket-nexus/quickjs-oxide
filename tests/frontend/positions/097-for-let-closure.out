@@ -1,0 +1,5 @@
+    at <anonymous> (097-for-let-closure.js:4:46)
+    at f (097-for-let-closure.js:4:56)
+    at g (097-for-let-closure.js:7:3)
+    at <eval> (097-for-let-closure.js:10:4)
+

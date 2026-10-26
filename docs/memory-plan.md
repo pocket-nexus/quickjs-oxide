@@ -31,7 +31,7 @@ The kernel maps file-backed pages in 64 KiB fault-around windows: touching one b
 
 ### 1.2 The compiler's transient peak
 
-The compiler holds the whole script's intermediate forms at once (the linear IR of every function, the stack-code intermediate, the register code) until lowering completes; `massif` puts the compile-phase peak at 22–32 bytes per source byte, and that peak is the program's peak for every program whose heap is small:
+The compiler holds the whole script's intermediate forms at once (the syntax tree, the HIR, the register code) until lowering completes; `massif` puts the compile-phase peak at 22–32 bytes per source byte, and that peak is the program's peak for every program whose heap is small:
 
 | Program | Source | Compile-phase peak | Run-phase heap peak | Peak RSS, `qjs` / QuickJS |
 | --- | ---: | ---: | ---: | ---: |
@@ -39,7 +39,7 @@ The compiler holds the whole script's intermediate forms at once (the linear IR 
 | Bounce | 147 KB | 3.3 MB | 9.4 MB | 13.0 / 4.3 MiB |
 | Box2D | 530 KB | about 12 MB | 9.1 MiB reserved | 22.0 / 8.8 MiB |
 | PdfJS | 1,480 KB | 39.7 MB | 50.7 MB | 73 / 24 MiB |
-| Mandreel | 2,528 KB | 124 MB, of which the IR's `ops` vector 80 MB | 1.4 MiB reserved | 117 / 58 MiB |
+| Mandreel | 2,528 KB | 124 MB | 1.4 MiB reserved | 117 / 58 MiB |
 
 QuickJS's heap during the compile of PdfJS stays under 7 MB. The retained code is a second, smaller cost: each function keeps its own copy of its source text (2.1× the file for Bounce, 2.6 MiB for PdfJS), instructions are 8 bytes and position entries 12.
 
@@ -121,12 +121,12 @@ The 37 programs on 2026-10-19 (one run; `collections`, `live` and `reserved` fro
 
 ## 3. Item B: the compiler's transient peak
 
-This item is carried by the pull-request sequence of #154 (the handler-table rewrite, the de-duplicated analysis, the allocation cuts); this page adds its memory acceptance and the mechanism that meets it without the IR-to-register rewrite that #154 defers.
+This item is carried by the pull-request sequence of #154 (the handler-table rewrite, the de-duplicated analysis, the allocation cuts); this page adds its memory acceptance and the mechanism that meets it.
 
 **Mechanism.** The peak becomes the largest single function's intermediate forms plus the finished code, instead of the whole script's:
 
-- `lower_unlinked_tree` and `lower_tree` consume the tree function by function: a function's IR (`FunctionIr`, its `ops` vector) and its stack-code intermediate are dropped as soon as its register code is published, and the buffers the lowering reuses (`analyze`'s per-pc regions, `positions`, the emitted `Insn` vector) are kept across functions rather than reallocated;
-- `SpannedIrOp` shrinks (the rare large payloads are boxed) so the per-function IR costs less per source byte;
+- `mir::lower` builds each function's MIR through the builder's `Stream` when it reaches the function and drops it as soon as its register code is published, and the buffers the lowering reuses (the liveness and allocation tables, `positions`, the emitted `Insn` vector) are kept across functions rather than reallocated;
+- the syntax tree's and the HIR's nodes stay narrow (the rare large payloads are boxed) so the whole-script forms cost less per source byte;
 - the lexer's lookahead buffer (`probe_token`, 1.5 MB on PdfJS) is bounded by the deepest re-scan the grammar needs, not by the function;
 - the source text kept for `Function.prototype.toString` is one shared byte string per script with a range per unit, so the code store holds the file once (today 2.1× the file).
 
@@ -201,7 +201,7 @@ Expected: the small programs' heap goes from 3–8 MiB to about 1.2 MiB; Earley-
 Measured first, taken if the numbers hold:
 
 - **Array ranges.** The value heap adds the classes `3 × 2^k` beside `2^k`, encoded in the header's `log` byte with one mantissa bit, so a ten-element literal takes 12 slots instead of 16 and a 1,024-element array growing by 1.5× lands on a class. Splay's leaves save 32 bytes each (8 MiB live, 24 MiB of peak under growth 2). The classes change `class_len`, `growth_bytes`, the free-list index and the elements' growth rule in `Heap::set_element`.
-- **Concatenation chains.** `a + b + c` with string operands allocates an intermediate per `+`. The register lowering recognizes a chain of string concatenations and emits one `ConcatN` over its operands, allocating the result once; the runtime path copies the units of every operand into one flat string (or one rope when the result is at least `ROPE_MIN`). Splay's leaf strings go from three allocations to two (the tag's conversion and the result), which lowers the garbage allocated per leaf and so the collection count, not the live set.
+- **Concatenation chains.** `a + b + c` with string operands allocates an intermediate per `+`. The MIR lowering recognizes a chain of string concatenations and emits one `ConcatN` over its operands, allocating the result once; the runtime path copies the units of every operand into one flat string (or one rope when the result is at least `ROPE_MIN`). Splay's leaf strings go from three allocations to two (the tag's conversion and the result), which lowers the garbage allocated per leaf and so the collection count, not the live set.
 
 **Acceptance.** Splay's live bytes after a collection at most 70 MiB and its collection count at most today's; the instruction gate; the corpora unchanged. Expected: Splay 268 → about 220 MiB (about 1.5× QuickJS; section 6 says why not lower).
 

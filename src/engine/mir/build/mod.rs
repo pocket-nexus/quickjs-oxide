@@ -2,7 +2,7 @@
 //!
 //! The builder walks each function's HIR in the order QuickJS emits its
 //! bytecode, so the operations, their evaluation order and their source
-//! positions are the ones the old front end produces. A binding of the
+//! positions are QuickJS's. A binding of the
 //! function is a variable ([`Var`]): one register for the whole function,
 //! read and written with `GetVar` and `SetVar`; a binding an inner function
 //! captures holds its cell there. Everything else is an SSA value. Phis
@@ -754,7 +754,7 @@ impl<'s, 'h> Builder<'s, 'h> {
     /// since QuickJS keeps it as a distinct string, not an atom.
     pub(crate) fn string_literal(&mut self, string: u32) -> Value {
         let text = &self.cx.strings[string as usize];
-        if crate::engine::compiler::register::is_tagged_int_atom(text) {
+        if crate::engine::mir::lower::is_tagged_int_atom(text) {
             let index = self.constant(Constant::String(string));
             return self.op(Op::Const, &[], Imm::Const(index));
         }

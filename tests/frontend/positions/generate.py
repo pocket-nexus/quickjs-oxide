@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Writes the position test programs: each case throws from one construct
-and prints the error's stack, so `scripts/frontend/diff.py` compares where
-both front ends place every frame.
+and prints the error's stack. Each `NAME.out` records the stack QuickJS
+prints; `scripts/checks/check-outputs.py` compares every case with it, and
+`--update` rewrites the records after a deliberate change.
 
     python3 tests/frontend/positions/generate.py
+    python3 scripts/checks/check-outputs.py --qjs target/release/qjs tests/frontend/positions
 """
 
 import os

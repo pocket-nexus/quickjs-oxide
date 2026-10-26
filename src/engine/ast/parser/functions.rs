@@ -3,15 +3,15 @@
 use super::support::{ForHeadDelimiter, IdentifierContext, for_head_regexp_allowed_after};
 use super::{FunctionKind, Parser, StatementPosition, pos};
 use crate::engine::api::error::{Error, ErrorKind};
+use crate::engine::ast::lexer::{
+    Identifier, Keyword, LexContext, Lexer, LexicalGoal, Punctuator, Span, TemplatePartKind,
+    TokenKind,
+};
+use crate::engine::ast::stack_guard::ParserStackFrame;
 use crate::engine::ast::{
     DeclKind, Expr, ExprKind, Function, Ident, MethodRole, Param, Pattern, PatternKind, Ref,
     ScopeKind, Stmt, StmtKind, Storage,
 };
-use crate::engine::compiler::lexer::{
-    Identifier, Keyword, LexContext, Lexer, LexicalGoal, Punctuator, Span, TemplatePartKind,
-    TokenKind,
-};
-use crate::engine::compiler::stack_guard::ParserStackFrame;
 
 /// A parenthesized arrow probe that declined at its first token, kept until
 /// the AssignmentExpression it began has been parsed.
@@ -377,7 +377,7 @@ impl<'source> Parser<'source> {
         }
         loop {
             // QuickJS's JS_MAX_LOCAL_VARS bounds the argument slots.
-            if params.len() >= crate::engine::compiler::MAX_LOCAL_VARIABLES {
+            if params.len() >= crate::engine::limits::MAX_LOCAL_VARIABLES {
                 return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
                     .with_span(self.current().span));
             }
@@ -465,7 +465,7 @@ impl<'source> Parser<'source> {
 
     fn identifier_parameter(
         &mut self,
-        name: crate::engine::compiler::names::NameId,
+        name: crate::engine::ast::names::NameId,
         span: Span,
     ) -> Result<Pattern, Error> {
         self.register_identifier_parameter(name, span)?;
@@ -606,7 +606,7 @@ impl<'source> Parser<'source> {
                 self.expect_punctuator(Punctuator::LeftParen)?;
                 if !self.consume_punctuator(Punctuator::RightParen)? {
                     loop {
-                        if params.len() >= crate::engine::compiler::MAX_LOCAL_VARIABLES {
+                        if params.len() >= crate::engine::limits::MAX_LOCAL_VARIABLES {
                             return Err(Error::new(ErrorKind::JsInternal, "too many arguments")
                                 .with_span(self.current().span));
                         }

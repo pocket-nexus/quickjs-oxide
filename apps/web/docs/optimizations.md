@@ -1,10 +1,10 @@
 # Optimizations
 
-quickjs-oxide is an interpreter: it compiles JavaScript to bytecode and runs that bytecode in a loop. Its speed and its memory use come from how the bytecode is shaped, how values and objects are laid out, how property access is cached and how the heap is managed. This page walks through each technique, where it lives in the source and what it buys. The engine's core is the crate `quickjs-oxide-core` in [`core/`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/core/README.md); the compiler is in the root crate under [`src/engine/compiler`](https://github.com/pocket-nexus/quickjs-oxide/tree/main/src/engine/compiler). Both have no unsafe code.
+quickjs-oxide is an interpreter: it compiles JavaScript to bytecode and runs that bytecode in a loop. Its speed and its memory use come from how the bytecode is shaped, how values and objects are laid out, how property access is cached and how the heap is managed. This page walks through each technique, where it lives in the source and what it buys. The engine's core is the crate `quickjs-oxide-core` in [`core/`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/core/README.md); the compiler is in the root crate under [`src/engine`](https://github.com/pocket-nexus/quickjs-oxide/tree/main/src/engine): the parser in `ast`, name resolution in `hir`, and the SSA form and its register lowering in `mir`. Both have no unsafe code.
 
 | Technique | Where | Effect |
 | --- | --- | --- |
-| Register bytecode | `src/engine/compiler/register`, `core/src/bytecode` | fewer instructions than stack code; operands read in place |
+| Register bytecode | `src/engine/mir/lower`, `core/src/bytecode` | fewer instructions than stack bytecode; operands read in place |
 | One dispatch loop | `core/src/vm/interp.rs` | calls and returns without Rust recursion; hot opcodes inline |
 | NaN-boxed values | `core/src/value.rs` | every value is one 8-byte word; numbers need no allocation |
 | Shapes and validity cells | `core/src/shape.rs` | objects with the same layout share it; a prototype chain is checked with one flag |
@@ -15,12 +15,12 @@ quickjs-oxide is an interpreter: it compiles JavaScript to bytecode and runs tha
 | The value heap | `core/src/heap/values.rs` | property values and elements in one vector, in size classes |
 | Mark-sweep collector | `core/src/heap/gc.rs` | collects only at allocation; memory bounded by a budget |
 | Reclaiming run-time code | `core/src/heap/code.rs` | code from `eval` and `new Function` is freed when unreachable |
-| Linear-time compilation | `src/engine/compiler` | compile cost grows with the source size, not faster |
+| Linear-time compilation | `src/engine/ast`, `src/engine/hir`, `src/engine/mir` | compile cost grows with the source size, not faster |
 | Startup layout | `apps/cli/qjs.order` | the code that every run executes sits together in the binary |
 
 ## Register bytecode
 
-The front end parses source into QuickJS-shaped stack code: instructions that push and pop an operand stack. The register lowering ([`src/engine/compiler/register`](https://github.com/pocket-nexus/quickjs-oxide/tree/main/src/engine/compiler/register)) turns each function into register code for the core. It walks the stack code with a symbolic stack in which every stack depth is a fixed register, so the stack depth is the register allocator: register 0 is `this`, then the parameters, the locals and one temporary per depth. Pushes and pops that only move values between the stack and locals disappear, because the instruction that uses a value names its register directly.
+The front end parses source into a syntax tree and resolves every name; the middle end turns each function into an SSA graph in which a function's bindings are variables and every other intermediate is a value. The lowering ([`src/engine/mir/lower`](https://github.com/pocket-nexus/quickjs-oxide/tree/main/src/engine/mir/lower)) turns each graph into register code for the core: register 0 is `this`, then the parameters and the variables, and the values take the registers above by linear scan over their live ranges. A value that is stored straight into a variable is computed in the variable's register, and a call's operands are computed in place in the callee's window, so the instruction that uses a value names its register directly.
 
 An instruction (`Insn`) is 8 bytes: an opcode, three 8-bit register operands and a 32-bit immediate. The immediate carries a constant index, a jump target, a property key or an `i32` literal, so common shapes fold into one instruction: arithmetic with a literal (`AddI`), a comparison and its branch (`JLt`, `JNlt` and their forms against an `i16` literal), and a string concatenation chain (`ConcatN`). The function below
 
@@ -35,15 +35,13 @@ function sum(points) {
 lowers to this loop (`qjs --disassemble`; `l` registers are locals, `t` temporaries, `p` parameters, `ic` cache sites):
 
 ```text
-  0007  GetField            t1, p0, .length, ic0
-  0008  JNlt                l1, t1, @16
-  0009  CheckInit           l0, .total
-  0010  CheckInit           l1, .i
-  0011  GetElem             t1, p0, l1
-  0012  GetField            t1, t1, .x, ic1
-  0013  Add                 l0, l0, t1
-  0014  Inc                 l1, l1
-  0015  Jmp                 @6
+  0002  GetField            t0, p0, .length, ic0
+  0003  JNlt                l1, t0, @9
+  0004  GetElem             t0, p0, l1
+  0005  GetField            t0, t0, .x, ic1
+  0006  Add                 l0, l0, t0
+  0007  Inc                 l1, l1
+  0008  JmpBack             @2
 ```
 
 Each unit is checked once by a validator ([`core/src/bytecode/validate.rs`](https://github.com/pocket-nexus/quickjs-oxide/blob/main/core/src/bytecode/validate.rs)) when it is published: every register operand lies inside the frame, every jump target and constant index is in range. The loop then indexes registers with no checks of its own.
@@ -133,7 +131,7 @@ Regular expressions are compiled once per distinct source and flags and shared b
 
 The compiler's passes each walk a function once:
 
-- the register lowering analyzes each function's stack depth, catch regions and join points in one pass and reuses the result for both the function and the children that capture from it;
+- the MIR is built and lowered one function at a time, and a function's graph is dropped once its register code is published;
 - the exception-handler table is built in one pass with a stack of open regions, each region knowing its parent;
 - name resolution, closure captures and global declarations look names up through indexes;
 - debug positions and source locations are assigned in one forward pass over the source.

@@ -1,0 +1,4 @@
+    at f (017-undeclared-read.js:4:10)
+    at g (017-undeclared-read.js:7:3)
+    at <eval> (017-undeclared-read.js:10:4)
+

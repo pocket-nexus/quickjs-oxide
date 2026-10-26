@@ -1,0 +1,4 @@
+    at f (099-finally-throws.js:4:21)
+    at g (099-finally-throws.js:7:3)
+    at <eval> (099-finally-throws.js:10:4)
+

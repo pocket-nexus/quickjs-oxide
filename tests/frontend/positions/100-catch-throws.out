@@ -1,0 +1,4 @@
+    at f (100-catch-throws.js:4:33)
+    at g (100-catch-throws.js:7:3)
+    at <eval> (100-catch-throws.js:10:4)
+

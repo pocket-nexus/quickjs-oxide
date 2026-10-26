@@ -1,0 +1,8 @@
+    at r (113-stack-overflow-like.js:2:38)
+    at r (113-stack-overflow-like.js:2:42)
+    at r (113-stack-overflow-like.js:2:42)
+    at r (113-stack-overflow-like.js:2:42)
+    at f (113-stack-overflow-like.js:4:3)
+    at g (113-stack-overflow-like.js:7:3)
+    at <eval> (113-stack-overflow-like.js:10:4)
+

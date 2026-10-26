@@ -1,0 +1,5 @@
+    at h (041-destructure-param.js:2:12)
+    at f (041-destructure-param.js:4:4)
+    at g (041-destructure-param.js:7:3)
+    at <eval> (041-destructure-param.js:10:4)
+

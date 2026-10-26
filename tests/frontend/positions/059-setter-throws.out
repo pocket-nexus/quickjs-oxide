@@ -1,0 +1,5 @@
+    at set x (059-setter-throws.js:2:37)
+    at f (059-setter-throws.js:4:4)
+    at g (059-setter-throws.js:7:3)
+    at <eval> (059-setter-throws.js:10:4)
+

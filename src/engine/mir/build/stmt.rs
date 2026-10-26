@@ -1,5 +1,5 @@
 //! Statements, in QuickJS's layout: each construct's blocks are created in
-//! the order the old front end emits their code.
+//! the order QuickJS emits their code.
 
 use super::entry::lexical;
 use super::pattern::Mode;

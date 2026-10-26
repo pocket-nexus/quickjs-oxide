@@ -7,7 +7,7 @@
 - [ ] `cargo clippy --workspace --all-targets --all-features -- -D warnings` and `cargo fmt --check`
 - [ ] Tests for the changed areas pass
 
-### The core (`core/`, `src/engine/compiler/register`, `src/engine/api/core`)
+### The core (`core/`, `src/engine/mir/lower`, `src/engine/api/core`)
 
 Only for a pull request that changes code `quickjs-oxide-core` runs
 (the gates in docs/performance/principles.md):

@@ -1,0 +1,5 @@
+    at C (049-derived-no-super.js:2:12)
+    at f (049-derived-no-super.js:4:8)
+    at g (049-derived-no-super.js:7:3)
+    at <eval> (049-derived-no-super.js:10:4)
+

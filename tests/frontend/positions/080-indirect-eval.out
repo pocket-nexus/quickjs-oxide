@@ -1,0 +1,6 @@
+    at <eval> (<input>:1:2)
+    at eval (native)
+    at f (080-indirect-eval.js:4:3)
+    at g (080-indirect-eval.js:7:3)
+    at <eval> (080-indirect-eval.js:10:4)
+

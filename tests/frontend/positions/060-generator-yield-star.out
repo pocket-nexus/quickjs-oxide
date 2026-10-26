@@ -1,0 +1,6 @@
+    at gen (060-generator-yield-star.js:2:19)
+    at next (native)
+    at f (060-generator-yield-star.js:4:13)
+    at g (060-generator-yield-star.js:7:3)
+    at <eval> (060-generator-yield-star.js:10:4)
+

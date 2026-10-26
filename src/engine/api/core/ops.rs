@@ -20,8 +20,8 @@ use super::property::{
 };
 use super::runtime::{Preloaded, PromiseSnapshot, PromiseState, Shared, slot};
 use super::value::{CallableRef, ObjectRef, Slot, SymbolRef, Value};
+use crate::engine::api::core::compile::CompileOptions;
 use crate::engine::api::error::{Error, NativeErrorKind};
-use crate::engine::compiler::CompileOptions;
 use crate::engine::value::JsString;
 use crate::engine::value::bigint::JsBigInt;
 
@@ -316,7 +316,10 @@ impl View<'_> {
     }
 
     pub(crate) fn eval_bytes(&mut self, source: &[u8]) -> JsResult<Value> {
-        self.eval_bytes_with_filename(source, crate::engine::compiler::DEFAULT_EVAL_FILENAME)
+        self.eval_bytes_with_filename(
+            source,
+            crate::engine::api::core::compile::DEFAULT_EVAL_FILENAME,
+        )
     }
 
     pub(crate) fn eval_with_filename(&mut self, source: &str, filename: &str) -> JsResult<Value> {
@@ -354,7 +357,10 @@ impl View<'_> {
     }
 
     pub(crate) fn compile_bytes(&mut self, source: &[u8]) -> JsResult<FunctionBytecodeRef> {
-        self.compile_bytes_with_filename(source, crate::engine::compiler::DEFAULT_EVAL_FILENAME)
+        self.compile_bytes_with_filename(
+            source,
+            crate::engine::api::core::compile::DEFAULT_EVAL_FILENAME,
+        )
     }
 
     pub(crate) fn compile_with_filename(
@@ -404,20 +410,12 @@ impl View<'_> {
             compile_script(&mut compiler, source, filename, debug_info)
         };
         match lowered {
-            Ok(lowered) => Ok(FunctionBytecodeRef::new(
-                self.lift_object(lowered.function),
-                #[cfg(test)]
-                source,
-                #[cfg(test)]
-                filename,
-                #[cfg(test)]
-                debug_info,
-            )),
+            Ok(lowered) => Ok(FunctionBytecodeRef::new(self.lift_object(lowered.function))),
             Err(ScriptCompileError::Front(error)) => {
                 Err(self.throw_compile_error(&error, source, filename))
             }
             Err(ScriptCompileError::Lower(error)) => match error {
-                crate::engine::compiler::register::LowerError::Syntax(message) => {
+                crate::engine::mir::compile::LowerError::Syntax(message) => {
                     let error = Error::new(crate::engine::api::error::ErrorKind::Syntax, message);
                     Err(self.throw_compile_error(&error, source, filename))
                 }
@@ -474,7 +472,7 @@ impl View<'_> {
     pub(crate) fn compile_module_bytes(&mut self, source: &[u8]) -> JsResult<ModuleBytecodeRef> {
         self.compile_module_bytes_with_filename(
             source,
-            crate::engine::compiler::DEFAULT_EVAL_FILENAME,
+            crate::engine::api::core::compile::DEFAULT_EVAL_FILENAME,
         )
     }
 

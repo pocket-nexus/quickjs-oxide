@@ -8,7 +8,7 @@ This page follows a script from source text to a running program and names the c
 
 | Crate | Path | Content |
 | --- | --- | --- |
-| `quickjs-oxide` | `src/` | The front end (lexer, parser, scopes, stack-code emission), the register lowering and the embedding API |
+| `quickjs-oxide` | `src/` | The front end (lexer, parser, name resolution into the HIR), the middle end (the MIR and its register lowering) and the embedding API |
 | `quickjs-oxide-core` | `core/` | Values, the heap and its collector, shapes, register bytecode, the loop that runs it, the builtins, the `Host` trait and `Runtime` |
 | `quickjs-oxide-regexp` | `regexp/` | Regular-expression compilation and matching over UTF-16 code units, and the Unicode 17 tables |
 | `quickjs-oxide-host` | `adapters/native` | `SystemHost`: the system clock and the time-zone rules from TZif files and `TZ` |
@@ -21,13 +21,16 @@ Dependencies point one way. `quickjs-oxide-regexp` depends on nothing. `quickjs-
 
 ## From source to result
 
-A script passes through four stages before it runs:
+A script passes through these stages:
 
 ```text
 source text
   │  front end (quickjs-oxide)
   ▼
-QuickJS-shaped stack code, one unit per function
+syntax tree, then the HIR with every name resolved
+  │  middle end (quickjs-oxide)
+  ▼
+the MIR: one SSA graph per function
   │  register lowering (quickjs-oxide)
   ▼
 quickjs-oxide-core register code
@@ -41,11 +44,15 @@ completion value or exception
 
 ### Front end
 
-The front end in `src/engine/compiler` parses Script or Module source and emits code for an operand stack, shaped like QuickJS's bytecode. It resolves every identifier once all scopes are known, applies local rewrites, and computes each function's maximum stack depth. The output is a tree of unlinked functions, or a module record with its imports and exports. Early errors carry QuickJS's messages and positions.
+The parser in `src/engine/ast` reads Script or Module source into a syntax tree and records every scope and declaration. `src/engine/hir` resolves every identifier once all scopes are known and records closure captures and TDZ checks. The output is the HIR: a tree of functions, or a module with its imports and exports. Early errors carry QuickJS's messages and positions.
+
+### Middle end
+
+`src/engine/mir` turns each function into an SSA graph in the order QuickJS emits its bytecode: the function's bindings are variables, every other intermediate is a value, and phis appear only where an expression's branches join.
 
 ### Register lowering
 
-The lowering in `src/engine/compiler/register` turns each function's stack code into register code for `quickjs-oxide-core`. Register 0 is `this`, followed by the parameters, the locals and one temporary per stack depth, so the stack depth chooses the register. Variables captured by closures become cells. A function with more locals and temporaries than its 256-register window keeps the rest in a spill area.
+The lowering in `src/engine/mir/lower` turns each function's graph into register code for `quickjs-oxide-core`. Register 0 is `this`, followed by the parameters and the variables; the values take the registers above by linear scan over their live ranges. Variables captured by closures hold cells. A function whose variables and values pass its 256-register window keeps the rest in a spill area.
 
 Each instruction is 8 bytes: an opcode, three byte operands and a 32-bit immediate.
 

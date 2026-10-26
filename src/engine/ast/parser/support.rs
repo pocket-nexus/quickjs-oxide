@@ -2,13 +2,13 @@
 
 use super::{FunctionKind, InMode, Parser};
 use crate::engine::api::error::{Error, ErrorKind, NativeErrorMessage};
-use crate::engine::compiler::lexer::{
+use crate::engine::ast::lexer::{
     Identifier, Keyword, LexContext, LexError, LexErrorKind, LexicalGoal, NumberKind,
     NumberLiteral, NumericRadix, Punctuator, Span, TemplatePart, TemplatePartKind, Token,
     TokenKind, quickjs_simple_lookahead_is_of,
 };
-use crate::engine::compiler::names::NameId;
-use crate::engine::compiler::stack_guard::ParserStackFrame;
+use crate::engine::ast::names::NameId;
+use crate::engine::ast::stack_guard::ParserStackFrame;
 use crate::engine::value::bigint::JsBigInt;
 use crate::engine::value::{JsString, JsStringError};
 use num_bigint::BigUint;

@@ -84,12 +84,12 @@ def rust_code_only(source: str) -> str:
 root = Path(__file__).resolve().parents[2]
 src = root / "src"
 errors = []
-# The front end (`compiler`, its stack instructions and unlinked records in
-# `code`, its primitive values in `value`), the HIR it hands the middle end
-# (`hir`) and the embedding API over `quickjs-oxide-core` (`api`); the engine
+# The front end (the lexer, parser and syntax tree in `ast`, the HIR in `hir`,
+# the MIR and the register lowering in `mir`, its primitive values in
+# `value`) and the embedding API over `quickjs-oxide-core` (`api`); the engine
 # itself is the `quickjs-oxide-core` crate (`core/`) and the
 # regular-expression engine the `quickjs-oxide-regexp` crate (`regexp/`).
-expected = {"compiler", "code", "value", "ast", "hir", "mir", "api"}
+expected = {"value", "ast", "hir", "mir", "api"}
 if {p.name for p in src.glob("*.rs")} != {"lib.rs"}:
     errors.append("src must contain only lib.rs as a top-level Rust source")
 if {p.name for p in src.iterdir() if p.is_dir()} != {"engine", "source"}:
@@ -106,15 +106,13 @@ if re.search(r"\bpub\s+use\b", root_code):
 if set(re.findall(r"\bpub\s+mod\s+(\w+)", engine_code)) != {"api"}:
     errors.append("engine::api must be the only public engine module")
 # The embedding API keeps its implementation
-# private: its items are its own, the API root's, the front end's (errors,
-# strings, compile options, import attributes) or `quickjs-oxide-core`'s.
+# private: its items are its own, the API root's, the engine's errors and
+# strings, or `quickjs-oxide-core`'s.
 core_api = rust_code_only((src / "engine/api/core/mod.rs").read_text())
 if set(re.findall(r"\bpub\s+mod\s+(\w+)", core_api)) - {"test262"}:
     errors.append("engine::api::core must not expose its implementation modules")
 allowed_reexports = (
-    "crate::engine::api::error::", "crate::engine::code::debug::",
-    "crate::engine::code::module::", "crate::engine::compiler::",
-    "crate::engine::value::", "oxide_core::",
+    "crate::engine::api::error::", "crate::engine::value::", "oxide_core::",
 )
 for path in re.findall(r"\bpub\s+use\s+((?:crate|oxide_core)::[\w:]*)", core_api):
     if path != "crate::engine::api::" and not path.startswith(allowed_reexports):

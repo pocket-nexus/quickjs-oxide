@@ -1,0 +1,4 @@
+    at f (043-for-of-not-iterable.js:4:12)
+    at g (043-for-of-not-iterable.js:7:3)
+    at <eval> (043-for-of-not-iterable.js:10:4)
+

@@ -1,0 +1,4 @@
+    at f (065-optional-chain.js:4:14)
+    at g (065-optional-chain.js:7:3)
+    at <eval> (065-optional-chain.js:10:4)
+

@@ -18,11 +18,15 @@ pub mod test262;
 mod value;
 
 pub use buffer::{TypedArrayKind, TypedArrayView};
+pub use compile::{CompileOptions, DebugInfoMode};
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
 pub use convert::{FromJs, IntoJs};
 pub use error::RuntimeError;
 pub use function::{FunctionOptions, HostFunction, Raw, Scope};
-pub use module::{CompiledModule, ModuleLoader, ModuleScope, ModuleSource};
+pub use module::{
+    CompiledModule, ModuleImportAttribute, ModuleImportAttributes, ModuleLoader, ModuleScope,
+    ModuleSource,
+};
 pub use ops::{Js, JsResult};
 pub use promise::PromiseCapability;
 pub use property::{
@@ -37,9 +41,6 @@ pub use value::{CallableRef, ObjectRef, SymbolRef, Value};
 
 pub use crate::engine::api::error::{Error, ErrorKind, NativeErrorKind};
 pub use crate::engine::api::{declare_thread_stack, number_to_string, quickjs_detect_module_bytes};
-pub use crate::engine::code::debug::DebugInfoMode;
-pub use crate::engine::code::module::{ModuleImportAttribute, ModuleImportAttributes};
-pub use crate::engine::compiler::CompileOptions;
 pub use crate::engine::value::bigint::{BigIntError, JsBigInt};
 pub use crate::engine::value::{JsString, JsStringError};
 /// The core's value, which [`Host::promise_rejection`] receives.
@@ -47,5 +48,7 @@ pub use oxide_core::Value as CoreValue;
 pub use oxide_core::host::{Host, RejectionEvent, Stream};
 pub use oxide_core::{HeapLimits, MemoryReport, RuntimeOptions};
 
+#[cfg(test)]
+mod language_tests;
 #[cfg(test)]
 mod tests;

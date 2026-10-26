@@ -1,0 +1,6 @@
+    at <class_static_block> (057-static-block-throws.js:4:23)
+    at <class_static_init> (057-static-block-throws.js:4:13)
+    at f (057-static-block-throws.js:4:9)
+    at g (057-static-block-throws.js:7:3)
+    at <eval> (057-static-block-throws.js:10:4)
+

@@ -1,0 +1,4 @@
+    at f (066-optional-call.js:4:3)
+    at g (066-optional-call.js:7:3)
+    at <eval> (066-optional-call.js:10:4)
+

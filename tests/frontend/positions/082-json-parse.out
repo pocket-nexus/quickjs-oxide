@@ -1,0 +1,6 @@
+    at <input>:1:2
+    at parse (native)
+    at f (082-json-parse.js:4:3)
+    at g (082-json-parse.js:7:3)
+    at <eval> (082-json-parse.js:10:4)
+

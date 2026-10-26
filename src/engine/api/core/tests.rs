@@ -5,8 +5,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use super::{EvalOptions, QjsHelpers, Runtime, RuntimeError, RuntimeOptions, Value};
-use crate::engine::compiler::CompileOptions;
-use crate::engine::compiler::register::run_tests::{corpus, run_on_core};
+use crate::engine::api::core::compile::CompileOptions;
+use crate::engine::mir::run_tests::{corpus, run_on_core};
 
 #[derive(Default)]
 struct Capture(Rc<RefCell<String>>);

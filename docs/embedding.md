@@ -21,7 +21,7 @@ Every crate keeps `unsafe_code = "forbid"`, and a runtime has one realm.
 | `api::core::error` | root crate | `Exception(Value)`, `Interrupted`, `Poisoned` |
 | `api::core::module` | root crate | `ModuleScope`, `ModuleSource::Synthetic`, `Context::define_module` |
 | `api::core::promise`, `api::core::buffer`, `api::core::convert` | root crate | `PromiseCapability`; `TypedArrayView`, `TypedArrayKind`; `FromJs`, `IntoJs` and the typed `HostFunction` impls |
-| `src/engine/compiler/register` | root crate | the lowering emits `JmpBack` for a backward `Jmp` |
+| `bytecode::builder`, `src/engine/mir/lower` | `quickjs-oxide-core`, root crate | `CodeBuilder::mark_back_edges` turns each backward `Jmp` the lowering emits into `JmpBack` |
 
 The tests are `core/tests/host.rs` (the core's host functions and objects) and `tests/embedding_api.rs` (the API).
 

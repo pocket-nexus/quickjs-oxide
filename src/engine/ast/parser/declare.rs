@@ -1,16 +1,15 @@
 //! Declaration registration with QuickJS's redeclaration early errors.
 //!
-//! Each rule is the stack-code parser's (`compiler::parser::declarations`),
-//! with storage derived from the function kind instead of allocated: a
+//! Each rule is QuickJS's, with storage derived from the function kind: a
 //! script's `var`s and top-level lexicals are global, a module's root
 //! bindings are module bindings, sloppy (indirect) eval code declares
 //! globals and strict eval code locals.
 
 use super::{FunctionKind, Parser};
 use crate::engine::api::error::Error;
+use crate::engine::ast::lexer::Span;
+use crate::engine::ast::names::NameId;
 use crate::engine::ast::{Decl, DeclId, DeclKind, ScopeId, ScopeKind, Storage};
-use crate::engine::compiler::lexer::Span;
-use crate::engine::compiler::names::NameId;
 
 const LEXICAL_REDEFINITION: &str = "invalid redefinition of lexical identifier";
 

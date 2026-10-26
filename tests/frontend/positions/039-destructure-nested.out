@@ -1,0 +1,4 @@
+    at f (039-destructure-nested.js:4:11)
+    at g (039-destructure-nested.js:7:3)
+    at <eval> (039-destructure-nested.js:10:4)
+

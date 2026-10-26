@@ -51,25 +51,25 @@ source_alias_identity_pattern='(?i:\blet\s+(?:mut\s+)?([a-z_][a-z0-9_]*)\s*=\s*(
 filename_probe_pattern='(?i:\b(?:filename|file_name|path)\b)[^;\n]{0,160}(?:\.(?:contains|starts_with|ends_with|find|rfind|match_indices|strip_prefix|strip_suffix)\(\s*(?:r\#*)?"[^"\n]+|(?:==|!=)\s*(?:r\#*)?"[^"\n]+"\#*)|(?:r\#*)?"[^"\n]+"\#*\s*(?:==|!=)[^;\n]{0,160}(?i:\b(?:filename|file_name|path)\b)|(?i:\bmatch\s+(?:&\s*)?(?:filename|file_name|path)\b)[^\{\n]{0,80}\{[\s\S]{0,240}?(?:r\#*)?"[^"\n]+"\#*\s*=>'
 filename_alias_pattern='(?i:\blet\s+(?:mut\s+)?([a-z_][a-z0-9_]*)\s*=\s*(?:&\s*)?(?:filename|file_name|path)(?:\.(?:to_owned|to_string|clone|as_str|as_ref|trim|trim_start|trim_end)\(\))*\s*;)[\s\S]{0,400}?\b\1[^;\n]{0,140}(?:(?:==|!=)\s*(?:r\#*)?"[^"\n]+"\#*|\.(?:contains|starts_with|ends_with|find|rfind|match_indices|strip_prefix|strip_suffix)\(\s*(?:r\#*)?"[^"\n]+)'
 embedded_fixture_pattern='include_(?:str|bytes)!\s*\([^;\n]{0,180}(?:r\#*)?"[^"\n]*(?:test262|fixture|(?:^|/)test/)[^"\n]*"'
-source_literal_allow_pattern="^src/engine/compiler/lexer\\.rs:[0-9]+:[[:space:]]*let limit = if source == \"'abc'\" \\{ 2 \\} else \\{ 1 \\};$"
+source_literal_allow_pattern="^src/engine/ast/lexer\\.rs:[0-9]+:[[:space:]]*let limit = if source == \"'abc'\" \\{ 2 \\} else \\{ 1 \\};$"
 
 source_probe_allowlist=$tmp/source-probe-allowlist.txt
 printf '%s\n' \
-    "src/engine/compiler/lexer.rs:        if ch == '\\r' && self.source[self.offset..].starts_with(\"\\r\\n\") {" \
-    "src/engine/compiler/lexer.rs:            '/' if source.starts_with(\"//\") => {" \
-    "src/engine/compiler/lexer.rs:            '/' if source.starts_with(\"/*\") => {" \
-    "src/engine/compiler/lexer.rs:                let Some(end) = source[2..].find(\"*/\") else {" \
-    "src/engine/compiler/lexer.rs:        if source.starts_with(\"//\") {" \
-    "src/engine/compiler/lexer.rs:        } else if source.starts_with(\"/*\") {" \
-    "src/engine/compiler/lexer.rs:            let Some(end) = source[2..].find(\"*/\") else {" \
-    "src/engine/compiler/lexer.rs:    let Some(after) = source.strip_prefix(\"of\") else {" \
-    "src/engine/compiler/lexer.rs:    if !source.starts_with(b\"#!\") {" \
-    "src/engine/compiler/lexer.rs:        if source.starts_with(b\"//\") {" \
-    "src/engine/compiler/lexer.rs:        } else if source.starts_with(b\"/*\") {" \
-    "src/engine/compiler/lexer.rs:    if let Some(rest) = source.strip_prefix(b\"import\")" \
-    "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"export\")" \
-    "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\".\") {" \
-    "src/engine/compiler/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"(\") {" \
+    "src/engine/ast/lexer.rs:        if ch == '\\r' && self.source[self.offset..].starts_with(\"\\r\\n\") {" \
+    "src/engine/ast/lexer.rs:            '/' if source.starts_with(\"//\") => {" \
+    "src/engine/ast/lexer.rs:            '/' if source.starts_with(\"/*\") => {" \
+    "src/engine/ast/lexer.rs:                let Some(end) = source[2..].find(\"*/\") else {" \
+    "src/engine/ast/lexer.rs:        if source.starts_with(\"//\") {" \
+    "src/engine/ast/lexer.rs:        } else if source.starts_with(\"/*\") {" \
+    "src/engine/ast/lexer.rs:            let Some(end) = source[2..].find(\"*/\") else {" \
+    "src/engine/ast/lexer.rs:    let Some(after) = source.strip_prefix(\"of\") else {" \
+    "src/engine/ast/lexer.rs:    if !source.starts_with(b\"#!\") {" \
+    "src/engine/ast/lexer.rs:        if source.starts_with(b\"//\") {" \
+    "src/engine/ast/lexer.rs:        } else if source.starts_with(b\"/*\") {" \
+    "src/engine/ast/lexer.rs:    if let Some(rest) = source.strip_prefix(b\"import\")" \
+    "src/engine/ast/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"export\")" \
+    "src/engine/ast/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\".\") {" \
+    "src/engine/ast/lexer.rs:    } else if let Some(rest) = source.strip_prefix(b\"(\") {" \
     > "$source_probe_allowlist"
 
 filename_probe_allowlist=$tmp/filename-probe-allowlist.txt
@@ -253,10 +253,10 @@ printf 'let name = filename.to_owned(); if name.contains("no-new-call-expression
 rg --quiet --multiline --pcre2 -- "$filename_alias_pattern" "$tmp/filename-owned-alias.rs" \
     || die "owned filename-alias canary escaped the anti-cheat pattern"
 
-allowed_source_occurrence="src/engine/compiler/lexer.rs:1:        if source.starts_with(\"//\") {"
+allowed_source_occurrence="src/engine/ast/lexer.rs:1:        if source.starts_with(\"//\") {"
 [[ -z $(filter_exact_allowlist "$source_probe_allowlist" <<< "$allowed_source_occurrence") ]] \
     || die "exact source-probe allowlist rejected its authenticated expression"
-blocked_source_occurrence='src/engine/compiler/lexer.rs:999:if source.find("import").is_some() { syntax_error(); }'
+blocked_source_occurrence='src/engine/ast/lexer.rs:999:if source.find("import").is_some() { syntax_error(); }'
 [[ $(filter_exact_allowlist "$source_probe_allowlist" <<< "$blocked_source_occurrence") == \
     "$blocked_source_occurrence" ]] \
     || die "source-probe allowlist admitted a different expression with an allowed literal"

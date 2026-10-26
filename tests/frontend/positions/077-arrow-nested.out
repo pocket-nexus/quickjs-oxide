@@ -1,0 +1,5 @@
+    at <anonymous> (077-arrow-nested.js:4:24)
+    at f (077-arrow-nested.js:4:3)
+    at g (077-arrow-nested.js:7:3)
+    at <eval> (077-arrow-nested.js:10:4)
+

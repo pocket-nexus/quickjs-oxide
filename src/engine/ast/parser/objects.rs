@@ -4,10 +4,10 @@ use super::functions::FunctionOptions;
 use super::support::{IdentifierContext, number_key, parse_number};
 use super::{Parser, pos};
 use crate::engine::api::error::Error;
-use crate::engine::ast::{Expr, ExprKind, MethodRole, ObjProp, PropKey, Ref};
-use crate::engine::compiler::lexer::{
+use crate::engine::ast::lexer::{
     NumberKind, Punctuator, TokenKind, quickjs_simple_lookahead_has_line_terminator,
 };
+use crate::engine::ast::{Expr, ExprKind, MethodRole, ObjProp, PropKey, Ref};
 use crate::engine::value::JsString;
 
 impl<'source> Parser<'source> {

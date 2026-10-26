@@ -1,0 +1,5 @@
+    at toFixed (native)
+    at f (111-number-method.js:4:3)
+    at g (111-number-method.js:7:3)
+    at <eval> (111-number-method.js:10:4)
+

@@ -9,7 +9,7 @@ use super::Parser;
 use super::functions::DeclinedArrow;
 use super::patterns::{BindingPatternScan, ParenthesizedParameterScan};
 use super::support::ForIterationKind;
-use crate::engine::compiler::lexer::{LexContext, LexError, Lexer, LexicalGoal, Punctuator, Token};
+use crate::engine::ast::lexer::{LexContext, LexError, Lexer, LexicalGoal, Punctuator, Token};
 use oxide_core::FxHashMap;
 use std::cell::Cell;
 

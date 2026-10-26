@@ -1,0 +1,5 @@
+    at <anonymous> (078-closure-capture.js:2:64)
+    at f (078-closure-capture.js:4:3)
+    at g (078-closure-capture.js:7:3)
+    at <eval> (078-closure-capture.js:10:4)
+
