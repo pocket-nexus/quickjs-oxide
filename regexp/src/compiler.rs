@@ -123,6 +123,37 @@ impl CompiledRegExp {
     pub const fn has_named_captures(&self) -> bool {
         self.0.group_names.is_some()
     }
+
+    /// Owned allocation capacity, excluding the inline program and allocator
+    /// overhead. Includes compiler search metadata and instruction payloads.
+    #[must_use]
+    pub fn owned_bytes(&self) -> usize {
+        std::mem::size_of_val(self.instructions())
+            + self
+                .instructions()
+                .iter()
+                .map(|instruction| match instruction {
+                    Instruction::Range { ranges, .. } => std::mem::size_of_val(&**ranges),
+                    Instruction::ClassRepeat(repeat) => {
+                        size_of::<super::ClassRepeat>() + std::mem::size_of_val(&*repeat.ranges)
+                    }
+                    Instruction::BackReference { captures, .. }
+                    | Instruction::BackwardBackReference { captures, .. } => {
+                        std::mem::size_of_val(&**captures)
+                    }
+                    _ => 0,
+                })
+                .sum::<usize>()
+            + self.group_names().map_or(0, |names| {
+                std::mem::size_of_val(names)
+                    + names
+                        .iter()
+                        .flatten()
+                        .map(|name| std::mem::size_of_val(&**name))
+                        .sum::<usize>()
+            })
+            + self.0.search.owned_bytes()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1774,6 +1805,7 @@ struct CodeBuilder {
     unicode: bool,
     multiline: bool,
     dot_all: bool,
+    fuse_repeats: bool,
 }
 
 impl CodeBuilder {
@@ -1786,6 +1818,7 @@ impl CodeBuilder {
             unicode: flags.is_unicode(),
             multiline: flags.contains(RegExpFlags::MULTILINE),
             dot_all: flags.contains(RegExpFlags::DOT_ALL),
+            fuse_repeats: true,
         }
     }
 
@@ -2080,6 +2113,39 @@ impl CodeBuilder {
             return Ok(());
         }
 
+        if self.fuse_repeats
+            && !backward
+            && let Atom::Class(class) = atom
+            && class.strings.is_empty()
+        {
+            let mut ascii = [0u64; 2];
+            for unit in 0..128u32 {
+                let value = if self.ignore_case {
+                    crate::unicode::case::regexp_canonicalize(unit, self.unicode)
+                } else {
+                    unit
+                };
+                if class
+                    .ranges
+                    .iter()
+                    .any(|range| range.start <= value && value <= range.end)
+                    != class.inverted
+                {
+                    ascii[(unit / 64) as usize] |= 1 << (unit % 64);
+                }
+            }
+            self.emit(Instruction::ClassRepeat(Box::new(super::ClassRepeat {
+                ranges: class.ranges.clone().into_boxed_slice(),
+                ascii,
+                inverted: class.inverted,
+                ignore_case: self.ignore_case,
+                minimum: quantifier.minimum,
+                maximum: quantifier.maximum,
+                greedy: quantifier.greedy,
+            })));
+            return Ok(());
+        }
+
         self.compile_required_repetitions(
             atom,
             quantifier.minimum,
@@ -2289,6 +2355,16 @@ impl CodeBuilder {
             self.patch_split(index, after, body);
         }
     }
+}
+
+#[cfg(test)]
+pub(super) fn compile_unoptimized(pattern: &[u16], flags: &[u16]) -> CompiledRegExp {
+    let flags = parse_flags(flags).unwrap();
+    let parsed = Parser::new(pattern, flags).parse().unwrap();
+    let mut builder = CodeBuilder::new(flags);
+    builder.fuse_repeats = false;
+    let (instructions, registers) = builder.compile(&parsed.expression).unwrap();
+    CompiledRegExp::from_parts(flags, parsed.capture_count, registers, instructions)
 }
 
 pub(super) fn compile_units(

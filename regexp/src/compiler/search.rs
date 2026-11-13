@@ -92,12 +92,22 @@ impl Default for SearchPlan {
 }
 
 impl SearchPlan {
+    pub(super) fn owned_bytes(&self) -> usize {
+        (self
+            .required
+            .as_ref()
+            .map_or(0, |required| required.units.capacity())
+            + self.literal.as_ref().map_or(0, Vec::capacity))
+            * size_of::<u16>()
+    }
+
     pub(super) fn analyze(expression: &Expression, flags: RegExpFlags, no_captures: bool) -> Self {
         let facts = expression_facts(
             expression,
             ModifierState::from_flags(flags),
             flags.is_unicode(),
         );
+        let literal = if no_captures { facts.exact } else { None };
         Self {
             anchored: facts.anchored,
             minimum: facts.minimum,
@@ -106,8 +116,12 @@ impl SearchPlan {
             } else {
                 facts.first
             },
-            required: facts.required,
-            literal: if no_captures { facts.exact } else { None },
+            required: if literal.is_some() {
+                None
+            } else {
+                facts.required
+            },
+            literal,
         }
     }
 }
