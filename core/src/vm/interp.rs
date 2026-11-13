@@ -3037,7 +3037,7 @@ fn arith_fast(op: Arith, x: Value, y: Value) -> Option<Value> {
             return value;
         }
     }
-    if x.is_number() && y.is_number() && op != Arith::Pow {
+    if matches!(op, Arith::Mul | Arith::Div) && x.is_number() && y.is_number() {
         let (f, g) = (x.as_f64()?, y.as_f64()?);
         // The double forms of the hottest operators stay in the arm. A
         // product stays a double, as a sum does; a quotient becomes an
@@ -3045,10 +3045,24 @@ fn arith_fast(op: Arith, x: Value, y: Value) -> Option<Value> {
         return Some(match op {
             Arith::Mul => Value::number(f * g),
             Arith::Div => number::number(f / g),
-            _ => ops::number_op(op, f, g),
+            _ => unreachable!("a product or quotient"),
         });
     }
+    if !matches!(op, Arith::Mul | Arith::Div | Arith::Pow) {
+        return arith_number(op, x, y);
+    }
     None
+}
+
+/// Keep the non-Int32 remainder and bitwise conversions out of each
+/// specialized arm. The common double product and quotient stay inline.
+#[inline(never)]
+fn arith_number(op: Arith, x: Value, y: Value) -> Option<Value> {
+    if x.is_number() && y.is_number() {
+        Some(ops::number_op(op, x.as_f64()?, y.as_f64()?))
+    } else {
+        None
+    }
 }
 
 /// `Neg`, `Plus`, `ToNumeric` and `BitNot` on numbers.
