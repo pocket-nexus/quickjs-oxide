@@ -1917,6 +1917,29 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     }
                     write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
                 }
+                Opcode::IncGetElem => {
+                    let x = reg!(insn.b);
+                    if let Some(i) = x.as_int32()
+                        && let Some(value) = i.checked_add(1)
+                    {
+                        reg!(insn.a) = Value::int32(value);
+                        if let Some(read) = code.get(pc).copied()
+                            && read.op == Opcode::GetElem
+                            && let (Some(object), Some(index)) =
+                                (reg!(read.b).as_object(), reg!(read.c).as_int32())
+                            && index >= 0
+                        {
+                            let element = cx.heap.get_element(object, index as u32);
+                            if !element.is_empty() {
+                                pc += 1;
+                                set!('dispatch, read.a, element)
+                            }
+                        }
+                        regs = window!();
+                        continue 'dispatch;
+                    }
+                    write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
+                }
                 Opcode::Dec => {
                     let x = reg!(insn.b);
                     if let Some(i) = x.as_int32()

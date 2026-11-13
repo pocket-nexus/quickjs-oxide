@@ -101,6 +101,14 @@ fn a_counted_loop_is_a_compare_jump_and_an_increment() {
 }
 
 #[test]
+fn prefix_element_reads_keep_both_fault_positions() {
+    let code = function("function f(a,k) { return a[++k]; }", "f");
+    assert_eq!(code[..2], ["IncGetElem p1, p1", "GetElem t0, p0, p1"]);
+    let code = function("function f(a,k) { return a[k++]; }", "f");
+    assert!(!code.iter().any(|line| line.starts_with("IncGetElem")));
+}
+
+#[test]
 fn rule_two_reads_the_old_value_before_a_write() {
     let code = function("function f(x) { return x + (x = 2); }", "f");
     assert_eq!(

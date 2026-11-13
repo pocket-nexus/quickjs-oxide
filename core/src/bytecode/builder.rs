@@ -178,6 +178,18 @@ impl CodeBuilder {
         &self.code
     }
 
+    /// Keeps both PCs and their source/handler positions. The interpreter
+    /// may consume the read only when neither operation can throw or call JS.
+    pub fn hint_increment_element(&mut self) {
+        let n = self.code.len();
+        if n >= 2 {
+            let (increment, read) = (self.code[n - 2], self.code[n - 1]);
+            if increment.op == Opcode::Inc && read.op == Opcode::GetElem && increment.a == read.c {
+                self.code[n - 2].op = Opcode::IncGetElem;
+            }
+        }
+    }
+
     /// Turns every `Jmp` whose target is at or before it into `JmpBack`,
     /// once the targets are final: the loop polls for interrupts on
     /// back-edges only.

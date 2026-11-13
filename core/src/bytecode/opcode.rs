@@ -501,6 +501,9 @@ opcodes! {
     /// `Jmp` to a target at or before itself: a loop's back-edge, which
     /// counts down to the next interrupt poll.
     JmpBack: Jump,
+    /// `a = ++b`, with a hint to consume a following dense `GetElem`.
+    /// Misses execute that instruction normally, preserving its fault PC.
+    IncGetElem: AB,
 }
 
 /// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in

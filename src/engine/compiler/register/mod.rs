@@ -1934,6 +1934,9 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 let (_, [object, key]) = self.pop_operands::<2>()?;
                 let dst = self.result_register()?;
                 let at = self.emit(|b| b.abc(Opcode::GetElem, dst, object, key));
+                if self.fusible(pc) {
+                    self.builder.hint_increment_element();
+                }
                 self.push_result(at)?;
             }
             I::GetArrayEl2 => {
