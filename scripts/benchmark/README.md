@@ -326,9 +326,12 @@ python3 scripts/benchmark/bench.py layout \
 ```
 
 Relinks both saved builds at **0, 16, 32 and 48 bytes**, then measures serially
-in ABBA order with hardware instructions and cycles. Link relaxation is disabled;
-all four `.text` sections within each engine must be byte-identical or the run
-fails before sampling. These diagnostic links can differ from the native release
+in ABBA order with hardware instructions and cycles. The fixed origin is +64
+bytes from each default placement (actual shifts 64/80/96/112), avoiding the
+linker's default-placement special case while exercising every modulo-64
+alignment at 16-byte granularity. All four `.text` sections within each engine
+must be byte-identical or the run fails before sampling; it never searches for
+a favorable origin or accepts rewritten instructions. These links can differ from the native release
 binary, whose original Sweep and Claim results must remain in the report.
 
 The default workloads are all eight V8 v7 programs plus `numeric_local_loop`
