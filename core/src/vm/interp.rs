@@ -225,6 +225,16 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
         Opcode::NewArrayK => (insn.a, new_array_constants(cx, frame.bytecode, insn)?),
         Opcode::NewObjectLit => (insn.a, new_object_literal(cx, frame, unit, insn)?),
+        Opcode::InitField => {
+            let object = reg(cx, insn.a);
+            let value = reg(cx, insn.b);
+            cx.heap.set_slot(
+                object.as_object().expect("a literal object"),
+                insn.imm,
+                value,
+            );
+            (insn.a, object)
+        }
         Opcode::ForInStart => {
             let value = reg(cx, insn.b);
             (insn.a, property::for_in_start(cx, value)?)
@@ -2264,15 +2274,6 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     let object = object.as_object().expect("an object");
                     property::define(cx, object, insn.key(), value)
                 }
-                Opcode::InitField => {
-                    let (object, value) = (
-                        reg!(insn.a).as_object().expect("a literal object"),
-                        reg!(insn.b),
-                    );
-                    cx.heap.set_slot(object, insn.imm, value);
-                    regs = window!();
-                    continue 'dispatch;
-                }
                 Opcode::DeleteField => {
                     let object = reg!(insn.b);
                     write!('dispatch, insn.a,
@@ -2447,6 +2448,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::NewRegExp
                 | Opcode::NewArrayK
                 | Opcode::NewObjectLit
+                | Opcode::InitField
                 | Opcode::ForInStart
                 | Opcode::AppendSpread
                 | Opcode::ThrowInternal
