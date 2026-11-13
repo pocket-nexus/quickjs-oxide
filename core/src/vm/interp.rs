@@ -224,16 +224,39 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         }
         Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
         Opcode::NewArrayK => (insn.a, new_array_constants(cx, frame.bytecode, insn)?),
-        Opcode::NewObjectLit => (insn.a, new_object_literal(cx, frame, unit, insn)?),
+        Opcode::NewObjectLit => (insn.a, new_object_literal(cx, unit, insn)?),
         Opcode::InitField => {
             let object = reg(cx, insn.a);
             let value = reg(cx, insn.b);
-            cx.heap.set_slot(
-                object.as_object().expect("a literal object"),
-                insn.imm,
-                value,
-            );
+            let id = object.as_object().expect("a literal object");
+            let slot = u32::from(insn.c);
+            if cx.heap.shape(cx.heap.shape_of(id)).width > slot {
+                cx.heap.set_slot(id, slot, value);
+            } else {
+                property::define(cx, id, insn.key(), value)?;
+            }
             (insn.a, object)
+        }
+        Opcode::FinishObjectLit => {
+            let value = reg(cx, insn.a);
+            let object = value.as_object().expect("a literal object");
+            let creator = unit.code[insn.imm as usize];
+            let site = unit.ic_base as usize + creator.c as usize;
+            let shape = cx.heap.shape_of(object).index();
+            if creator.c == FIELD_NO_SITE || cx.heap.ics.entry(site).w0 != shape {
+                let filled = creator.c != FIELD_NO_SITE
+                    && cx.heap.ics.record(
+                        site,
+                        IcEntry {
+                            w0: shape,
+                            w1: NONE,
+                            w2: NONE,
+                            w3: NONE,
+                        },
+                    );
+                cx.heap.ics.count_miss(site, filled);
+            }
+            (insn.a, value)
         }
         Opcode::ForInStart => {
             let value = reg(cx, insn.b);
@@ -2449,6 +2472,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::NewArrayK
                 | Opcode::NewObjectLit
                 | Opcode::InitField
+                | Opcode::FinishObjectLit
                 | Opcode::ForInStart
                 | Opcode::AppendSpread
                 | Opcode::ThrowInternal
@@ -2788,13 +2812,8 @@ fn new_array_constants(cx: &mut Cx<'_>, bytecode: BytecodeId, insn: Insn) -> Res
     Ok(Value::object(array))
 }
 
-fn new_object_literal(
-    cx: &mut Cx<'_>,
-    frame: &Frame,
-    unit: &CodeUnit,
-    insn: Insn,
-) -> Result<Value, Throw> {
-    let count = u32::from(insn.b);
+fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Value, Throw> {
+    let count = insn.imm;
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let object = cx
         .heap
@@ -2806,33 +2825,6 @@ fn new_object_literal(
     if insn.c != FIELD_NO_SITE && entry.is_filled() {
         cx.heap.objects.get_mut(object.0).shape = ShapeId(entry.w0);
         cx.heap.ics.count_hit(IcKind::Literal);
-    } else {
-        for index in 0..count {
-            let atom = cx
-                .heap
-                .bytecode_constant(frame.bytecode, insn.imm + index)
-                .as_string()
-                .expect("a literal key");
-            cx.heap
-                .add_property(
-                    object,
-                    PropertyKey::atom(atom),
-                    PropertyFlags::DEFAULT,
-                    Value::UNDEFINED,
-                )
-                .map_err(|error| error::heap_error(cx, error))?;
-        }
-        let filled = insn.c != FIELD_NO_SITE
-            && cx.heap.ics.record(
-                site,
-                IcEntry {
-                    w0: cx.heap.shape_of(object).index(),
-                    w1: NONE,
-                    w2: NONE,
-                    w3: NONE,
-                },
-            );
-        cx.heap.ics.count_miss(site, filled);
     }
     Ok(Value::object(object))
 }

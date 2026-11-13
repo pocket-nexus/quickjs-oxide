@@ -508,11 +508,12 @@ opcodes! {
     IncGetElem: AB,
     /// A fresh array filled from a consecutive run of primitive constants.
     NewArrayK: AConstRange,
-    /// A plain object with its final data-property shape: `b` keys from
-    /// constant `imm`, `c` a literal cache site. Values follow as InitField.
-    NewObjectLit: AConst,
-    /// Initializes slot `imm` of a fresh plain object `a` from register `b`.
-    InitField: ABInt,
+    /// A fresh object with `imm` slots and a weak final-shape cache in `c`.
+    NewObjectLit: ACount,
+    /// Defines key `imm` from `b`, or initializes known slot `c`, on `a`.
+    InitField: ABKey,
+    /// Publishes the completed shape at the NewObjectLit instruction `imm`.
+    FinishObjectLit: AInt,
 }
 
 /// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in
