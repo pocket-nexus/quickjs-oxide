@@ -342,12 +342,15 @@ fn literal_shapes_are_weak_and_refill_after_collection() {
 #[test]
 fn an_interrupted_literal_does_not_publish_a_partial_shape() {
     let mut session = Session::new();
-    assert_eq!(session.run(
-        "var log = [];
-         function literal(fail) { return { left: (log.push(1), fail ? explode() : 3), right: (log.push(2), 4) }; }
-         function explode() { throw new Error('stop'); }
+    assert_eq!(
+        session.run(
+            "var log = [];
+         function value(fail) { log.push(1); if (fail) throw new Error('stop'); return 3; }
+         function literal(fail) { return { left: value(fail), right: (log.push(2), 4) }; }
          try { literal(true); } catch(e) { print(e.message, log.join()); }"
-    ), "stop 1\n");
+        ),
+        "stop 1\n"
+    );
     let site = session.site("literal", Opcode::NewObjectLit, 0);
     assert!(session.entry(site).is_empty());
     assert_eq!(
