@@ -325,28 +325,25 @@ python3 scripts/benchmark/bench.py layout \
   --max-spread-percent 3 --max-regression-percent 2 --output /tmp/oxide-layout
 ```
 
-Relinks both saved builds at **0, 16, 32 and 48 bytes**, then measures serially
-in ABBA order with hardware instructions and cycles. The fixed origin is +64
-bytes from each default placement (actual shifts 64/80/96/112), avoiding the
-linker's default-placement special case while exercising every modulo-64
-alignment at 16-byte granularity. All four `.text` sections within each engine
-must be byte-identical or the run fails before sampling; it never searches for
-a favorable origin or accepts rewritten instructions. These links can differ from the native release
-binary, whose original Sweep and Claim results must remain in the report.
+Relinks each build at offsets **0/16/32/48** from a fixed +64-byte origin
+(actual shifts 64/80/96/112), then measures each offset serially in ABBA order.
+All four `.text` sections within each engine must be byte-identical before
+sampling. Offsets separated only by 64 bytes would miss smaller alignment
+changes. The relinks can differ from the native release binary; retain its
+original Sweep and Claim results separately.
 
 The default workloads are all eight V8 v7 programs plus `numeric_local_loop`
 and `array_read`. `--case` selects suite cases and `--fixed-case` selects fixed
-probes. `summary.md` and `summary.json` retain every placement, each engine's
-minimum/median/maximum and spread, and all time/cycle/instruction ratios.
-The diagnostic gate fails if candidate time or cycles vary by more than the
-declared spread limit, or any matched-offset time/cycles regression exceeds its
-declared limit. Failed or incomplete samples also fail. Set these limits before
-running; they are median diagnostics, not confidence intervals or a replacement
-for paired A/A+A/B `noninferior`/`net-gain` gates.
+probes. `summary.md` and `summary.json` retain each placement's time, cycles
+and instructions, plus each engine's minimum/median/maximum and spread
+(`max/min − 1` across placement medians). The diagnostic gate checks candidate
+time/cycles spread and the worst matched-offset regression against the limits
+declared before running. Failed or incomplete samples also fail.
 
-Moving code by 64/128/192 alone preserves modulo-64 alignment and misses the
-smaller placement changes this command stresses. A passing instruction-count
-or loop-size gate does not imply stable time or cycles across placements.
+Offsets run in sequential blocks, so spread may include drift and process
+variation; it is not an A/A noise estimate or a confidence interval. Investigate
+large spreads with interleaved placements and profiles. These diagnostics do
+not replace paired A/A+A/B Claim gates or make a missed gate pass.
 
 ## relink
 
@@ -358,9 +355,8 @@ python3 scripts/benchmark/bench.py relink /tmp/oxide-relink/build.log /tmp/oxide
 
 Relinks one saved LTO build with `.text` placed at each offset from the
 default address, writing `PREFIX-d<delta>` binaries and `PREFIX-relinks.json`
-with each variant's `.text` address and SHA-256. The machine code is
-identical, so the spread of a `run` over the variants is the layout noise of
-that build. A variant whose `.text` bytes differ from the first offset variant
-is reported on stderr.
-`--no-relax --require-identical` disables address-dependent linker relaxation
-and rejects differences between offset variants instead of merely warning.
+with each variant's `.text` address, size and SHA-256. A variant whose `.text`
+bytes differ from the first offset variant is reported on stderr;
+`--require-identical` rejects it. Compare identical variants with `run` to
+investigate placement sensitivity, controlling measurement noise separately.
+Use `layout` for both-engine comparisons at finer offsets.

@@ -32,6 +32,6 @@ A change that crosses the loop-size gate moves code out of line (`rare_op` or an
 
 ## Measurement
 
-Performance conclusions are drawn from retired instructions, not time. Instruction counts are deterministic for a given binary and workload; time also moves with code layout, by 3–6% from layout alone when unrelated code changes. A time change with flat instructions is recorded as layout. Time is reported, with its A/A range, only beside the instruction counts.
+Retired instructions decide the Sweep's work gate; they do not establish speed. Report time with its A/A range and read cycles beside instructions. Flat instruction counts do not explain a time regression: investigate with profiles and the `layout` diagnostic before attributing it to code placement. Layout sensitivity has no fixed percentage allowance and does not relax a Claim gate.
 
 Each measurement records the source, the binary's SHA-256, the workload, the machine and the raw samples, and checks every sample's output. The procedure and fields are in [Measurement method](measurement.md); the probes and their Callgrind method in [Diagnostic probes](probes/README.md).

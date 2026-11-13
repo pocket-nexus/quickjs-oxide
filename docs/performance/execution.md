@@ -8,7 +8,7 @@ The root crate's front end parses and resolves source into stack code; the regis
 
 `Runtime::publish` runs the validator (`bytecode/validate.rs`) once per unit and appends it to the `CodeStore`: every register operand is below `register_count`, every call window and `NewArray` range fits, every target, constant, child and capture index is in range. The loop then indexes without further checks of its own; a validator failure is an internal error of the lowering, never a JavaScript exception. `qjs --disassemble FILE` prints the register code.
 
-New opcodes are appended at the end of `Opcode`. Inserting one in the middle shifts the discriminants and changes how LLVM lays out the loop's arms, which moves the instructions of every V8 v7 program by 1–6%.
+New opcodes are appended at the end of `Opcode`. Inserting one in the middle shifts the discriminants and can change LLVM's dispatch code and arm layout; validate both work and timing rather than assuming an unrelated opcode is free.
 
 ## Frames and register windows
 
@@ -42,6 +42,7 @@ A function inside the window lowers exactly as it would without this path. The `
 `vm::interp::run_at` runs the top frame from an instruction until the entry frame returns. It is one `'dispatch: loop` over `match insn.op` with the frame-derived values (`code`, `base`, `strict`, `ic_base`) in locals and the window in `regs`.
 
 - **Inline arms** cover moves and constants, `Int32` and double arithmetic and comparisons (an overflow or a non-number takes `ops`), the compare-jumps against registers and against `i16` literals, `GetField`, `SetField` and the global forms' cache hits, dense and typed-array element reads and writes, cells and captures, `NewObject`, calls and returns.
+- **Arithmetic dispatch.** Specialized multiply, divide, remainder, shift and bitwise arms pass a constant operation to `arith_fast`. A miss decodes the opcode in the shared out-of-line `arith_slow`; generic coercions and quotient normalization stay out of the dispatch loop.
 - **The window and the heap.** `regs` borrows the register file inside the heap, so an arm that calls into the heap copies its operands out first and takes the window again afterwards (the `set!` and `write!` macros, and the common tail). The cache hits take the heap's arenas as separate fields, disjoint from the register file, and keep the window.
 - **Slow paths** are `#[inline(never)]` functions in `ops`, `property`, `object` and the other modules, returning `Result<_, Throw>`. Their result falls into the common tail: success retakes the window and dispatches, a throw unwinds.
 - **The rare-op split.** Opcodes no hot path runs share out-of-line arms: `rare_op` (accessor and method definitions, the spill scope, `arguments`, rest, `new.target`, regular-expression literals, `for-in` setup, spread elements, the error throws, `import()`, `ConcatN`), `iter::iter_op` (iteration), `class::class_op` (classes, private names, super and reference forms) and `suspend_op` (generators and `await`). A new opcode enters `run_at` inline only when a profile of a suite program shows it hot.
@@ -57,13 +58,13 @@ Rust re-enters JavaScript through `vm::call` and `vm::construct`: the receiver a
 
 ### The size gate
 
-`run_at` stays under 16,384 bytes, read with `nm --size-sort` on the release `qjs` (symbol `oxide_core::vm::interp::run_at`). It is 15,226 bytes. A change that crosses the gate moves code out of line before it merges; see [Execution principles](principles.md).
+`run_at` stays under 16,384 bytes, read with `nm --size-sort` on the release `qjs` (symbol `oxide_core::vm::interp::run_at`). Measure each build; size depends on the toolchain and profile. A change that crosses the gate moves code out of line before it merges; see [Execution principles](principles.md).
 
 ## Inline caches
 
 Each cache site has one 16-byte `IcEntry` (`w0`–`w3`) in the `IcStore`. The store lives in the `Heap`, beside the register file, rather than in a `CodeUnit`: the loop holds the unit's code borrowed across every heap call, and the collector prunes every entry that names a dead shape, object or cell after each marking, before an index is recycled. Entries are weak.
 
-`CodeBuilder::finish` numbers a unit's sites: the named-property sites first in instruction order (0 to 254 in `c`; the rest share the reserved site 255, which is never filled), then the global forms (`b | c << 8`), then `New` (`imm`). `Runtime::publish` reserves the unit's entries from its `ic_base`.
+`CodeBuilder::finish` numbers a unit's sites: named-property and `NewObjectLit` sites first in instruction order (0 to 254 in `c`; the rest share the reserved site 255, which is never filled), then the global forms (`b | c << 8`), then `New` (`imm`). `Runtime::publish` reserves the unit's entries from its `ic_base`.
 
 | Kind | Opcodes | Entry | Hit |
 | --- | --- | --- | --- |
@@ -71,6 +72,7 @@ Each cache site has one 16-byte `IcEntry` (`w0`–`w3`) in the `IcStore`. The st
 | Set | `SetField` | shape before, shape after, slot, validity cell | same shape: a slot store; transition: the shape matches, the slot is within the object's reserved range, the object is extensible and not used as a prototype, and the chain's cell holds; then the new shape and the store |
 | Global | `GetGlobal`, `GetGlobalOrUndefined`, `SetGlobal` | global generation, slot, property flags, holder | one compare of the heap's `global_generation` and a load (`SetGlobal` also checks `WRITABLE`) |
 | Construct | `New` | constructor shape, `prototype` slot, receiver slots | the constructor's shape matches: its `prototype` slot read live, the receiver allocated with the learned slot count |
+| Literal | `NewObjectLit` | final shape, learned by `FinishObjectLit` | allocate a fresh object with known slots; `InitField` writes each value after its evaluation |
 
 Details of the hit paths:
 

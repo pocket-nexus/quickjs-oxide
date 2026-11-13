@@ -1,7 +1,8 @@
 """Relink one saved LTO build at several .text placements (layout perturbations).
 
-The method of #119: identical machine code at different addresses, so a
-timing spread across the variants measures layout sensitivity, not code.
+The method of #119: compare identical machine code at different addresses.
+Time and cycles across the variants diagnose placement sensitivity; control
+measurement noise separately with A/A runs.
 
 The build log holds rustc's `--print link-args` output from a `-C save-temps` build:
 
@@ -33,7 +34,7 @@ def text_info(binary):
     return addr, size, digest
 
 
-def placements(build_log, prefix, deltas, *, binary=None, no_relax=False, require_identical=False):
+def placements(build_log, prefix, deltas, *, binary=None, require_identical=False):
     """Relink serially; strict placement experiments reject changed machine code."""
     with open(build_log) as source:
         line = next(l for l in source
@@ -48,8 +49,7 @@ def placements(build_log, prefix, deltas, *, binary=None, no_relax=False, requir
     def link(output, extra):
         command = list(link_argv)
         command[out_index] = output
-        options = ["-Wl,--no-relax"] if no_relax else []
-        subprocess.run(command + options + extra, env={**os.environ, **env}, check=True)
+        subprocess.run(command + extra, env={**os.environ, **env}, check=True)
 
     prefix = str(prefix)
     link(prefix + "-default", [])
@@ -78,10 +78,9 @@ def main(argv=None):
     parser.add_argument("prefix", help="output prefix for the relinked binaries")
     parser.add_argument("deltas", nargs="+", type=lambda d: int(d, 0), help=".text offsets from the default placement")
     parser.add_argument("--binary", help="binary name when the log links several")
-    parser.add_argument("--no-relax", action="store_true", help="disable address-dependent linker relaxation")
     parser.add_argument("--require-identical", action="store_true", help="fail if offset variants have different .text bytes")
     args = parser.parse_args(argv)
     receipts = placements(args.build_log, args.prefix, args.deltas, binary=args.binary,
-                          no_relax=args.no_relax, require_identical=args.require_identical)
+                          require_identical=args.require_identical)
     for r in receipts:
         print(r)
