@@ -59,6 +59,13 @@ class LayoutTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "offsets"):
             layout.summarize(data, 3, 2)
 
+    def test_cpu_or_machine_changes_invalidate_the_comparison(self):
+        for key, value in (("cpu", 3), ("machine", {"cpu": "another CPU"})):
+            data = {d: results() for d in layout.OFFSETS}
+            data[48]["metadata"][key] = value
+            with self.assertRaisesRegex(ValueError, "settings"):
+                layout.summarize(data, 3, 2)
+
     def test_strict_relinks_disable_relaxation_and_reject_changed_text(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

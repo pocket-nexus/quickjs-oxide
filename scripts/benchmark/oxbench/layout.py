@@ -16,6 +16,7 @@ import statistics
 
 from . import relink, runner
 from .common import ROOT, digest, paired_order
+from .paired import measurement_context
 from .sweep import V8_CASES
 
 OFFSETS = (0, 16, 32, 48)
@@ -65,7 +66,8 @@ def summarize(matrices, max_spread, max_regression):
     for data in matrices.values():
         meta = data["metadata"]
         if [(w["case"], w["sha256"]) for w in meta["workloads"]] != identity \
-                or any(meta[k] != first[k] for k in ("repeat", "cpu", "linux_counters")):
+                or any(meta[k] != first[k] for k in ("repeat", "cpu", "linux_counters")) \
+                or measurement_context(meta) != measurement_context(first):
             raise ValueError("layout inputs or measurement settings changed between offsets")
     rows = []
     for case, _ in identity:
@@ -100,6 +102,14 @@ def markdown(report):
             b, c = p["base"], p["candidate"]
             lines.append(f"| {row['case']} | {p['offset']} | {b['time']/1e6:.2f} | {c['time']/1e6:.2f} | "
                          f"{c['time']/b['time']:.4f} | {c['cycles']/b['cycles']:.4f} | {c['instructions']/b['instructions']:.4f} |")
+    lines += ["", "| Case | Base ms min/median/max | Candidate ms min/median/max | Base G cycles min/median/max | Candidate G cycles min/median/max |",
+              "|---|---|---|---|---|"]
+    for row in report["rows"]:
+        fields = []
+        for metric, scale in (("time", 1e6), ("cycles", 1e9)):
+            for engine in ("base", "candidate"):
+                fields.append(" / ".join(f"{row['engines'][engine][metric][k]/scale:.3f}" for k in ("min", "median", "max")))
+        lines.append(f"| {row['case']} | " + " | ".join(fields) + " |")
     lines += ["", "| Case | Base time spread | Candidate time spread | Candidate cycles spread | Worst time ratio | Gate |",
               "|---|---:|---:|---:|---:|---|"]
     for row in report["rows"]:
@@ -171,6 +181,7 @@ def main(argv=None):
             return 1
         matrices[offset] = json.loads((output / f"offset-{offset}/results.json").read_text())
     report = summarize(matrices, args.max_spread_percent, args.max_regression_percent)
+    report["plan"] = plan
     (output / "summary.json").write_text(json.dumps(report, indent=2) + "\n")
     text = markdown(report)
     (output / "summary.md").write_text(text)
