@@ -247,7 +247,12 @@ impl CodeBuilder {
 /// reserved and never filled. The global forms follow in `b | c << 8`, with
 /// the same rule at [`GLOBAL_NO_SITE`]; `New` sites come last, in `imm`.
 fn number_sites(code: &mut [Insn]) -> u32 {
-    let is_field = |insn: &Insn| matches!(IcKind::of(insn.op), Some(IcKind::Get | IcKind::Set));
+    let is_field = |insn: &Insn| {
+        matches!(
+            IcKind::of(insn.op),
+            Some(IcKind::Get | IcKind::Set | IcKind::Literal)
+        )
+    };
     let is_global = |insn: &Insn| IcKind::of(insn.op) == Some(IcKind::Global);
     let fields = code.iter().filter(|insn| is_field(insn)).count() as u32;
     let reserved = u32::from(FIELD_NO_SITE);

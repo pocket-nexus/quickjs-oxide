@@ -178,7 +178,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
         lines.next(),
         Some(
             "every: params 2, locals 2, registers 400, constants 3, children 1, this slots 0, \
-             cache sites 6"
+             cache sites 7"
         )
     );
     for (pc, (op, operands)) in expected.iter().enumerate() {

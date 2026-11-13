@@ -153,8 +153,12 @@ pub fn validate<'a>(
             Format::AConst => {
                 register(insn.a)?;
                 // A regular expression reads its source and its flags.
-                let last = insn.imm as u64 + u64::from(insn.op == Opcode::NewRegExp);
-                if last >= u64::from(unit.constant_count) {
+                let count = match insn.op {
+                    Opcode::NewRegExp => 2,
+                    Opcode::NewObjectLit => u64::from(insn.b),
+                    _ => 1,
+                };
+                if u64::from(insn.imm) + count > u64::from(unit.constant_count) {
                     return fail(at, E::Constant(insn.imm));
                 }
             }

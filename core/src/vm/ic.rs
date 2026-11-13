@@ -37,6 +37,8 @@ pub enum IcKind {
     Global,
     /// `New`: `fn_shape`, `proto_slot`, `slots`.
     Construct,
+    /// `NewObjectLit`: the final shape, cached weakly in `w0`.
+    Literal,
 }
 
 impl IcKind {
@@ -49,6 +51,7 @@ impl IcKind {
                 Some(IcKind::Global)
             }
             Opcode::New => Some(IcKind::Construct),
+            Opcode::NewObjectLit => Some(IcKind::Literal),
             _ => None,
         }
     }
@@ -59,6 +62,7 @@ impl IcKind {
             IcKind::Set => "set",
             IcKind::Global => "global",
             IcKind::Construct => "construct",
+            IcKind::Literal => "literal",
         }
     }
 }
@@ -221,14 +225,14 @@ pub(crate) fn set_hit(
 #[derive(Clone, Debug, Default)]
 pub struct IcStats {
     /// Inline entry hits, including a polymorphic site's latest shape.
-    pub mono_hits: [u64; 4],
+    pub mono_hits: [u64; 5],
     /// Hits on the out-of-line probe of a polymorphic row.
-    pub poly_hits: [u64; 4],
+    pub poly_hits: [u64; 5],
     /// Misses that filled or refilled an entry.
-    pub fills: [u64; 4],
+    pub fills: [u64; 5],
     /// Misses that did not: an accessor, a dictionary, a complete miss, a
     /// megamorphic site.
-    pub unfilled: [u64; 4],
+    pub unfilled: [u64; 5],
     /// Misses per entry, both kinds.
     pub site_misses: Vec<u64>,
     /// `IterStart`s that walked a pristine array by index, and the ones that
@@ -699,7 +703,7 @@ fn records(kind: IcKind, entry: IcEntry) -> impl Iterator<Item = Record> {
             }
         }
         IcKind::Global => {}
-        IcKind::Construct => found[0] = Some(Record::Shape(entry.w0)),
+        IcKind::Construct | IcKind::Literal => found[0] = Some(Record::Shape(entry.w0)),
     }
     found.into_iter().flatten()
 }
