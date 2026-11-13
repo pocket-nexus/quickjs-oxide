@@ -2,14 +2,27 @@
 //!
 //! The instruction families are a typed Rust analogue of pinned QuickJS
 //! `libregexp-opcode.h`. Absolute instruction indices replace the C engine's
-//! packed relative byte offsets; greediness is represented by `Split` branch
-//! order instead of separate `split_*_first` opcodes.
+//! packed relative byte offsets. General quantifiers encode greediness through
+//! `Split` branch order; eligible class quantifiers use a fused scan descriptor.
 
 /// Inclusive Unicode scalar or UTF-16 code-unit interval.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CharacterRange {
     pub start: u32,
     pub end: u32,
+}
+
+/// A capture-free, single-character class repeated in the forward direction.
+/// The bitmap includes case folding for ASCII input; other input uses ranges.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ClassRepeat {
+    pub(crate) ranges: Box<[CharacterRange]>,
+    pub(crate) ascii: [u64; 2],
+    pub(crate) inverted: bool,
+    pub(crate) ignore_case: bool,
+    pub(crate) minimum: u32,
+    pub(crate) maximum: Option<u32>,
+    pub(crate) greedy: bool,
 }
 
 impl CharacterRange {
@@ -39,6 +52,9 @@ pub enum Instruction {
         inverted: bool,
         ignore_case: bool,
     },
+    /// Fused fixed, greedy or lazy class repetition. Box the cold descriptor
+    /// to keep the common instruction representation from growing.
+    ClassRepeat(Box<ClassRepeat>),
     LineStart {
         multiline: bool,
     },

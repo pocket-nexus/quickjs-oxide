@@ -6,11 +6,12 @@
 //! through the Rust call stack and never delegates to a host regular-expression
 //! engine.
 
+use std::cell::RefCell;
 use std::error::Error as StdError;
 use std::fmt;
 use std::ops::Range;
 
-use super::{CharacterRange, CompiledRegExp, Instruction, RegExpFlags};
+use super::{CharacterRange, ClassRepeat, CompiledRegExp, Instruction, RegExpFlags};
 use crate::unicode::case::regexp_canonicalize as canonicalize;
 
 const INTERRUPT_POLL_INTERVAL: u32 = 10_000;
@@ -269,13 +270,13 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
             return Ok(None);
         }
         if state.is_none() {
-            state = Some(AttemptState::new(
+            state = Some(Scratch::acquire(
                 program.capture_count(),
                 program.register_count(),
                 candidate,
             )?);
         }
-        let state = state.as_mut().expect("attempt state was initialized");
+        let state = &mut state.as_mut().expect("attempt state was initialized").state;
         state.reset(candidate);
         if let Some(result) = run_attempt(program, input, unicode, &mut poller, state)? {
             return Ok(Some(result));
@@ -310,6 +311,38 @@ fn find_literal<T: Copy + Into<u16>, F: FnMut() -> bool>(
         }
     }
     Ok(None)
+}
+
+fn validate_ranges(ranges: &[CharacterRange], pc: usize) -> Result<(), ExecError> {
+    for range in ranges {
+        if range.start > range.end || range.end > 0x10_ffff {
+            return Err(ProgramError::InvalidCharacterRange {
+                pc,
+                start: range.start,
+                end: range.end,
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn repeat_next<T: Copy + Into<u16>>(
+    repeat: &ClassRepeat,
+    input: &[T],
+    position: usize,
+    unicode: bool,
+) -> Option<usize> {
+    let (mut character, next) = read_character(input, position, unicode)?;
+    let matched = if character < 128 {
+        repeat.ascii[(character / 64) as usize] & (1 << (character % 64)) != 0
+    } else {
+        if repeat.ignore_case {
+            character = canonicalize(character, unicode);
+        }
+        range_contains(&repeat.ranges, character) != repeat.inverted
+    };
+    matched.then_some(next)
 }
 
 pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError> {
@@ -370,6 +403,7 @@ pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError
             Instruction::Char { value, .. } if *value > 0x10_ffff => {
                 return Err(ProgramError::InvalidCharacter { pc, value: *value }.into());
             }
+            Instruction::ClassRepeat(repeat) => validate_ranges(&repeat.ranges, pc)?,
             Instruction::Range { ranges, .. } => {
                 for range in ranges {
                     if range.start > range.end || range.end > 0x10_ffff {
@@ -533,8 +567,20 @@ impl Undo {
 
 #[derive(Clone, Copy, Debug)]
 enum ControlKind {
-    Split { pc: usize },
-    LookAhead { negative: bool, target: usize },
+    Split {
+        pc: usize,
+    },
+    LookAhead {
+        negative: bool,
+        target: usize,
+    },
+    /// `limit` is the minimum endpoint for greedy rollback, or the remaining
+    /// optional character count for lazy expansion (usize::MAX is unbounded).
+    Repeat {
+        pc: usize,
+        limit: usize,
+        greedy: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -544,6 +590,7 @@ struct ControlFrame {
     undo_len: usize,
 }
 
+#[derive(Default)]
 struct AttemptState {
     pc: usize,
     position: usize,
@@ -551,6 +598,59 @@ struct AttemptState {
     registers: Vec<RegisterValue>,
     undo: Vec<Undo>,
     controls: Vec<ControlFrame>,
+}
+
+// One bounded spare per thread. No borrow survives acquisition, so an interrupt
+// hook may reenter the regexp engine without aliasing an active execution.
+const MAX_SCRATCH_BYTES: usize = 32 * 1024;
+thread_local! {
+    static SCRATCH: RefCell<Option<AttemptState>> = const { RefCell::new(None) };
+}
+
+struct Scratch {
+    state: AttemptState,
+}
+
+impl Scratch {
+    fn acquire(captures: u8, registers: u8, position: usize) -> Result<Self, ExecError> {
+        let mut state = SCRATCH
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default();
+        state.prepare(captures, registers, position)?;
+        Ok(Self { state })
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let state = &mut self.state;
+        let bytes = state
+            .captures
+            .capacity()
+            .saturating_mul(size_of::<Option<usize>>())
+            .saturating_add(
+                state
+                    .registers
+                    .capacity()
+                    .saturating_mul(size_of::<RegisterValue>()),
+            )
+            .saturating_add(state.undo.capacity().saturating_mul(size_of::<Undo>()))
+            .saturating_add(
+                state
+                    .controls
+                    .capacity()
+                    .saturating_mul(size_of::<ControlFrame>()),
+            );
+        if bytes <= MAX_SCRATCH_BYTES {
+            state.reset(0);
+            let _ = SCRATCH.try_with(|slot| {
+                let mut slot = slot.borrow_mut();
+                if slot.is_none() {
+                    *slot = Some(std::mem::take(state));
+                }
+            });
+        }
+    }
 }
 
 impl AttemptState {
@@ -563,28 +663,32 @@ impl AttemptState {
         self.controls.clear();
     }
 
+    #[cfg(test)]
     fn new(capture_count: u8, register_count: u8, position: usize) -> Result<Self, ExecError> {
-        let mut captures = Vec::new();
+        let mut state = Self::default();
+        state.prepare(capture_count, register_count, position)?;
+        Ok(state)
+    }
+
+    fn prepare(
+        &mut self,
+        capture_count: u8,
+        register_count: u8,
+        position: usize,
+    ) -> Result<(), ExecError> {
         let capture_slots = usize::from(capture_count) * 2;
-        captures
-            .try_reserve_exact(capture_slots)
+        self.captures
+            .try_reserve_exact(capture_slots.saturating_sub(self.captures.len()))
             .map_err(|_| ExecError::OutOfMemory)?;
-        captures.resize(capture_slots, None);
+        self.captures.resize(capture_slots, None);
 
-        let mut registers = Vec::new();
-        registers
-            .try_reserve_exact(usize::from(register_count))
+        self.registers
+            .try_reserve_exact(usize::from(register_count).saturating_sub(self.registers.len()))
             .map_err(|_| ExecError::OutOfMemory)?;
-        registers.resize(usize::from(register_count), RegisterValue::Unset);
-
-        Ok(Self {
-            pc: 0,
-            position,
-            captures,
-            registers,
-            undo: Vec::new(),
-            controls: Vec::new(),
-        })
+        self.registers
+            .resize(usize::from(register_count), RegisterValue::Unset);
+        self.reset(position);
+        Ok(())
     }
 
     fn push_backtrack(&mut self, pc: usize) -> Result<(), ExecError> {
@@ -594,6 +698,24 @@ impl AttemptState {
         self.controls.push(ControlFrame {
             kind: ControlKind::Split { pc },
             position: self.position,
+            undo_len: self.undo.len(),
+        });
+        Ok(())
+    }
+
+    fn push_repeat(
+        &mut self,
+        pc: usize,
+        position: usize,
+        limit: usize,
+        greedy: bool,
+    ) -> Result<(), ExecError> {
+        self.controls
+            .try_reserve(1)
+            .map_err(|_| ExecError::OutOfMemory)?;
+        self.controls.push(ControlFrame {
+            kind: ControlKind::Repeat { pc, limit, greedy },
+            position,
             undo_len: self.undo.len(),
         });
         Ok(())
@@ -625,17 +747,70 @@ impl AttemptState {
     /// A failed positive lookahead propagates through its boundary. A failed
     /// negative lookahead succeeds at its continuation. Split frames resume
     /// their retained branch.
-    fn restore_backtrack(&mut self) -> bool {
+    fn restore_backtrack<T: Copy + Into<u16>, F: FnMut() -> bool>(
+        &mut self,
+        instructions: &[Instruction],
+        input: &[T],
+        unicode: bool,
+        poller: &mut Poller<'_, F>,
+    ) -> Result<bool, ExecError> {
         loop {
             let Some(frame) = self.controls.pop() else {
-                return false;
+                return Ok(false);
             };
             self.rollback_to(frame.undo_len);
             self.position = frame.position;
             match frame.kind {
                 ControlKind::Split { pc } => {
                     self.pc = pc;
-                    return true;
+                    return Ok(true);
+                }
+                ControlKind::Repeat {
+                    pc,
+                    limit,
+                    greedy: true,
+                } => {
+                    self.pc = pc;
+                    if self.position > limit {
+                        let (_, previous) = read_previous_character(input, self.position, unicode)
+                            .expect("repeat endpoint follows a character");
+                        self.controls.push(ControlFrame {
+                            position: previous,
+                            ..frame
+                        });
+                    }
+                    return Ok(true);
+                }
+                ControlKind::Repeat {
+                    pc,
+                    limit,
+                    greedy: false,
+                } => {
+                    poller.step()?;
+                    let Instruction::ClassRepeat(repeat) = &instructions[pc - 1] else {
+                        unreachable!("repeat frame refers to its instruction")
+                    };
+                    let Some(next) = repeat_next(repeat, input, self.position, unicode) else {
+                        continue;
+                    };
+                    self.position = next;
+                    self.pc = pc;
+                    if limit > 1 {
+                        self.controls.push(ControlFrame {
+                            kind: ControlKind::Repeat {
+                                pc,
+                                limit: if limit == usize::MAX {
+                                    limit
+                                } else {
+                                    limit - 1
+                                },
+                                greedy: false,
+                            },
+                            position: next,
+                            ..frame
+                        });
+                    }
+                    return Ok(true);
                 }
                 ControlKind::LookAhead {
                     negative: false, ..
@@ -645,7 +820,7 @@ impl AttemptState {
                     target,
                 } => {
                     self.pc = target;
-                    return true;
+                    return Ok(true);
                 }
             }
         }
@@ -817,7 +992,7 @@ where
 
     macro_rules! fail_branch {
         () => {{
-            if state.restore_backtrack() {
+            if state.restore_backtrack(instructions, input, unicode, poller)? {
                 continue;
             }
             return Ok(None);
@@ -887,6 +1062,44 @@ where
                     fail_branch!();
                 }
                 state.position = next;
+            }
+            Instruction::ClassRepeat(repeat) => {
+                let mut count = 0u32;
+                let mut failed = false;
+                while count < repeat.minimum {
+                    poller.step()?;
+                    let Some(next) = repeat_next(repeat, input, state.position, unicode) else {
+                        failed = true;
+                        break;
+                    };
+                    state.position = next;
+                    count += 1;
+                }
+                if failed {
+                    fail_branch!();
+                }
+                let minimum_position = state.position;
+                let remaining = repeat
+                    .maximum
+                    .map_or(usize::MAX, |maximum| (maximum - count) as usize);
+                if repeat.greedy {
+                    let mut optional = 0usize;
+                    let mut previous = state.position;
+                    while optional < remaining {
+                        poller.step()?;
+                        let Some(next) = repeat_next(repeat, input, state.position, unicode) else {
+                            break;
+                        };
+                        previous = state.position;
+                        state.position = next;
+                        optional += 1;
+                    }
+                    if state.position != minimum_position {
+                        state.push_repeat(state.pc, previous, minimum_position, true)?;
+                    }
+                } else if remaining != 0 {
+                    state.push_repeat(state.pc, state.position, remaining, false)?;
+                }
             }
             Instruction::LineStart { multiline } => {
                 if state.position != 0
@@ -1356,6 +1569,152 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn fused_repetitions_agree_with_the_original_instruction_path() {
+        for pattern in [
+            "[ab]*b",
+            "[ab]*?b",
+            "[ab]+b",
+            "[ab]+?b",
+            "[ab]{2,4}b",
+            "[ab]{2,4}?b",
+            "[ab]{3}b",
+            "[ab]{0,2}b",
+            "[ab]{0,2}?b",
+            "[ab]{2,}b",
+            "[ab]{2,}?b",
+            "([ab]+)([ab]*)",
+            "([ab]+?)([ab]*)",
+            "(?:([ab]+)|[ab]+)b",
+            "([ab]+)?\\1",
+            "(?=([ab]+))[ab]*b",
+            "(?![ab]+b)[ab]*",
+            "(?<=([ab]+))[ab]+",
+            "([ab]+a)*",
+            "([ab]*?b)*",
+            "[^a]+a",
+            "[a-z]+",
+            "[\\s\\S]*b",
+            "^([ab]+)$",
+            "(?i:[a-z]+)(?-i:[ab]*)",
+            "[\\uD800-\\uDFFF]+a",
+            "[😀a]+b",
+            "[😀a]+?b",
+        ] {
+            for flags in ["", "u", "y", "i", "iu", "m", "v"] {
+                let optimized = compile(pattern, flags);
+                let original = crate::compiler::compile_unoptimized(&units(pattern), &units(flags));
+                assert!(
+                    optimized
+                        .instructions()
+                        .iter()
+                        .any(|i| matches!(i, Instruction::ClassRepeat(_)))
+                );
+                let alphabet = [0x61u16, 0x62, 0x78, 0x0a, 0x212a, 0x17f, 0xd83d, 0xde00];
+                let mut seed = 17u32;
+                for index in 0..120 {
+                    let mut input = Vec::new();
+                    for _ in 0..index % 8 {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        input.push(alphabet[(seed >> 16) as usize % alphabet.len()]);
+                    }
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute(&optimized, &input, start),
+                            execute(&original, &input, start),
+                            "{pattern}/{flags} {input:?} @{start}"
+                        );
+                    }
+                }
+                for input in [&b""[..], &b"aaaaab"[..], &b"abbabba"[..], &b"xab\nab"[..]] {
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute_latin1_with_interrupt(&optimized, input, start, || false),
+                            execute_latin1_with_interrupt(&original, input, start, || false),
+                            "{pattern}/{flags} {input:?} @{start}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_scans_poll_and_lazy_empty_matches_do_not_scan_ahead() {
+        let input = vec![u16::from(b'a'); 30_000];
+        for pattern in ["[a-z]+$", "[a-z]{20000}", "[a-z]*?b"] {
+            // A required literal could reject before reaching repetition, so
+            // remove just the search plan for this interruption test.
+            let compiled = compile(pattern, "");
+            let unfiltered = program(
+                compiled.flags(),
+                compiled.capture_count(),
+                compiled.register_count(),
+                compiled.instructions().to_vec(),
+            );
+            assert_eq!(
+                execute_with_interrupt(&unfiltered, &input, 0, || true),
+                Err(ExecError::Interrupted)
+            );
+        }
+        let lazy = compile("[a-z]*?", "");
+        assert_eq!(
+            execute_with_interrupt(&lazy, &input, 0, || panic!(
+                "empty lazy match scanned input"
+            ))
+            .unwrap()
+            .unwrap()
+            .capture(0),
+            Some(&(0..0))
+        );
+    }
+
+    #[test]
+    fn scratch_is_reentrant_cleared_after_errors_and_bounded() {
+        SCRATCH.with(|slot| *slot.borrow_mut() = None);
+        let outer = compile("([a-z]+)$", "");
+        let inner = compile("(b)+", "");
+        let input = vec![u16::from(b'a'); 30_000];
+        let mut called = false;
+        assert!(
+            execute_with_interrupt(&outer, &input, 0, || {
+                called = true;
+                assert_eq!(
+                    execute(&inner, &units("bb"), 0)
+                        .unwrap()
+                        .unwrap()
+                        .capture(1),
+                    Some(&(1..2))
+                );
+                false
+            })
+            .unwrap()
+            .is_some()
+        );
+        assert!(called);
+        assert_eq!(
+            execute_with_interrupt(&outer, &input, 0, || true),
+            Err(ExecError::Interrupted)
+        );
+        assert_eq!(
+            execute(&inner, &units("b"), 0).unwrap().unwrap().capture(1),
+            Some(&(0..1))
+        );
+        SCRATCH.with(|slot| {
+            let slot = slot.borrow();
+            let state = slot.as_ref().unwrap();
+            assert!(state.captures.iter().all(Option::is_none));
+            assert!(state.controls.is_empty() && state.undo.is_empty());
+        });
+        let mut large = Scratch::acquire(1, 0, 0).unwrap();
+        large
+            .state
+            .controls
+            .reserve(MAX_SCRATCH_BYTES / size_of::<ControlFrame>() + 1);
+        drop(large);
+        SCRATCH.with(|slot| assert!(slot.borrow().is_none()));
     }
 
     #[test]
