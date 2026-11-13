@@ -1881,7 +1881,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 reg!($insn.a) = value;
                 continue $label;
             }
-            write!($label, $insn.a, ops::arith(cx, Arith::$op, x, y))
+            write!($label, $insn.a, arith_slow(cx, $insn.op, x, y))
         }};
     }
 
@@ -3018,7 +3018,7 @@ fn jump_of(op: Opcode) -> (Test, bool) {
 }
 
 /// `x op y` for two numbers; `None` sends the operation to the slow path.
-#[inline(always)]
+#[inline]
 fn arith_fast(op: Arith, x: Value, y: Value) -> Option<Value> {
     if let (Some(i), Some(j)) = (x.as_int32(), y.as_int32()) {
         let shift = j as u32 & 31;
@@ -3048,21 +3048,28 @@ fn arith_fast(op: Arith, x: Value, y: Value) -> Option<Value> {
             _ => unreachable!("a product or quotient"),
         });
     }
-    if !matches!(op, Arith::Mul | Arith::Div | Arith::Pow) {
-        return arith_number(op, x, y);
-    }
     None
 }
 
-/// Keep the non-Int32 remainder and bitwise conversions out of each
-/// specialized arm. The common double product and quotient stay inline.
+/// Decode the operation only after the specialized numeric path misses.
+/// Sharing this continuation keeps conversions and exceptions out of the
+/// hot arms, without duplicating their call/throw machinery per operator.
 #[inline(never)]
-fn arith_number(op: Arith, x: Value, y: Value) -> Option<Value> {
-    if x.is_number() && y.is_number() {
-        Some(ops::number_op(op, x.as_f64()?, y.as_f64()?))
-    } else {
-        None
-    }
+fn arith_slow(cx: &mut Cx<'_>, op: Opcode, x: Value, y: Value) -> Result<Value, Throw> {
+    let op = match op {
+        Opcode::Mul | Opcode::MulI => Arith::Mul,
+        Opcode::Div => Arith::Div,
+        Opcode::Mod => Arith::Mod,
+        Opcode::Pow => Arith::Pow,
+        Opcode::Shl | Opcode::ShlI => Arith::Shl,
+        Opcode::Sar | Opcode::SarI => Arith::Sar,
+        Opcode::Shr | Opcode::ShrI => Arith::Shr,
+        Opcode::BitAnd | Opcode::BitAndI => Arith::BitAnd,
+        Opcode::BitOr | Opcode::BitOrI => Arith::BitOr,
+        Opcode::BitXor | Opcode::BitXorI => Arith::BitXor,
+        _ => unreachable!("an arithmetic opcode"),
+    };
+    ops::arith(cx, op, x, y)
 }
 
 /// `Neg`, `Plus`, `ToNumeric` and `BitNot` on numbers.
