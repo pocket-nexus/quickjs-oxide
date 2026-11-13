@@ -82,6 +82,20 @@ Details of the hit paths:
 
 Element access has no cache: `GetElem` and `SetElem` read and write an array's or ordinary object's dense elements inline for a non-negative `Int32` key, and a typed array's through `typed::fast_get` and `fast_set`. A hole is filled inline only while no object used as a prototype has an index property or is exotic (`Heap::holes_writable`).
 
+The lowering marks an adjacent prefix increment and element read with
+`IncGetElem`. It consumes the read only for a non-overflowing `Int32`
+increment and a present dense element. Coercion, holes and other receivers
+execute the original operations at their original PCs.
+
+Constant array literals of at least two elements use `NewArrayK`: allocate a
+fresh array, then copy immutable values from a consecutive pool range. A
+straight-line object literal with two to sixteen unique, non-index string
+keys uses `NewObjectLit` and `InitField`. Its weak literal cache stores the
+final shape; allocation precedes value evaluation, whose order is unchanged.
+Duplicate or computed keys, methods, spreads, prototype definitions and
+control-flow joins use the general definition path. Literal initialization
+stays outside the hot loop.
+
 With the `ic-stats` feature (and in debug builds) the store counts inline hits (including the latest shape of a polymorphic site), out-of-line row hits, fills and unfilled misses per kind, misses per site and iteration starts; `qjs --ic-stats` prints `Runtime::ic_report` at exit. Release builds without the feature carry no counter.
 
 ## Iteration

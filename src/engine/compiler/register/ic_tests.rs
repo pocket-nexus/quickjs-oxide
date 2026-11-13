@@ -317,6 +317,28 @@ fn promoted_polymorphic_entries_keep_prototype_guards() {
     );
 }
 
+#[test]
+fn literal_shapes_are_weak_and_refill_after_collection() {
+    let mut session = Session::new();
+    assert_eq!(
+        session.run("function literal() { return { left: 1, right: 2 }; } var keep = literal();"),
+        ""
+    );
+    let site = session.site("literal", Opcode::NewObjectLit, 0);
+    assert!(session.entry(site).is_filled());
+    let before = session.stats();
+    assert_eq!(session.run("keep = literal();"), "");
+    counted(hits(&before, &session.stats(), IcKind::Literal), |n| n == 1);
+    session.run("keep = undefined;");
+    session.runtime.heap_mut().collect();
+    assert!(session.entry(site).is_empty());
+    assert_eq!(
+        session.run("keep = literal(); print(keep.left, keep.right, Object.keys(keep).join());"),
+        "1 2 left,right\n"
+    );
+    assert!(session.entry(site).is_filled());
+}
+
 /// A closure is a header and a function record until an own-property
 /// operation needs its `length`, `name` or `prototype`: neither an arrow nor
 /// a `function` takes value slots, and a `function`'s `prototype` object
