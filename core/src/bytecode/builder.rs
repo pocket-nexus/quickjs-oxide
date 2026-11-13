@@ -87,6 +87,11 @@ impl CodeBuilder {
         self.push(Format::AConst, Insn::new(op, a, 0, 0, index))
     }
 
+    pub fn a_const_range(&mut self, op: Opcode, a: u8, first: u32, count: u16) -> u32 {
+        let [b, c] = count.to_le_bytes();
+        self.push(Format::AConstRange, Insn::new(op, a, b, c, first))
+    }
+
     #[track_caller]
     pub fn key(&mut self, op: Opcode, key: PropertyKey) -> u32 {
         self.push(Format::Key, Insn::new(op, 0, 0, 0, key.raw()))

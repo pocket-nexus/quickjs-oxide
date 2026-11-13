@@ -1834,6 +1834,24 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                     .len()
                     .checked_sub(count)
                     .ok_or_else(|| LowerError::Internal("symbolic stack underflow".into()))?;
+                if count >= 2
+                    && self.stack[base..]
+                        .iter()
+                        .all(|entry| self.constant_value(*entry).is_some())
+                {
+                    let first = self.pool.len() as u32;
+                    self.pool.reserve(count);
+                    for depth in base..self.stack.len() {
+                        let value = self.constant_value(self.stack[depth]).expect("a constant");
+                        self.pool.push(value);
+                    }
+                    self.stack.truncate(base);
+                    let dst = self.result_register()?;
+                    let at =
+                        self.emit(|b| b.a_const_range(Opcode::NewArrayK, dst, first, count as u16));
+                    self.push_result(at)?;
+                    return Ok(1);
+                }
                 if count > 0 && self.spilled(base + count - 1) {
                     return self.array_from_slots(base).map(|()| 1);
                 }
@@ -3316,6 +3334,19 @@ impl<'a, 'c> Lowerer<'a, 'c> {
     }
 
     // ---- allocation forms ----
+
+    fn constant_value(&self, entry: Entry) -> Option<CoreValue> {
+        Some(match entry {
+            Entry::Int(value) => CoreValue::int32(value),
+            Entry::Undefined => CoreValue::UNDEFINED,
+            Entry::Null => CoreValue::NULL,
+            Entry::Bool(value) => CoreValue::bool(value),
+            Entry::Const(index) if self.pool[index as usize].as_object().is_none() => {
+                self.pool[index as usize]
+            }
+            _ => return None,
+        })
+    }
 
     /// The `DefineField`s that fill the object literal created at `pc`: the
     /// slot count `NewObject` reserves.

@@ -40,6 +40,18 @@ fn instruction_is_eight_bytes() {
     }
 }
 
+#[test]
+fn constant_array_ranges_are_validated_without_wrapping() {
+    for (first, count) in [(1, 2), (u32::MAX, 2), (0, u16::MAX)] {
+        let mut code = unit(8, |b| {
+            b.a_const_range(Opcode::NewArrayK, 5, first, count);
+            b.op(Opcode::ReturnUndefined);
+        });
+        code.constant_count = 2;
+        assert_eq!(validate(&code), Err(ValidateErrorKind::Constant(first)));
+    }
+}
+
 /// Builds every opcode through the builder with format-specific operands,
 /// publishes the unit and checks each disassembled line.
 #[test]
@@ -79,6 +91,10 @@ fn every_opcode_round_trips_through_the_disassembler() {
             Format::AConst => {
                 builder.a_const(op, 6, 1);
                 "t1, k1".into()
+            }
+            Format::AConstRange => {
+                builder.a_const_range(op, 5, 1, 2);
+                "t0, k1, 2".into()
             }
             Format::Key => {
                 builder.key(op, key);

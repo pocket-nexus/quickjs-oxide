@@ -223,6 +223,7 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
             (insn.a, target)
         }
         Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
+        Opcode::NewArrayK => (insn.a, new_array_constants(cx, frame.bytecode, insn)?),
         Opcode::ForInStart => {
             let value = reg(cx, insn.b);
             (insn.a, property::for_in_start(cx, value)?)
@@ -2434,6 +2435,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::Rest
                 | Opcode::LoadNewTarget
                 | Opcode::NewRegExp
+                | Opcode::NewArrayK
                 | Opcode::ForInStart
                 | Opcode::AppendSpread
                 | Opcode::ThrowInternal
@@ -2753,6 +2755,23 @@ fn new_array(cx: &mut Cx<'_>, base: usize, insn: Insn) -> Result<Value, Throw> {
         heap.values.set(elements, index, value);
     }
     heap.set_array_length(array, insn.imm);
+    Ok(Value::object(array))
+}
+
+fn new_array_constants(cx: &mut Cx<'_>, bytecode: BytecodeId, insn: Insn) -> Result<Value, Throw> {
+    let count = u32::from(u16::from_le_bytes([insn.b, insn.c]));
+    let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
+    let array = cx
+        .heap
+        .alloc_array(Some(prototype), count)
+        .map_err(|error| error::heap_error(cx, error))?;
+    let heap = &mut *cx.heap;
+    let elements = heap.header(array).elements();
+    for index in 0..count {
+        let value = heap.bytecode_constant(bytecode, insn.imm + index);
+        heap.values.set(elements, index, value);
+    }
+    heap.set_array_length(array, count);
     Ok(Value::object(array))
 }
 

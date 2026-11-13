@@ -164,6 +164,13 @@ pub fn validate<'a>(
                     return fail(at, E::RegisterRange);
                 }
             }
+            Format::AConstRange => {
+                register(insn.a)?;
+                let count = u16::from_le_bytes([insn.b, insn.c]);
+                if u64::from(insn.imm) + u64::from(count) > u64::from(unit.constant_count) {
+                    return fail(at, E::Constant(insn.imm));
+                }
+            }
             Format::AChild => {
                 register(insn.a)?;
                 if insn.imm as usize >= unit.children.len() {
