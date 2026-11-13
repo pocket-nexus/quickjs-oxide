@@ -1867,6 +1867,23 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             }
         };
     }
+    // Carry the operation from the opcode arm as a constant. A shared arm
+    // first mapping Opcode to Arith leaves another hot jump-table dispatch.
+    macro_rules! arith {
+        ($label:lifetime, $insn:ident, $op:ident, $immediate:expr) => {{
+            let x = reg!($insn.b);
+            let y = if $immediate {
+                Value::int32($insn.int())
+            } else {
+                reg!($insn.c)
+            };
+            if let Some(value) = arith_fast(Arith::$op, x, y) {
+                reg!($insn.a) = value;
+                continue $label;
+            }
+            write!($label, $insn.a, ops::arith(cx, Arith::$op, x, y))
+        }};
+    }
 
     'dispatch: loop {
         let insn = code[pc];
@@ -2084,35 +2101,29 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     }
                     write!('dispatch, insn.a, ops::arith(cx, Arith::Sub, x, y))
                 }
-                Opcode::Mul
-                | Opcode::Div
-                | Opcode::Mod
-                | Opcode::Pow
-                | Opcode::Shl
-                | Opcode::Sar
-                | Opcode::Shr
-                | Opcode::BitAnd
-                | Opcode::BitOr
-                | Opcode::BitXor
-                | Opcode::MulI
-                | Opcode::BitAndI
-                | Opcode::BitOrI
-                | Opcode::BitXorI
-                | Opcode::ShlI
-                | Opcode::SarI
-                | Opcode::ShrI => {
-                    let (op, immediate) = arith_of(insn.op);
-                    let x = reg!(insn.b);
-                    let y = if immediate {
-                        Value::int32(insn.int())
-                    } else {
-                        reg!(insn.c)
-                    };
-                    if let Some(value) = arith_fast(op, x, y) {
-                        reg!(insn.a) = value;
-                        continue 'dispatch;
-                    }
-                    write!('dispatch, insn.a, ops::arith(cx, op, x, y))
+                Opcode::Mul | Opcode::MulI => {
+                    arith!('dispatch, insn, Mul, insn.op == Opcode::MulI)
+                }
+                Opcode::Div => arith!('dispatch, insn, Div, false),
+                Opcode::Mod => arith!('dispatch, insn, Mod, false),
+                Opcode::Pow => arith!('dispatch, insn, Pow, false),
+                Opcode::Shl | Opcode::ShlI => {
+                    arith!('dispatch, insn, Shl, insn.op == Opcode::ShlI)
+                }
+                Opcode::Sar | Opcode::SarI => {
+                    arith!('dispatch, insn, Sar, insn.op == Opcode::SarI)
+                }
+                Opcode::Shr | Opcode::ShrI => {
+                    arith!('dispatch, insn, Shr, insn.op == Opcode::ShrI)
+                }
+                Opcode::BitAnd | Opcode::BitAndI => {
+                    arith!('dispatch, insn, BitAnd, insn.op == Opcode::BitAndI)
+                }
+                Opcode::BitOr | Opcode::BitOrI => {
+                    arith!('dispatch, insn, BitOr, insn.op == Opcode::BitOrI)
+                }
+                Opcode::BitXor | Opcode::BitXorI => {
+                    arith!('dispatch, insn, BitXor, insn.op == Opcode::BitXorI)
                 }
 
                 // ---- comparisons as values ----
@@ -3003,31 +3014,6 @@ fn jump_of(op: Opcode) -> (Test, bool) {
         Opcode::JNeqI => (T::Loose, false),
         Opcode::JStrictEqI => (T::Strict, true),
         _ => (T::Strict, false),
-    }
-}
-
-/// The operator of an arithmetic arm and whether its right operand is the
-/// `i32` literal.
-#[inline(always)]
-fn arith_of(op: Opcode) -> (Arith, bool) {
-    match op {
-        Opcode::Mul => (Arith::Mul, false),
-        Opcode::Div => (Arith::Div, false),
-        Opcode::Mod => (Arith::Mod, false),
-        Opcode::Pow => (Arith::Pow, false),
-        Opcode::Shl => (Arith::Shl, false),
-        Opcode::Sar => (Arith::Sar, false),
-        Opcode::Shr => (Arith::Shr, false),
-        Opcode::BitAnd => (Arith::BitAnd, false),
-        Opcode::BitOr => (Arith::BitOr, false),
-        Opcode::BitXor => (Arith::BitXor, false),
-        Opcode::MulI => (Arith::Mul, true),
-        Opcode::BitAndI => (Arith::BitAnd, true),
-        Opcode::BitOrI => (Arith::BitOr, true),
-        Opcode::BitXorI => (Arith::BitXor, true),
-        Opcode::ShlI => (Arith::Shl, true),
-        Opcode::SarI => (Arith::Sar, true),
-        _ => (Arith::Shr, true),
     }
 }
 

@@ -18,3 +18,32 @@ print(acc);
 print(NaN === NaN, NaN !== NaN, Infinity - Infinity, -Infinity);
 print(0.000001, 0.0000001, 1e20, 100 / 3, -1e-10, 255 / 256);
 print(1 + - + + + - + 1, 3 - -3, typeof (1 / 3));
+// Dynamic operands keep the register forms live; immediate forms have their
+// own lowering. Cover numeric fallbacks, unsigned results and signed zero.
+function dispatchArithmetic(a, b) {
+  print(a * b, a / b, a % b, a ** b, a << b, a >> b, a >>> b, a & b, a | b, a ^ b);
+}
+dispatchArithmetic(-7, 2);
+dispatchArithmetic(1.5, 2);
+dispatchArithmetic(-0, 3);
+dispatchArithmetic(2147483647, 33);
+dispatchArithmetic(NaN, 0);
+dispatchArithmetic('7', '2');
+function immediateArithmetic(a) {
+  print(a * 3, a << 3, a >> 3, a >>> 3, a & 3, a | 3, a ^ 3);
+}
+immediateArithmetic(-1);
+immediateArithmetic(2147483647);
+immediateArithmetic(2.5);
+immediateArithmetic('7');
+function dispatchBigInts(a, b) {
+  print(String(a * b), String(a / b), String(a % b), String(a ** b),
+        String(a << b), String(a >> b), String(a & b), String(a | b), String(a ^ b));
+}
+dispatchBigInts(-7n, 2n);
+var coercions = '';
+var leftOperand = { valueOf: function () { coercions += 'L'; return 7; } };
+var rightOperand = { valueOf: function () { coercions += 'R'; return 2; } };
+dispatchArithmetic(leftOperand, rightOperand);
+print(coercions);
+try { dispatchArithmetic(1n, 2); } catch (e) { print(e.name); }
