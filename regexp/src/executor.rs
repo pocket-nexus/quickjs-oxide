@@ -15,6 +15,7 @@ use super::{CharacterRange, ClassRepeat, CompiledRegExp, Instruction, RegExpFlag
 use crate::unicode::case::regexp_canonicalize as canonicalize;
 
 const INTERRUPT_POLL_INTERVAL: u32 = 10_000;
+const REQUIRED_PREFILTER_DELAY: u32 = 128;
 
 /// One successful match. Every range is measured in UTF-16 code units.
 /// Capture zero is the complete match; an unmatched group is `None`.
@@ -201,22 +202,62 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
     program: &CompiledRegExp,
     input: &[T],
     start: usize,
-    mut interrupted: F,
+    interrupted: F,
 ) -> Result<Option<RegExpMatch>, ExecError> {
+    match execute_search(program, input, start, interrupted) {
+        Ok(result) => Ok(result),
+        Err(ExecutionStop::Rejected) => Ok(None),
+        Err(ExecutionStop::Error(error)) => Err(error),
+    }
+}
+
+// A proved search rejection is control flow, not a guest interruption or an
+// execution error. Keep it private while unwinding any active scratch lease.
+enum ExecutionStop {
+    Error(ExecError),
+    Rejected,
+}
+
+impl From<ExecError> for ExecutionStop {
+    fn from(error: ExecError) -> Self {
+        Self::Error(error)
+    }
+}
+
+impl From<ProgramError> for ExecutionStop {
+    fn from(error: ProgramError) -> Self {
+        Self::Error(error.into())
+    }
+}
+
+fn poll_interrupt<F: FnMut() -> bool>(interrupted: &mut F) -> Result<u32, ExecutionStop> {
+    if interrupted() {
+        Err(ExecError::Interrupted.into())
+    } else {
+        Ok(INTERRUPT_POLL_INTERVAL)
+    }
+}
+
+fn execute_search<T: Copy + Into<u16>, F: FnMut() -> bool>(
+    program: &CompiledRegExp,
+    input: &[T],
+    start: usize,
+    mut interrupted: F,
+) -> Result<Option<RegExpMatch>, ExecutionStop> {
     #[cfg(test)]
     validate_program(program)?;
     if start > input.len() {
         return Err(ExecError::StartOutOfBounds {
             start,
             input_len: input.len(),
-        });
+        }
+        .into());
     }
 
     let flags = program.flags();
     let unicode = flags.is_unicode();
     let sticky = flags.contains(RegExpFlags::STICKY);
     let mut candidate = normalize_start(input, start, unicode);
-    let mut poller = Poller::new(&mut interrupted);
     let search = program.search();
     if search.anchored && candidate != 0 {
         return Ok(None);
@@ -224,10 +265,59 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
     if search.minimum > input.len() - candidate {
         return Ok(None);
     }
+    let fixed_start = sticky || search.anchored;
+    if fixed_start && candidate < input.len() && !search.first.contains(input[candidate].into()) {
+        return Ok(None);
+    }
+    // Let a cheap single-start match finish before searching its suffix. Use
+    // one early checkpoint to retain required-literal rejection before an
+    // expensive backtracking attempt, without a new per-step budget counter.
+    let initial_start = candidate;
+    let mut deferred = if fixed_start {
+        search.required.as_ref()
+    } else {
+        None
+    };
+    let first_checkpoint = if deferred.is_some() {
+        REQUIRED_PREFILTER_DELAY
+    } else {
+        INTERRUPT_POLL_INTERVAL
+    };
+    let mut checkpoint = || {
+        if let Some(required) = deferred.take() {
+            let mut interrupt_only = || poll_interrupt(&mut interrupted);
+            let mut scanner = Poller::new(&mut interrupt_only);
+            scanner.remaining = INTERRUPT_POLL_INTERVAL - REQUIRED_PREFILTER_DELAY;
+            let last_start = required
+                .max_prefix
+                .map_or(input.len(), |prefix| initial_start.saturating_add(prefix));
+            if find_literal(
+                input,
+                &required.units,
+                initial_start,
+                last_start,
+                &mut scanner,
+            )?
+            .is_none()
+            {
+                return Err(ExecutionStop::Rejected);
+            }
+            // Preserve partial polling progress made by the proof scan.
+            return Ok(scanner.remaining);
+        }
+        poll_interrupt(&mut interrupted)
+    };
+    let mut poller = Poller::new(&mut checkpoint);
+    poller.remaining = first_checkpoint;
     if let Some(literal) = &search.literal {
-        let found = find_literal(input, literal, candidate, &mut poller)?;
+        let last_start = if fixed_start {
+            candidate
+        } else {
+            input.len() - literal.len()
+        };
+        let found = find_literal(input, literal, candidate, last_start, &mut poller)?;
         return match found {
-            Some(position) if !sticky || position == candidate => {
+            Some(position) => {
                 let mut captures = Vec::new();
                 captures
                     .try_reserve_exact(1)
@@ -240,15 +330,21 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
             _ => Ok(None),
         };
     }
-    if let Some(required) = &search.required {
-        let Some(position) = find_literal(input, &required.units, candidate, &mut poller)? else {
+    // Unanchored searches retain the eager proof to avoid retrying starts when
+    // a required substring is absent. Single-start searches defer it above.
+    if !fixed_start && let Some(required) = &search.required {
+        let Some(position) = find_literal(
+            input,
+            &required.units,
+            candidate,
+            input.len().saturating_sub(required.units.len()),
+            &mut poller,
+        )?
+        else {
             return Ok(None);
         };
         if let Some(prefix) = required.max_prefix {
             let lower = position.saturating_sub(prefix);
-            if (sticky || search.anchored) && lower > candidate {
-                return Ok(None);
-            }
             // A required substring can be in the middle of a match. Only its
             // proven maximum prefix bounds the earliest possible start.
             while candidate < lower {
@@ -288,16 +384,17 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
     }
 }
 
-fn find_literal<T: Copy + Into<u16>, F: FnMut() -> bool>(
+fn find_literal<T: Copy + Into<u16>, F: FnMut() -> Result<u32, ExecutionStop>>(
     input: &[T],
     literal: &[u16],
     start: usize,
+    last_start: usize,
     poller: &mut Poller<'_, F>,
-) -> Result<Option<usize>, ExecError> {
+) -> Result<Option<usize>, ExecutionStop> {
     if literal.len() > input.len() - start {
         return Ok(None);
     }
-    for position in start..=input.len() - literal.len() {
+    for position in start..=last_start.min(input.len() - literal.len()) {
         let mut matched = true;
         for (offset, expected) in literal.iter().enumerate() {
             poller.step()?;
@@ -505,28 +602,35 @@ pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError
 
 struct Poller<'a, F> {
     remaining: u32,
-    interrupted: &'a mut F,
+    checkpoint: &'a mut F,
 }
 
 impl<'a, F> Poller<'a, F>
 where
-    F: FnMut() -> bool,
+    F: FnMut() -> Result<u32, ExecutionStop>,
 {
-    fn new(interrupted: &'a mut F) -> Self {
+    fn new(checkpoint: &'a mut F) -> Self {
         Self {
             remaining: INTERRUPT_POLL_INTERVAL,
-            interrupted,
+            checkpoint,
         }
     }
 
-    fn step(&mut self) -> Result<(), ExecError> {
+    #[inline(always)]
+    fn step(&mut self) -> Result<(), ExecutionStop> {
         self.remaining -= 1;
         if self.remaining == 0 {
-            self.remaining = INTERRUPT_POLL_INTERVAL;
-            if (self.interrupted)() {
-                return Err(ExecError::Interrupted);
-            }
+            self.refill()?;
         }
+        Ok(())
+    }
+
+    // Keep required-literal scans and host callbacks out of every character's
+    // decrement-and-branch path, even when the checkpoint closure grows.
+    #[cold]
+    #[inline(never)]
+    fn refill(&mut self) -> Result<(), ExecutionStop> {
+        self.remaining = (self.checkpoint)()?;
         Ok(())
     }
 }
@@ -747,13 +851,13 @@ impl AttemptState {
     /// A failed positive lookahead propagates through its boundary. A failed
     /// negative lookahead succeeds at its continuation. Split frames resume
     /// their retained branch.
-    fn restore_backtrack<T: Copy + Into<u16>, F: FnMut() -> bool>(
+    fn restore_backtrack<T: Copy + Into<u16>, F: FnMut() -> Result<u32, ExecutionStop>>(
         &mut self,
         instructions: &[Instruction],
         input: &[T],
         unicode: bool,
         poller: &mut Poller<'_, F>,
-    ) -> Result<bool, ExecError> {
+    ) -> Result<bool, ExecutionStop> {
         loop {
             let Some(frame) = self.controls.pop() else {
                 return Ok(false);
@@ -984,9 +1088,9 @@ fn run_attempt<T: Copy + Into<u16>, F>(
     unicode: bool,
     poller: &mut Poller<'_, F>,
     state: &mut AttemptState,
-) -> Result<Option<RegExpMatch>, ExecError>
+) -> Result<Option<RegExpMatch>, ExecutionStop>
 where
-    F: FnMut() -> bool,
+    F: FnMut() -> Result<u32, ExecutionStop>,
 {
     let instructions = program.instructions();
 
@@ -1204,7 +1308,9 @@ where
                 state.push_backtrack(*second)?;
                 state.pc = *first;
             }
-            Instruction::Match => return state.finish_match().map(Some),
+            Instruction::Match => {
+                return state.finish_match().map(Some).map_err(ExecutionStop::Error);
+            }
             Instruction::SaveStart { capture } => {
                 state.set_capture(usize::from(*capture) * 2, Some(state.position))?;
             }
@@ -1569,6 +1675,108 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn fixed_start_rejections_do_not_search_the_remaining_input() {
+        let mut input = vec![u16::from(b'x'); 30_000];
+        input[0] = u16::from(b'a');
+        input.extend(units("abcEND"));
+        let latin1: Vec<u8> = input.iter().map(|unit| *unit as u8).collect();
+        for (pattern, flags) in [
+            ("abc", "y"),
+            ("(abc)", "y"),
+            ("[ab]+END", "y"),
+            ("^abc", ""),
+            ("^a.*END", ""),
+            ("^(?:a|b)cEND", ""),
+        ] {
+            // ^a.*END must inspect its suffix; use a first-character miss for
+            // that case. The others accept the first character, then reject.
+            let start = usize::from(pattern == "^a.*END");
+            let compiled = compile(pattern, flags);
+            assert_eq!(
+                execute_with_interrupt(&compiled, &input[start..], 0, || {
+                    panic!("{pattern}/{flags} searched past its only start")
+                }),
+                Ok(None)
+            );
+            assert_eq!(
+                execute_latin1_with_interrupt(&compiled, &latin1[start..], 0, || {
+                    panic!("Latin-1 {pattern}/{flags} searched past its only start")
+                }),
+                Ok(None)
+            );
+        }
+        // lastIndex may be nonzero, and the first-character test alone is not
+        // sufficient: the literal still differs at its second character.
+        for flags in ["y", "uy"] {
+            let compiled = compile("abc", flags);
+            let mut input = units("xa");
+            input.extend(std::iter::repeat_n(u16::from(b'x'), 30_000));
+            input.extend(units("abc"));
+            assert_eq!(
+                execute_with_interrupt(&compiled, &input, 1, || {
+                    panic!("sticky literal searched beyond lastIndex")
+                }),
+                Ok(None)
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_start_prefilter_still_cuts_off_expensive_failures() {
+        let input = vec![u16::from(b'a'); 30];
+        for (pattern, flags) in [("^(a+)+END$", ""), ("(a+)+END$", "y")] {
+            let compiled = compile(pattern, flags);
+            let mut polls = 0;
+            // Keep this test bounded even if deferred rejection is removed:
+            // a missing literal must reject before exponential backtracking
+            // exhausts the interrupt allowance.
+            assert_eq!(
+                execute_with_interrupt(&compiled, &input, 0, || {
+                    polls += 1;
+                    polls > 2
+                }),
+                Ok(None),
+                "{pattern}/{flags} exhausted its backtracking allowance"
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_prefilter_resumes_captures_and_polls_during_its_scan() {
+        let input = units(&format!("{}END", "a".repeat(300)));
+        let latin1: Vec<u8> = input.iter().map(|unit| *unit as u8).collect();
+        for (pattern, flags) in [
+            ("^([ab]+)(END)$", ""),
+            ("([ab]+)(END)$", "y"),
+            ("([ab]+)(END)$", "uy"),
+            ("^([ab]{200,400})(END)$", ""),
+            ("^((a|aa)+)(END)$", ""),
+        ] {
+            let compiled = compile(pattern, flags);
+            let original = crate::compiler::compile_unoptimized(&units(pattern), &units(flags));
+            let expected = execute(&original, &input, 0).unwrap();
+            assert!(expected.is_some());
+            assert_eq!(execute(&compiled, &input, 0).unwrap(), expected);
+            assert_eq!(
+                execute_latin1_with_interrupt(&compiled, &latin1, 0, || false).unwrap(),
+                expected
+            );
+        }
+
+        let compiled = compile("^([ab]+)(END)$", "");
+        let long = units(&format!("{}END", "a".repeat(30_000)));
+        assert_eq!(
+            execute_with_interrupt(&compiled, &long, 0, || true),
+            Err(ExecError::Interrupted)
+        );
+        // Interruption during the proof must release and clear its lease.
+        assert_eq!(
+            execute(&compiled, &input, 0).unwrap().unwrap().capture(1),
+            Some(&(0..300))
+        );
     }
 
     #[test]

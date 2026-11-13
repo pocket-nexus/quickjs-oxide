@@ -18,8 +18,12 @@ Forward repetitions of single-character classes use a fused instruction with
 an ASCII bitmap. Greedy rollback retains one endpoint frame; lazy matching
 extends by one character only when the continuation fails. Capturing bodies,
 backward matching and Unicode Sets string members keep ordinary instructions.
-Scans preserve Unicode advancement and interrupt polling. Sticky matching
-never tries a later candidate.
+Scans preserve Unicode advancement and interrupt polling. Sticky and proven
+start-anchored matches check only their one candidate: pure literals compare
+only at that position, and other patterns defer required-literal search until
+128 matching steps. Cheap failures do not scan unrelated trailing input, while
+expensive backtracking still rejects missing literals. The proof scan shares
+the interrupt budget and preserves partial progress when matching resumes.
 
 Execution can reuse one spare set of capture/register/undo/control buffers per
 thread, retaining at most 32 KiB of vector capacity. The spare is leased without
