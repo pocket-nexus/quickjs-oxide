@@ -6,7 +6,7 @@
 
 use oxide_core::bytecode::Opcode;
 use oxide_core::heap::gc::HeapLimits;
-use oxide_core::vm::ic::{IcEntry, IcKind, IcStats, MEGA_TAG, POLY_TAG};
+use oxide_core::vm::ic::{IcEntry, IcKind, IcStats, MEGA_TAG};
 use oxide_core::{Intrinsic, PropertyFlags, Runtime, Value};
 
 use super::lower_script;
@@ -277,13 +277,18 @@ fn polymorphic_rows_and_the_megamorphic_mark() {
          getX(a); getX(b);",
     );
     let site = session.site("getX", Opcode::GetField, 0);
-    assert_eq!(session.entry(site).w0, POLY_TAG);
+    assert!(session.runtime.heap().ics().poly_row(site).is_some());
     let before = session.stats();
     assert_eq!(session.run("print(getX(a) + getX(b));"), "3\n");
     let after = session.stats();
     counted(poly_hits(&before, &after, IcKind::Get), |count| count == 2);
+    let before = session.stats();
+    assert_eq!(session.run("for (var i = 0; i < 100; i++) getX(b);"), "");
+    let after = session.stats();
+    counted(hits(&before, &after, IcKind::Get), |count| count == 100);
+    counted(poly_hits(&before, &after, IcKind::Get), |count| count == 0);
     assert_eq!(session.run("print(getX(c) + getX(d));"), "7\n");
-    assert_eq!(session.entry(site).w0, POLY_TAG);
+    assert!(session.runtime.heap().ics().poly_row(site).is_some());
     assert_eq!(session.run("print(getX(e), getX(a));"), "5 1\n");
     assert_eq!(session.entry(site).w0, MEGA_TAG);
 }

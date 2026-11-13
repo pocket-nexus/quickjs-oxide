@@ -319,6 +319,7 @@ pub(crate) fn get_cached(
             );
             if let Some(value) = hit {
                 cx.heap.ics.count_poly_hit(IcKind::Get);
+                cx.heap.ics.promote(site, entry);
                 return Ok(value);
             }
         }
@@ -474,6 +475,7 @@ pub(crate) fn set_cached(
                 value,
             ) {
                 heap.ics.count_poly_hit(IcKind::Set);
+                heap.ics.promote(site, entry);
                 return Ok(());
             }
         }
