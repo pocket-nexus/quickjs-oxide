@@ -313,6 +313,38 @@ compilation and lowering cancel. `--binary` uses the root crate's ignored
 ([`core/examples/workloads.rs`](../../core/examples/workloads.rs)) and their
 JavaScript counterparts, subtracting each side's empty loop.
 
+## layout
+
+```sh
+# Build each clean source with RUSTFLAGS='-C save-temps --print link-args'
+# and bench.py build before measuring. No build/test jobs during the run.
+python3 scripts/benchmark/bench.py layout \
+  --base-log /tmp/base-target/release/qjs.build.stdout.log \
+  --candidate-log /tmp/candidate-target/release/qjs.build.stdout.log \
+  --suite target/suite-matrix/manifest.json --repeat 4 --cpu 2 \
+  --max-spread-percent 3 --max-regression-percent 2 --output /tmp/oxide-layout
+```
+
+Relinks both saved builds at **0, 16, 32 and 48 bytes**, then measures serially
+in ABBA order with hardware instructions and cycles. Link relaxation is disabled;
+all four `.text` sections within each engine must be byte-identical or the run
+fails before sampling. These diagnostic links can differ from the native release
+binary, whose original Sweep and Claim results must remain in the report.
+
+The default workloads are all eight V8 v7 programs plus `numeric_local_loop`
+and `array_read`. `--case` selects suite cases and `--fixed-case` selects fixed
+probes. `summary.md` and `summary.json` retain every placement, each engine's
+minimum/median/maximum and spread, and all time/cycle/instruction ratios.
+The diagnostic gate fails if candidate time or cycles vary by more than the
+declared spread limit, or any matched-offset time/cycles regression exceeds its
+declared limit. Failed or incomplete samples also fail. Set these limits before
+running; they are median diagnostics, not confidence intervals or a replacement
+for paired A/A+A/B `noninferior`/`net-gain` gates.
+
+Moving code by 64/128/192 alone preserves modulo-64 alignment and misses the
+smaller placement changes this command stresses. A passing instruction-count
+or loop-size gate does not imply stable time or cycles across placements.
+
 ## relink
 
 ```sh
@@ -327,3 +359,5 @@ with each variant's `.text` address and SHA-256. The machine code is
 identical, so the spread of a `run` over the variants is the layout noise of
 that build. A variant whose `.text` bytes differ from the first offset variant
 is reported on stderr.
+`--no-relax --require-identical` disables address-dependent linker relaxation
+and rejects differences between offset variants instead of merely warning.
