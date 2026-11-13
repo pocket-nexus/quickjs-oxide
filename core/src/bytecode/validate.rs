@@ -155,7 +155,6 @@ pub fn validate<'a>(
                 // A regular expression reads its source and its flags.
                 let count = match insn.op {
                     Opcode::NewRegExp => 2,
-                    Opcode::NewObjectLit => u64::from(insn.b),
                     _ => 1,
                 };
                 if u64::from(insn.imm) + count > u64::from(unit.constant_count) {
@@ -210,6 +209,14 @@ pub fn validate<'a>(
                     return fail(at, E::WideRegister(insn.imm));
                 }
             }
+        }
+        if insn.op == Opcode::FinishObjectLit
+            && !unit
+                .code
+                .get(insn.imm as usize)
+                .is_some_and(|creator| creator.op == Opcode::NewObjectLit && creator.a == insn.a)
+        {
+            return fail(at, E::Target(insn.imm));
         }
         // A spill access names the unit's spill register and one of its slots.
         if matches!(

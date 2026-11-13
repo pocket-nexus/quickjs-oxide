@@ -53,15 +53,17 @@ fn constant_array_ranges_are_validated_without_wrapping() {
 }
 
 #[test]
-fn literal_key_ranges_are_validated_without_wrapping() {
-    for first in [1, u32::MAX] {
-        let mut code = unit(8, |b| {
-            b.raw(Insn::new(Opcode::NewObjectLit, 5, 2, 0, first));
+fn literal_finish_names_its_creator_and_object_register() {
+    let make = |register, target| {
+        unit(8, |b| {
+            b.a_count(Opcode::NewObjectLit, 5, 2);
+            b.a_int(Opcode::FinishObjectLit, register, target);
             b.op(Opcode::ReturnUndefined);
-        });
-        code.constant_count = 2;
-        assert_eq!(validate(&code), Err(ValidateErrorKind::Constant(first)));
-    }
+        })
+    };
+    assert_eq!(validate(&make(5, 0)), Ok(()));
+    assert_eq!(validate(&make(6, 0)), Err(ValidateErrorKind::Target(0)));
+    assert_eq!(validate(&make(5, 999)), Err(ValidateErrorKind::Target(999)));
 }
 
 /// Builds every opcode through the builder with format-specific operands,
@@ -72,7 +74,12 @@ fn every_opcode_round_trips_through_the_disassembler() {
     let mut builder = CodeBuilder::new();
     let mut expected = Vec::new();
     // The spill opcodes need a spill scope: `spill_scope_accesses_validate`.
-    let spill = [Opcode::NewSpill, Opcode::LoadSlot, Opcode::StoreSlot];
+    let spill = [
+        Opcode::NewSpill,
+        Opcode::LoadSlot,
+        Opcode::StoreSlot,
+        Opcode::FinishObjectLit,
+    ];
     for &op in Opcode::ALL.iter().filter(|op| !spill.contains(op)) {
         // Registers: this, p0, p1, l0, l1, t0 = 5, t1 = 6, ...
         let operands = match op.format() {
