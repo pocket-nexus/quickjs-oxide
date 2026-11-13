@@ -235,9 +235,9 @@ fn literals_reserve_their_slots_and_elements() {
         "function f(a) { var o = {x: 1, y: a}; return [a, 2, o]; }",
         "f",
     );
-    assert_eq!(code[0], "NewObject t0, 2");
+    assert_eq!(code[0], "NewObjectLit t0, k0, ic0");
     assert!(
-        code.contains(&"DefineField t0, p0, .y".to_owned()),
+        code.contains(&"InitField t0, p0, 1".to_owned()),
         "{code:#?}"
     );
     assert!(

@@ -843,6 +843,7 @@ struct Lowerer<'a, 'c> {
     /// temporary, for retargeting into a local.
     last_dest: Option<(u32, u32)>,
     checked: FxHashSet<u32>,
+    literal_field_slots: FxHashMap<usize, u32>,
     /// Depth of temporaries used above the stack (TDZ checks of captures).
     max_scratch: u32,
     pool: Vec<CoreValue>,
@@ -953,6 +954,7 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             pc: 0,
             last_dest: None,
             checked: FxHashSet::default(),
+            literal_field_slots: FxHashMap::default(),
             max_scratch: 0,
             pool: Vec::new(),
             pool_index: vec![NO_SLOT; function.constants().len()],
@@ -1822,9 +1824,23 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.push_result(at)?;
             }
             I::Object => {
-                let slots = self.literal_slots(pc);
+                let literal = self.plain_literal(pc)?;
                 let dst = self.result_register()?;
-                let at = self.emit(|b| b.a_count(Opcode::NewObject, dst, slots));
+                let at = match literal {
+                    Some((first, count)) => self.emit(|b| {
+                        b.raw(oxide_core::Insn::new(
+                            Opcode::NewObjectLit,
+                            dst,
+                            count,
+                            0,
+                            first,
+                        ))
+                    }),
+                    None => {
+                        let slots = self.literal_slots(pc);
+                        self.emit(|b| b.a_count(Opcode::NewObject, dst, slots))
+                    }
+                };
                 self.push_result(at)?;
             }
             I::ArrayFrom(count) => {
@@ -1987,10 +2003,14 @@ impl<'a, 'c> Lowerer<'a, 'c> {
                 self.emit(|b| b.abc(Opcode::SetElem, object, key, value));
             }
             I::DefineField(name) => {
-                let key = self.name_key(name)?;
                 let (_, [value]) = self.pop_operands::<1>()?;
                 let object = self.operand(self.stack.len() - 1)?;
-                self.emit(|b| b.ab_key(Opcode::DefineField, object, value, key));
+                if let Some(&slot) = self.literal_field_slots.get(&pc) {
+                    self.emit(|b| b.ab_int(Opcode::InitField, object, value, slot as i32));
+                } else {
+                    let key = self.name_key(name)?;
+                    self.emit(|b| b.ab_key(Opcode::DefineField, object, value, key));
+                }
             }
             I::DefineArrayEl => {
                 let (_, [value]) = self.pop_operands::<1>()?;
@@ -3346,6 +3366,73 @@ impl<'a, 'c> Lowerer<'a, 'c> {
             }
             _ => return None,
         })
+    }
+
+    /// Only a straight-line run of static, unique data definitions may
+    /// initialize slots directly. Nested value evaluation may call JS, but
+    /// nothing can observe the literal before its definitions complete.
+    fn plain_literal(&mut self, pc: usize) -> Result<Option<(u32, u8)>, LowerError> {
+        let Some(base) = self.analysis.depth[pc] else {
+            return Ok(None);
+        };
+        let mut fields = Vec::new();
+        for next in pc + 1..self.code.len() {
+            let Some(depth) = self.analysis.depth[next] else {
+                return Ok(None);
+            };
+            if depth <= base {
+                break;
+            }
+            if self.analysis.label[next] {
+                return Ok(None);
+            }
+            let insn = &self.code[next];
+            if depth == base + 2
+                && let Instruction::DefineField(name) = *insn
+            {
+                fields.push((next, name));
+                if fields.len() > 16 {
+                    return Ok(None);
+                }
+                continue;
+            }
+            let (popped, _) = insn.stack_effect();
+            if popped as u32 >= depth - base {
+                if matches!(
+                    insn,
+                    Instruction::DefineFieldComputed
+                        | Instruction::DefineMethod { .. }
+                        | Instruction::DefineMethodComputed { .. }
+                        | Instruction::SetProto
+                        | Instruction::CopyDataProperties
+                        | Instruction::CopyDataPropertiesExcluded { .. }
+                ) {
+                    return Ok(None);
+                }
+                break;
+            }
+        }
+        if fields.len() < 2 {
+            return Ok(None);
+        }
+        let mut keys = Vec::with_capacity(fields.len());
+        for &(_, name) in &fields {
+            let key = self.name_key(name)?;
+            let oxide_core::heap::atom::KeyKind::String(atom) = key.kind() else {
+                return Ok(None);
+            };
+            if keys.contains(&atom) {
+                return Ok(None);
+            }
+            keys.push(atom);
+        }
+        let first = self.pool.len() as u32;
+        self.pool
+            .extend(keys.iter().copied().map(CoreValue::string));
+        for (slot, &(at, _)) in fields.iter().enumerate() {
+            self.literal_field_slots.insert(at, slot as u32);
+        }
+        Ok(Some((first, fields.len() as u8)))
     }
 
     /// The `DefineField`s that fill the object literal created at `pc`: the

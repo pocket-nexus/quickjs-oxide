@@ -71,7 +71,7 @@ impl Insn {
     #[inline]
     pub const fn site(self) -> Option<u32> {
         match self.op {
-            Opcode::GetField | Opcode::SetField => Some(self.c as u32),
+            Opcode::GetField | Opcode::SetField | Opcode::NewObjectLit => Some(self.c as u32),
             Opcode::GetGlobal | Opcode::GetGlobalOrUndefined | Opcode::SetGlobal => {
                 Some(self.b as u32 | (self.c as u32) << 8)
             }
