@@ -52,6 +52,18 @@ fn constant_array_ranges_are_validated_without_wrapping() {
     }
 }
 
+#[test]
+fn literal_key_ranges_are_validated_without_wrapping() {
+    for first in [1, u32::MAX] {
+        let mut code = unit(8, |b| {
+            b.raw(Insn::new(Opcode::NewObjectLit, 5, 2, 0, first));
+            b.op(Opcode::ReturnUndefined);
+        });
+        code.constant_count = 2;
+        assert_eq!(validate(&code), Err(ValidateErrorKind::Constant(first)));
+    }
+}
+
 /// Builds every opcode through the builder with format-specific operands,
 /// publishes the unit and checks each disassembled line.
 #[test]
