@@ -19,6 +19,7 @@ documents each one. The rules behind them are in
 | How does cost grow with size? | Explain | `scaling` |
 | What does compilation cost? | Explain | `compile corpus`, `compile probes`, `compile matrix` |
 | How much of a time difference is code layout? | Explain | `relink`, then `run` over the variants |
+| Does dispatch remain stable at different alignments? | Explain | `layout` (0/16/32/48-byte placements, time/cycles spread and regression) |
 
 Each tier is a different kind of evidence, not a smaller version of the next
 one. The Sweep is the default check of every change that reaches the engine;

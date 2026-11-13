@@ -23,6 +23,7 @@ COMMANDS = {
         ("sweep", "sweep", "the default check: all fixed probes and V8 v7, base vs candidate, with the gates"),
         ("run", "runner", "run a workload manifest on engines: time, perf counters or Callgrind"),
         ("paired", "paired", "accept or reject an A/B result against its A/A noise"),
+        ("layout", "layout", "stress 0/16/32/48-byte placements; gate time/cycles spread and regression"),
         ("memory", "memory", "peak RSS against QuickJS over the suite programs"),
         ("scaling", "scaling", "data-structure scaling workloads across sizes"),
         ("compile corpus", "compile_corpus", "generate the front-end compile corpus"),
