@@ -21,6 +21,14 @@ backup="$(mktemp -d)"
 cp Cargo.toml Cargo.lock "${backup}/"
 trap 'cp "${backup}/Cargo.toml" "${backup}/Cargo.lock" . && rm -rf "${backup}"' EXIT
 
+# The unpublished version repeats across commits. A restored Cargo cache can
+# otherwise supply unpacked sources from an earlier commit instead of the
+# archives packaged below. Invalidate only these five pre-release source trees.
+for crate in quickjs-oxide-regexp quickjs-oxide-core quickjs-oxide \
+             quickjs-oxide-host quickjs-oxide-cli; do
+  rm -rf -- "${CARGO_HOME:-${HOME}/.cargo}"/registry/src/*/"${crate}-${unpublished}"
+done
+
 ./scripts/release/set-workspace-version.sh "${unpublished}"
 cargo package --locked --allow-dirty \
   -p quickjs-oxide-regexp -p quickjs-oxide-core -p quickjs-oxide \

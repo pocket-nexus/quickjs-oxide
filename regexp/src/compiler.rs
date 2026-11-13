@@ -13,9 +13,51 @@ use super::group_name::{self, CaptureSummary};
 use super::opcode::{CharacterRange, Instruction};
 use std::collections::BTreeSet;
 
+mod search;
+pub(super) use search::SearchPlan;
+
 const INFINITE_REPETITION: u32 = i32::MAX as u32;
 const MAX_CODE_POINT: u32 = 0x10_ffff;
 const MAX_GROUP_NESTING: usize = 256;
+
+/// ASCII membership after canonicalization. Only ASCII letter case changes
+/// for ASCII input; construct range masks once instead of folding 128 units.
+fn ascii_class_bitmap(
+    ranges: &[CharacterRange],
+    inverted: bool,
+    ignore_case: bool,
+    unicode: bool,
+) -> [u64; 2] {
+    let mut bits = [0u64; 2];
+    for range in ranges {
+        if range.start >= 128 {
+            continue;
+        }
+        let start = range.start;
+        let end = range.end.min(127);
+        if start / 64 == end / 64 {
+            bits[(start / 64) as usize] |=
+                (u64::MAX << (start % 64)) & (u64::MAX >> (63 - end % 64));
+        } else {
+            bits[0] |= u64::MAX << start;
+            bits[1] |= u64::MAX >> (127 - end);
+        }
+    }
+    if ignore_case {
+        const UPPER: u64 = ((1u64 << 26) - 1) << 1;
+        const LOWER: u64 = UPPER << 32;
+        bits[1] = if unicode {
+            (bits[1] & !UPPER) | ((bits[1] & LOWER) >> 32)
+        } else {
+            (bits[1] & !LOWER) | ((bits[1] & UPPER) << 32)
+        };
+    }
+    if inverted {
+        bits[0] = !bits[0];
+        bits[1] = !bits[1];
+    }
+    bits
+}
 
 /// One runtime-independent compiled regular-expression program.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -30,8 +72,7 @@ struct Program {
     capture_count: u8,
     register_count: u8,
     instructions: Box<[Instruction]>,
-    /// An exact first UTF-16 unit after only zero-width instructions.
-    first_unit: Option<u16>,
+    search: SearchPlan,
     /// Capture names aligned to captures 1..N. Capture zero is deliberately
     /// absent. `None` for the whole field means the pattern has no named
     /// captures and matches QuickJS's absent group-name trailer.
@@ -51,7 +92,7 @@ impl CompiledRegExp {
             capture_count,
             register_count,
             instructions: instructions.into_boxed_slice(),
-            first_unit: None,
+            search: SearchPlan::default(),
             group_names: None,
         })
     }
@@ -62,18 +103,18 @@ impl CompiledRegExp {
         register_count: u8,
         instructions: Vec<Instruction>,
         group_names: Option<Box<[Option<GroupName>]>>,
+        search: SearchPlan,
     ) -> Result<Self, CompileError> {
         debug_assert!(group_names.as_ref().is_none_or(|names| {
             names.len() == usize::from(capture_count).saturating_sub(1)
                 && names.iter().any(Option::is_some)
         }));
-        let first_unit = first_required_unit(&instructions);
         let program = Self(Program {
             flags,
             capture_count,
             register_count,
             instructions: instructions.into_boxed_slice(),
-            first_unit,
+            search,
             group_names,
         });
         super::executor::validate_program(&program).map_err(|error| CompileError {
@@ -106,8 +147,8 @@ impl CompiledRegExp {
         &self.0.instructions
     }
 
-    pub(super) const fn first_unit(&self) -> Option<u16> {
-        self.0.first_unit
+    pub(super) const fn search(&self) -> &SearchPlan {
+        &self.0.search
     }
 
     /// Names aligned to captures 1..N, or `None` when this program has no
@@ -121,27 +162,37 @@ impl CompiledRegExp {
     pub const fn has_named_captures(&self) -> bool {
         self.0.group_names.is_some()
     }
-}
 
-fn first_required_unit(instructions: &[Instruction]) -> Option<u16> {
-    for instruction in instructions {
-        match *instruction {
-            Instruction::SaveStart { .. }
-            | Instruction::SaveEnd { .. }
-            | Instruction::ResetCaptures { .. }
-            | Instruction::LineStart { .. }
-            | Instruction::LineEnd { .. }
-            | Instruction::WordBoundary { .. } => {}
-            Instruction::Char {
-                value,
-                ignore_case: false,
-            } if value <= 0xffff && !(0xd800..=0xdfff).contains(&value) => {
-                return Some(value as u16);
-            }
-            _ => return None,
-        }
+    /// Owned allocation capacity, excluding the inline program and allocator
+    /// overhead. Includes compiler search metadata and instruction payloads.
+    #[must_use]
+    pub fn owned_bytes(&self) -> usize {
+        std::mem::size_of_val(self.instructions())
+            + self
+                .instructions()
+                .iter()
+                .map(|instruction| match instruction {
+                    Instruction::Range { ranges, .. } => std::mem::size_of_val(&**ranges),
+                    Instruction::ClassRepeat(repeat) => {
+                        size_of::<super::ClassRepeat>() + std::mem::size_of_val(&*repeat.ranges)
+                    }
+                    Instruction::BackReference { captures, .. }
+                    | Instruction::BackwardBackReference { captures, .. } => {
+                        std::mem::size_of_val(&**captures)
+                    }
+                    _ => 0,
+                })
+                .sum::<usize>()
+            + self.group_names().map_or(0, |names| {
+                std::mem::size_of_val(names)
+                    + names
+                        .iter()
+                        .flatten()
+                        .map(|name| std::mem::size_of_val(&**name))
+                        .sum::<usize>()
+            })
+            + self.0.search.owned_bytes()
     }
-    None
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1793,6 +1844,7 @@ struct CodeBuilder {
     unicode: bool,
     multiline: bool,
     dot_all: bool,
+    fuse_repeats: bool,
 }
 
 impl CodeBuilder {
@@ -1805,6 +1857,7 @@ impl CodeBuilder {
             unicode: flags.is_unicode(),
             multiline: flags.contains(RegExpFlags::MULTILINE),
             dot_all: flags.contains(RegExpFlags::DOT_ALL),
+            fuse_repeats: true,
         }
     }
 
@@ -2099,6 +2152,29 @@ impl CodeBuilder {
             return Ok(());
         }
 
+        if self.fuse_repeats
+            && !backward
+            && let Atom::Class(class) = atom
+            && class.strings.is_empty()
+        {
+            let ascii = ascii_class_bitmap(
+                &class.ranges,
+                class.inverted,
+                self.ignore_case,
+                self.unicode,
+            );
+            self.emit(Instruction::ClassRepeat(Box::new(super::ClassRepeat {
+                ranges: class.ranges.clone().into_boxed_slice(),
+                ascii,
+                inverted: class.inverted,
+                ignore_case: self.ignore_case,
+                minimum: quantifier.minimum,
+                maximum: quantifier.maximum,
+                greedy: quantifier.greedy,
+            })));
+            return Ok(());
+        }
+
         self.compile_required_repetitions(
             atom,
             quantifier.minimum,
@@ -2310,6 +2386,16 @@ impl CodeBuilder {
     }
 }
 
+#[cfg(test)]
+pub(super) fn compile_unoptimized(pattern: &[u16], flags: &[u16]) -> CompiledRegExp {
+    let flags = parse_flags(flags).unwrap();
+    let parsed = Parser::new(pattern, flags).parse().unwrap();
+    let mut builder = CodeBuilder::new(flags);
+    builder.fuse_repeats = false;
+    let (instructions, registers) = builder.compile(&parsed.expression).unwrap();
+    CompiledRegExp::from_parts(flags, parsed.capture_count, registers, instructions)
+}
+
 pub(super) fn compile_units(
     pattern: &[u16],
     flag_units: &[u16],
@@ -2325,12 +2411,14 @@ pub(super) fn compile_units(
         flags.insert(RegExpFlags::NAMED_GROUPS);
     }
     let (instructions, register_count) = CodeBuilder::new(flags).compile(&expression)?;
+    let search = SearchPlan::analyze(&expression, flags, capture_count == 1);
     CompiledRegExp::from_compiled_parts(
         flags,
         capture_count,
         register_count,
         instructions,
         group_names,
+        search,
     )
 }
 
@@ -2669,6 +2757,39 @@ fn combine_surrogates(high: u32, low: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_bitmaps_match_runtime_canonicalization() {
+        for start in 0..128 {
+            for end in start..=128 {
+                for unicode in [false, true] {
+                    for ignore_case in [false, true] {
+                        for inverted in [false, true] {
+                            let bits = ascii_class_bitmap(
+                                &[CharacterRange::new(start, end)],
+                                inverted,
+                                ignore_case,
+                                unicode,
+                            );
+                            for unit in 0..128 {
+                                let canonical = if ignore_case {
+                                    crate::unicode::case::regexp_canonicalize(unit, unicode)
+                                } else {
+                                    unit
+                                };
+                                let expected = (start <= canonical && canonical <= end) != inverted;
+                                assert_eq!(
+                                    bits[(unit / 64) as usize] & (1 << (unit % 64)) != 0,
+                                    expected,
+                                    "{start}..={end} {unit} i={ignore_case} u={unicode} inverted={inverted}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fn compile_ascii(pattern: &str, flags: &str) -> Result<CompiledRegExp, CompileError> {
         compile_units(

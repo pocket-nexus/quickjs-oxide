@@ -42,28 +42,7 @@ pub struct RegExpStore {
 
 /// Bytes a program holds, including the arrays its instructions own.
 fn program_bytes(program: &CompiledRegExp) -> usize {
-    size_of::<Option<(RegExpRecord, CompiledRegExp)>>()
-        + std::mem::size_of_val(program.instructions())
-        + program
-            .instructions()
-            .iter()
-            .map(|instruction| match instruction {
-                oxide_regexp::Instruction::Range { ranges, .. } => std::mem::size_of_val(&**ranges),
-                oxide_regexp::Instruction::BackReference { captures, .. }
-                | oxide_regexp::Instruction::BackwardBackReference { captures, .. } => {
-                    std::mem::size_of_val(&**captures)
-                }
-                _ => 0,
-            })
-            .sum::<usize>()
-        + program.group_names().map_or(0, |names| {
-            std::mem::size_of_val(names)
-                + names
-                    .iter()
-                    .flatten()
-                    .map(|name| std::mem::size_of_val(&**name))
-                    .sum::<usize>()
-        })
+    size_of::<Option<(RegExpRecord, CompiledRegExp)>>() + program.owned_bytes()
 }
 
 impl RegExpStore {
@@ -328,12 +307,28 @@ mod tests {
 
     #[test]
     fn program_bytes_includes_backreference_captures() {
-        assert_owned_payload_bytes("(a)\\1", 1);
+        assert_owned_payload_bytes("(.)\\1", 1);
     }
 
     #[test]
     fn program_bytes_includes_backward_backreference_captures() {
-        assert_owned_payload_bytes("(a)(?<=\\1)", 1);
+        assert_owned_payload_bytes("(.)(?<=\\1)", 1);
+    }
+
+    #[test]
+    fn program_bytes_includes_repeat_descriptors_and_search_literals() {
+        assert_owned_payload_bytes(
+            "[aceg]+",
+            size_of::<oxide_regexp::ClassRepeat>() + 4 * size_of::<oxide_regexp::CharacterRange>(),
+        );
+        let pattern: Vec<u16> = "abcdef".encode_utf16().collect();
+        let program = oxide_regexp::compile(&pattern, &[]).unwrap();
+        assert!(
+            super::program_bytes(&program)
+                >= size_of::<Option<(super::RegExpRecord, oxide_regexp::CompiledRegExp)>>()
+                    + std::mem::size_of_val(program.instructions())
+                    + pattern.len() * size_of::<u16>()
+        );
     }
 
     #[test]

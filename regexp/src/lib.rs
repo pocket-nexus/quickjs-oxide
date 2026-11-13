@@ -23,7 +23,7 @@ pub use executor::{
 };
 pub use flags::RegExpFlags;
 pub use group_name::GroupName;
-pub use opcode::{CharacterRange, Instruction};
+pub use opcode::{CharacterRange, ClassRepeat, Instruction};
 
 pub mod unicode;
 

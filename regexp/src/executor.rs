@@ -6,14 +6,16 @@
 //! through the Rust call stack and never delegates to a host regular-expression
 //! engine.
 
+use std::cell::RefCell;
 use std::error::Error as StdError;
 use std::fmt;
 use std::ops::Range;
 
-use super::{CharacterRange, CompiledRegExp, Instruction, RegExpFlags};
+use super::{CharacterRange, ClassRepeat, CompiledRegExp, Instruction, RegExpFlags};
 use crate::unicode::case::regexp_canonicalize as canonicalize;
 
 const INTERRUPT_POLL_INTERVAL: u32 = 10_000;
+const REQUIRED_PREFILTER_DELAY: u32 = 128;
 
 /// One successful match. Every range is measured in UTF-16 code units.
 /// Capture zero is the complete match; an unmatched group is `None`.
@@ -200,44 +202,264 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
     program: &CompiledRegExp,
     input: &[T],
     start: usize,
-    mut interrupted: F,
+    interrupted: F,
 ) -> Result<Option<RegExpMatch>, ExecError> {
+    match execute_search(program, input, start, interrupted) {
+        Ok(result) => Ok(result),
+        Err(ExecutionStop::Rejected) => Ok(None),
+        Err(ExecutionStop::Error(error)) => Err(error),
+    }
+}
+
+// A proved search rejection is control flow, not a guest interruption or an
+// execution error. Keep it private while unwinding any active scratch lease.
+enum ExecutionStop {
+    Error(ExecError),
+    Rejected,
+}
+
+impl From<ExecError> for ExecutionStop {
+    fn from(error: ExecError) -> Self {
+        Self::Error(error)
+    }
+}
+
+impl From<ProgramError> for ExecutionStop {
+    fn from(error: ProgramError) -> Self {
+        Self::Error(error.into())
+    }
+}
+
+fn poll_interrupt<F: FnMut() -> bool>(interrupted: &mut F) -> Result<u32, ExecutionStop> {
+    if interrupted() {
+        Err(ExecError::Interrupted.into())
+    } else {
+        Ok(INTERRUPT_POLL_INTERVAL)
+    }
+}
+
+fn execute_search<T: Copy + Into<u16>, F: FnMut() -> bool>(
+    program: &CompiledRegExp,
+    input: &[T],
+    start: usize,
+    mut interrupted: F,
+) -> Result<Option<RegExpMatch>, ExecutionStop> {
     #[cfg(test)]
     validate_program(program)?;
     if start > input.len() {
         return Err(ExecError::StartOutOfBounds {
             start,
             input_len: input.len(),
-        });
+        }
+        .into());
     }
 
     let flags = program.flags();
     let unicode = flags.is_unicode();
     let sticky = flags.contains(RegExpFlags::STICKY);
     let mut candidate = normalize_start(input, start, unicode);
-    let mut poller = Poller::new(&mut interrupted);
-
-    let mut state =
-        AttemptState::new(program.capture_count(), program.register_count(), candidate)?;
-    loop {
-        if !sticky && let Some(required) = program.first_unit() {
-            while candidate < input.len() && input[candidate].into() != required {
+    let search = program.search();
+    if search.anchored && candidate != 0 {
+        return Ok(None);
+    }
+    if search.minimum > input.len() - candidate {
+        return Ok(None);
+    }
+    let fixed_start = sticky || search.anchored;
+    if fixed_start && candidate < input.len() && !search.first.contains(input[candidate].into()) {
+        return Ok(None);
+    }
+    // Let a cheap single-start match finish before searching its suffix. Use
+    // one early checkpoint to retain required-literal rejection before an
+    // expensive backtracking attempt, without a new per-step budget counter.
+    let initial_start = candidate;
+    let mut deferred = if fixed_start {
+        search.required.as_ref()
+    } else {
+        None
+    };
+    let first_checkpoint = if deferred.is_some() {
+        REQUIRED_PREFILTER_DELAY
+    } else {
+        INTERRUPT_POLL_INTERVAL
+    };
+    let mut checkpoint = || {
+        if let Some(required) = deferred.take() {
+            let mut interrupt_only = || poll_interrupt(&mut interrupted);
+            let mut scanner = Poller::new(&mut interrupt_only);
+            scanner.remaining = INTERRUPT_POLL_INTERVAL - REQUIRED_PREFILTER_DELAY;
+            let last_start = required
+                .max_prefix
+                .map_or(input.len(), |prefix| initial_start.saturating_add(prefix));
+            if find_literal(
+                input,
+                &required.units,
+                initial_start,
+                last_start,
+                &mut scanner,
+            )?
+            .is_none()
+            {
+                return Err(ExecutionStop::Rejected);
+            }
+            // Preserve partial polling progress made by the proof scan.
+            return Ok(scanner.remaining);
+        }
+        poll_interrupt(&mut interrupted)
+    };
+    let mut poller = Poller::new(&mut checkpoint);
+    poller.remaining = first_checkpoint;
+    if let Some(literal) = &search.literal {
+        let last_start = if fixed_start {
+            candidate
+        } else {
+            input.len() - literal.len()
+        };
+        let found = find_literal(input, literal, candidate, last_start, &mut poller)?;
+        return match found {
+            Some(position) => {
+                let mut captures = Vec::new();
+                captures
+                    .try_reserve_exact(1)
+                    .map_err(|_| ExecError::OutOfMemory)?;
+                captures.push(Some(position..position + literal.len()));
+                Ok(Some(RegExpMatch {
+                    captures: captures.into_boxed_slice(),
+                }))
+            }
+            _ => Ok(None),
+        };
+    }
+    // Unanchored searches retain the eager proof to avoid retrying starts when
+    // a required substring is absent. Single-start searches defer it above.
+    if !fixed_start && let Some(required) = &search.required {
+        let Some(position) = find_literal(
+            input,
+            &required.units,
+            candidate,
+            input.len().saturating_sub(required.units.len()),
+            &mut poller,
+        )?
+        else {
+            return Ok(None);
+        };
+        if let Some(prefix) = required.max_prefix {
+            let lower = position.saturating_sub(prefix);
+            // A required substring can be in the middle of a match. Only its
+            // proven maximum prefix bounds the earliest possible start.
+            while candidate < lower {
                 poller.step()?;
                 candidate = advance_string_index(input, candidate, unicode);
             }
-            if candidate == input.len() {
+        }
+    }
+    let mut state = None;
+    loop {
+        while candidate < input.len() && !search.first.contains(input[candidate].into()) {
+            if sticky || search.anchored {
                 return Ok(None);
             }
+            poller.step()?;
+            candidate = advance_string_index(input, candidate, unicode);
         }
+        if search.minimum > input.len() - candidate {
+            return Ok(None);
+        }
+        if state.is_none() {
+            state = Some(Scratch::acquire(
+                program.capture_count(),
+                program.register_count(),
+                candidate,
+            )?);
+        }
+        let state = &mut state.as_mut().expect("attempt state was initialized").state;
         state.reset(candidate);
-        if let Some(result) = run_attempt(program, input, unicode, &mut poller, &mut state)? {
+        if let Some(result) = run_attempt(program, input, unicode, &mut poller, state)? {
             return Ok(Some(result));
         }
-        if sticky || candidate == input.len() {
+        if sticky || search.anchored || candidate == input.len() {
             return Ok(None);
         }
         candidate = advance_string_index(input, candidate, unicode);
     }
+}
+
+fn find_literal<T: Copy + Into<u16>, F: FnMut() -> Result<u32, ExecutionStop>>(
+    input: &[T],
+    literal: &[u16],
+    start: usize,
+    last_start: usize,
+    poller: &mut Poller<'_, F>,
+) -> Result<Option<usize>, ExecutionStop> {
+    if literal.len() > input.len() - start {
+        return Ok(None);
+    }
+    let Some((&first, suffix)) = literal.split_first() else {
+        return Ok(Some(start));
+    };
+    let last_start = last_start.min(input.len() - literal.len());
+    let mut position = start;
+    while position <= last_start {
+        // Scan only as far as the next checkpoint. Common first-unit misses
+        // need one comparison, without a polling branch or suffix iterator
+        // setup for every unit. Charge all inspected units before proceeding.
+        let end = (last_start + 1).min(position.saturating_add(poller.remaining as usize));
+        let found = input[position..end]
+            .iter()
+            .position(|unit| (*unit).into() == first);
+        let inspected = found.map_or(end - position, |offset| offset + 1);
+        poller.advance(inspected as u32)?;
+        let Some(offset) = found else {
+            position = end;
+            continue;
+        };
+        position += offset;
+        let mut matched = true;
+        for (offset, expected) in suffix.iter().enumerate() {
+            poller.step()?;
+            if input[position + offset + 1].into() != *expected {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Ok(Some(position));
+        }
+        position += 1;
+    }
+    Ok(None)
+}
+
+fn validate_ranges(ranges: &[CharacterRange], pc: usize) -> Result<(), ExecError> {
+    for range in ranges {
+        if range.start > range.end || range.end > 0x10_ffff {
+            return Err(ProgramError::InvalidCharacterRange {
+                pc,
+                start: range.start,
+                end: range.end,
+            }
+            .into());
+        }
+    }
+    Ok(())
+}
+
+fn repeat_next<T: Copy + Into<u16>>(
+    repeat: &ClassRepeat,
+    input: &[T],
+    position: usize,
+    unicode: bool,
+) -> Option<usize> {
+    let (mut character, next) = read_character(input, position, unicode)?;
+    let matched = if character < 128 {
+        repeat.ascii[(character / 64) as usize] & (1 << (character % 64)) != 0
+    } else {
+        if repeat.ignore_case {
+            character = canonicalize(character, unicode);
+        }
+        range_contains(&repeat.ranges, character) != repeat.inverted
+    };
+    matched.then_some(next)
 }
 
 pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError> {
@@ -298,6 +520,7 @@ pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError
             Instruction::Char { value, .. } if *value > 0x10_ffff => {
                 return Err(ProgramError::InvalidCharacter { pc, value: *value }.into());
             }
+            Instruction::ClassRepeat(repeat) => validate_ranges(&repeat.ranges, pc)?,
             Instruction::Range { ranges, .. } => {
                 for range in ranges {
                     if range.start > range.end || range.end > 0x10_ffff {
@@ -399,28 +622,41 @@ pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError
 
 struct Poller<'a, F> {
     remaining: u32,
-    interrupted: &'a mut F,
+    checkpoint: &'a mut F,
 }
 
 impl<'a, F> Poller<'a, F>
 where
-    F: FnMut() -> bool,
+    F: FnMut() -> Result<u32, ExecutionStop>,
 {
-    fn new(interrupted: &'a mut F) -> Self {
+    fn new(checkpoint: &'a mut F) -> Self {
         Self {
             remaining: INTERRUPT_POLL_INTERVAL,
-            interrupted,
+            checkpoint,
         }
     }
 
-    fn step(&mut self) -> Result<(), ExecError> {
-        self.remaining -= 1;
+    #[inline(always)]
+    fn step(&mut self) -> Result<(), ExecutionStop> {
+        self.advance(1)
+    }
+
+    #[inline(always)]
+    fn advance(&mut self, steps: u32) -> Result<(), ExecutionStop> {
+        debug_assert!(steps > 0 && steps <= self.remaining);
+        self.remaining -= steps;
         if self.remaining == 0 {
-            self.remaining = INTERRUPT_POLL_INTERVAL;
-            if (self.interrupted)() {
-                return Err(ExecError::Interrupted);
-            }
+            self.refill()?;
         }
+        Ok(())
+    }
+
+    // Keep required-literal scans and host callbacks out of every character's
+    // decrement-and-branch path, even when the checkpoint closure grows.
+    #[cold]
+    #[inline(never)]
+    fn refill(&mut self) -> Result<(), ExecutionStop> {
+        self.remaining = (self.checkpoint)()?;
         Ok(())
     }
 }
@@ -461,8 +697,20 @@ impl Undo {
 
 #[derive(Clone, Copy, Debug)]
 enum ControlKind {
-    Split { pc: usize },
-    LookAhead { negative: bool, target: usize },
+    Split {
+        pc: usize,
+    },
+    LookAhead {
+        negative: bool,
+        target: usize,
+    },
+    /// `limit` is the minimum endpoint for greedy rollback, or the remaining
+    /// optional character count for lazy expansion (usize::MAX is unbounded).
+    Repeat {
+        pc: usize,
+        limit: usize,
+        greedy: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -472,6 +720,7 @@ struct ControlFrame {
     undo_len: usize,
 }
 
+#[derive(Default)]
 struct AttemptState {
     pc: usize,
     position: usize,
@@ -479,6 +728,59 @@ struct AttemptState {
     registers: Vec<RegisterValue>,
     undo: Vec<Undo>,
     controls: Vec<ControlFrame>,
+}
+
+// One bounded spare per thread. No borrow survives acquisition, so an interrupt
+// hook may reenter the regexp engine without aliasing an active execution.
+const MAX_SCRATCH_BYTES: usize = 32 * 1024;
+thread_local! {
+    static SCRATCH: RefCell<Option<AttemptState>> = const { RefCell::new(None) };
+}
+
+struct Scratch {
+    state: AttemptState,
+}
+
+impl Scratch {
+    fn acquire(captures: u8, registers: u8, position: usize) -> Result<Self, ExecError> {
+        let mut state = SCRATCH
+            .with(|slot| slot.borrow_mut().take())
+            .unwrap_or_default();
+        state.prepare(captures, registers, position)?;
+        Ok(Self { state })
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let state = &mut self.state;
+        let bytes = state
+            .captures
+            .capacity()
+            .saturating_mul(size_of::<Option<usize>>())
+            .saturating_add(
+                state
+                    .registers
+                    .capacity()
+                    .saturating_mul(size_of::<RegisterValue>()),
+            )
+            .saturating_add(state.undo.capacity().saturating_mul(size_of::<Undo>()))
+            .saturating_add(
+                state
+                    .controls
+                    .capacity()
+                    .saturating_mul(size_of::<ControlFrame>()),
+            );
+        if bytes <= MAX_SCRATCH_BYTES {
+            state.reset(0);
+            let _ = SCRATCH.try_with(|slot| {
+                let mut slot = slot.borrow_mut();
+                if slot.is_none() {
+                    *slot = Some(std::mem::take(state));
+                }
+            });
+        }
+    }
 }
 
 impl AttemptState {
@@ -491,28 +793,32 @@ impl AttemptState {
         self.controls.clear();
     }
 
+    #[cfg(test)]
     fn new(capture_count: u8, register_count: u8, position: usize) -> Result<Self, ExecError> {
-        let mut captures = Vec::new();
+        let mut state = Self::default();
+        state.prepare(capture_count, register_count, position)?;
+        Ok(state)
+    }
+
+    fn prepare(
+        &mut self,
+        capture_count: u8,
+        register_count: u8,
+        position: usize,
+    ) -> Result<(), ExecError> {
         let capture_slots = usize::from(capture_count) * 2;
-        captures
-            .try_reserve_exact(capture_slots)
+        self.captures
+            .try_reserve_exact(capture_slots.saturating_sub(self.captures.len()))
             .map_err(|_| ExecError::OutOfMemory)?;
-        captures.resize(capture_slots, None);
+        self.captures.resize(capture_slots, None);
 
-        let mut registers = Vec::new();
-        registers
-            .try_reserve_exact(usize::from(register_count))
+        self.registers
+            .try_reserve_exact(usize::from(register_count).saturating_sub(self.registers.len()))
             .map_err(|_| ExecError::OutOfMemory)?;
-        registers.resize(usize::from(register_count), RegisterValue::Unset);
-
-        Ok(Self {
-            pc: 0,
-            position,
-            captures,
-            registers,
-            undo: Vec::new(),
-            controls: Vec::new(),
-        })
+        self.registers
+            .resize(usize::from(register_count), RegisterValue::Unset);
+        self.reset(position);
+        Ok(())
     }
 
     fn push_backtrack(&mut self, pc: usize) -> Result<(), ExecError> {
@@ -522,6 +828,24 @@ impl AttemptState {
         self.controls.push(ControlFrame {
             kind: ControlKind::Split { pc },
             position: self.position,
+            undo_len: self.undo.len(),
+        });
+        Ok(())
+    }
+
+    fn push_repeat(
+        &mut self,
+        pc: usize,
+        position: usize,
+        limit: usize,
+        greedy: bool,
+    ) -> Result<(), ExecError> {
+        self.controls
+            .try_reserve(1)
+            .map_err(|_| ExecError::OutOfMemory)?;
+        self.controls.push(ControlFrame {
+            kind: ControlKind::Repeat { pc, limit, greedy },
+            position,
             undo_len: self.undo.len(),
         });
         Ok(())
@@ -553,17 +877,70 @@ impl AttemptState {
     /// A failed positive lookahead propagates through its boundary. A failed
     /// negative lookahead succeeds at its continuation. Split frames resume
     /// their retained branch.
-    fn restore_backtrack(&mut self) -> bool {
+    fn restore_backtrack<T: Copy + Into<u16>, F: FnMut() -> Result<u32, ExecutionStop>>(
+        &mut self,
+        instructions: &[Instruction],
+        input: &[T],
+        unicode: bool,
+        poller: &mut Poller<'_, F>,
+    ) -> Result<bool, ExecutionStop> {
         loop {
             let Some(frame) = self.controls.pop() else {
-                return false;
+                return Ok(false);
             };
             self.rollback_to(frame.undo_len);
             self.position = frame.position;
             match frame.kind {
                 ControlKind::Split { pc } => {
                     self.pc = pc;
-                    return true;
+                    return Ok(true);
+                }
+                ControlKind::Repeat {
+                    pc,
+                    limit,
+                    greedy: true,
+                } => {
+                    self.pc = pc;
+                    if self.position > limit {
+                        let (_, previous) = read_previous_character(input, self.position, unicode)
+                            .expect("repeat endpoint follows a character");
+                        self.controls.push(ControlFrame {
+                            position: previous,
+                            ..frame
+                        });
+                    }
+                    return Ok(true);
+                }
+                ControlKind::Repeat {
+                    pc,
+                    limit,
+                    greedy: false,
+                } => {
+                    poller.step()?;
+                    let Instruction::ClassRepeat(repeat) = &instructions[pc - 1] else {
+                        unreachable!("repeat frame refers to its instruction")
+                    };
+                    let Some(next) = repeat_next(repeat, input, self.position, unicode) else {
+                        continue;
+                    };
+                    self.position = next;
+                    self.pc = pc;
+                    if limit > 1 {
+                        self.controls.push(ControlFrame {
+                            kind: ControlKind::Repeat {
+                                pc,
+                                limit: if limit == usize::MAX {
+                                    limit
+                                } else {
+                                    limit - 1
+                                },
+                                greedy: false,
+                            },
+                            position: next,
+                            ..frame
+                        });
+                    }
+                    return Ok(true);
                 }
                 ControlKind::LookAhead {
                     negative: false, ..
@@ -573,7 +950,7 @@ impl AttemptState {
                     target,
                 } => {
                     self.pc = target;
-                    return true;
+                    return Ok(true);
                 }
             }
         }
@@ -737,15 +1114,15 @@ fn run_attempt<T: Copy + Into<u16>, F>(
     unicode: bool,
     poller: &mut Poller<'_, F>,
     state: &mut AttemptState,
-) -> Result<Option<RegExpMatch>, ExecError>
+) -> Result<Option<RegExpMatch>, ExecutionStop>
 where
-    F: FnMut() -> bool,
+    F: FnMut() -> Result<u32, ExecutionStop>,
 {
     let instructions = program.instructions();
 
     macro_rules! fail_branch {
         () => {{
-            if state.restore_backtrack() {
+            if state.restore_backtrack(instructions, input, unicode, poller)? {
                 continue;
             }
             return Ok(None);
@@ -815,6 +1192,44 @@ where
                     fail_branch!();
                 }
                 state.position = next;
+            }
+            Instruction::ClassRepeat(repeat) => {
+                let mut count = 0u32;
+                let mut failed = false;
+                while count < repeat.minimum {
+                    poller.step()?;
+                    let Some(next) = repeat_next(repeat, input, state.position, unicode) else {
+                        failed = true;
+                        break;
+                    };
+                    state.position = next;
+                    count += 1;
+                }
+                if failed {
+                    fail_branch!();
+                }
+                let minimum_position = state.position;
+                let remaining = repeat
+                    .maximum
+                    .map_or(usize::MAX, |maximum| (maximum - count) as usize);
+                if repeat.greedy {
+                    let mut optional = 0usize;
+                    let mut previous = state.position;
+                    while optional < remaining {
+                        poller.step()?;
+                        let Some(next) = repeat_next(repeat, input, state.position, unicode) else {
+                            break;
+                        };
+                        previous = state.position;
+                        state.position = next;
+                        optional += 1;
+                    }
+                    if state.position != minimum_position {
+                        state.push_repeat(state.pc, previous, minimum_position, true)?;
+                    }
+                } else if remaining != 0 {
+                    state.push_repeat(state.pc, state.position, remaining, false)?;
+                }
             }
             Instruction::LineStart { multiline } => {
                 if state.position != 0
@@ -919,7 +1334,9 @@ where
                 state.push_backtrack(*second)?;
                 state.pc = *first;
             }
-            Instruction::Match => return state.finish_match().map(Some),
+            Instruction::Match => {
+                return state.finish_match().map(Some).map_err(ExecutionStop::Error);
+            }
             Instruction::SaveStart { capture } => {
                 state.set_capture(usize::from(*capture) * 2, Some(state.position))?;
             }
@@ -1174,10 +1591,42 @@ mod tests {
     }
 
     #[test]
-    fn first_unit_filter_agrees_with_unfiltered_execution() {
+    fn search_plan_agrees_with_unfiltered_execution() {
         for pattern in [
-            "abc", "(a)b", "^ab", "\\bab", "é", "a?b", "a|b", "(?=a)a", "", "😀a", "\\ud800",
+            "abc",
+            "(a)b",
+            "^ab",
+            "\\bab",
+            "é",
+            "a?b",
+            "a|b",
+            "(?=a)a",
+            "",
+            "😀a",
+            "\\ud800",
             "(a)\\1",
+            "[a-z]+END",
+            "a{0,3}bc",
+            ".*abc",
+            "(?:ab|cd)ef",
+            "a*b",
+            "(?<=x)ab",
+            "(?<!a)b",
+            "(?=ab)ab",
+            "(a|ab)+b",
+            "(?i:a)b",
+            "(?-i:a)b",
+            "(?m:^a)b",
+            "(?:^a|^b)",
+            "(?:a?|b)c",
+            "[A-Z]+",
+            "[^a]+b",
+            "(a)?\\1b",
+            "[\\uD800-\\uDFFF]+a",
+            "\\uD800a",
+            "a\\uDC00",
+            "[a-z]{0}b",
+            "a{257}",
         ] {
             for flags in ["", "u", "y", "i", "m"] {
                 let filtered = compile(pattern, flags);
@@ -1187,13 +1636,30 @@ mod tests {
                     filtered.register_count(),
                     filtered.instructions().to_vec(),
                 );
-                for text in ["", "abc", "zzzabc", "baab", "\né", "😀abc", "a\nab"] {
+                for text in [
+                    "", "abc", "zzzabc", "baab", "\né", "😀abc", "a\nab", "END", "abcEND",
+                    "xyzEND", "KaſAb", "xabab", "cddef",
+                ] {
                     let input = units(text);
                     for start in 0..=input.len() {
                         assert_eq!(
                             execute(&filtered, &input, start),
                             execute(&plain, &input, start),
                             "{pattern:?}/{flags} {text:?} @{start}"
+                        );
+                    }
+                }
+                for input in [
+                    vec![0xd800, 0xdc00, 0x61],
+                    vec![0xd800, 0x61, 0xdc00],
+                    vec![0x61, 0xd800, 0xdc00],
+                    vec![0xdc00, 0xd800],
+                ] {
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute(&filtered, &input, start),
+                            execute(&plain, &input, start),
+                            "{pattern:?}/{flags} {input:?} @{start}"
                         );
                     }
                 }
@@ -1210,13 +1676,318 @@ mod tests {
     }
 
     #[test]
+    fn required_literal_retains_its_prefix_and_unicode_sets_alternatives() {
+        for (pattern, flags, text, expected) in [
+            ("[a-z]{2,4}END", "", "012abcEND", Some(3..9)),
+            ("[a-z]*END", "", "012abcEND", Some(3..9)),
+            ("a?END", "y", "aEND", Some(0..4)),
+            ("[\\q{ab|}]c", "v", "abc", Some(0..3)),
+            ("[\\q{ab|}]c", "v", "c", Some(0..1)),
+            ("[\\q{😀|ab}]c", "v", "😀c", Some(0..3)),
+        ] {
+            let filtered = compile(pattern, flags);
+            let plain = program(
+                filtered.flags(),
+                filtered.capture_count(),
+                filtered.register_count(),
+                filtered.instructions().to_vec(),
+            );
+            let input = units(text);
+            assert_eq!(execute(&filtered, &input, 0), execute(&plain, &input, 0));
+            assert_eq!(
+                execute(&filtered, &input, 0)
+                    .unwrap()
+                    .and_then(|m| m.capture(0).cloned()),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_start_rejections_do_not_search_the_remaining_input() {
+        let mut input = vec![u16::from(b'x'); 30_000];
+        input[0] = u16::from(b'a');
+        input.extend(units("abcEND"));
+        let latin1: Vec<u8> = input.iter().map(|unit| *unit as u8).collect();
+        for (pattern, flags) in [
+            ("abc", "y"),
+            ("(abc)", "y"),
+            ("[ab]+END", "y"),
+            ("^abc", ""),
+            ("^a.*END", ""),
+            ("^(?:a|b)cEND", ""),
+        ] {
+            // ^a.*END must inspect its suffix; use a first-character miss for
+            // that case. The others accept the first character, then reject.
+            let start = usize::from(pattern == "^a.*END");
+            let compiled = compile(pattern, flags);
+            assert_eq!(
+                execute_with_interrupt(&compiled, &input[start..], 0, || {
+                    panic!("{pattern}/{flags} searched past its only start")
+                }),
+                Ok(None)
+            );
+            assert_eq!(
+                execute_latin1_with_interrupt(&compiled, &latin1[start..], 0, || {
+                    panic!("Latin-1 {pattern}/{flags} searched past its only start")
+                }),
+                Ok(None)
+            );
+        }
+        // lastIndex may be nonzero, and the first-character test alone is not
+        // sufficient: the literal still differs at its second character.
+        for flags in ["y", "uy"] {
+            let compiled = compile("abc", flags);
+            let mut input = units("xa");
+            input.extend(std::iter::repeat_n(u16::from(b'x'), 30_000));
+            input.extend(units("abc"));
+            assert_eq!(
+                execute_with_interrupt(&compiled, &input, 1, || {
+                    panic!("sticky literal searched beyond lastIndex")
+                }),
+                Ok(None)
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_start_prefilter_still_cuts_off_expensive_failures() {
+        let input = vec![u16::from(b'a'); 30];
+        for (pattern, flags) in [("^(a+)+END$", ""), ("(a+)+END$", "y")] {
+            let compiled = compile(pattern, flags);
+            let mut polls = 0;
+            // Keep this test bounded even if deferred rejection is removed:
+            // a missing literal must reject before exponential backtracking
+            // exhausts the interrupt allowance.
+            assert_eq!(
+                execute_with_interrupt(&compiled, &input, 0, || {
+                    polls += 1;
+                    polls > 2
+                }),
+                Ok(None),
+                "{pattern}/{flags} exhausted its backtracking allowance"
+            );
+        }
+    }
+
+    #[test]
+    fn deferred_prefilter_resumes_captures_and_polls_during_its_scan() {
+        let input = units(&format!("{}END", "a".repeat(300)));
+        let latin1: Vec<u8> = input.iter().map(|unit| *unit as u8).collect();
+        for (pattern, flags) in [
+            ("^([ab]+)(END)$", ""),
+            ("([ab]+)(END)$", "y"),
+            ("([ab]+)(END)$", "uy"),
+            ("^([ab]{200,400})(END)$", ""),
+            ("^((a|aa)+)(END)$", ""),
+        ] {
+            let compiled = compile(pattern, flags);
+            let original = crate::compiler::compile_unoptimized(&units(pattern), &units(flags));
+            let expected = execute(&original, &input, 0).unwrap();
+            assert!(expected.is_some());
+            assert_eq!(execute(&compiled, &input, 0).unwrap(), expected);
+            assert_eq!(
+                execute_latin1_with_interrupt(&compiled, &latin1, 0, || false).unwrap(),
+                expected
+            );
+        }
+
+        let compiled = compile("^([ab]+)(END)$", "");
+        let long = units(&format!("{}END", "a".repeat(30_000)));
+        assert_eq!(
+            execute_with_interrupt(&compiled, &long, 0, || true),
+            Err(ExecError::Interrupted)
+        );
+        // Interruption during the proof must release and clear its lease.
+        assert_eq!(
+            execute(&compiled, &input, 0).unwrap().unwrap().capture(1),
+            Some(&(0..300))
+        );
+    }
+
+    #[test]
+    fn fused_repetitions_agree_with_the_original_instruction_path() {
+        for pattern in [
+            "[ab]*b",
+            "[ab]*?b",
+            "[ab]+b",
+            "[ab]+?b",
+            "[ab]{2,4}b",
+            "[ab]{2,4}?b",
+            "[ab]{3}b",
+            "[ab]{0,2}b",
+            "[ab]{0,2}?b",
+            "[ab]{2,}b",
+            "[ab]{2,}?b",
+            "([ab]+)([ab]*)",
+            "([ab]+?)([ab]*)",
+            "(?:([ab]+)|[ab]+)b",
+            "([ab]+)?\\1",
+            "(?=([ab]+))[ab]*b",
+            "(?![ab]+b)[ab]*",
+            "(?<=([ab]+))[ab]+",
+            "([ab]+a)*",
+            "([ab]*?b)*",
+            "[^a]+a",
+            "[a-z]+",
+            "[\\s\\S]*b",
+            "^([ab]+)$",
+            "(?i:[a-z]+)(?-i:[ab]*)",
+            "[\\uD800-\\uDFFF]+a",
+            "[😀a]+b",
+            "[😀a]+?b",
+        ] {
+            for flags in ["", "u", "y", "i", "iu", "m", "v"] {
+                let optimized = compile(pattern, flags);
+                let original = crate::compiler::compile_unoptimized(&units(pattern), &units(flags));
+                assert!(
+                    optimized
+                        .instructions()
+                        .iter()
+                        .any(|i| matches!(i, Instruction::ClassRepeat(_)))
+                );
+                let alphabet = [0x61u16, 0x62, 0x78, 0x0a, 0x212a, 0x17f, 0xd83d, 0xde00];
+                let mut seed = 17u32;
+                for index in 0..120 {
+                    let mut input = Vec::new();
+                    for _ in 0..index % 8 {
+                        seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+                        input.push(alphabet[(seed >> 16) as usize % alphabet.len()]);
+                    }
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute(&optimized, &input, start),
+                            execute(&original, &input, start),
+                            "{pattern}/{flags} {input:?} @{start}"
+                        );
+                    }
+                }
+                for input in [&b""[..], &b"aaaaab"[..], &b"abbabba"[..], &b"xab\nab"[..]] {
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute_latin1_with_interrupt(&optimized, input, start, || false),
+                            execute_latin1_with_interrupt(&original, input, start, || false),
+                            "{pattern}/{flags} {input:?} @{start}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn repeated_scans_poll_and_lazy_empty_matches_do_not_scan_ahead() {
+        let input = vec![u16::from(b'a'); 30_000];
+        for pattern in ["[a-z]+$", "[a-z]{20000}", "[a-z]*?b"] {
+            // A required literal could reject before reaching repetition, so
+            // remove just the search plan for this interruption test.
+            let compiled = compile(pattern, "");
+            let unfiltered = program(
+                compiled.flags(),
+                compiled.capture_count(),
+                compiled.register_count(),
+                compiled.instructions().to_vec(),
+            );
+            assert_eq!(
+                execute_with_interrupt(&unfiltered, &input, 0, || true),
+                Err(ExecError::Interrupted)
+            );
+        }
+        let lazy = compile("[a-z]*?", "");
+        assert_eq!(
+            execute_with_interrupt(&lazy, &input, 0, || panic!(
+                "empty lazy match scanned input"
+            ))
+            .unwrap()
+            .unwrap()
+            .capture(0),
+            Some(&(0..0))
+        );
+    }
+
+    #[test]
+    fn scratch_is_reentrant_cleared_after_errors_and_bounded() {
+        SCRATCH.with(|slot| *slot.borrow_mut() = None);
+        let outer = compile("([a-z]+)$", "");
+        let inner = compile("(b)+", "");
+        let input = vec![u16::from(b'a'); 30_000];
+        let mut called = false;
+        assert!(
+            execute_with_interrupt(&outer, &input, 0, || {
+                called = true;
+                assert_eq!(
+                    execute(&inner, &units("bb"), 0)
+                        .unwrap()
+                        .unwrap()
+                        .capture(1),
+                    Some(&(1..2))
+                );
+                false
+            })
+            .unwrap()
+            .is_some()
+        );
+        assert!(called);
+        assert_eq!(
+            execute_with_interrupt(&outer, &input, 0, || true),
+            Err(ExecError::Interrupted)
+        );
+        assert_eq!(
+            execute(&inner, &units("b"), 0).unwrap().unwrap().capture(1),
+            Some(&(0..1))
+        );
+        SCRATCH.with(|slot| {
+            let slot = slot.borrow();
+            let state = slot.as_ref().unwrap();
+            assert!(state.captures.iter().all(Option::is_none));
+            assert!(state.controls.is_empty() && state.undo.is_empty());
+        });
+        let mut large = Scratch::acquire(1, 0, 0).unwrap();
+        large
+            .state
+            .controls
+            .reserve(MAX_SCRATCH_BYTES / size_of::<ControlFrame>() + 1);
+        drop(large);
+        SCRATCH.with(|slot| assert!(slot.borrow().is_none()));
+    }
+
+    #[test]
     fn first_unit_filter_polls_while_skipping_failed_candidates() {
         let program = compile("z", "u");
-        assert_eq!(program.first_unit(), Some(u16::from(b'z')));
+        assert!(program.search().first.contains(u16::from(b'z')));
         assert_eq!(
             execute_with_interrupt(&program, &vec![u16::from(b'a'); 30_000], 0, || true),
             Err(ExecError::Interrupted)
         );
+    }
+
+    #[test]
+    fn literal_scans_keep_the_interrupt_budget_at_chunk_boundaries() {
+        let compiled = compile("abc", "u");
+        for prefix in [0, 9_997, 9_998, 9_999, 10_000, 10_001, 20_000] {
+            let mut input = vec![u16::from(b'x'); prefix];
+            input.extend(units("abc"));
+            let mut polls = 0;
+            let result = execute_with_interrupt(&compiled, &input, 0, || {
+                polls += 1;
+                false
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(result.capture(0), Some(&(prefix..prefix + 3)));
+            assert_eq!(polls, (prefix + 3) / INTERRUPT_POLL_INTERVAL as usize);
+            let latin1: Vec<u8> = input.iter().map(|unit| *unit as u8).collect();
+            assert_eq!(
+                execute_latin1_with_interrupt(&compiled, &latin1, 0, || false).unwrap(),
+                Some(result)
+            );
+            if prefix + 3 >= INTERRUPT_POLL_INTERVAL as usize {
+                assert_eq!(
+                    execute_with_interrupt(&compiled, &input, 0, || true),
+                    Err(ExecError::Interrupted)
+                );
+            }
+        }
     }
 
     #[test]
