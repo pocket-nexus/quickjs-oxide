@@ -1,7 +1,8 @@
 """Stress code placement at 0/16/32/48 bytes, retaining time, cycles and instructions.
 
-Saved LTO builds are relinked with relaxation disabled. Within each engine all
-four variants must have identical .text bytes. Native release Claim results
+Saved LTO builds are relinked from a fixed +64-byte origin, avoiding the
+linker's default-placement special case. Within each engine all four variants
+must have identical .text bytes. Native release Claim results
 remain separate: these diagnostic median gates do not replace paired A/A+A/B.
 """
 import argparse
@@ -18,6 +19,7 @@ from .common import ROOT, digest, paired_order
 from .sweep import V8_CASES
 
 OFFSETS = (0, 16, 32, 48)
+ORIGIN = 64
 METRICS = ("time", "cycles", "instructions")
 
 
@@ -138,7 +140,7 @@ def main(argv=None):
         parser.error("suite and fixed case names overlap")
     output = args.output.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    plan = dict(offsets=OFFSETS, repeat=args.repeat, order="abba", cpu=args.cpu,
+    plan = dict(offsets=OFFSETS, origin=ORIGIN, repeat=args.repeat, order="abba", cpu=args.cpu,
                 max_spread_percent=args.max_spread_percent, max_regression_percent=args.max_regression_percent,
                 build_logs={n: dict(path=str(p.resolve()), sha256=digest(p))
                             for n, p in (("base", args.base_log), ("candidate", args.candidate_log))})
@@ -149,15 +151,16 @@ def main(argv=None):
             item["build_receipt"] = json.loads(receipt.read_text())
     (output / "plan.json").write_text(json.dumps(plan, indent=2) + "\n")
     for engine, log in (("base", args.base_log), ("candidate", args.candidate_log)):
-        relink.placements(log, output / engine, OFFSETS, binary="qjs", no_relax=True, require_identical=True)
+        relink.placements(log, output / engine, [ORIGIN + d for d in OFFSETS],
+                          binary="qjs", require_identical=True)
     manifest = output / "manifest.json"
     manifest.write_text(json.dumps(dict(metadata=dict(workloads=dict(workloads=workloads))), indent=2) + "\n")
     matrices = {}
     commands = []
     for offset in OFFSETS:
         print(f"layout +{offset}: running", flush=True)
-        command = ["--manifest", str(manifest), "--engine", f"base={output}/base-d{offset}",
-                   "--engine", f"candidate={output}/candidate-d{offset}", "--repeat", str(args.repeat),
+        command = ["--manifest", str(manifest), "--engine", f"base={output}/base-d{ORIGIN + offset}",
+                   "--engine", f"candidate={output}/candidate-d{ORIGIN + offset}", "--repeat", str(args.repeat),
                    "--order", "abba", "--cpu", str(args.cpu), "--linux-counters", "--output", str(output / f"offset-{offset}")]
         commands.append(["python3", "scripts/benchmark/bench.py", "run", *command])
         (output / "commands.json").write_text(json.dumps(commands, indent=2) + "\n")
