@@ -13,6 +13,9 @@ characters remain unfiltered. Proven failures return before acquiring scratch
 storage; capture-free pure literals search directly. A required literal in the
 middle of a pattern bounds candidate starts only when its prefix has a finite
 maximum. Assertions, references and scoped modifiers retain their VM semantics.
+ASCII class bitmaps use interval masks and letter-case bit transfers at compile
+time. Literal first-unit scans charge inspected units in bounded chunks, with
+each chunk ending at the next interrupt checkpoint.
 
 Forward repetitions of single-character classes use a fused instruction with
 an ASCII bitmap. Greedy rollback retains one endpoint frame; lazy matching

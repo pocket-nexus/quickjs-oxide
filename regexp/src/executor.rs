@@ -394,11 +394,30 @@ fn find_literal<T: Copy + Into<u16>, F: FnMut() -> Result<u32, ExecutionStop>>(
     if literal.len() > input.len() - start {
         return Ok(None);
     }
-    for position in start..=last_start.min(input.len() - literal.len()) {
+    let Some((&first, suffix)) = literal.split_first() else {
+        return Ok(Some(start));
+    };
+    let last_start = last_start.min(input.len() - literal.len());
+    let mut position = start;
+    while position <= last_start {
+        // Scan only as far as the next checkpoint. Common first-unit misses
+        // need one comparison, without a polling branch or suffix iterator
+        // setup for every unit. Charge all inspected units before proceeding.
+        let end = (last_start + 1).min(position.saturating_add(poller.remaining as usize));
+        let found = input[position..end]
+            .iter()
+            .position(|unit| (*unit).into() == first);
+        let inspected = found.map_or(end - position, |offset| offset + 1);
+        poller.advance(inspected as u32)?;
+        let Some(offset) = found else {
+            position = end;
+            continue;
+        };
+        position += offset;
         let mut matched = true;
-        for (offset, expected) in literal.iter().enumerate() {
+        for (offset, expected) in suffix.iter().enumerate() {
             poller.step()?;
-            if input[position + offset].into() != *expected {
+            if input[position + offset + 1].into() != *expected {
                 matched = false;
                 break;
             }
@@ -406,6 +425,7 @@ fn find_literal<T: Copy + Into<u16>, F: FnMut() -> Result<u32, ExecutionStop>>(
         if matched {
             return Ok(Some(position));
         }
+        position += 1;
     }
     Ok(None)
 }
@@ -618,7 +638,13 @@ where
 
     #[inline(always)]
     fn step(&mut self) -> Result<(), ExecutionStop> {
-        self.remaining -= 1;
+        self.advance(1)
+    }
+
+    #[inline(always)]
+    fn advance(&mut self, steps: u32) -> Result<(), ExecutionStop> {
+        debug_assert!(steps > 0 && steps <= self.remaining);
+        self.remaining -= steps;
         if self.remaining == 0 {
             self.refill()?;
         }
@@ -1933,6 +1959,35 @@ mod tests {
             execute_with_interrupt(&program, &vec![u16::from(b'a'); 30_000], 0, || true),
             Err(ExecError::Interrupted)
         );
+    }
+
+    #[test]
+    fn literal_scans_keep_the_interrupt_budget_at_chunk_boundaries() {
+        let compiled = compile("abc", "u");
+        for prefix in [0, 9_997, 9_998, 9_999, 10_000, 10_001, 20_000] {
+            let mut input = vec![u16::from(b'x'); prefix];
+            input.extend(units("abc"));
+            let mut polls = 0;
+            let result = execute_with_interrupt(&compiled, &input, 0, || {
+                polls += 1;
+                false
+            })
+            .unwrap()
+            .unwrap();
+            assert_eq!(result.capture(0), Some(&(prefix..prefix + 3)));
+            assert_eq!(polls, (prefix + 3) / INTERRUPT_POLL_INTERVAL as usize);
+            let latin1: Vec<u8> = input.iter().map(|unit| *unit as u8).collect();
+            assert_eq!(
+                execute_latin1_with_interrupt(&compiled, &latin1, 0, || false).unwrap(),
+                Some(result)
+            );
+            if prefix + 3 >= INTERRUPT_POLL_INTERVAL as usize {
+                assert_eq!(
+                    execute_with_interrupt(&compiled, &input, 0, || true),
+                    Err(ExecError::Interrupted)
+                );
+            }
+        }
     }
 
     #[test]

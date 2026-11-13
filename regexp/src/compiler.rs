@@ -20,6 +20,45 @@ const INFINITE_REPETITION: u32 = i32::MAX as u32;
 const MAX_CODE_POINT: u32 = 0x10_ffff;
 const MAX_GROUP_NESTING: usize = 256;
 
+/// ASCII membership after canonicalization. Only ASCII letter case changes
+/// for ASCII input; construct range masks once instead of folding 128 units.
+fn ascii_class_bitmap(
+    ranges: &[CharacterRange],
+    inverted: bool,
+    ignore_case: bool,
+    unicode: bool,
+) -> [u64; 2] {
+    let mut bits = [0u64; 2];
+    for range in ranges {
+        if range.start >= 128 {
+            continue;
+        }
+        let start = range.start;
+        let end = range.end.min(127);
+        if start / 64 == end / 64 {
+            bits[(start / 64) as usize] |=
+                (u64::MAX << (start % 64)) & (u64::MAX >> (63 - end % 64));
+        } else {
+            bits[0] |= u64::MAX << start;
+            bits[1] |= u64::MAX >> (127 - end);
+        }
+    }
+    if ignore_case {
+        const UPPER: u64 = ((1u64 << 26) - 1) << 1;
+        const LOWER: u64 = UPPER << 32;
+        bits[1] = if unicode {
+            (bits[1] & !UPPER) | ((bits[1] & LOWER) >> 32)
+        } else {
+            (bits[1] & !LOWER) | ((bits[1] & UPPER) << 32)
+        };
+    }
+    if inverted {
+        bits[0] = !bits[0];
+        bits[1] = !bits[1];
+    }
+    bits
+}
+
 /// One runtime-independent compiled regular-expression program.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValidatedProgram(Program);
@@ -2118,22 +2157,12 @@ impl CodeBuilder {
             && let Atom::Class(class) = atom
             && class.strings.is_empty()
         {
-            let mut ascii = [0u64; 2];
-            for unit in 0..128u32 {
-                let value = if self.ignore_case {
-                    crate::unicode::case::regexp_canonicalize(unit, self.unicode)
-                } else {
-                    unit
-                };
-                if class
-                    .ranges
-                    .iter()
-                    .any(|range| range.start <= value && value <= range.end)
-                    != class.inverted
-                {
-                    ascii[(unit / 64) as usize] |= 1 << (unit % 64);
-                }
-            }
+            let ascii = ascii_class_bitmap(
+                &class.ranges,
+                class.inverted,
+                self.ignore_case,
+                self.unicode,
+            );
             self.emit(Instruction::ClassRepeat(Box::new(super::ClassRepeat {
                 ranges: class.ranges.clone().into_boxed_slice(),
                 ascii,
@@ -2728,6 +2757,39 @@ fn combine_surrogates(high: u32, low: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ascii_bitmaps_match_runtime_canonicalization() {
+        for start in 0..128 {
+            for end in start..=128 {
+                for unicode in [false, true] {
+                    for ignore_case in [false, true] {
+                        for inverted in [false, true] {
+                            let bits = ascii_class_bitmap(
+                                &[CharacterRange::new(start, end)],
+                                inverted,
+                                ignore_case,
+                                unicode,
+                            );
+                            for unit in 0..128 {
+                                let canonical = if ignore_case {
+                                    crate::unicode::case::regexp_canonicalize(unit, unicode)
+                                } else {
+                                    unit
+                                };
+                                let expected = (start <= canonical && canonical <= end) != inverted;
+                                assert_eq!(
+                                    bits[(unit / 64) as usize] & (1 << (unit % 64)) != 0,
+                                    expected,
+                                    "{start}..={end} {unit} i={ignore_case} u={unicode} inverted={inverted}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     fn compile_ascii(pattern: &str, flags: &str) -> Result<CompiledRegExp, CompileError> {
         compile_units(
