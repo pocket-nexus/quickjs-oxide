@@ -339,6 +339,24 @@ fn literal_shapes_are_weak_and_refill_after_collection() {
     assert!(session.entry(site).is_filled());
 }
 
+#[test]
+fn an_interrupted_literal_does_not_publish_a_partial_shape() {
+    let mut session = Session::new();
+    assert_eq!(session.run(
+        "var log = [];
+         function literal(fail) { return { left: (log.push(1), fail ? explode() : 3), right: (log.push(2), 4) }; }
+         function explode() { throw new Error('stop'); }
+         try { literal(true); } catch(e) { print(e.message, log.join()); }"
+    ), "stop 1\n");
+    let site = session.site("literal", Opcode::NewObjectLit, 0);
+    assert!(session.entry(site).is_empty());
+    assert_eq!(
+        session.run("var keep = literal(false); print(keep.left, keep.right, log.join());"),
+        "3 4 1,1,2\n"
+    );
+    assert!(session.entry(site).is_filled());
+}
+
 /// A closure is a header and a function record until an own-property
 /// operation needs its `length`, `name` or `prototype`: neither an arrow nor
 /// a `function` takes value slots, and a `function`'s `prototype` object
