@@ -75,14 +75,14 @@ Each cache site has one 16-byte `IcEntry` (`w0`–`w3`) in the `IcStore`. The st
 Details of the hit paths:
 
 - **Tagged `GetField` entries.** `LENGTH_TAG` reads an array's stored length or a string's unit count with no shape to compare; `STRING_RECEIVER_TAG` caches a property found on `%String.prototype%` or above, guarded by that prototype chain's cell.
-- **Polymorphic and megamorphic sites.** A `GetField` or `SetField` site is monomorphic until a second shape arrives, then links a row of four entries (`POLY`) that the out-of-line path (`property::get_cached`, `property::set_cached`) probes in order, then turns megamorphic. A megamorphic `GetField` site probes a shared direct-mapped table of 4,096 entries keyed by receiver shape and key, and fills it from its misses.
+- **Polymorphic and megamorphic sites.** A `GetField` or `SetField` site is monomorphic until a second shape arrives, then keeps four shapes in an out-of-line row (`POLY`). Its most recent successful entry also occupies the inline slot; a row hit promotes that entry, retaining all its original guards. A lazy side table links sites to rows. A fifth shape turns the site megamorphic. A megamorphic `GetField` site probes a shared direct-mapped table of 4,096 entries keyed by receiver shape and key, and fills it from its misses.
 - **What is never cached.** Accessors are not cached at `GetField`; a dictionary-mode receiver is never cached, while a prototype hit on a dictionary-mode holder is (any change to a prototype clears its cell). A transition is cached only when no prototype has the key as an accessor or read-only property.
 - **Globals.** Every insert, remove or reflag on the global object's dictionary bumps `global_generation`; a value write does not. A wrap of the generation clears every global entry. A miss looks up the global lexical environment first, then the global object's own data property.
 - **Construction.** A constructed receiver or empty object literal reserves at least four slots. When a constructor's frame returns to its `New`, `learn_receiver_size` raises the entry's slot count to the receiver shape's width (capped at twice the dictionary threshold), so the next construction reserves what the constructor added.
 
 Element access has no cache: `GetElem` and `SetElem` read and write an array's or ordinary object's dense elements inline for a non-negative `Int32` key, and a typed array's through `typed::fast_get` and `fast_set`. A hole is filled inline only while no object used as a prototype has an index property or is exotic (`Heap::holes_writable`).
 
-With the `ic-stats` feature (and in debug builds) the store counts hits, polymorphic hits, fills and unfilled misses per kind, misses per site and iteration starts; `qjs --ic-stats` prints `Runtime::ic_report` at exit. Release builds without the feature carry no counter.
+With the `ic-stats` feature (and in debug builds) the store counts inline hits (including the latest shape of a polymorphic site), out-of-line row hits, fills and unfilled misses per kind, misses per site and iteration starts; `qjs --ic-stats` prints `Runtime::ic_report` at exit. Release builds without the feature carry no counter.
 
 ## Iteration
 

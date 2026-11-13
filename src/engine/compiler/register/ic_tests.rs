@@ -293,6 +293,30 @@ fn polymorphic_rows_and_the_megamorphic_mark() {
     assert_eq!(session.entry(site).w0, MEGA_TAG);
 }
 
+#[test]
+fn promoted_polymorphic_entries_keep_prototype_guards() {
+    let mut session = Session::new();
+    assert_eq!(
+        session.run(
+            "var proto = { x: 1 };
+         var a = Object.create(proto), b = Object.create(proto);
+         a.a = 1; b.b = 2;
+         function read(o) { return o.x; }
+         read(a); read(b); read(b);"
+        ),
+        ""
+    );
+    let site = session.site("read", Opcode::GetField, 0);
+    assert!(session.runtime.heap().ics().poly_row(site).is_some());
+    assert_eq!(
+        session.run(
+            "Object.defineProperty(proto, 'x', { get: function () { return 7; } });
+         print(read(b), read(a));"
+        ),
+        "7 7\n"
+    );
+}
+
 /// A closure is a header and a function record until an own-property
 /// operation needs its `length`, `name` or `prototype`: neither an arrow nor
 /// a `function` takes value slots, and a `function`'s `prototype` object
