@@ -44,7 +44,7 @@ fn run_api(source: &str) -> String {
 #[test]
 fn the_corpus_prints_through_the_api_what_the_driver_prints() {
     let programs = corpus();
-    assert_eq!(programs.len(), 46);
+    assert_eq!(programs.len(), 49);
     let mut failures = Vec::new();
     for (name, source) in programs {
         let expected = run_on_core(&source);
