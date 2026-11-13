@@ -220,6 +220,15 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
     let mut state =
         AttemptState::new(program.capture_count(), program.register_count(), candidate)?;
     loop {
+        if !sticky && let Some(required) = program.first_unit() {
+            while candidate < input.len() && input[candidate].into() != required {
+                poller.step()?;
+                candidate = advance_string_index(input, candidate, unicode);
+            }
+            if candidate == input.len() {
+                return Ok(None);
+            }
+        }
         state.reset(candidate);
         if let Some(result) = run_attempt(program, input, unicode, &mut poller, &mut state)? {
             return Ok(Some(result));
@@ -1162,6 +1171,52 @@ mod tests {
 
     fn units(value: &str) -> Vec<u16> {
         value.encode_utf16().collect()
+    }
+
+    #[test]
+    fn first_unit_filter_agrees_with_unfiltered_execution() {
+        for pattern in [
+            "abc", "(a)b", "^ab", "\\bab", "é", "a?b", "a|b", "(?=a)a", "", "😀a", "\\ud800",
+            "(a)\\1",
+        ] {
+            for flags in ["", "u", "y", "i", "m"] {
+                let filtered = compile(pattern, flags);
+                let plain = program(
+                    filtered.flags(),
+                    filtered.capture_count(),
+                    filtered.register_count(),
+                    filtered.instructions().to_vec(),
+                );
+                for text in ["", "abc", "zzzabc", "baab", "\né", "😀abc", "a\nab"] {
+                    let input = units(text);
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute(&filtered, &input, start),
+                            execute(&plain, &input, start),
+                            "{pattern:?}/{flags} {text:?} @{start}"
+                        );
+                    }
+                }
+                for bytes in [&b""[..], &b"zzzabc"[..], &[0xe9, b'a'][..]] {
+                    for start in 0..=bytes.len() {
+                        assert_eq!(
+                            execute_latin1_with_interrupt(&filtered, bytes, start, || false),
+                            execute_latin1_with_interrupt(&plain, bytes, start, || false)
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn first_unit_filter_polls_while_skipping_failed_candidates() {
+        let program = compile("z", "u");
+        assert_eq!(program.first_unit(), Some(u16::from(b'z')));
+        assert_eq!(
+            execute_with_interrupt(&program, &vec![u16::from(b'a'); 30_000], 0, || true),
+            Err(ExecError::Interrupted)
+        );
     }
 
     #[test]
