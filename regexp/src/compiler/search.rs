@@ -1,7 +1,9 @@
 //! Conservative facts about consumed UTF-16 text. Assertions and references
 //! deliberately lose information rather than making assumptions about captures.
 
-use super::{Atom, CharacterRange, Expression, ModifierState, RegExpFlags, Term};
+use super::{
+    Atom, CharacterRange, Expression, ModifierState, RegExpFlags, Term, ascii_class_bitmap,
+};
 use crate::unicode::case::regexp_canonicalize;
 
 const MAX_LITERAL: usize = 256;
@@ -41,22 +43,28 @@ impl FirstSet {
         }
     }
 
+    fn literal(value: u32, ignore_case: bool, unicode: bool) -> Self {
+        if ignore_case {
+            let canonical = regexp_canonicalize(value, unicode);
+            return Self::ranges(
+                &[CharacterRange::new(canonical, canonical)],
+                false,
+                true,
+                unicode,
+            );
+        }
+        let mut set = Self::empty();
+        if value < 128 {
+            set.ascii[(value / 64) as usize] = 1 << (value % 64);
+        } else {
+            set.non_ascii = true;
+        }
+        set
+    }
+
     fn ranges(ranges: &[CharacterRange], inverted: bool, ignore_case: bool, unicode: bool) -> Self {
         let mut set = Self::empty();
-        for unit in 0..128u32 {
-            let value = if ignore_case {
-                regexp_canonicalize(unit, unicode)
-            } else {
-                unit
-            };
-            if ranges
-                .iter()
-                .any(|range| range.start <= value && value <= range.end)
-                != inverted
-            {
-                set.ascii[(unit / 64) as usize] |= 1 << (unit % 64);
-            }
-        }
+        set.ascii = ascii_class_bitmap(ranges, inverted, ignore_case, unicode);
         // Case folding can bring non-ASCII input into an ASCII range (Kelvin
         // sign and long s in Unicode mode). Keep that half of the set open.
         set.non_ascii = inverted || ignore_case || ranges.iter().any(|range| range.end >= 128);
@@ -289,17 +297,7 @@ fn atom_facts(atom: &Atom, modifiers: ModifierState, unicode: bool) -> Facts {
     let mut result = Facts::empty();
     match atom {
         Atom::Literal(value) => {
-            let canonical = if modifiers.ignore_case {
-                regexp_canonicalize(*value, unicode)
-            } else {
-                *value
-            };
-            result.first = FirstSet::ranges(
-                &[CharacterRange::new(canonical, canonical)],
-                false,
-                modifiers.ignore_case,
-                unicode,
-            );
+            result.first = FirstSet::literal(*value, modifiers.ignore_case, unicode);
             let units = if *value > 0xffff {
                 vec![
                     ((*value - 0x10000) / 1024 + 0xd800) as u16,
@@ -358,17 +356,9 @@ fn atom_facts(atom: &Atom, modifiers: ModifierState, unicode: bool) -> Facts {
                 result.minimum = result.minimum.min(length);
                 result.maximum = result.maximum.map(|maximum| maximum.max(length));
                 if let Some(value) = string.first() {
-                    let canonical = if modifiers.ignore_case {
-                        regexp_canonicalize(*value, unicode)
-                    } else {
-                        *value
-                    };
-                    result.first.union(&FirstSet::ranges(
-                        &[CharacterRange::new(canonical, canonical)],
-                        false,
-                        modifiers.ignore_case,
-                        unicode,
-                    ));
+                    result
+                        .first
+                        .union(&FirstSet::literal(*value, modifiers.ignore_case, unicode));
                 }
             }
         }
