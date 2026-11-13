@@ -719,7 +719,7 @@ impl Runtime {
         let _ = writeln!(
             out,
             "{:<10}{:>14}{:>14}{:>14}{:>14}{:>9}",
-            "ic", "mono hits", "poly hits", "fills", "unfilled", "hit %"
+            "ic", "inline hits", "poly hits", "fills", "unfilled", "hit %"
         );
         let kinds = [IcKind::Get, IcKind::Set, IcKind::Global, IcKind::Construct];
         for kind in kinds {
