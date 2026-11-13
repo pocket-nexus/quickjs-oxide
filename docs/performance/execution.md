@@ -90,8 +90,11 @@ execute the original operations at their original PCs.
 Constant array literals of at least two elements use `NewArrayK`: allocate a
 fresh array, then copy immutable values from a consecutive pool range. A
 straight-line object literal with two to sixteen unique, non-index string
-keys uses `NewObjectLit` and `InitField`. Its weak literal cache stores the
-final shape; allocation precedes value evaluation, whose order is unchanged.
+keys uses `NewObjectLit`, `InitField` and `FinishObjectLit`. Its weak literal
+cache stores the final shape only after the definitions complete. A miss
+defines each property after evaluating its value, preserving allocation and
+exception order; a hit initializes known slots. The object allocation still
+precedes value evaluation.
 Duplicate or computed keys, methods, spreads, prototype definitions and
 control-flow joins use the general definition path. Literal initialization
 stays outside the hot loop.
