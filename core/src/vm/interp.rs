@@ -3044,11 +3044,18 @@ fn arith_fast(op: Arith, x: Value, y: Value) -> Option<Value> {
         // `Int32` when it is one, since it is often an index.
         return Some(match op {
             Arith::Mul => Value::number(f * g),
-            Arith::Div => number::number(f / g),
+            Arith::Div => divide_numbers(f, g),
             _ => unreachable!("a product or quotient"),
         });
     }
     None
+}
+
+// Quotient normalization has several conversion checks. Keep that sequence
+// behind one call rather than expanding it into the dispatch loop.
+#[inline(never)]
+fn divide_numbers(x: f64, y: f64) -> Value {
+    number::number(x / y)
 }
 
 /// Decode the operation only after the specialized numeric path misses.
