@@ -13,6 +13,9 @@ use super::group_name::{self, CaptureSummary};
 use super::opcode::{CharacterRange, Instruction};
 use std::collections::BTreeSet;
 
+mod search;
+pub(super) use search::SearchPlan;
+
 const INFINITE_REPETITION: u32 = i32::MAX as u32;
 const MAX_CODE_POINT: u32 = 0x10_ffff;
 const MAX_GROUP_NESTING: usize = 256;
@@ -30,8 +33,7 @@ struct Program {
     capture_count: u8,
     register_count: u8,
     instructions: Box<[Instruction]>,
-    /// An exact first UTF-16 unit after only zero-width instructions.
-    first_unit: Option<u16>,
+    search: SearchPlan,
     /// Capture names aligned to captures 1..N. Capture zero is deliberately
     /// absent. `None` for the whole field means the pattern has no named
     /// captures and matches QuickJS's absent group-name trailer.
@@ -51,7 +53,7 @@ impl CompiledRegExp {
             capture_count,
             register_count,
             instructions: instructions.into_boxed_slice(),
-            first_unit: None,
+            search: SearchPlan::default(),
             group_names: None,
         })
     }
@@ -62,18 +64,18 @@ impl CompiledRegExp {
         register_count: u8,
         instructions: Vec<Instruction>,
         group_names: Option<Box<[Option<GroupName>]>>,
+        search: SearchPlan,
     ) -> Result<Self, CompileError> {
         debug_assert!(group_names.as_ref().is_none_or(|names| {
             names.len() == usize::from(capture_count).saturating_sub(1)
                 && names.iter().any(Option::is_some)
         }));
-        let first_unit = first_required_unit(&instructions);
         let program = Self(Program {
             flags,
             capture_count,
             register_count,
             instructions: instructions.into_boxed_slice(),
-            first_unit,
+            search,
             group_names,
         });
         super::executor::validate_program(&program).map_err(|error| CompileError {
@@ -106,8 +108,8 @@ impl CompiledRegExp {
         &self.0.instructions
     }
 
-    pub(super) const fn first_unit(&self) -> Option<u16> {
-        self.0.first_unit
+    pub(super) const fn search(&self) -> &SearchPlan {
+        &self.0.search
     }
 
     /// Names aligned to captures 1..N, or `None` when this program has no
@@ -121,27 +123,6 @@ impl CompiledRegExp {
     pub const fn has_named_captures(&self) -> bool {
         self.0.group_names.is_some()
     }
-}
-
-fn first_required_unit(instructions: &[Instruction]) -> Option<u16> {
-    for instruction in instructions {
-        match *instruction {
-            Instruction::SaveStart { .. }
-            | Instruction::SaveEnd { .. }
-            | Instruction::ResetCaptures { .. }
-            | Instruction::LineStart { .. }
-            | Instruction::LineEnd { .. }
-            | Instruction::WordBoundary { .. } => {}
-            Instruction::Char {
-                value,
-                ignore_case: false,
-            } if value <= 0xffff && !(0xd800..=0xdfff).contains(&value) => {
-                return Some(value as u16);
-            }
-            _ => return None,
-        }
-    }
-    None
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2325,12 +2306,14 @@ pub(super) fn compile_units(
         flags.insert(RegExpFlags::NAMED_GROUPS);
     }
     let (instructions, register_count) = CodeBuilder::new(flags).compile(&expression)?;
+    let search = SearchPlan::analyze(&expression, flags, capture_count == 1);
     CompiledRegExp::from_compiled_parts(
         flags,
         capture_count,
         register_count,
         instructions,
         group_names,
+        search,
     )
 }
 
