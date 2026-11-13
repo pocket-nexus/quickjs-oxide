@@ -216,28 +216,100 @@ fn execute_units<T: Copy + Into<u16>, F: FnMut() -> bool>(
     let sticky = flags.contains(RegExpFlags::STICKY);
     let mut candidate = normalize_start(input, start, unicode);
     let mut poller = Poller::new(&mut interrupted);
-
-    let mut state =
-        AttemptState::new(program.capture_count(), program.register_count(), candidate)?;
-    loop {
-        if !sticky && let Some(required) = program.first_unit() {
-            while candidate < input.len() && input[candidate].into() != required {
+    let search = program.search();
+    if search.anchored && candidate != 0 {
+        return Ok(None);
+    }
+    if search.minimum > input.len() - candidate {
+        return Ok(None);
+    }
+    if let Some(literal) = &search.literal {
+        let found = find_literal(input, literal, candidate, &mut poller)?;
+        return match found {
+            Some(position) if !sticky || position == candidate => {
+                let mut captures = Vec::new();
+                captures
+                    .try_reserve_exact(1)
+                    .map_err(|_| ExecError::OutOfMemory)?;
+                captures.push(Some(position..position + literal.len()));
+                Ok(Some(RegExpMatch {
+                    captures: captures.into_boxed_slice(),
+                }))
+            }
+            _ => Ok(None),
+        };
+    }
+    if let Some(required) = &search.required {
+        let Some(position) = find_literal(input, &required.units, candidate, &mut poller)? else {
+            return Ok(None);
+        };
+        if let Some(prefix) = required.max_prefix {
+            let lower = position.saturating_sub(prefix);
+            if (sticky || search.anchored) && lower > candidate {
+                return Ok(None);
+            }
+            // A required substring can be in the middle of a match. Only its
+            // proven maximum prefix bounds the earliest possible start.
+            while candidate < lower {
                 poller.step()?;
                 candidate = advance_string_index(input, candidate, unicode);
             }
-            if candidate == input.len() {
+        }
+    }
+    let mut state = None;
+    loop {
+        while candidate < input.len() && !search.first.contains(input[candidate].into()) {
+            if sticky || search.anchored {
                 return Ok(None);
             }
+            poller.step()?;
+            candidate = advance_string_index(input, candidate, unicode);
         }
+        if search.minimum > input.len() - candidate {
+            return Ok(None);
+        }
+        if state.is_none() {
+            state = Some(AttemptState::new(
+                program.capture_count(),
+                program.register_count(),
+                candidate,
+            )?);
+        }
+        let state = state.as_mut().expect("attempt state was initialized");
         state.reset(candidate);
-        if let Some(result) = run_attempt(program, input, unicode, &mut poller, &mut state)? {
+        if let Some(result) = run_attempt(program, input, unicode, &mut poller, state)? {
             return Ok(Some(result));
         }
-        if sticky || candidate == input.len() {
+        if sticky || search.anchored || candidate == input.len() {
             return Ok(None);
         }
         candidate = advance_string_index(input, candidate, unicode);
     }
+}
+
+fn find_literal<T: Copy + Into<u16>, F: FnMut() -> bool>(
+    input: &[T],
+    literal: &[u16],
+    start: usize,
+    poller: &mut Poller<'_, F>,
+) -> Result<Option<usize>, ExecError> {
+    if literal.len() > input.len() - start {
+        return Ok(None);
+    }
+    for position in start..=input.len() - literal.len() {
+        let mut matched = true;
+        for (offset, expected) in literal.iter().enumerate() {
+            poller.step()?;
+            if input[position + offset].into() != *expected {
+                matched = false;
+                break;
+            }
+        }
+        if matched {
+            return Ok(Some(position));
+        }
+    }
+    Ok(None)
 }
 
 pub(super) fn validate_program(program: &CompiledRegExp) -> Result<(), ExecError> {
@@ -1174,10 +1246,42 @@ mod tests {
     }
 
     #[test]
-    fn first_unit_filter_agrees_with_unfiltered_execution() {
+    fn search_plan_agrees_with_unfiltered_execution() {
         for pattern in [
-            "abc", "(a)b", "^ab", "\\bab", "é", "a?b", "a|b", "(?=a)a", "", "😀a", "\\ud800",
+            "abc",
+            "(a)b",
+            "^ab",
+            "\\bab",
+            "é",
+            "a?b",
+            "a|b",
+            "(?=a)a",
+            "",
+            "😀a",
+            "\\ud800",
             "(a)\\1",
+            "[a-z]+END",
+            "a{0,3}bc",
+            ".*abc",
+            "(?:ab|cd)ef",
+            "a*b",
+            "(?<=x)ab",
+            "(?<!a)b",
+            "(?=ab)ab",
+            "(a|ab)+b",
+            "(?i:a)b",
+            "(?-i:a)b",
+            "(?m:^a)b",
+            "(?:^a|^b)",
+            "(?:a?|b)c",
+            "[A-Z]+",
+            "[^a]+b",
+            "(a)?\\1b",
+            "[\\uD800-\\uDFFF]+a",
+            "\\uD800a",
+            "a\\uDC00",
+            "[a-z]{0}b",
+            "a{257}",
         ] {
             for flags in ["", "u", "y", "i", "m"] {
                 let filtered = compile(pattern, flags);
@@ -1187,13 +1291,30 @@ mod tests {
                     filtered.register_count(),
                     filtered.instructions().to_vec(),
                 );
-                for text in ["", "abc", "zzzabc", "baab", "\né", "😀abc", "a\nab"] {
+                for text in [
+                    "", "abc", "zzzabc", "baab", "\né", "😀abc", "a\nab", "END", "abcEND",
+                    "xyzEND", "KaſAb", "xabab", "cddef",
+                ] {
                     let input = units(text);
                     for start in 0..=input.len() {
                         assert_eq!(
                             execute(&filtered, &input, start),
                             execute(&plain, &input, start),
                             "{pattern:?}/{flags} {text:?} @{start}"
+                        );
+                    }
+                }
+                for input in [
+                    vec![0xd800, 0xdc00, 0x61],
+                    vec![0xd800, 0x61, 0xdc00],
+                    vec![0x61, 0xd800, 0xdc00],
+                    vec![0xdc00, 0xd800],
+                ] {
+                    for start in 0..=input.len() {
+                        assert_eq!(
+                            execute(&filtered, &input, start),
+                            execute(&plain, &input, start),
+                            "{pattern:?}/{flags} {input:?} @{start}"
                         );
                     }
                 }
@@ -1210,9 +1331,37 @@ mod tests {
     }
 
     #[test]
+    fn required_literal_retains_its_prefix_and_unicode_sets_alternatives() {
+        for (pattern, flags, text, expected) in [
+            ("[a-z]{2,4}END", "", "012abcEND", Some(3..9)),
+            ("[a-z]*END", "", "012abcEND", Some(3..9)),
+            ("a?END", "y", "aEND", Some(0..4)),
+            ("[\\q{ab|}]c", "v", "abc", Some(0..3)),
+            ("[\\q{ab|}]c", "v", "c", Some(0..1)),
+            ("[\\q{😀|ab}]c", "v", "😀c", Some(0..3)),
+        ] {
+            let filtered = compile(pattern, flags);
+            let plain = program(
+                filtered.flags(),
+                filtered.capture_count(),
+                filtered.register_count(),
+                filtered.instructions().to_vec(),
+            );
+            let input = units(text);
+            assert_eq!(execute(&filtered, &input, 0), execute(&plain, &input, 0));
+            assert_eq!(
+                execute(&filtered, &input, 0)
+                    .unwrap()
+                    .and_then(|m| m.capture(0).cloned()),
+                expected
+            );
+        }
+    }
+
+    #[test]
     fn first_unit_filter_polls_while_skipping_failed_candidates() {
         let program = compile("z", "u");
-        assert_eq!(program.first_unit(), Some(u16::from(b'z')));
+        assert!(program.search().first.contains(u16::from(b'z')));
         assert_eq!(
             execute_with_interrupt(&program, &vec![u16::from(b'a'); 30_000], 0, || true),
             Err(ExecError::Interrupted)
