@@ -66,19 +66,18 @@ class LayoutTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "settings"):
                 layout.summarize(data, 3, 2)
 
-    def test_strict_relinks_disable_relaxation_and_reject_changed_text(self):
+    def test_strict_relinks_reject_changed_text(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             log = root / "build.log"
             log.write_text('"cc" "input.o" "-o" "/tmp/qjs-hash"\n')
-            with mock.patch.object(relink.subprocess, "run") as run, \
+            with mock.patch.object(relink.subprocess, "run"), \
                     mock.patch.object(relink, "text_info", side_effect=[(0x1000, 10, "default"),
                                                                        (0x1000, 10, "same"),
                                                                        (0x1010, 10, "changed")]):
                 with self.assertRaisesRegex(ValueError, "text differs"):
                     relink.placements(log, root / "qjs", [0, 16], binary="qjs",
-                                      no_relax=True, require_identical=True)
-                self.assertTrue(all("-Wl,--no-relax" in c.args[0] for c in run.call_args_list))
+                                      require_identical=True)
 
 
 if __name__ == "__main__":

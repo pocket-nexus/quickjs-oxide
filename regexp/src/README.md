@@ -6,6 +6,12 @@ matches and supports bounded interrupt callbacks.
 `quickjs-oxide-core`'s `core/src/builtins/regexp.rs` owns JS RegExp objects,
 properties, coercions and user callbacks.
 
+The compiler records an exact first UTF-16 unit when it can prove one after
+zero-width instructions. Non-sticky searches skip candidates with a different
+unit before entering the matcher, preserving Unicode index advancement and
+interrupt polling. Case-folded or surrogate literals and ambiguous prefixes
+keep the general search path; sticky matching never searches ahead.
+
 ## Files and subdirectories
 
 - [compiler.rs](compiler.rs): typed RegExp parser and compiler.
