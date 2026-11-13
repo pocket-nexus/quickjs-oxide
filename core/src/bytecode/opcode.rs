@@ -20,6 +20,8 @@ pub enum Format {
     ABInt,
     /// `a` register, `imm` a constant-pool index.
     AConst,
+    /// `a` register, `imm` the first constant, `b | c << 8` the count.
+    AConstRange,
     /// `imm` a `PropertyKey`.
     Key,
     /// `a` register, `imm` a `PropertyKey`.
@@ -504,6 +506,8 @@ opcodes! {
     /// `a = ++b`, with a hint to consume a following dense `GetElem`.
     /// Misses execute that instruction normally, preserving its fault PC.
     IncGetElem: AB,
+    /// A fresh array filled from a consecutive run of primitive constants.
+    NewArrayK: AConstRange,
 }
 
 /// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in
