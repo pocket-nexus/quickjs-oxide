@@ -28,7 +28,7 @@ pub(crate) mod proxy;
 pub(crate) mod suspend;
 pub(crate) mod typed;
 pub(crate) mod via;
-pub(crate) mod waiter;
+pub mod waiter;
 // Public for the root crate's differential test.
 #[doc(hidden)]
 pub mod radix;
@@ -288,8 +288,12 @@ pub struct Services {
     /// `Symbol.for`'s registry: content to symbol. Registered symbols are
     /// fixed roots.
     pub(crate) symbol_registry: crate::heap::hash::FxHashMap<Vec<u16>, crate::SymbolId>,
-    /// Whether `Atomics.wait` may block this agent.
+    /// Whether `Atomics.wait` may block this agent: true once a host
+    /// installs a [Waiter](crate::vm::waiter::Waiter), and switchable from
+    /// JavaScript (agent.canBlock() clears it for Test262's CanBlockIsFalse).
     pub can_block: bool,
+    /// The blocking mechanism, when the host has threads.
+    pub waiter: Option<alloc::sync::Arc<dyn crate::vm::waiter::Waiter>>,
     /// The monotonic clock the natives read, and the reading the runtime
     /// started at: `performance.now()` is the difference.
     pub(crate) monotonic: crate::host::Monotonic,
@@ -332,7 +336,8 @@ impl Default for Services {
             hooks: Box::new(crate::host::NoHost),
             random_state: 1,
             symbol_registry: Default::default(),
-            can_block: true,
+            can_block: false,
+            waiter: None,
             monotonic: crate::host::Monotonic::NONE,
             monotonic_origin: 0,
             compile: None,

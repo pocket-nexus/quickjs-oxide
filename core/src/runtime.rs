@@ -513,6 +513,13 @@ impl Runtime {
         self.host.can_block = can_block;
     }
 
+    /// Installs the mechanism Atomics.wait blocks with, and allows blocking
+    /// (a host with threads installs one; a target without them cannot).
+    pub fn set_waiter(&mut self, waiter: alloc::sync::Arc<dyn crate::vm::waiter::Waiter>) {
+        self.host.waiter = Some(waiter);
+        self.host.can_block = true;
+    }
+
     /// Installs the embedder's hooks and seeds `Math.random` from
     /// [`Host::random_seed`](crate::host::Host::random_seed).
     pub fn set_host(&mut self, mut hooks: Box<dyn crate::host::Host>) {

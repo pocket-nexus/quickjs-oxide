@@ -255,6 +255,7 @@ impl Runtime {
         let mut core = oxide_core::Runtime::new(options)
             .expect("the initial realm fits any heap cap the options allow");
         core.set_host(Box::new(host));
+        core.set_waiter(std::sync::Arc::new(super::waiter::ProcessWaiter));
         core.set_compiler(super::compile::compile_for_core);
         core.set_module_host(oxide_core::vm::module::ModuleHost {
             normalize: super::module::normalize_shim,
