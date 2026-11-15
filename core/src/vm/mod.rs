@@ -290,6 +290,10 @@ pub struct Services {
     pub(crate) symbol_registry: crate::heap::hash::FxHashMap<Vec<u16>, crate::SymbolId>,
     /// Whether `Atomics.wait` may block this agent.
     pub can_block: bool,
+    /// The monotonic clock the natives read, and the reading the runtime
+    /// started at: `performance.now()` is the difference.
+    pub(crate) monotonic: crate::host::Monotonic,
+    pub(crate) monotonic_origin: u64,
     /// The embedder's compiler.
     pub(crate) compile: Option<compile::CompileFn>,
     /// The embedder's module loader.
@@ -329,6 +333,8 @@ impl Default for Services {
             random_state: 1,
             symbol_registry: Default::default(),
             can_block: true,
+            monotonic: crate::host::Monotonic::NONE,
+            monotonic_origin: 0,
             compile: None,
             module_host: None,
             modules: Default::default(),
@@ -342,6 +348,17 @@ impl Default for Services {
 }
 
 impl Services {
+    /// Milliseconds on the monotonic clock since the runtime installed its
+    /// host: what `performance.now()` and `$262.agent.monotonicNow()` report.
+    /// A host with no clock leaves every reading at zero.
+    pub(crate) fn monotonic_ms(&self) -> f64 {
+        let elapsed = self
+            .monotonic
+            .now_ns()
+            .saturating_sub(self.monotonic_origin);
+        elapsed as f64 / 1.0e6
+    }
+
     pub(crate) fn random_state(&self) -> u64 {
         self.random_state
     }

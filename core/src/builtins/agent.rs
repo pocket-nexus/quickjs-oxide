@@ -8,7 +8,7 @@ use crate::float;
 use alloc::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use super::{Native, define, plain_object};
 use crate::heap::HeapError;
@@ -69,12 +69,6 @@ pub struct AgentSelf {
     hub: Arc<AgentHub>,
     /// The `receiveBroadcast` callback (a fixed root), until called.
     callback: Option<Value>,
-}
-
-static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
-
-pub(super) fn monotonic_ms() -> f64 {
-    START.get_or_init(Instant::now).elapsed().as_secs_f64() * 1000.0
 }
 
 /// Defines `$262.agent` on `host` for the main agent (`main`) or an agent.
@@ -241,8 +235,8 @@ pub(super) fn sleep(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(Value::UNDEFINED)
 }
 
-pub(super) fn monotonic_now(_cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, Throw> {
-    Ok(Value::number(float::floor(monotonic_ms())))
+pub(super) fn monotonic_now(cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, Throw> {
+    Ok(Value::number(float::floor(cx.host.monotonic_ms())))
 }
 
 /// `$262.agent.receiveBroadcast(callback)` in an agent.
