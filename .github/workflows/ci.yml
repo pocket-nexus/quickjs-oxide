@@ -138,11 +138,10 @@ jobs:
             --test unsupported_diagnostics --test oracle \
             -- -D warnings
 
-  # The bare-metal target the core is being converted for (docs/planned.md §5.4).
-  # Non-blocking on purpose: it reports how much of the core still depends on
-  # `std`, and turns blocking once the conversion lands.
+  # The bare-metal target the core builds for (docs/planned.md §5.4). The core
+  # is `#![no_std]` in every build a port can make, so this is a gate like any
+  # other: a change that reaches for `std` fails here.
   core-no-std:
-    continue-on-error: true
     if: >-
       github.event_name == 'pull_request' ||
       github.event_name == 'push' ||
