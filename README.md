@@ -20,14 +20,12 @@ pass rate is 79.815%.
   Rust; the only third-party code in the engine is `num-bigint` and
   `num-traits`, for the front end's BigInt literals and the embedding API's
   BigInt values.
-- **Measured performance.** On 2026-11-14, quickjs-oxide took 0.749× QuickJS
-  2026-06-04's time over V8 v7's eight fixed-work programs, 0.979× over
-  Octane's 15 and 0.954× over AWFY's 14. The geometric mean over all 37
-  programs was 0.915× (8.5% less time); peak RSS was 1.542×. These are
-  release-build measurements on one Linux machine, with slower individual
-  programs and a missed per-program net-gain gate. The
-  [performance page](apps/web/docs/performance.md) gives the method,
-  limitations and measurement record.
+- **Performance close to QuickJS.** On the 37 fixed-work programs of the
+  V8 v7, Octane 2.0 and AWFY suites, quickjs-oxide takes 0.94× QuickJS
+  2026-06-04's time over V8 v7's eight programs, 1.15× over Octane's 15 and
+  0.99× over AWFY's 14 (geometric means of release builds on one Linux
+  machine; `scripts/benchmark/bench.py suite` builds the
+  [matrix](scripts/benchmark/README.md#suite)).
 - **ECMAScript first, QuickJS where it is open.** ECMA-262 and Test262 decide
   correctness; QuickJS 2026-06-04 decides what the specification leaves to
   the implementation (error messages, `stack`, the printer, property order of

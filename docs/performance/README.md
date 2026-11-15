@@ -10,7 +10,7 @@ The engine compiles each function to register bytecode for its core, `quickjs-ox
 - [Benchmarking](benchmarking.md): which measurement answers which question, and the standard command for each.
 - [Measurement method](measurement.md): build identity, fixed workloads, sampling and recorded costs.
 - [Diagnostic probes](probes/README.md): the fixed workload matrix, ordinary-write programs, the allocation ledger and the Callgrind runtime probes.
-- [Planned work](../planned.md): remaining memory and heap-cap work, code images and heap snapshots, 32-bit and `no_std` targets, an optional generational collector.
+- [Planned work](../planned.md): the heap cap as a policy, reclaiming dynamic code, code images and heap snapshots, 32-bit and `no_std` targets, a generational collector.
 
 ## Tools
 
