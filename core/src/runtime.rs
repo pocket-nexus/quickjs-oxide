@@ -520,6 +520,10 @@ impl Runtime {
         let monotonic = hooks.monotonic();
         self.host.seed_random(seed);
         self.host.hooks = hooks;
+        // The collector times its pauses by the same clock; `performance.now()`
+        // counts from here, so the origin is read once, not per call.
+        self.host.monotonic = monotonic;
+        self.host.monotonic_origin = monotonic.now_ns();
         self.heap_mut().gc_mut().monotonic = monotonic;
     }
 
