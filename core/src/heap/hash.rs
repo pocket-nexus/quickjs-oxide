@@ -1,8 +1,13 @@
 //! A small multiplicative hasher for the heap's internal tables, whose keys are
 //! 32-bit indices and are not attacker-chosen hash-flooding inputs.
+//!
+//! The tables themselves come from `hashbrown`, the SwissTable that `std`'s
+//! `HashMap` wraps: the same algorithm and the same growth policy, but reachable
+//! without an operating system. The hasher is ours either way, so iteration
+//! order stays a property of the keys and not of a random seed.
 
 use core::hash::{BuildHasherDefault, Hasher};
-use std::collections::HashMap;
+use hashbrown::{HashMap, HashSet};
 
 const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
 
@@ -55,4 +60,4 @@ impl Hasher for FxHasher {
 }
 
 pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
-pub type FxHashSet<K> = std::collections::HashSet<K, BuildHasherDefault<FxHasher>>;
+pub type FxHashSet<K> = HashSet<K, BuildHasherDefault<FxHasher>>;

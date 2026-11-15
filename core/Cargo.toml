@@ -20,6 +20,8 @@ workspace = true
 [dependencies]
 # The one floating-point implementation; see src/float.rs.
 libm = { workspace = true }
+# The hash table behind the heap's internal maps; see src/heap/hash.rs.
+hashbrown = { workspace = true }
 # The regular-expression engine.
 oxide-regexp = { workspace = true }
 
