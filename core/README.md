@@ -10,9 +10,36 @@ how they fit together. This page is the core's design record: its module
 layout, the rooting rule every heap user follows, and the design decisions
 behind the bytecode, the loop, the caches and the heap.
 
-The crate has `#![forbid(unsafe_code)]` and one dependency, the
-regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
-crate depends on it; it does not depend on the root crate.
+The crate has `#![forbid(unsafe_code)]` and three dependencies: the
+regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none;
+`hashbrown` for the heap's hash tables; and `libm` for the floating point. The
+root crate depends on it; it does not depend on the root crate.
+
+## Without an operating system
+
+The crate is `#![cfg_attr(not(test), no_std)]` with `alloc`: one build, not a
+`std` build and a `no_std` one. The test build keeps the standard library
+because a test harness needs a process; everything a port compiles is the
+`no_std` library. The check that keeps it true is blocking in CI:
+
+```sh
+cargo check -p quickjs-oxide-core --target thumbv7em-none-eabi
+```
+
+So the core has no threads, no files, and no clock of its own. What it needs
+from an embedder is `host::Host` — the streams, the wall clock, the file
+access, the monotonic reading, the sleep — plus two capabilities in the
+runtime's services: `vm::waiter::Waiter` for `Atomics.wait`'s blocking, and
+`builtins::agent::AgentHost` for `$262.agent`'s threads. A host with none of
+them gets the defaults: output discarded, the epoch, no file, no clock, a
+`TypeError` from `Atomics.wait` and zero from `Atomics.notify`.
+
+Two consequences worth knowing before reading the code: every file names
+`alloc`'s collections itself, because there is no prelude to supply them; and
+every floating-point function goes through `core::float`, which wraps `libm`,
+because the platform's libm and `libm` disagree in the last bit on 15 of the 20
+functions QuickJS exposes — one implementation everywhere is what keeps a
+Test262 receipt computed on one host valid on another.
 
 ## Layout
 

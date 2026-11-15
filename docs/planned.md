@@ -38,8 +38,8 @@ An empty script costs about 3.1 million user-space instructions on the release `
 | `bytecode` | `quickjs-oxide-core` | the code image's unit encoding (4.2) |
 | `snapshot` (new) | `quickjs-oxide-core` | the snapshot writer and loader over every arena and store (4.3) |
 | `runtime` | `quickjs-oxide-core` | the behavior behind `RuntimeOptions` (3.3); `Runtime::snapshot`, `Runtime::from_snapshot`, `Runtime::load_image` (4.4) |
-| `host` | `quickjs-oxide-core` | the `std` feature split: streams, clock and file access as `std`-only defaults; the math provider (5.4) |
-| `heap::hash`, `shape`, `heap::atom`, … | `quickjs-oxide-core` | the core's own hash table in place of `std::collections::HashMap` (5.4) |
+| `host` | `quickjs-oxide-core` | the capabilities a port supplies and the core can not: streams, the clock, file access, sleep, the waiter, the agents (5.4) |
+| `heap::hash`, `shape`, `heap::atom`, … | `quickjs-oxide-core` | `hashbrown` in place of `std::collections::HashMap`, with the same `FxHasher` (5.4) |
 | `api` | root crate | the image encoding of `CompiledUnits` |
 | `apps/cli` (`qjs`) | CLI | `--compile`, `--snapshot`, `--load-snapshot` |
 | `scripts/benchmark`, `docs/performance/probes` | tools | the runners of the section 9 tables |
@@ -153,24 +153,26 @@ The 32-bit item includes a one-time audit, recorded in its pull request: every `
 
 This plan stops short of linking for a console. It makes `quickjs-oxide-core` buildable without the standard library (5.4), verified on a tier-2 target with no `std` at all (`thumbv7em-none-eabi`, core and alloc only, installed by `rustup` on the pinned stable toolchain), and documents in `core/README.md` the recipe a port follows: a nightly toolchain, `-Zbuild-std=core,alloc`, the target's JSON or tier-3 name, a `Host` implementation over the SDK (streams, clock, time zone, file access, the math provider), `RuntimeOptions` for the device, and code images compiled on the host. Whether this repository also runs that recipe in a non-gating weekly job with a nightly toolchain is the maintainer's call (section 10).
 
-### 5.4 `quickjs-oxide-core` without `std`
+### 5.4 `quickjs-oxide-core` without `std` — delivered
 
-`quickjs-oxide-core` gets a default feature `std`; without it the crate is `#![no_std]` with `alloc`. What `std` provides and what stands in for it:
+`quickjs-oxide-core` is `#![cfg_attr(not(test), no_std)]` with `alloc`: one build, not two. There is no `std` feature. A second configuration nobody ships is the one that rots, and the plan below asked for two; the work that landed asks the compiler instead, on a bare-metal target, on every push. The test build keeps the standard library, because a test harness needs a process.
 
-| Use | With `std` | Without `std` |
-| --- | --- | --- |
-| `Vec`, `Box`, `String`, `Rc`, `VecDeque`, `BTreeMap` | `std` | `alloc`, the same types |
-| `std::collections::HashMap` with the core's `FxHasher` (shapes, transitions, the atom table, `shape_roots`, `prototypes`, ropes, ephemerons, the regular-expression index, two in the VM) | `std` | the core's own open-addressing table, generalized from `heap::table::Table` (the index of the `Map` and `Set` storage), with the same `FxHasher`, used by both builds so the `std` build is measured by the instruction gate (none of these tables is on a cache hit path) |
-| `Instant` for pause timing | `std` | pauses untimed; `GcStats` keeps counts and bytes |
-| `Host` defaults: process streams, `SystemTime`, `read_to_string` | `std` | the port implements `write`, `now_ms`, `local_tz_offset_minutes`; `read_file` defaults to `None` |
-| threads, `Mutex`, `Condvar`, `mpsc` (the Test262 agents, a blocking `Atomics.wait`) | `std` | the `agent` module is `std`-only; `Atomics.wait` behaves as with `CanBlockIsFalse` (`TypeError`); `Atomics.notify` returns 0; `SharedArrayBuffer` keeps `Arc<[AtomicU8]>` (in `alloc` and `core`) |
-| `std::error::Error` impls | `std` | `core::error::Error` |
-| `f64` transcendental and rounding methods (`sin`, `exp`, `ln`, `pow`, `sqrt`, `floor`, `round`, …; `Math`, `Date`, radix formatting, `Number.prototype.toFixed` and friends) | the exactly specified ones (`floor`, `ceil`, `trunc`, `round`, `fmod` via `%`, `sqrt` correctly rounded) are the core's own bit-exact implementations in both builds; the transcendental ones go through `Host::math(op, x, y)`, whose `std` default calls the standard library | `Host::math` is the port's SDK libm, which is what QuickJS on that platform computes too |
+| Use | Where it comes from |
+| --- | --- |
+| `Vec`, `Box`, `String`, `Cow`, `vec!`, `format!` | `alloc`, named by each file — there is no prelude to supply them |
+| the heap's hash tables | `hashbrown` with `default-features = false`; the core's `FxHasher` still decides the layout, so iteration order stays a property of the keys |
+| pause timing | `Host::monotonic`, a `Monotonic` capability (a `fn() -> u64`, like QuickJS's `JSMallocFunctions`) that the collector holds, because it times itself from paths with no host in hand. A host with no clock reports zero |
+| streams, `Date.now`, file access, sleep | `Host`, whose core defaults do nothing: output discarded, the epoch, `None`, return at once. The process's own bodies live in the engine crate, `src/engine/api/core/host.rs` |
+| `Atomics.wait`'s blocking, `$262.agent` | `Arc<dyn Waiter>` and `Arc<dyn AgentHost>` in the runtime's services. A host with threads installs one of each; a target without them has `can_block` false, so `Atomics.wait` throws the `TypeError` the specification asks for and `Atomics.notify` returns 0 |
+| `f64` transcendental and rounding methods | the `libm` crate, through one module, `core::float`: one implementation on every port, so a receipt computed on one host holds on another. `libm` and the platform libm differ in the last bit on 15 of the 20 functions QuickJS exposes, so mixing them is what this rules out |
 
-The core keeps zero dependencies beyond `quickjs-oxide-regexp`: its own hash table, its own exact rounding functions. `quickjs-oxide-regexp` gets the same `std` feature if it needs one (it is a table-driven matcher over `u16` slices; the item checks).
+`quickjs-oxide-regexp` is `#![no_std]` too, with one exception: its `test-hooks` feature — the allocation-failure hooks a test arms, which are thread-local — is a dev-dependency feature and makes that one build a `std` build. No dependent enables it in a normal build. That is the only place in the workspace where a feature decides `std`.
 
-**Acceptance (`no_std` item).** `cargo check -p quickjs-oxide-core --no-default-features --target thumbv7em-none-eabi` in `fast`; `cargo test -p quickjs-oxide-core --no-default-features` on x86_64 (the tests that need threads or timing are `std`-gated); the instruction gate on the eight with the core's own hash table; the full Test262 receipt re-frozen if any `Math` or `Date` result changes (none should: the `std` default is the same library call).
+The dependencies are `quickjs-oxide-regexp`, `hashbrown` and `libm`, and nothing else.
 
+Two costs that were not visible until the build existed: `Math.exp(1)` moved by one unit in the last place (2.718281828459045 → 2.7182818284590455), and the regular-expression executor lost its per-thread scratch buffer, because a target without threads has no thread-local storage — one allocation per `execute` call instead of one per thread.
+
+**Acceptance (delivered).** `cargo check -p quickjs-oxide-core --target thumbv7em-none-eabi` in `fast`, blocking; `cargo check --workspace --all-targets --features test262-host`; the workspace's tests unchanged.
 ## 6. The generational collector (optional)
 
 #122 lists "an optional copying nursery, decided on measurements". The measurement: Splay spends 33% of its time in nine full collections over a 75 MiB live set, Havlak 11%, every other suite program under 8%. The lever is worth 20–25% of Splay's time, and little elsewhere.
@@ -188,7 +190,7 @@ The mechanism that fits a non-moving arena heap is **generational marking with s
 `qjs` grows `--compile`, `--snapshot`, `--load-snapshot`, honors `--strip-source` for both, and accepts `.oxc` files as programs. The churn ring of `bench.py slopes heap` gains the cap and the report.
 
 CI:
-- `fast`: `cargo check -p quickjs-oxide-core --no-default-features --target thumbv7em-none-eabi` (`no_std` item); `cargo check --target i686-unknown-linux-musl -p quickjs-oxide-cli` (32-bit item); the snapshot round-trip, determinism and truncation tests run inside `cargo test -p quickjs-oxide-core` (snapshot item).
+- `fast`: `cargo check -p quickjs-oxide-core --target thumbv7em-none-eabi` (`no_std` item); `cargo check --target i686-unknown-linux-musl -p quickjs-oxide-cli` (32-bit item); the snapshot round-trip, determinism and truncation tests run inside `cargo test -p quickjs-oxide-core` (snapshot item).
 - `suite-32bit` (nightly and dispatch, with the 32-bit item): build the i686 `qjs` and `run-test262` in release, run the corpus and the probes under stress, the 37 programs at one `run()` under the `suite-stress` intervals, and the frozen focused vector; compare the realm snapshot with the x86_64 build's byte for byte.
 - `suite-stress` additionally runs the 37 programs at one `run()` under a 32 MiB cap (heap cap item) and the churn ring under 8 MiB, checking the pass condition of 3.4.
 - Reference-machine measurements (the instruction gate, the section 9 tables) are recorded in pull requests, not run in CI.
@@ -201,7 +203,7 @@ CI:
 | Code images | `encode_image`, `load_image`, `--compile`, `.oxc` programs; the fuzz-style flip test (4.1, 4.2, 4.4) | every suite program's image loads and prints the manifest's stdout; the validator rejects a flipped image at every offset without a panic; the image rows of the snapshot and image table | when a device port is scheduled | 6–8 days |
 | Heap snapshots | writer, loader, quiescence, fingerprint, truncation test, `--snapshot`, `--load-snapshot` (4.2–4.4) | the realm round trip is byte-identical across two runs and loads to a runtime that passes `core/tests/corpus`; a snapshot after each of the three setup corpora runs its program to the manifest's stdout; the gate of 4.5 for the realm | when a port asks for a warm start | 8–12 days |
 | 32-bit | the i686 gate and the audit (5.1, 5.2); the `suite-32bit` tier | section 5.1's acceptance; the audit in the pull request; the 32-bit table | with code images, or when a 32-bit port is scheduled | 3–5 days |
-| `no_std` | `quickjs-oxide-core` without `std` (5.4); the recipe in `core/README.md` (5.3) | the `thumbv7em-none-eabi` check in `fast`; `--no-default-features` tests; the instruction gate with the core's own table; receipts unchanged or re-frozen | when a port without `std` is scheduled | 8–12 days |
+| `no_std` | `quickjs-oxide-core` without `std` (5.4); the recipe in `core/README.md` (5.3) | the `thumbv7em-none-eabi` check in `fast`, blocking; the workspace's tests unchanged; receipts re-frozen with the reason recorded | delivered on `feat/no-std-core` | — |
 | Measurement | each item's tables on the reference machine; the fixed-work suite tables and the Test262 receipt replayed | section 9's exit conditions | per item, as each lands | 4–6 days |
 | Generational collector | section 6, if not struck | the go/no-go of section 6 recorded either way | only on the maintainer's request | 10–15 days |
 
@@ -242,13 +244,13 @@ Made:
 - two artifacts, images and snapshots, in one little-endian `u32`-indexed format with a build fingerprint; hash tables rebuilt at load; inline caches empty at load; loaders treat input as untrusted and the publication validator runs on every image (4.2);
 - a snapshot requires quiescence and holds no host state (4.3);
 - the 32-bit gate target is `i686-unknown-linux-musl`, with `wasm32` as the second 32-bit build; MIPS targets are left to the ports' nightly recipe (5.1, 5.3);
-- `quickjs-oxide-core` keeps zero dependencies beyond `quickjs-oxide-regexp`: its own hash table, its own exact rounding functions, transcendental math through the `Host` in `no_std` builds (5.4);
+- `quickjs-oxide-core` depends on `quickjs-oxide-regexp`, `hashbrown` and `libm` and on nothing else; the floating point comes from one module so no port can disagree with another in the last bit (5.4);
 - the generational option is sticky mark bits with a write barrier in the `Heap`'s write entry points, behind a feature until its go/no-go (6).
 
 Open, with the item that decides each:
 
 - the shrink thresholds (a quarter trailing, half free, `bytes > 2 × live`): heap cap, by the memory table's ratios and the churn ring's steady state;
-- whether `quickjs-oxide-regexp` needs a `std` feature: `no_std`;
+- whether `quickjs-oxide-regexp` needs a `std` feature: settled — it does not, in every build a dependent can make;
 - whether a non-gating weekly job runs the PSP recipe with a nightly toolchain: the maintainer, with the `no_std` item;
 - whether a snapshot may be taken with live handles (writing them as a handle section) for embedders that hold values across the snapshot: heap snapshots, only if a consumer asks; the default is to require none;
 - the young threshold and the stress intervals of the generational mode: the generational collector;
@@ -259,7 +261,7 @@ Open, with the item that decides each:
 - **Snapshot drift.** Every record field or store added later must be written and read, or snapshots silently lose state. Mitigation: the writer and reader are generated from one description per record (a `Serial` trait implemented once per type, with a round-trip test that compares the `MemoryReport` and the corpus output before and after), and the fingerprint rejects a stale file rather than loading it.
 - **Determinism of a snapshot.** Hash-table iteration order could make two snapshots of one runtime differ. Mitigation: tables are rebuilt at load rather than written (4.2); everything written is in index order; the byte-identity test is in `fast`.
 - **The barrier's cost.** A write barrier on the `SetField` hit path is paid by every program for Splay's benefit. Mitigation: the go/no-go's 2% gate on the eight, and removal rather than a feature if it fails.
-- **`no_std` reach.** The split touches many files for a build this repository cannot run end to end. Mitigation: one implementation for both builds wherever possible (the table, the rounding functions), `std`-gated modules rather than `cfg` inside functions, and the `thumbv7em` check in `fast` so the build cannot rot.
-- **Math parity.** Routing transcendental functions through the `Host` could change a result if a default differed from the standard library's call. Mitigation: the `std` default is the direct call, the receipts are re-frozen only with the reason recorded, and the Test262 full vector runs nightly.
+- **`no_std` reach.** The conversion touches many files for a build this repository cannot run end to end. Mitigation, as delivered: one implementation rather than two — `libm` everywhere, `hashbrown` everywhere — no `cfg` inside a function body, and the `thumbv7em` check in `fast`, blocking, so the build cannot rot.
+- **Math parity.** Replacing the platform's transcendental functions changes a result wherever the two implementations disagree in the last bit, which is 15 of the 20 functions QuickJS exposes. Mitigation: one implementation (`libm`) rather than two, receipts re-frozen only with the reason recorded, and the Test262 full vector runs nightly.
 - **Shrinking that thrashes.** Giving memory back and taking it again on every collection costs page faults. Mitigation: the `bytes > 2 × live` condition and the churn ring's steady-state measurement in the heap cap item.
 - **The i686 tier's time.** The 37 programs under stress take 93 minutes on x86_64, and a 32-bit build is slower. Mitigation: the 32-bit item measures and sets the tier's stress intervals.
