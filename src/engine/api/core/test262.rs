@@ -115,6 +115,8 @@ impl Worker {
         let failed = |error: oxide_core::HeapError| error.to_string();
         let mut runtime = Runtime::new(RuntimeOptions::default()).map_err(failed)?;
         runtime.set_host(host);
+        runtime.set_waiter(std::sync::Arc::new(super::waiter::ProcessWaiter));
+        runtime.set_agent_host(super::agent::ProcessAgents::new());
         runtime.set_can_block(can_block);
         runtime.set_compiler(compile_for_core);
         runtime.install_print().map_err(failed)?;

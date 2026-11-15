@@ -306,10 +306,12 @@ pub struct Services {
     pub(crate) modules: crate::heap::hash::FxHashMap<String, ObjectId>,
     /// The embedder's script runner, for `$262.agent.start`.
     pub(crate) script_runner: Option<crate::builtins::agent::ScriptRunner>,
-    /// The agents this (main) agent started.
-    pub(crate) agent_hub: Option<alloc::sync::Arc<crate::builtins::agent::AgentHub>>,
-    /// This runtime as an agent of another.
-    pub(crate) agent: Option<crate::builtins::agent::AgentSelf>,
+    /// The agents this runtime coordinates, when the host has threads.
+    pub(crate) agents: Option<alloc::sync::Arc<dyn crate::builtins::agent::AgentHost>>,
+    /// This runtime's index among those agents, when it is one of them.
+    pub(crate) agent_index: Option<usize>,
+    /// The `receiveBroadcast` callback (a fixed root), until taken.
+    pub(crate) agent_callback: Option<Value>,
     /// Whether unhandled rejected promises are kept in
     /// `Heap::rejections` for the embedder.
     pub(crate) track_rejections: bool,
@@ -344,8 +346,9 @@ impl Default for Services {
             module_host: None,
             modules: Default::default(),
             script_runner: None,
-            agent_hub: None,
-            agent: None,
+            agents: None,
+            agent_index: None,
+            agent_callback: None,
             track_rejections: false,
             interrupt: Default::default(),
         }

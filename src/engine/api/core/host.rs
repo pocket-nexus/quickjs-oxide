@@ -44,6 +44,12 @@ impl Host for SystemHost {
     fn monotonic(&mut self) -> Monotonic {
         Monotonic::new(monotonic_ns)
     }
+
+    fn sleep_ms(&mut self, milliseconds: f64) {
+        if milliseconds > 0.0 {
+            std::thread::sleep(std::time::Duration::from_secs_f64(milliseconds / 1000.0));
+        }
+    }
 }
 
 /// A failed or closed stream is not the runtime's to report: QuickJS ignores

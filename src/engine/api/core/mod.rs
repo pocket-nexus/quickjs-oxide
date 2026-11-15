@@ -2,6 +2,7 @@
 //! Rust data or handles, the host as one trait, host functions with a
 //! [`Scope`], module loaders with a [`ModuleScope`].
 
+mod agent;
 mod buffer;
 pub(crate) mod compile;
 mod context;
