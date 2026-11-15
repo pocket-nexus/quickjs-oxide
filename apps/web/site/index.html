@@ -70,8 +70,8 @@
   <div class="cards">
     <article class="card a-pink"><span class="chip">0 unsafe</span><h3>Safe Rust</h3>
       <p>Every crate in the workspace sets <code>forbid(unsafe_code)</code>: the engine, the CLI and the WebAssembly bindings.</p></article>
-    <article class="card a-yellow"><span class="chip">≈1× QuickJS</span><h3>QuickJS-class speed</h3>
-      <p>Register bytecode, inline caches and NaN-boxed values keep run time level with QuickJS on the V8 v7, Octane and Are-We-Fast-Yet suites.</p></article>
+    <article class="card a-yellow"><span class="chip">1.34× on V8 v7</span><h3>Measured performance</h3>
+      <p>V8 v7's eight fixed-work programs take 25.1% less time than QuickJS. Across all 37 V8 v7, Octane and AWFY programs, the reduction is 8.5%.</p></article>
     <article class="card a-cyan"><span class="chip">Native + WASM</span><h3>Runs where you need it</h3>
       <p>Embed it in a Rust application, use the native <code>qjs</code> command line, or ship the WebAssembly build to the browser, like the demo above.</p></article>
   </div>
@@ -79,15 +79,15 @@
 
 <section class="block wrap">
   <div class="sec-head"><h2 class="px px-shadow c-cyan">By the numbers</h2><div class="trail"></div></div>
-  <p class="sec-intro">Measured against QuickJS 2026-06-04, the engine quickjs-oxide follows. Method and raw results are in the docs.</p>
+  <p class="sec-intro">Measured against QuickJS 2026-06-04, the engine quickjs-oxide follows. The docs link the method and measurement record.</p>
   <div class="numbers">
     <div class="stat"><div class="big c-yellow">@@TEST262_PERCENT@@%</div><div class="what">Test262 pass rate</div><p>@@TEST262_PASSES@@ of @@TEST262_SCOPE@@ variants in the scope QuickJS runs.</p></div>
-    <div class="stat"><div class="big c-cyan">≈1×</div><div class="what">QuickJS speed</div><p>Geometric mean of run time relative to QuickJS. Lower is faster.</p>
-      <div class="ratios"><span>V8 v7 0.94×</span><span>Octane 1.15×</span><span>AWFY 0.99×</span></div></div>
+    <div class="stat"><div class="big c-cyan">0.915×</div><div class="what">Time vs QuickJS</div><p>Geometric mean over 37 fixed-work programs. Lower is faster; some programs are slower.</p>
+      <div class="ratios"><span>V8 v7 0.749×</span><span>Octane 0.979×</span><span>AWFY 0.954×</span></div></div>
     <div class="stat"><div class="big c-pink">0</div><div class="what">Lines of unsafe</div><p>The compiler rejects <code>unsafe</code> in every crate of the workspace.</p></div>
-    <div class="stat"><div class="big c-lilac">0</div><div class="what">Dependencies</div><p>No third-party crates, except num-bigint for BigInt. The native host adds tz-rs for time zones.</p></div>
+    <div class="stat"><div class="big c-lilac">2</div><div class="what">Engine dependencies</div><p>num-bigint and num-traits support BigInt literals and embedding values. The native host adds tz-rs for time zones.</p></div>
   </div>
-  <p class="numbers-foot">Release builds on one Linux machine. <a href="docs/performance/">See the method and every result →</a></p>
+  <p class="numbers-foot">Release builds on one Linux machine, 2026-11-14. <a href="docs/performance/">See the method and every result →</a></p>
 </section>
 
 <section class="block wrap">
