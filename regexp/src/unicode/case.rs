@@ -7,9 +7,9 @@
 //! UTF-16 surrogates.
 
 use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, is_in_table};
+use alloc::vec::Vec;
 #[cfg(any(test, feature = "test-hooks"))]
 use core::cell::Cell;
-use alloc::vec::Vec;
 
 mod tables {
     include!("generated/unicode/unicode_case_tables.rs");

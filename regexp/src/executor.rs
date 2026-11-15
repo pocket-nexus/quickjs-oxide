@@ -372,11 +372,7 @@ fn execute_search<T: Copy + Into<u16>, F: FnMut() -> bool>(
             // without threads has no thread-local storage, and the reuse that
             // matters is this one.
             let mut fresh = AttemptState::default();
-            fresh.prepare(
-                program.capture_count(),
-                program.register_count(),
-                candidate,
-            )?;
+            fresh.prepare(program.capture_count(), program.register_count(), candidate)?;
             state = Some(fresh);
         }
         let state = state.as_mut().expect("attempt state was initialized");
