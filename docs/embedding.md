@@ -105,21 +105,10 @@ At the outermost entry the API clears `vm.interrupted` and returns `RuntimeError
 
 The core lends a string's flat representation (`NativeCx::string_repr`, which flattens a rope); the API copies that slice once into a `JsString`, and a `JsString` passed back is allocated from its flat storage. `JsString::to_utf8_lossy` takes ASCII and Latin-1 bytes and flat UTF-16 directly. Every string an embedder reads goes this way: host function arguments, `eval` results and property values.
 
-## Measurements
-
-On the V8 v7 programs at full fixed work, against the same tree without this layer (`instructions:u`): richards +0.71%, deltablue +0.93%, crypto +0.23%, raytrace +0.44%, earley-boyer +0.42%, regexp −0.03%, splay +0.21%, navier-stokes +0.72%. Host functions and objects alone move nothing (within 0.02%); the rest is the interrupt poll. `run_at` is 15,210 bytes (gate: 16,384).
-
-A host function call costs about 560 instructions with no arguments. With a 1 KiB string argument, per call:
-
-| Argument type | Latin-1 or ASCII text | UTF-16 text |
-| --- | ---: | ---: |
-| `JsString` | ~430 | ~630 |
-| `String` | ~1,300 | ~56,000 |
-
 ## Known issues
 
-- **Recursion depth.** Rust → JavaScript → Rust recursion through a host function fits about 725 levels in the default 1 MiB native-stack budget in a release build and about 46 in a debug build; a builtin's re-entry reaches more (`Array.prototype.map`: 1,063 in release). The 1,000-level test runs on a thread with a 256 MiB stack.
-- **UTF-16 text to `String`.** Converting wide text to a Rust `String` costs about 55 instructions per code unit, in std's `String::from_utf16_lossy`. A host function that only reads or forwards text takes `JsString` instead.
+- **Recursion depth.** Rust → JavaScript → Rust recursion through host functions consumes the native-stack budget. The depth depends on the build and call path; `RuntimeOptions.native_stack_budget` and `native_depth_limit` bound it.
+- **UTF-16 text to `String`.** Converting wide text to a Rust `String` decodes UTF-16 through std's `String::from_utf16_lossy`. A host function that only reads or forwards text takes `JsString` instead.
 - **Interrupt latency.** The poll runs at back-edges and calls only. One long native operation (a regular expression over a large input, a large `join`) is not interrupted until it returns to the loop.
 - **The interrupt flag stays set.** `InterruptHandle::interrupt` stops every later evaluation until `clear()`.
 - **Host objects print as `Object`.** The printer does not use the prototype's `constructor`; `Symbol.toStringTag` changes only `Object.prototype.toString`.

@@ -1,6 +1,6 @@
 # The heap and the collector
 
-This page describes the heap of `quickjs-oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) extends this design with growth that stops at the cap and heap snapshots; [the memory plan](memory-plan.md) is the plan for peak memory against QuickJS.
+This page describes the heap of `quickjs-oxide-core` (`core/src/heap/`, `core/src/shape.rs`, `core/src/value.rs`): how values are represented, where records live, how shapes and validity cells keep inline caches valid, and how the mark-sweep collector finds its roots, when it runs, and what the memory cap does. [`core/README.md`](../core/README.md) is the core's design record and states the rooting rule in full. [Planned work](planned.md) covers the remaining memory and embedding-target work.
 
 ## Values
 
@@ -163,7 +163,7 @@ The defaults are a 1 MiB minimum heap and growth 2. Under `GcPolicy::Manual` of 
 
 The cap limits `Heap::bytes()`: the bytes reserved by every arena (record storage, bitmaps, out-of-line bytes), the value heap (its backing vector, class lists and bitmap), flattened ropes, the ropes' halves table, the atom table, the inline caches, the live dynamic units and the regular-expression programs. Publishing a unit does not check the cap; the next safepoint collects or fails with `OutOfMemory` if the heap is over it. With a cap set every safepoint takes the slow path. If reserving what the allocation needs would cross the cap, the safepoint collects first (whatever the trigger says); if the heap would still cross it, the allocation fails with `HeapError::OutOfMemory` and allocates nothing. The loop and the natives turn that error into the realm's preallocated `%OutOfMemoryError%` intrinsic, an `InternalError: out of memory` created at realm initialization, so throwing it allocates nothing. The error is catchable.
 
-Under a cap the budget stops one growth step short of it: the churn ring of `core/examples/workloads.rs` (`churn 3000000 --ring 65536 --cap-mib 32`) settles at 18.9 MiB reserved. [Planned work](planned.md#3-the-heap-cap-as-a-policy) describes the growth step clamped to the cap.
+The cap check uses the arena's normal growth step, so an allocation can fail when its requested records would fit but the full reservation would not. [Planned work](planned.md#heap-cap-policy) covers growth clamped to the remaining cap and recovery checks.
 
 ### Stress mode
 
