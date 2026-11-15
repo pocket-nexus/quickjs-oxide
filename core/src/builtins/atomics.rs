@@ -3,7 +3,6 @@
 //! across agents; `wait` and `notify` queue on the same coordinator.
 
 use crate::float;
-use std::time::Duration;
 
 use super::bigint::to_index;
 use super::{Native, methods, to_string_tag};
@@ -168,22 +167,24 @@ fn modify(
 ) -> u64 {
     let (view, store) = typed::view(cx.heap, object);
     let size = view.kind.size();
+    let waiter = cx.host.waiter.clone();
     let buffer = typed::buffer_mut(cx.heap, store);
     let shared = buffer.is_shared();
+    let mut old = 0u64;
     let mut run = || {
         let mut bytes = [0u8; 8];
         buffer.read(byte_index, &mut bytes[..size]);
-        let old = u64::from_le_bytes(bytes);
+        old = u64::from_le_bytes(bytes);
         if let Some(new) = operation(old) {
             buffer.write(byte_index, &new.to_le_bytes()[..size]);
         }
-        old
     };
     if shared {
-        waiter::with_seq_cst(run)
+        waiter::with_seq_cst(waiter.as_deref(), run);
     } else {
-        run()
+        run();
     }
+    old
 }
 
 fn decode(cx: &mut Cx<'_>, kind: ElementKind, bits: u64) -> Result<Value, Throw> {
@@ -311,23 +312,31 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let timeout = if timeout.is_nan() || timeout == f64::INFINITY {
         None
     } else {
-        // A finite JS timeout can exceed Duration's range. Saturate it rather
-        // than panicking, while keeping NaN/+Infinity as untimed waits.
-        Some(Duration::try_from_secs_f64(timeout.max(0.0) / 1000.0).unwrap_or(Duration::MAX))
+        // A finite JS timeout can exceed every representable nanosecond count.
+        // Saturate it rather than panicking, while keeping NaN/+Infinity as
+        // untimed waits.
+        let nanoseconds = timeout.max(0.0) * 1.0e6;
+        Some(if nanoseconds >= u64::MAX as f64 {
+            u64::MAX
+        } else {
+            nanoseconds as u64
+        })
     };
     if !cx.host.can_block {
         return Err(error::type_error(cx, "cannot block in this thread"));
     }
+    let Some(waiter) = cx.host.waiter.clone() else {
+        return Err(error::type_error(cx, "cannot block in this thread"));
+    };
     let (view, store) = typed::view(cx.heap, object);
     let size = view.kind.size();
     let mask = mask(kind);
     let buffer = typed::buffer(cx.heap, store);
-    let outcome = waiter::wait(place, timeout, || {
+    let outcome = waiter.wait(place, timeout, &mut || {
         let mut bytes = [0u8; 8];
         buffer.read(byte_index, &mut bytes[..size]);
-        Ok::<_, ()>(u64::from_le_bytes(bytes) & mask == expected & mask)
-    })
-    .unwrap_or(WaitOutcome::NotEqual);
+        u64::from_le_bytes(bytes) & mask == expected & mask
+    });
     let text = match outcome {
         WaitOutcome::NotEqual => "not-equal",
         WaitOutcome::Ok => "ok",
@@ -356,7 +365,10 @@ pub(super) fn notify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let Some(place) = location(cx, object, byte_index) else {
         return Ok(Value::int32(0));
     };
-    Ok(Value::number(waiter::notify(place, count) as f64))
+    let Some(waiter) = cx.host.waiter.clone() else {
+        return Ok(Value::int32(0));
+    };
+    Ok(Value::number(waiter.notify(place, count) as f64))
 }
 
 /// `Atomics.pause(N)`.

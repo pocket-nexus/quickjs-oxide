@@ -17,6 +17,7 @@ mod runtime;
 #[cfg(feature = "test262-host")]
 pub mod test262;
 mod value;
+mod waiter;
 
 pub use buffer::{TypedArrayKind, TypedArrayView};
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
