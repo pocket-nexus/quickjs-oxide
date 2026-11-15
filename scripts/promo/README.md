@@ -1,86 +1,75 @@
-# Performance race video
+# Eight-leg relay video
 
-`v8_race.py` renders a 76-second, 1080p, Chinese film from an existing V8 v7
-measurement campaign. It draws original pixel cars and scenery, synthesizes
-an original chiptune soundtrack, and encodes H.264/AAC with FFmpeg. It uses
-the installed Pillow, NumPy, Fontconfig, Noto Sans CJK and DejaVu Sans Mono;
-it downloads no assets and installs no packages.
+`v8_race.py` renders **only the V8 v7 relay**: starting lights, eight legs on a
+scrolling track, the finish and a held result in the same scene. The cut is
+26 seconds at 1920×1080, 60 fps. A native 480×270 canvas is enlarged 4× with
+nearest-neighbor sampling and a fixed 12px pixel typeface.
+
+The camera follows quickjs-oxide. Mountain layers scroll at different rates;
+track markings and stage signs move with the world. Cars have animated wheels,
+suspension and exhaust; cars outside the camera view retain edge indicators
+and minimap markers. When oxide finishes, race positions freeze, confetti and
+a finish cue play, and a column shows every engine's recorded relay total.
+The original synthesized soundtrack has countdown, stage and motor cues.
 
 The eight cars are quickjs-oxide, QuickJS, JavaScriptCore, V8, Boa, Brimstone,
-MuJS and Duktape. **All run without JIT**: V8 uses the Node.js shell with
-`--jitless`; JSC uses `--useJIT=false --useRegExpJIT=false`. Pinned versions
-and executable/library hashes belong to the campaign record.
+MuJS and Duktape. All run without JIT: V8 uses Node.js with `--jitless`; JSC
+uses `--useJIT=false --useRegExpJIT=false`. Versions and binary/library hashes
+are in the campaign record. [Artwork and font notices](assets/README.md)
+cover the adapted car construction and rasterized typeface.
 
-## Measure first
+## Measurement inputs
 
-All measurements go through
-[`scripts/benchmark/bench.py`](../benchmark/README.md); the renderer never
-runs an engine. Follow [the measurement rules](../../docs/performance/benchmarking.md):
-finish builds first, use immutable binaries, pin one CPU, measure serially,
-declare repetitions and order before recording, and keep failed samples.
-Do not render or encode video during measurement.
+The renderer never runs an engine. Measurements use
+[`bench.py`](../benchmark/README.md) under the
+[measurement rules](../../docs/performance/benchmarking.md): immutable
+binaries, fixed repetitions/order, one CPU, serial recording, checked output
+and no concurrent builds, tests or encoding.
 
-The input layout is:
+The frozen campaign contains `plan.json`, `commands.json`, `identities.json`,
+`suite/manifest.json`, `aa/results.json`, seven `ab-ENGINE/results.json` files
+and seven `paired-ENGINE.json` reports. The A/A uses the same QuickJS binary
+under `quickjs`/`control` labels. Each A/B compares QuickJS and one of the other
+seven engines. All runs cover the same eight programs with six ABBA pairs,
+CPU 2 and Linux counters. Failed or missing samples, changed program bytes,
+settings or binary identities, and absent no-JIT flags reject rendering.
+A missed per-program gain gate stays a miss in the separate data report.
 
-```text
-campaign/
-  plan.json                 # date, no-JIT mode, fixed settings and source identity
-  commands.json             # commands as run and their exit codes
-  identities.json           # binary/library hashes, versions and wrapper flags
-  suite/manifest.json       # eight programs, fixed work, hashes and checked stdout
-  aa/results.json           # quickjs/control: the same QuickJS binary
-  ab-oxide/results.json     # quickjs/oxide
-  ab-jsc/results.json       # quickjs/jsc
-  ab-v8/results.json        # quickjs/v8
-  ab-boa/results.json       # quickjs/boa
-  ab-brimstone/results.json # quickjs/brimstone
-  ab-mujs/results.json      # quickjs/mujs
-  ab-duktape/results.json   # quickjs/duktape
-  paired-<engine>.json      # bench.py paired with the matched A/A and net-gain gate
-```
+MuJS and Duktape require ES5 source. The campaign replaces only the generator's
+arrow-function print adapter with the same ES5 adapter on every engine; the
+benchmark bodies and frozen iteration counts are unchanged. This starts a new
+baseline, without mixing earlier timings. Keep the preparation steps and
+minimal Duktape host with the raw campaign evidence.
 
-Each formal run uses six pairs in ABBA order on CPU 2, with Linux counters;
-all eight programs must succeed. The A/A precedes every A/B campaign. A missed
-gain gate is preserved and reported; it does not become a passing gate in
-the video report. The renderer rejects missing/failed samples, mismatched
-program hashes, changed settings or missing explicit no-JIT flags.
-
-MuJS and Duktape need ES5 source. The recording replaces only the suite
-generator's arrow-function print adapter with an ES5 print adapter, identically
-for every engine. This starts a new baseline: original benchmark bodies and
-fixed work counts stay unchanged, and older timings are not mixed into it.
-Keep the adapter, minimal Duktape host and exact preparation steps with the
-campaign evidence.
+The relay concatenates per-program median process times, including startup,
+compilation, execution and exit. Each program occupies exactly one eighth of
+the track. Motion within a leg is uniform interpolation, marked on screen as
+`中位示意`; the displayed clock is the recorded-time scale, at a fixed 0.4×
+playback rate. This is a timing illustration, not a per-iteration trace.
+The freeze is at oxide's finish; the time column includes recorded totals for
+cars still behind. No geometric-mean scoreboard appears in this cut.
 
 ## Render and inspect
 
+Pillow, NumPy and FFmpeg are required. The small pixel glyph atlas and notices
+are included; no fonts or packages are installed by the renderer.
+
 ```sh
 python3 scripts/promo/v8_race.py --campaign target/CAMPAIGN \
-  --output target/v8-race-video --stills-only
+  --output target/v8-relay --stills-only
 python3 scripts/promo/v8_race.py --campaign target/CAMPAIGN \
-  --output target/v8-race-video
+  --output target/v8-relay
 ffprobe -v error -show_format -show_streams \
-  target/v8-race-video/quickjs-oxide-v8-v7-no-jit-zh.mp4
+  target/v8-relay/quickjs-oxide-v8-v7-relay-only-no-jit-zh.mp4
 ```
 
-Inspect `contact.png` and the full-resolution `stills/` before encoding. The
-output includes the MP4, poster, original soundtrack, encode log/command,
-derived `video-data.json` and a report linking each result to its input hash.
-Check the encoded video for the full duration, audio, readable text and the
-final frame. All media, raw results and reports stay under `target/` or
+Inspect `contact.png` and `stills/`: the start, each of the eight legs and the
+finish. Check label bounds, off-screen indicators, stage order, frozen car
+positions and the encoded video through its final frame. Output includes the
+MP4, poster, soundtrack, encode log/command, `video-data.json` and a provenance
+report. Raw results, media and generated reports stay under `target/` or
 outside the repository, out of commits.
 
-The relay concatenates each program's median process time, gives every
-program an eighth of the track, and uses explicitly labelled uniform motion
-inside each leg. It freezes when oxide finishes. It is an illustration of
-measured times, not a live race or a recorded per-iteration trace.
-
-The separate scoreboard shows the reciprocal of the equal-weight geometric
-mean of each program's median-time ratio to its paired QuickJS run. Bars use
-one linear scale. Relay finish times and this relative-speed metric are
-different quantities; neither is the original suite's adaptive score. Only
-the recorded versions, configurations and machine are compared.
-
-The visual reference is the racing section of
+The visual reference is the relay in
 [Ion_Mio_'s video](https://x.com/Ion_Mio_/status/2119684071299436891).
-The renderer includes no frames, music, sprites or code from that video.
+No frames or audio from it are used in the cut.
