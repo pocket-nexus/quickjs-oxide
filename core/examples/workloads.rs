@@ -19,13 +19,29 @@
 //! | `churn` | allocate an object or an array of 1–64 elements into a ring of 4096 live entries (`--ring`) |
 
 use std::hint::black_box;
+use std::sync::OnceLock;
 use std::time::Instant;
 
 use oxide_core::heap::gc::HeapLimits;
 use oxide_core::heap::object::ObjectKind;
+use oxide_core::host::{Host, Monotonic};
 use oxide_core::{Heap, Intrinsic, ObjectId, PropertyFlags, PropertyKey, Runtime, Value};
 
 const DEFAULT: PropertyFlags = PropertyFlags::DEFAULT;
+
+/// The process's only service this example wants: a monotonic clock.
+struct ExampleHost;
+
+impl Host for ExampleHost {
+    fn monotonic(&mut self) -> Monotonic {
+        Monotonic::new(monotonic_ns)
+    }
+}
+
+fn monotonic_ns() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_nanos() as u64
+}
 
 struct Options {
     name: String,
@@ -221,6 +237,9 @@ fn main() {
         max_bytes: options.cap.unwrap_or(usize::MAX),
     };
     let mut runtime = Runtime::new(limits).unwrap();
+    // The collector's pause statistics need a clock, and the core has none:
+    // the embedder supplies one, as every port must.
+    runtime.set_host(Box::new(ExampleHost));
     runtime.heap_mut().gc_mut().record_pauses = options.report;
     if let Some(min_heap) = options.min_heap {
         runtime.heap_mut().gc_mut().min_heap = min_heap;

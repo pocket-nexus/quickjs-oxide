@@ -44,7 +44,7 @@ pub use crate::engine::value::bigint::{BigIntError, JsBigInt};
 pub use crate::engine::value::{JsString, JsStringError};
 /// The core's value, which [`Host::promise_rejection`] receives.
 pub use oxide_core::Value as CoreValue;
-pub use oxide_core::host::{Host, RejectionEvent, Stream};
+pub use oxide_core::host::{Host, Monotonic, RejectionEvent, Stream};
 pub use oxide_core::{HeapLimits, MemoryReport, RuntimeOptions};
 
 #[cfg(test)]

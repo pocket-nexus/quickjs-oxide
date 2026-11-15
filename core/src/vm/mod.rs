@@ -320,13 +320,13 @@ impl core::fmt::Debug for Services {
 
 impl Default for Services {
     fn default() -> Self {
-        // QuickJS seeds from the clock; programs that compare output replace
-        // `Math.random`, as the benchmark harness does.
-        let seed = crate::clock::time_seed();
+        // A constant until the embedder installs its host: the seed comes from
+        // [`Host::random_seed`](crate::host::Host::random_seed) at that point
+        // (`Runtime::set_host`), because the core cannot reach a clock.
         Services {
             output: Output::default(),
             hooks: Box::new(crate::host::SystemHost),
-            random_state: seed.max(1),
+            random_state: 1,
             symbol_registry: Default::default(),
             can_block: true,
             compile: None,

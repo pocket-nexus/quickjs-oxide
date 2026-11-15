@@ -517,8 +517,10 @@ impl Runtime {
     /// [`Host::random_seed`](crate::host::Host::random_seed).
     pub fn set_host(&mut self, mut hooks: Box<dyn crate::host::Host>) {
         let seed = hooks.random_seed();
+        let monotonic = hooks.monotonic();
         self.host.seed_random(seed);
         self.host.hooks = hooks;
+        self.heap_mut().gc_mut().monotonic = monotonic;
     }
 
     /// Keeps every rejected promise without a handler alive until a handler

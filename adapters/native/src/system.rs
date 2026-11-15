@@ -8,9 +8,10 @@ use std::cell::RefCell;
 use std::env;
 
 use std::ffi::{OsStr, OsString};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use quickjs_oxide::engine::api::core::Host;
+use quickjs_oxide::engine::api::core::{Host, Monotonic};
 use tz::TimeZone;
 
 /// The core's host over the system clock and the host TZif/POSIX
@@ -82,6 +83,16 @@ impl Host for SystemHost {
     fn random_seed(&mut self) -> u64 {
         system_time_random_seed(SystemTime::now())
     }
+
+    fn monotonic(&mut self) -> Monotonic {
+        Monotonic::new(monotonic_ns)
+    }
+}
+
+/// Nanoseconds from the first call, for the collector's pause statistics.
+fn monotonic_ns() -> u64 {
+    static START: OnceLock<Instant> = OnceLock::new();
+    START.get_or_init(Instant::now).elapsed().as_nanos() as u64
 }
 
 fn timezone_offset_at(time_zone: &TimeZone, unix_seconds: i64) -> i32 {
