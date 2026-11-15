@@ -62,29 +62,17 @@ const fn no_clock() -> u64 {
 pub trait Host {
     /// Writes host output (`print`): UTF-8, with a lone surrogate of the
     /// JavaScript string encoded as is (WTF-8), as QuickJS's
-    /// `JS_ToCStringLen` writes it. The default writes to the process's
-    /// streams.
+    /// `JS_ToCStringLen` writes it. The default discards it: the core has no
+    /// stream to write to. An embedder with a process writes to its standard
+    /// streams, as `quickjs-oxide`'s and `quickjs-oxide-host`'s hosts do.
     fn write(&mut self, stream: Stream, text: &[u8]) {
-        use std::io::Write;
-        match stream {
-            Stream::Stdout => {
-                let mut out = std::io::stdout().lock();
-                let _ = out.write_all(text);
-                let _ = out.flush();
-            }
-            Stream::Stderr => {
-                let mut out = std::io::stderr().lock();
-                let _ = out.write_all(text);
-                let _ = out.flush();
-            }
-        }
+        let _ = (stream, text);
     }
 
-    /// Milliseconds since the Unix epoch (`Date.now()`).
+    /// Milliseconds since the Unix epoch (`Date.now()`). The default is the
+    /// epoch itself: the core has no clock.
     fn now_ms(&mut self) -> f64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0.0, |elapsed| elapsed.as_millis() as f64)
+        0.0
     }
 
     /// UTC minus local time, in minutes, at `utc_ms`
@@ -111,9 +99,10 @@ pub trait Host {
     }
 
     /// The text of the file at `path`, for the CLI's `load` and `read`
-    /// (`qjs --std`). The default reads the process's file system.
+    /// (`qjs --std`). The default finds no file system and returns `None`.
     fn read_file(&mut self, path: &str) -> Option<String> {
-        std::fs::read_to_string(path).ok()
+        let _ = path;
+        None
     }
 
     /// The monotonic clock the collector times its pauses with
@@ -131,8 +120,9 @@ pub trait Host {
     }
 }
 
-/// The default host: the process's streams, the system clock, UTC.
+/// The host a runtime starts with, until the embedder installs its own: no
+/// output, no clock, no files, a constant seed.
 #[derive(Debug, Default)]
-pub struct SystemHost;
+pub(crate) struct NoHost;
 
-impl Host for SystemHost {}
+impl Host for NoHost {}

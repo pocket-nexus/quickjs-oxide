@@ -50,17 +50,24 @@ src/
 
 The core asks its embedder for one trait, `oxide_core::host::Host`, which the API re-exports as `api::core::Host`:
 
-| Method | Used by | Default |
+| Method | Used by | Core default |
 | --- | --- | --- |
-| `write(stream, text)` | `print`, `console.log`, the `qjs` helpers | the process's stdout and stderr |
-| `now_ms()` | `Date.now`, `new Date()` | the system clock |
+| `write(stream, text)` | `print`, `console.log`, the `qjs` helpers | discards |
+| `now_ms()` | `Date.now`, `new Date()` | the epoch |
 | `local_tz_offset_minutes(utc_ms)` | local-time `Date` methods | UTC |
-| `random_seed()` | the initial `Math.random` state | derived from the clock |
+| `random_seed()` | the initial `Math.random` state | a constant |
+| `monotonic()` | the collector's pause statistics | no clock: zero-length pauses |
 | `promise_rejection(event, promise)` | `HostPromiseRejectionTracker` (`Rejected`, `Handled`) | ignored |
-| `read_file(path)` | `load` and `read` under `qjs --std` | the process's file system |
+| `read_file(path)` | `load` and `read` under `qjs --std` | finds no file |
 | `interrupt()` | the loop's interrupt poll, about every thousand back-edges and calls | never interrupts |
 
-The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output; the page that embeds it shows results itself.
+Every default needs no operating system, because the core runs without one. The
+process's services live one layer up: the engine crate's `SystemHost` (the
+streams, the system clock, the file system, UTC) is what `Runtime::new` installs,
+and `adapters/native`'s `SystemHost` adds the host's TZif/POSIX time-zone rules
+(`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does).
+`adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and
+discards output; the page that embeds it shows results itself.
 
 Compilation and module loading are function pointers on the core's services, because the host object lives inside the runtime they borrow. The API installs the front end as the core's compile function (`set_compiler`) and its module shims as the core's `ModuleHost`; an embedder supplies module-loading policy through the API's `ModuleLoader` trait (`normalize`, `load`), whose callbacks receive a `ModuleScope`. A host function, the embedder's Rust closure as a JavaScript function, is a core native closure whose body the API wraps: the core lends it a `NativeCx` while it runs, and the API turns that into the closure's `Scope`. Applications choose input, output, module policy and when the job queue drains. [`src/engine/api/README.md`](../src/engine/api/README.md) describes the API's types.
 

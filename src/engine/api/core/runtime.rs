@@ -234,9 +234,6 @@ pub enum GcPolicy {
 /// The collector's statistics.
 pub use oxide_core::heap::gc::GcStats;
 
-/// A default host over the process: its streams, the system clock, UTC.
-pub use oxide_core::host::SystemHost;
-
 impl Default for Runtime {
     fn default() -> Self {
         Self::new()
@@ -250,7 +247,7 @@ impl Runtime {
     }
 
     pub fn with_options(options: RuntimeOptions) -> Self {
-        Self::with_host(SystemHost, options)
+        Self::with_host(super::host::SystemHost, options)
     }
 
     /// A runtime over `host` (the clock, the time zone, output, files).
