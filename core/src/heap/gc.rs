@@ -227,6 +227,8 @@ pub struct GcState {
     /// asks (`GcPolicy::Manual` of the API).
     pub(crate) manual: bool,
     pub stats: GcStats,
+    /// The pause clock, as the embedder handed it over.
+    pub(crate) monotonic: crate::host::Monotonic,
     /// When set, every pause is appended to `pauses`.
     pub record_pauses: bool,
     pub pauses: Vec<Duration>,
@@ -260,6 +262,7 @@ impl GcState {
             limits,
             manual: false,
             stats: GcStats::default(),
+            monotonic: crate::host::Monotonic::NONE,
             record_pauses: false,
             pauses: Vec::new(),
             mark_stack: Vec::new(),
@@ -389,7 +392,7 @@ impl Heap {
 
     /// A full collection.
     pub fn collect(&mut self) {
-        let start = crate::clock::Stopwatch::start();
+        let start = self.gc.monotonic.now_ns();
         let before = self.used_bytes();
         self.mark_from_roots();
         self.process_weak();
@@ -398,7 +401,8 @@ impl Heap {
         let live = self.used_bytes();
         self.set_budget(live);
         let gc = &mut self.gc;
-        let pause = start.elapsed();
+        let paused = gc.monotonic.now_ns().saturating_sub(start);
+        let pause = Duration::from_nanos(paused);
         let stats = &mut gc.stats;
         stats.collections += 1;
         stats.total_pause += pause;

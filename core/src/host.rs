@@ -20,8 +20,45 @@ pub enum RejectionEvent {
     Handled,
 }
 
-/// The embedder's services. Every method has a default suitable for a
-/// standalone runtime: the process's streams, the system clock and UTC.
+/// A monotonic reading in nanoseconds, handed over as a plain function.
+///
+/// The collector times its own pauses from paths that have no host in hand —
+/// an allocation that trips the pressure trigger is inside `Heap`. So the
+/// clock arrives the way QuickJS takes `JSMallocFunctions`: a function
+/// pointer the embedder installs once, not a method the core calls. A port
+/// with no clock leaves [`Monotonic::NONE`] in place and its pauses read zero.
+#[derive(Clone, Copy, Debug)]
+pub struct Monotonic(fn() -> u64);
+
+impl Default for Monotonic {
+    fn default() -> Monotonic {
+        Monotonic::NONE
+    }
+}
+
+impl Monotonic {
+    /// No clock: every reading is zero.
+    pub const NONE: Monotonic = Monotonic(no_clock);
+    /// The embedder's clock: nanoseconds from any fixed point, never going
+    /// backwards.
+    pub const fn new(read: fn() -> u64) -> Monotonic {
+        Monotonic(read)
+    }
+
+    /// A reading, in nanoseconds.
+    #[inline]
+    pub fn now_ns(self) -> u64 {
+        (self.0)()
+    }
+}
+
+const fn no_clock() -> u64 {
+    0
+}
+
+/// The embedder's services. Every method has a default that needs no
+/// operating system: no output, no clock, no files. A port that has them
+/// overrides them, as `quickjs-oxide-host` does.
 pub trait Host {
     /// Writes host output (`print`): UTF-8, with a lone surrogate of the
     /// JavaScript string encoded as is (WTF-8), as QuickJS's
@@ -56,10 +93,11 @@ pub trait Host {
         0
     }
 
-    /// The initial state of `Math.random`. The default derives it from the
-    /// system clock, as QuickJS seeds from host time.
+    /// The initial state of `Math.random`, as QuickJS seeds from host time.
+    /// The default is a constant: a clock-derived seed is the port's to
+    /// supply, and `quickjs-oxide-host` seeds from the system clock.
     fn random_seed(&mut self) -> u64 {
-        crate::clock::time_seed()
+        1
     }
 
     /// `HostPromiseRejectionTracker(promise, operation)`. The promise is a
@@ -76,6 +114,13 @@ pub trait Host {
     /// (`qjs --std`). The default reads the process's file system.
     fn read_file(&mut self, path: &str) -> Option<String> {
         std::fs::read_to_string(path).ok()
+    }
+
+    /// The monotonic clock the collector times its pauses with
+    /// ([collector statistics](crate::heap::gc::GcStats)). The default has no
+    /// clock, so pauses read zero — as on a target without one.
+    fn monotonic(&mut self) -> Monotonic {
+        Monotonic::NONE
     }
 
     /// Polled about every thousand loop back-edges and calls while a
