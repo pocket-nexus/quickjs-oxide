@@ -1,7 +1,7 @@
 //! The disassembler: one instruction per line, registers by role (`this`,
 //! `p0`, `l3`, `t2`, or `r300` above a frame's temporaries).
 
-use std::fmt::Write;
+use core::fmt::Write;
 
 use super::{Capture, CodeUnit, Format, Insn};
 use crate::heap::atom::{KeyKind, PropertyKey};

@@ -90,13 +90,13 @@ pub fn script(name: &str, extensions: bool) -> Option<PropertyRanges> {
         &tables::SCRIPT_SETS
     };
     let index = find(tables::SCRIPT_NAMES, name)?;
-    Some(PropertyRanges::new(std::slice::from_ref(&sets[index]), 1))
+    Some(PropertyRanges::new(core::slice::from_ref(&sets[index]), 1))
 }
 
 pub fn binary_property(name: &str) -> Option<PropertyRanges> {
     let index = find(tables::BINARY_PROPERTY_NAMES, name)?;
     Some(PropertyRanges::new(
-        std::slice::from_ref(&tables::BINARY_PROPERTY_SETS[index]),
+        core::slice::from_ref(&tables::BINARY_PROPERTY_SETS[index]),
         1,
     ))
 }
@@ -108,7 +108,7 @@ pub fn sequence_property(name: &str, mut visit: impl FnMut(&[u32])) -> Option<()
     // RGI_Emoji, the one name past the stored sets, is the union of them all.
     let sets = tables::SEQUENCE_PROPERTY_SETS
         .get(index)
-        .map_or(&tables::SEQUENCE_PROPERTY_SETS[..], std::slice::from_ref);
+        .map_or(&tables::SEQUENCE_PROPERTY_SETS[..], core::slice::from_ref);
     let data = &tables::SEQUENCE_DATA;
     for &offset in sets {
         let mut position = offset as usize;

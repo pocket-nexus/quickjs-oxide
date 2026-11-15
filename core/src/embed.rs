@@ -10,8 +10,8 @@
 //! and holds before its next entry). Results are unrooted; hold them before
 //! the next call that can allocate.
 
-use std::any::Any;
-use std::rc::Rc;
+use alloc::rc::Rc;
+use core::any::Any;
 
 use crate::bytecode::CodeStore;
 use crate::heap::atom::{KeyKind, PropertyKey};
@@ -250,7 +250,7 @@ impl<'a> NativeCx<'a> {
     }
 
     /// The flag another thread sets to interrupt the running script.
-    pub fn interrupt_flag(&self) -> std::sync::Arc<std::sync::atomic::AtomicBool> {
+    pub fn interrupt_flag(&self) -> std::sync::Arc<core::sync::atomic::AtomicBool> {
         std::sync::Arc::clone(&self.host.interrupt)
     }
 

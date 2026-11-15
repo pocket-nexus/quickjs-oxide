@@ -3,7 +3,7 @@
 //! schoolbook algorithms.
 
 use crate::float;
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Big {

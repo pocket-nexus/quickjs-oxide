@@ -21,7 +21,7 @@ pub mod table;
 pub mod values;
 mod verify;
 
-use std::fmt;
+use core::fmt;
 
 use self::arena::Arena;
 use self::atom::{AtomTable, KEY_INDEX_LIMIT, PropertyKey};
@@ -62,7 +62,7 @@ impl fmt::Display for HeapError {
     }
 }
 
-impl std::error::Error for HeapError {}
+impl core::error::Error for HeapError {}
 
 /// One unit of the tree [`Heap::alloc_bytecode_function`] creates.
 #[derive(Clone, Copy, Debug)]
@@ -124,7 +124,7 @@ pub struct Heap {
     /// Every module record: modules live as long as the runtime.
     pub(crate) modules: Vec<Value>,
     /// Bytes of flattened ropes (the arena counts a rope as empty).
-    pub(crate) rope_bytes: std::cell::Cell<usize>,
+    pub(crate) rope_bytes: core::cell::Cell<usize>,
     /// Each unflattened rope's two halves, by string index (kept out of
     /// [`StringRecord`], which every string pays for).
     pub(crate) ropes: FxHashMap<u32, (StringId, StringId)>,
@@ -185,7 +185,7 @@ pub struct Heap {
     /// marked as roots.
     pub(crate) arguments_shapes: [Option<ShapeId>; 2],
     /// The job queue: roots until each runs.
-    pub(crate) jobs: std::collections::VecDeque<crate::vm::jobs::Job>,
+    pub(crate) jobs: alloc::collections::VecDeque<crate::vm::jobs::Job>,
 }
 
 /// How long an atom [`Heap::intern`] returns is kept. Atoms are otherwise
@@ -225,7 +225,7 @@ impl Heap {
             rejections: Vec::new(),
             holey: Default::default(),
             modules: Vec::new(),
-            rope_bytes: std::cell::Cell::new(0),
+            rope_bytes: core::cell::Cell::new(0),
             ropes: FxHashMap::default(),
             html_dda: false,
             symbols: Arena::new(),
@@ -251,7 +251,7 @@ impl Heap {
             closure_shapes: [None; CLOSURE_SHAPES],
             pending_closure_shapes: [None; CLOSURE_SHAPES],
             arguments_shapes: [None; 2],
-            jobs: std::collections::VecDeque::new(),
+            jobs: alloc::collections::VecDeque::new(),
         };
         let cell = heap
             .cells
@@ -1284,7 +1284,7 @@ impl Heap {
 
     /// Sets how [`Heap::intern`] keeps its atoms; returns the mode before.
     pub fn set_atom_mode(&mut self, mode: AtomMode) -> AtomMode {
-        std::mem::replace(&mut self.atom_mode, mode)
+        core::mem::replace(&mut self.atom_mode, mode)
     }
 
     pub fn atom_mode(&self) -> AtomMode {

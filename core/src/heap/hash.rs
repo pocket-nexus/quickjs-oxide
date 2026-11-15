@@ -1,8 +1,8 @@
 //! A small multiplicative hasher for the heap's internal tables, whose keys are
 //! 32-bit indices and are not attacker-chosen hash-flooding inputs.
 
+use core::hash::{BuildHasherDefault, Hasher};
 use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
 
 const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
 

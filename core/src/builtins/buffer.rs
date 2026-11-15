@@ -393,7 +393,7 @@ fn transfer_buffer(cx: &mut Cx<'_>, site: CallSite, preserve: bool) -> Result<Va
     let prototype = cx.realm.intrinsic(Intrinsic::ArrayBufferPrototype);
     let result = alloc_buffer(cx, prototype, 0, max, false)?;
     let source = typed::buffer_mut(cx.heap, object);
-    let mut bytes = match std::mem::replace(&mut source.store, Store::Owned(Vec::new())) {
+    let mut bytes = match core::mem::replace(&mut source.store, Store::Owned(Vec::new())) {
         Store::Owned(bytes) => bytes,
         Store::Shared(_) => unreachable!("an ArrayBuffer"),
     };

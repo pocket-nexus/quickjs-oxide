@@ -368,6 +368,6 @@ pub(super) fn pause(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             _ => return Err(error::type_error(cx, "not an integral number")),
         }
     }
-    std::hint::spin_loop();
+    core::hint::spin_loop();
     Ok(Value::UNDEFINED)
 }

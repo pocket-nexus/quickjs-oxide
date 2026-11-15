@@ -4,8 +4,8 @@
 //! and `new` on bytecode functions stay in the loop; a throw unwinds through
 //! the handler tables.
 
-use std::cmp::Ordering;
-use std::rc::Rc;
+use alloc::rc::Rc;
+use core::cmp::Ordering;
 
 use super::arguments;
 use super::error::{self, ErrorKind};
@@ -155,14 +155,14 @@ fn raise_top(cx: &mut Cx<'_>, end: u32) {
 }
 
 #[inline(never)]
-fn clear_registers(cx: &mut Cx<'_>, range: std::ops::Range<usize>) {
+fn clear_registers(cx: &mut Cx<'_>, range: core::ops::Range<usize>) {
     cx.heap.vm.registers[range].fill(Value::UNDEFINED);
 }
 
 /// Moves the arguments past a function's parameters above its registers.
 #[cold]
 #[inline(never)]
-fn keep_extra_arguments(cx: &mut Cx<'_>, extras: std::ops::Range<usize>, to: usize) {
+fn keep_extra_arguments(cx: &mut Cx<'_>, extras: core::ops::Range<usize>, to: usize) {
     cx.heap.vm.registers.copy_within(extras, to);
 }
 
@@ -839,7 +839,7 @@ pub(super) fn call_from_rust(
 /// gives every C function call a stack frame).
 #[inline(never)]
 fn native_from_rust(cx: &mut Cx<'_>, native: Native, site: CallSite) -> Result<Value, Throw> {
-    if std::mem::take(&mut cx.heap.vm.frameless_native) || native.frameless() {
+    if core::mem::take(&mut cx.heap.vm.frameless_native) || native.frameless() {
         return native::call(cx, native, site);
     }
     cx.heap.vm.natives.push(super::NativeSite {

@@ -5,6 +5,10 @@
 
 #![forbid(unsafe_code)]
 
+// `alloc` by its own path, not through `std`'s prelude: the core takes every
+// collection from here so that `#![no_std]` is a switch rather than a rewrite.
+extern crate alloc;
+
 pub mod builtins;
 pub mod bytecode;
 mod clock;

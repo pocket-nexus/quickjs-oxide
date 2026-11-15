@@ -7,8 +7,8 @@
 //! 0 is its target; a registry's slot 0 is the cleanup callback, then a cell
 //! of three slots (target, held value, unregister token) per registration.
 
-use std::cell::Cell;
-use std::rc::Rc;
+use alloc::rc::Rc;
+use core::cell::Cell;
 
 use super::{
     Native, accessor, getter, install_constructor, link_constructor, methods, to_string_tag,

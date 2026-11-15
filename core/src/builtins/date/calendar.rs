@@ -166,7 +166,7 @@ pub(crate) fn time_clip(time: f64) -> f64 {
 /// or folded into a fused multiply-add by later optimization changes.
 #[inline(never)]
 fn fp_step(value: f64) -> f64 {
-    std::hint::black_box(value)
+    core::hint::black_box(value)
 }
 
 /// Pinned QuickJS's `set_date_fields`: MakeDay, MakeTime, MakeDate, optional
