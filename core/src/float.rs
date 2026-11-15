@@ -20,6 +20,17 @@ pub(crate) use libm::{
     log10, pow, sin, sinh, sqrt, tan, tanh, trunc,
 };
 
+/// `f64::rem_euclid`: the remainder with the modulus's sign, which `core` has
+/// no method for.
+pub(crate) fn rem_euclid(value: f64, modulus: f64) -> f64 {
+    let remainder = value % modulus;
+    if remainder < 0.0 {
+        remainder + modulus.abs()
+    } else {
+        remainder
+    }
+}
+
 /// `f64::fract`: the fractional part, keeping the sign of the input.
 pub(crate) fn fract(value: f64) -> f64 {
     value - trunc(value)

@@ -3,6 +3,10 @@
 //! still in their registers (so rooted) and roots any intermediate it holds
 //! across a second allocation or a call back into JavaScript.
 
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 use crate::float;
 use core::cmp::Ordering;
 

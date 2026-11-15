@@ -3,6 +3,9 @@
 //! `DataView` (tag `DataView`) holds the buffer in slot 0 and a byte [`View`].
 //! `Symbol.species` is not consulted: `slice` makes an intrinsic buffer.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use super::bigint::to_index;
 use super::{
     Native, accessor, getter, install_constructor, link_constructor, methods, to_string_tag,

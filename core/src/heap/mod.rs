@@ -6,6 +6,11 @@
 //! allocating call must root it on [`RootStack`](gc::RootStack) first; see
 //! `core/README.md`.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 pub mod arena;
 pub mod atom;
 pub mod bigint;

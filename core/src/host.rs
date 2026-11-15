@@ -2,6 +2,8 @@
 //! the platform only through this trait, so it stays dependency-free and a port
 //! supplies its own implementation.
 
+use alloc::string::String;
+
 /// Which output stream `print` and the console write to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Stream {

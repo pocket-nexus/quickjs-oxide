@@ -8,6 +8,8 @@
 //! The record vector grows by [`step_bytes`] and gives back a trailing free
 //! run of more than a quarter of its capacity after a sweep.
 
+use alloc::vec::Vec;
+
 use core::mem;
 
 use super::gc::Room;

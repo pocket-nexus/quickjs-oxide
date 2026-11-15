@@ -1,6 +1,8 @@
 //! Typed-array elements: the integer-indexed exotic object's element reads and
 //! writes, the element conversions, and the loop's inline paths.
 
+use alloc::vec::Vec;
+
 use super::{Cx, Throw, error, number, ops};
 use crate::float;
 use crate::heap::Heap;

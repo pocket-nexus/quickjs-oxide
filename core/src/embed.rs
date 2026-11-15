@@ -10,6 +10,9 @@
 //! and holds before its next entry). Results are unrooted; hold them before
 //! the next call that can allocate.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use alloc::rc::Rc;
 use core::any::Any;
 

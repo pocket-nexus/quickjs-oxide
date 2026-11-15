@@ -1,5 +1,8 @@
 //! Number conversions: `Number::toString(10)`, `StringToNumber`, `ToInt32`.
 
+use alloc::string::String;
+use alloc::string::ToString;
+
 use crate::float;
 use crate::value::Value;
 
@@ -30,7 +33,7 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
         return 0;
     }
     let truncated = float::trunc(value);
-    let modulo = truncated.rem_euclid(4_294_967_296.0);
+    let modulo = float::rem_euclid(truncated, 4_294_967_296.0);
     modulo as u32
 }
 

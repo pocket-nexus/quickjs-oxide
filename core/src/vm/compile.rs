@@ -13,6 +13,11 @@
 //! string constants) are held. Before the program runs, its atoms are pinned
 //! for good instead.
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use super::native::CallSite;
 use super::{Cx, Throw, error, ops};
 use crate::ErrorKind;

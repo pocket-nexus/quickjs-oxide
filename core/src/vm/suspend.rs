@@ -9,6 +9,8 @@
 //! and a [`SavedFrame`] header. While an activation runs, its record is on
 //! `VmStack::active`, where `Yield` and `Await` find it.
 
+use alloc::vec::Vec;
+
 use super::error;
 use super::interp;
 use super::jobs;

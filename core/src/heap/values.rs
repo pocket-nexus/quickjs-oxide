@@ -13,6 +13,8 @@
 //! free run, then splits the smallest larger free range. The value heap does not move
 //! ranges; [`ValueHeap::fragmentation`] reports what churn leaves behind.
 
+use alloc::vec::Vec;
+
 use super::arena::{grown_capacity, step_bytes};
 use super::gc::Room;
 use crate::value::Value;

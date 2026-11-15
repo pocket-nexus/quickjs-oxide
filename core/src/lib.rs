@@ -4,9 +4,13 @@
 //! embedder's entries. See `core/README.md`.
 
 #![forbid(unsafe_code)]
+// Without an operating system: no threads, no files, no clock of its own. The
+// host brings those (see `host`), and the test build keeps the standard
+// library because a test harness needs a process.
+#![cfg_attr(not(test), no_std)]
 
 // `alloc` by its own path, not through `std`'s prelude: the core takes every
-// collection from here so that `#![no_std]` is a switch rather than a rewrite.
+// collection from here, because there is no prelude to take them from.
 extern crate alloc;
 
 pub mod builtins;

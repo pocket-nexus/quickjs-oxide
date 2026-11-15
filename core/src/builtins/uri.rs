@@ -1,6 +1,8 @@
 //! The URI functions and the Annex B `escape` and `unescape`: QuickJS's codecs
 //! over UTF-16 code units.
 
+use alloc::vec::Vec;
+
 use super::{Native, methods, string_units, to_string_id};
 use crate::heap::HeapError;
 use crate::value::Value;

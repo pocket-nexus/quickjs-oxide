@@ -11,6 +11,8 @@
 //! threads), the buffer's maximum length, and the value. Reports are strings in
 //! a queue.
 
+use alloc::boxed::Box;
+
 use alloc::string::String;
 use alloc::sync::Arc;
 

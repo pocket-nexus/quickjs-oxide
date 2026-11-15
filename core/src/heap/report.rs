@@ -3,6 +3,11 @@
 //! [`MemoryReport::reserved_bytes`] equals [`Heap::bytes`], the total the heap
 //! cap compares against.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use core::fmt;
 
 use super::Heap;

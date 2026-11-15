@@ -5,6 +5,9 @@
 //! arena. Collection happens only at an allocation safepoint
 //! ([`Heap::safepoint`]) or on an explicit [`Heap::collect`].
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use core::mem;
 use core::time::Duration;
 

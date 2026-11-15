@@ -10,6 +10,12 @@
 //! are `2^a * radix^b`, so every division is a shift or a run of one-limb
 //! divisions.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 use crate::float;
 use core::cmp::Ordering;
 
