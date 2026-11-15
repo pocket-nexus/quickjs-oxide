@@ -15,7 +15,6 @@ quickjs-oxide is an interpreter: it compiles JavaScript to bytecode and runs tha
 | The value heap | `core/src/heap/values.rs` | property values and elements in one vector, in size classes |
 | Mark-sweep collector | `core/src/heap/gc.rs` | collects only at allocation; memory bounded by a budget |
 | Reclaiming run-time code | `core/src/heap/code.rs` | code from `eval` and `new Function` is freed when unreachable |
-| Regular-expression search plans | `regexp/src/compiler/search.rs`, `regexp/src/executor.rs` | conservative search filters, direct literal matching and fused class repetitions |
 | Linear-time compilation | `src/engine/compiler` | compile cost grows with the source size, not faster |
 | Startup layout | `apps/cli/qjs.order` | the code that every run executes sits together in the binary |
 
@@ -56,7 +55,7 @@ Each unit is checked once by a validator ([`core/src/bytecode/validate.rs`](http
 - **Register windows.** All frames share one register file. A call's window starts at the callee's operands inside the caller's window, so arguments are never copied. The loop takes the running window as a fixed-size array, which lets the compiler drop the bounds check on an 8-bit register operand.
 - **Calls stay in the loop.** A call, return or `new` of a bytecode function pushes or pops a 32-byte `Frame` and continues, with no Rust recursion. `Function.prototype.call` and `apply` are rewritten into a direct call of their receiver.
 - **Inline fast paths.** Moves, constants, `Int32` and double arithmetic and comparisons, compare-and-branch, cache hits, dense element access, closures' captured variables and calls are handled in the loop body. An overflow or a non-number operand falls to an out-of-line function.
-- **Cold code out of line.** Opcodes that no hot path runs (spread, `arguments`, class setup, generators, iteration protocol steps and others) share out-of-line functions such as `rare_op`. The loop must stay under 16,384 bytes of machine code; its size is checked for each measured release build because the toolchain and profile affect it.
+- **Cold code out of line.** Opcodes that no hot path runs (spread, `arguments`, class setup, generators, iteration protocol steps and others) share out-of-line functions such as `rare_op`. The loop is kept under 16,384 bytes of machine code; it is 15,226 bytes.
 - **Natives.** Builtins are Rust functions that read their receiver and arguments straight from the register file and call back into JavaScript through a nested loop.
 - **Suspension.** Generators and async functions copy their register window into a heap record when they suspend and back when they resume, so a frame that never suspends pays nothing for them.
 
@@ -140,12 +139,6 @@ The compiler's passes each walk a function once:
 - debug positions and source locations are assigned in one forward pass over the source.
 
 Compile time and compile memory therefore grow in proportion to the source size, which matters for large bundles and for embedders that compile code at run time.
-
-## Regular-expression matching
-
-The compiler derives conservative search facts from the parsed pattern: start anchoring, minimum UTF-16 length, an ASCII first-character bitmap and a required literal with a bounded prefix where possible. These facts reject impossible searches before allocating execution buffers; capture-free pure literals match directly. Other patterns retain the instruction VM's capture, assertion and Unicode semantics.
-
-Forward repetitions of single-character classes use a fused instruction. Greedy backtracking retains one endpoint frame, while lazy matching extends only when the continuation fails. One spare set of execution buffers per thread is retained up to 32 KiB; reentrant calls lease separate buffers. Sticky and start-anchored matches avoid scanning an unrelated suffix on a cheap failure, and defer the required-literal proof until matching becomes expensive. The [RegExp implementation guide](https://github.com/pocket-nexus/quickjs-oxide/blob/main/regexp/src/README.md) describes the search and interrupt budgets.
 
 ## Startup layout
 
