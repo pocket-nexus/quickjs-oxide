@@ -4,6 +4,7 @@
 //! shared bytes of a `SharedArrayBuffer` (an `Arc`, so no heap crosses threads)
 //! and waits until each has taken them; reports are strings in a shared queue.
 
+use crate::float;
 use std::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
@@ -241,7 +242,7 @@ pub(super) fn sleep(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 }
 
 pub(super) fn monotonic_now(_cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, Throw> {
-    Ok(Value::number(monotonic_ms().floor()))
+    Ok(Value::number(float::floor(monotonic_ms())))
 }
 
 /// `$262.agent.receiveBroadcast(callback)` in an agent.

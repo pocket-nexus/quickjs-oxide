@@ -9,6 +9,7 @@ use super::{
     Native, install_constructor, link_constructor, methods, string_repr, string_units, this_string,
     to_string_id,
 };
+use crate::float;
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::heap::string::StringRepr;
@@ -207,7 +208,7 @@ pub(super) fn from_code_point(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, 
     for index in 0..site.argc {
         let code = site.arg(cx, index);
         let code = ops::to_number(cx, code)?;
-        if code.fract() != 0.0 || !(0.0..=1_114_111.0).contains(&code) {
+        if float::fract(code) != 0.0 || !(0.0..=1_114_111.0).contains(&code) {
             return Err(error::range_error(cx, "invalid code point"));
         }
         push_code_point(&mut text, code as u32);
@@ -355,7 +356,7 @@ pub(super) fn last_index_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Th
     let position = if position.is_nan() {
         f64::INFINITY
     } else {
-        position.trunc()
+        float::trunc(position)
     };
     let start = position.clamp(0.0, haystack.len() as f64) as usize;
     if needle.len() > haystack.len() {

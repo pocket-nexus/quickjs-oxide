@@ -9,6 +9,7 @@ pub mod builtins;
 pub mod bytecode;
 mod clock;
 pub mod embed;
+mod float;
 pub mod heap;
 pub mod host;
 pub mod runtime;

@@ -5,6 +5,8 @@
 //! injected by callers: the calendar code must not silently turn local-time
 //! operations into UTC operations.
 
+use crate::float;
+
 const MS_PER_SECOND: i64 = 1_000;
 const MS_PER_MINUTE: i64 = 60 * MS_PER_SECOND;
 const MS_PER_HOUR: i64 = 60 * MS_PER_MINUTE;
@@ -148,7 +150,7 @@ where
 /// ECMAScript TimeClip as implemented by pinned QuickJS.
 pub(crate) fn time_clip(time: f64) -> f64 {
     if (-TIME_CLIP_BOUND..=TIME_CLIP_BOUND).contains(&time) {
-        let clipped = time.trunc();
+        let clipped = float::trunc(time);
         // Upstream uses `trunc(t) + 0.0`; spell the signed-zero consequence out
         // so it cannot be optimized into retaining negative zero.
         if clipped == 0.0 { 0.0 } else { clipped }
@@ -184,7 +186,7 @@ where
     let year = fields[0];
     let month = fields[1];
     let date = fields[2];
-    let normalized_year = fp_step(year + (month / 12.0).floor());
+    let normalized_year = fp_step(year + float::floor(month / 12.0));
     let mut normalized_month = month % 12.0;
     if normalized_month < 0.0 {
         normalized_month += 12.0;
@@ -255,7 +257,7 @@ where
         if !field.is_finite() {
             return f64::NAN;
         }
-        *field = field.trunc();
+        *field = float::trunc(*field);
         if index == 0 && (0.0..100.0).contains(field) {
             *field += 1900.0;
         }

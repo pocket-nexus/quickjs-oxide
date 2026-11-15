@@ -2,6 +2,7 @@
 //! and `BigInt.prototype`'s `toString(radix)`, `toLocaleString` and `valueOf`.
 
 use super::{Native, install_constructor, link_constructor, methods, string_text, to_string_tag};
+use crate::float;
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
 use crate::runtime::Intrinsic;
@@ -97,7 +98,7 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
                 "cannot convert NaN or Infinity to BigInt",
             ));
         }
-        if number.trunc() != number {
+        if float::trunc(number) != number {
             return Err(error::range_error(
                 cx,
                 "cannot convert to BigInt: not an integer",

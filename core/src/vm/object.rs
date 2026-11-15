@@ -25,6 +25,7 @@ use super::ops;
 use super::property::{self, length_value};
 use super::proxy;
 use super::{Cx, Throw, module, typed};
+use crate::float;
 use crate::heap::atom::{KeyKind, PropertyKey};
 use crate::heap::object::{InternalTag, NONE, ObjectKind, flags};
 use crate::runtime::{Intrinsic, Names, WellKnown};
@@ -688,7 +689,7 @@ pub(crate) fn index_key(cx: &mut Cx<'_>, index: u32) -> Result<PropertyKey, Thro
 
 /// The key of a number index up to 2^53 − 1.
 pub(crate) fn number_key(cx: &mut Cx<'_>, index: f64) -> Result<PropertyKey, Throw> {
-    if (0.0..4294967295.0).contains(&index) && index.fract() == 0.0 {
+    if (0.0..4294967295.0).contains(&index) && float::fract(index) == 0.0 {
         return index_key(cx, index as u32);
     }
     let text = super::number::to_string(index);
@@ -1295,7 +1296,7 @@ pub(crate) fn cannot_define(cx: &mut Cx<'_>, mut object: ObjectId, key: Property
     let message = match header.kind {
         ObjectKind::Proxy => "proxy: defineProperty exception",
         ObjectKind::TypedArray => match super::typed::numeric_index(heap, key) {
-            Some(index) if index.fract() != 0.0 || !index.is_finite() => {
+            Some(index) if float::fract(index) != 0.0 || !index.is_finite() => {
                 "non integer index in typed array"
             }
             Some(index) if index.is_sign_negative() => "negative index in typed array",
@@ -1412,7 +1413,7 @@ pub(crate) fn to_integer_or_infinity(cx: &mut Cx<'_>, value: Value) -> Result<f6
         0.0
     } else {
         // `trunc` keeps -0; ToIntegerOrInfinity returns +0 for it.
-        number.trunc() + 0.0
+        float::trunc(number) + 0.0
     })
 }
 

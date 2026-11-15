@@ -2,6 +2,7 @@
 //! high zero limbs), the representation of the heap's `BigIntRecord`. Plain
 //! schoolbook algorithms.
 
+use crate::float;
 use std::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,7 +80,7 @@ impl Big {
 
     /// The exact value of an integral double.
     pub fn from_f64(value: f64) -> Option<Big> {
-        if !value.is_finite() || value.trunc() != value {
+        if !value.is_finite() || float::trunc(value) != value {
             return None;
         }
         let bits = value.abs().to_bits();

@@ -3,6 +3,7 @@
 //! still in their registers (so rooted) and roots any intermediate it holds
 //! across a second allocation or a call back into JavaScript.
 
+use crate::float;
 use std::cmp::Ordering;
 
 use super::bigint::{Big, BigError, qjs};
@@ -782,7 +783,7 @@ fn compare_big_number(a: &Big, b: f64) -> Option<Ordering> {
             Ordering::Greater
         });
     }
-    let floor = b.floor();
+    let floor = float::floor(b);
     let order = a.cmp(&Big::from_f64(floor).expect("finite integral"));
     Some(if order == Ordering::Equal && floor != b {
         Ordering::Less
