@@ -7,10 +7,10 @@
 //! UTF-16 surrogates that Rust scalar-value APIs cannot represent.
 
 use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, index_position};
+use alloc::vec::Vec;
 #[cfg(any(test, feature = "test-hooks"))]
 use core::cell::Cell;
 use core::cmp::Ordering;
-use alloc::vec::Vec;
 
 mod tables {
     include!("generated/unicode/unicode_normalize_tables.rs");
