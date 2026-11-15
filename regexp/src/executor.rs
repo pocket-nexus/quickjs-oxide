@@ -6,13 +6,14 @@
 //! through the Rust call stack and never delegates to a host regular-expression
 //! engine.
 
-use core::cell::RefCell;
 use core::error::Error as StdError;
 use core::fmt;
 use core::ops::Range;
 
 use super::{CharacterRange, ClassRepeat, CompiledRegExp, Instruction, RegExpFlags};
 use crate::unicode::case::regexp_canonicalize as canonicalize;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 
 const INTERRUPT_POLL_INTERVAL: u32 = 10_000;
 const REQUIRED_PREFILTER_DELAY: u32 = 128;
@@ -366,13 +367,19 @@ fn execute_search<T: Copy + Into<u16>, F: FnMut() -> bool>(
             return Ok(None);
         }
         if state.is_none() {
-            state = Some(Scratch::acquire(
+            // One attempt state per execution, reused across candidate
+            // positions. It used to come from a thread-local spare; a target
+            // without threads has no thread-local storage, and the reuse that
+            // matters is this one.
+            let mut fresh = AttemptState::default();
+            fresh.prepare(
                 program.capture_count(),
                 program.register_count(),
                 candidate,
-            )?);
+            )?;
+            state = Some(fresh);
         }
-        let state = &mut state.as_mut().expect("attempt state was initialized").state;
+        let state = state.as_mut().expect("attempt state was initialized");
         state.reset(candidate);
         if let Some(result) = run_attempt(program, input, unicode, &mut poller, state)? {
             return Ok(Some(result));
@@ -728,59 +735,6 @@ struct AttemptState {
     registers: Vec<RegisterValue>,
     undo: Vec<Undo>,
     controls: Vec<ControlFrame>,
-}
-
-// One bounded spare per thread. No borrow survives acquisition, so an interrupt
-// hook may reenter the regexp engine without aliasing an active execution.
-const MAX_SCRATCH_BYTES: usize = 32 * 1024;
-thread_local! {
-    static SCRATCH: RefCell<Option<AttemptState>> = const { RefCell::new(None) };
-}
-
-struct Scratch {
-    state: AttemptState,
-}
-
-impl Scratch {
-    fn acquire(captures: u8, registers: u8, position: usize) -> Result<Self, ExecError> {
-        let mut state = SCRATCH
-            .with(|slot| slot.borrow_mut().take())
-            .unwrap_or_default();
-        state.prepare(captures, registers, position)?;
-        Ok(Self { state })
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let state = &mut self.state;
-        let bytes = state
-            .captures
-            .capacity()
-            .saturating_mul(size_of::<Option<usize>>())
-            .saturating_add(
-                state
-                    .registers
-                    .capacity()
-                    .saturating_mul(size_of::<RegisterValue>()),
-            )
-            .saturating_add(state.undo.capacity().saturating_mul(size_of::<Undo>()))
-            .saturating_add(
-                state
-                    .controls
-                    .capacity()
-                    .saturating_mul(size_of::<ControlFrame>()),
-            );
-        if bytes <= MAX_SCRATCH_BYTES {
-            state.reset(0);
-            let _ = SCRATCH.try_with(|slot| {
-                let mut slot = slot.borrow_mut();
-                if slot.is_none() {
-                    *slot = Some(core::mem::take(state));
-                }
-            });
-        }
-    }
 }
 
 impl AttemptState {
@@ -1567,6 +1521,7 @@ fn range_contains(ranges: &[CharacterRange], character: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, vec};
 
     fn program(
         flags: RegExpFlags,
@@ -1906,8 +1861,7 @@ mod tests {
     }
 
     #[test]
-    fn scratch_is_reentrant_cleared_after_errors_and_bounded() {
-        SCRATCH.with(|slot| *slot.borrow_mut() = None);
+    fn an_interrupt_hook_may_run_the_engine_again() {
         let outer = compile("([a-z]+)$", "");
         let inner = compile("(b)+", "");
         let input = vec![u16::from(b'a'); 30_000];
@@ -1936,19 +1890,6 @@ mod tests {
             execute(&inner, &units("b"), 0).unwrap().unwrap().capture(1),
             Some(&(0..1))
         );
-        SCRATCH.with(|slot| {
-            let slot = slot.borrow();
-            let state = slot.as_ref().unwrap();
-            assert!(state.captures.iter().all(Option::is_none));
-            assert!(state.controls.is_empty() && state.undo.is_empty());
-        });
-        let mut large = Scratch::acquire(1, 0, 0).unwrap();
-        large
-            .state
-            .controls
-            .reserve(MAX_SCRATCH_BYTES / size_of::<ControlFrame>() + 1);
-        drop(large);
-        SCRATCH.with(|slot| assert!(slot.borrow().is_none()));
     }
 
     #[test]

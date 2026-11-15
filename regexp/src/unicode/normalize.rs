@@ -10,6 +10,7 @@ use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, index_position}
 #[cfg(any(test, feature = "test-hooks"))]
 use core::cell::Cell;
 use core::cmp::Ordering;
+use alloc::vec::Vec;
 
 mod tables {
     include!("generated/unicode/unicode_normalize_tables.rs");

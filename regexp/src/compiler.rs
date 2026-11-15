@@ -12,6 +12,13 @@ use super::group_name::GroupName;
 use super::group_name::{self, CaptureSummary};
 use super::opcode::{CharacterRange, Instruction};
 use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::vec;
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::borrow::ToOwned;
 
 mod search;
 pub(super) use search::SearchPlan;

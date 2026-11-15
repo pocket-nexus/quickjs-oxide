@@ -4,6 +4,9 @@
 //! JavaScript identifier lexer: group names always use Unicode identifier
 //! semantics, accept only `\u` escapes, and are normalized before comparison.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 /// A normalized group name: its UTF-16 code units.
 pub type GroupName = Box<[u16]>;
 
@@ -313,6 +316,7 @@ const fn combine_surrogates_u32(high: u32, low: u32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, vec};
 
     fn parsed(source: &str) -> Option<String> {
         let units = source.encode_utf16().collect::<Vec<_>>();
