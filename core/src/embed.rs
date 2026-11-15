@@ -250,8 +250,8 @@ impl<'a> NativeCx<'a> {
     }
 
     /// The flag another thread sets to interrupt the running script.
-    pub fn interrupt_flag(&self) -> std::sync::Arc<core::sync::atomic::AtomicBool> {
-        std::sync::Arc::clone(&self.host.interrupt)
+    pub fn interrupt_flag(&self) -> alloc::sync::Arc<core::sync::atomic::AtomicBool> {
+        alloc::sync::Arc::clone(&self.host.interrupt)
     }
 
     /// Whether an interrupt is unwinding (the last throw was one).

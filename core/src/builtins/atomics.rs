@@ -285,7 +285,7 @@ fn location(cx: &Cx<'_>, object: ObjectId, byte_index: usize) -> Option<WaitLoca
     let (_, store) = typed::view(cx.heap, object);
     match &typed::buffer(cx.heap, store).store {
         Store::Shared(shared) => Some(WaitLocation::new(
-            std::sync::Arc::as_ptr(shared) as *const () as usize as u64,
+            alloc::sync::Arc::as_ptr(shared) as *const () as usize as u64,
             byte_index,
         )),
         Store::Owned(_) => None,
