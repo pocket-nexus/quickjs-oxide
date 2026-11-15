@@ -139,6 +139,32 @@ jobs:
             --test unsupported_diagnostics --test oracle \
             -- -D warnings
 
+  # The bare-metal target the core is being converted for (docs/planned.md §5.4).
+  # Non-blocking on purpose: it reports how much of the core still depends on
+  # `std`, and turns blocking once the conversion lands.
+  core-no-std:
+    continue-on-error: true
+    if: >-
+      github.event_name == 'pull_request' ||
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.tier == 'fast')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned toolchain with the bare-metal target
+        run: |
+          rustup toolchain install "${RUST_VERSION}" --profile minimal
+          rustup default "${RUST_VERSION}"
+          rustup target add thumbv7em-none-eabi
+
+      - name: Check the core crate against the bare-metal target
+        run: cargo check --locked -p quickjs-oxide-core --target thumbv7em-none-eabi
+
   test262-focused:
     if: >-
       github.event_name == 'pull_request' ||
