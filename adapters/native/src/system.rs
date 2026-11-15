@@ -98,6 +98,10 @@ impl Host for SystemHost {
     fn monotonic(&mut self) -> Monotonic {
         self.process.monotonic()
     }
+
+    fn sleep_ms(&mut self, milliseconds: f64) {
+        self.process.sleep_ms(milliseconds);
+    }
 }
 
 fn timezone_offset_at(time_zone: &TimeZone, unix_seconds: i64) -> i32 {

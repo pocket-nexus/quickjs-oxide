@@ -112,6 +112,11 @@ pub trait Host {
         Monotonic::NONE
     }
 
+    /// Blocks the calling thread for `milliseconds` (`$262.agent.sleep`). The
+    /// default has no clock to wait on and returns at once: a target with one
+    /// thread has nothing to yield to.
+    fn sleep_ms(&mut self, _milliseconds: f64) {}
+
     /// Polled about every thousand loop back-edges and calls while a
     /// script runs: `true` stops the script with an uncatchable
     /// `InternalError: interrupted`. The default never interrupts.

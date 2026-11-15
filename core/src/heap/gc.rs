@@ -6,7 +6,7 @@
 //! ([`Heap::safepoint`]) or on an explicit [`Heap::collect`].
 
 use core::mem;
-use std::time::Duration;
+use core::time::Duration;
 
 use super::hash::FxHashMap;
 use super::object::{InternalTag, NONE, ObjectKind};
