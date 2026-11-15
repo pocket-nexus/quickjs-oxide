@@ -29,11 +29,17 @@ python3 scripts/release/gen-symbol-order.py --check-inputs
 
 current="$(./scripts/release/workspace-version.sh)"
 if [[ "${current}" != "${version}" ]]; then
+  # A version changes Rust symbol hashes. Preserve the current binary's
+  # function order rather than giving unrelated hot loops a new placement.
+  cargo build --locked --release --quiet -p quickjs-oxide-cli --bin qjs
+  layout_reference_dir="$(mktemp -d)"
+  trap 'rm -rf -- "${layout_reference_dir}"' EXIT
+  cp target/release/qjs "${layout_reference_dir}/qjs"
   ./scripts/release/set-workspace-version.sh "${version}"
   # The order file names mangled symbols, whose crate hashes change with the
   # version: regenerate it for the release build.
   cargo build --locked --release --quiet -p quickjs-oxide-cli --bin qjs
-  python3 scripts/release/gen-symbol-order.py
+  python3 scripts/release/gen-symbol-order.py --layout-reference "${layout_reference_dir}/qjs"
   git commit --quiet -m "release: ${tag}" -- Cargo.toml Cargo.lock apps/cli/qjs.order
 fi
 git tag -a "${tag}" -m "quickjs-oxide ${tag}"

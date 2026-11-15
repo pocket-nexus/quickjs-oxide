@@ -30,7 +30,12 @@ git push --atomic origin main v0.1.0
 `cut-release.sh` sets the workspace version, refreshes `Cargo.lock`,
 regenerates `apps/cli/qjs.order` (the link order of `qjs`; its mangled names
 change with the version), commits `release: v0.1.0` and creates the annotated
-tag. Regenerating runs the release `qjs` under callgrind, so `valgrind` and the
+tag. Before changing the version it builds a layout reference; regeneration
+translates that binary's function order across changed Rust symbol hashes,
+including equivalent folded functions. The profiled interpreter dispatch loop
+is placed first; the remaining functions retain their previous relative order.
+Startup profiles add functions without a previous placement. Regenerating
+runs the release `qjs` under callgrind, so `valgrind` and the
 fixed-work bundles that `scripts/release/gen-symbol-order.py` reads must be
 present. The release workflow rejects a
 tag that does not match the workspace version, so `cargo install --tag` and the
