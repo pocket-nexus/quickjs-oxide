@@ -6,6 +6,12 @@
 //! plain `u32` code points. Heap objects and ECMAScript intrinsics are wired
 //! by the engines that depend on it (the root crate and `quickjs-oxide-core`).
 
+// Without an operating system, except two builds that need one: the test
+// harness, and `test-hooks` — the allocation-failure hooks a test arms are
+// thread-local, and a target without threads has no thread-local storage.
+// `test-hooks` is a dev-dependency feature only: no dependent enables it in a
+// normal build, so every shipped build of this crate is the no_std one.
+#![cfg_attr(all(not(test), not(feature = "test-hooks")), no_std)]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
