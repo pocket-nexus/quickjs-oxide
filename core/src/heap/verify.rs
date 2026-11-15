@@ -8,7 +8,7 @@
 //! empties a dead registry cell, so every edge is empty, a primitive or a
 //! live record.
 
-use std::fmt;
+use core::fmt;
 
 use super::Heap;
 use super::arena::{Arena, Record};

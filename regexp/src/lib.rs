@@ -8,6 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+extern crate alloc;
+
 mod compiler;
 mod executor;
 mod flags;

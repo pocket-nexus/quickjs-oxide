@@ -163,7 +163,7 @@ impl ValueHeap {
     pub fn new() -> Self {
         ValueHeap {
             values: Vec::new(),
-            free: std::array::from_fn(|_| Vec::new()),
+            free: core::array::from_fn(|_| Vec::new()),
             listed: 0,
             runs: Vec::new(),
             current: (0, 0),
@@ -355,7 +355,7 @@ impl ValueHeap {
     /// free slots, where [`ValueHeap::release`] records the ranges the sweep
     /// frees, and [`ValueHeap::finish_sweep`] rebuilds it from the bitmap.
     pub fn begin_sweep(&mut self) {
-        let mut bits = std::mem::take(&mut self.bits);
+        let mut bits = core::mem::take(&mut self.bits);
         bits.clear();
         bits.resize(self.values.len().div_ceil(64), 0);
         for (class, list) in self.free.iter_mut().enumerate() {
@@ -364,7 +364,7 @@ impl ValueHeap {
                 set_bits(&mut bits, start as usize, end);
             }
         }
-        let (start, end) = std::mem::take(&mut self.current);
+        let (start, end) = core::mem::take(&mut self.current);
         for (start, end, _) in self.runs.drain(..).chain([(start, end, 0)]) {
             if start < end {
                 set_bits(&mut bits, start as usize, end as usize);
@@ -395,7 +395,7 @@ impl ValueHeap {
     /// goes back to the allocator. Lower ranges and runs are reused first.
     pub fn finish_sweep(&mut self) {
         let len = self.values.len();
-        let bits = std::mem::take(&mut self.bits);
+        let bits = core::mem::take(&mut self.bits);
         let mut at = 0;
         while let Some(start) = next_bit(&bits, at, true, len) {
             let stop = next_bit(&bits, start, false, len).unwrap_or(len);

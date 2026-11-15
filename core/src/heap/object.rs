@@ -345,7 +345,7 @@ pub enum InternalData {
     /// A collection's index; its entries are the record's slots.
     Table(Box<super::table::Table>),
     /// A collection iterator's position, moved by compactions.
-    Cursor(std::rc::Rc<std::cell::Cell<u32>>),
+    Cursor(alloc::rc::Rc<core::cell::Cell<u32>>),
     /// An `ArrayBuffer` or `SharedArrayBuffer`.
     Buffer(Box<super::buffer::Buffer>),
     /// A typed array's or `DataView`'s window; slot 0 is the buffer.
@@ -359,7 +359,7 @@ pub enum InternalData {
     HostFn(crate::vm::native::HostBody),
     /// An embedder's value attached to a host object
     /// (`InternalTag::HostData`).
-    HostData(std::rc::Rc<dyn std::any::Any>),
+    HostData(alloc::rc::Rc<dyn core::any::Any>),
 }
 
 /// The internal slots of a suspended activation before its registers: the

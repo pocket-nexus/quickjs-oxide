@@ -1326,7 +1326,7 @@ fn substitute_with_groups(
     // pass records the `$<name>` tokens in order, each is then read (and
     // converted) once per token as QuickJS does, and a second pass
     // consumes the values in that order.
-    let names = std::cell::RefCell::new(Vec::<Vec<u16>>::new());
+    let names = core::cell::RefCell::new(Vec::<Vec<u16>>::new());
     let record = |name: &[u16]| -> Option<Option<Vec<u16>>> {
         names.borrow_mut().push(name.to_vec());
         Some(None)
@@ -1346,7 +1346,7 @@ fn substitute_with_groups(
             Some(units(cx, value))
         });
     }
-    let next = std::cell::Cell::new(0usize);
+    let next = core::cell::Cell::new(0usize);
     let lookup = |_: &[u16]| -> Option<Option<Vec<u16>>> {
         let index = next.get();
         next.set(index + 1);

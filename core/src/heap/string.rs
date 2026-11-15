@@ -6,7 +6,7 @@
 //! flattens on the first use of its units ([`super::Heap::string`]); its
 //! length and width are known without flattening.
 
-use std::cell::{Cell, OnceCell};
+use core::cell::{Cell, OnceCell};
 
 use super::arena::Record;
 use super::object::NONE;
@@ -91,7 +91,7 @@ pub fn array_index(len: usize, mut units: impl Iterator<Item = u16>) -> Option<u
         return (len == 1).then_some(0);
     }
     let mut value: u64 = 0;
-    for unit in std::iter::once(first).chain(units) {
+    for unit in core::iter::once(first).chain(units) {
         let digit = unit
             .checked_sub(u16::from(b'0'))
             .filter(|digit| *digit <= 9)?;

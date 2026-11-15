@@ -62,14 +62,14 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     )?;
     let constant = PropertyFlags::data(false, false, false);
     for (name, value) in [
-        ("E", std::f64::consts::E),
-        ("LN10", std::f64::consts::LN_10),
-        ("LN2", std::f64::consts::LN_2),
-        ("LOG2E", std::f64::consts::LOG2_E),
-        ("LOG10E", std::f64::consts::LOG10_E),
-        ("PI", std::f64::consts::PI),
-        ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
-        ("SQRT2", std::f64::consts::SQRT_2),
+        ("E", core::f64::consts::E),
+        ("LN10", core::f64::consts::LN_10),
+        ("LN2", core::f64::consts::LN_2),
+        ("LOG2E", core::f64::consts::LOG2_E),
+        ("LOG10E", core::f64::consts::LOG10_E),
+        ("PI", core::f64::consts::PI),
+        ("SQRT1_2", core::f64::consts::FRAC_1_SQRT_2),
+        ("SQRT2", core::f64::consts::SQRT_2),
     ] {
         define(cx, math, name, Value::number(value), constant)?;
     }
@@ -181,7 +181,7 @@ fn fdlibm_acosh(value: f64) -> f64 {
     if value < 268_435_456.0 {
         return float::log(2.0 * value - 1.0 / (value + float::sqrt(value * value - 1.0)));
     }
-    float::log(value) + std::f64::consts::LN_2
+    float::log(value) + core::f64::consts::LN_2
 }
 
 fn sign_of(value: f64) -> f64 {

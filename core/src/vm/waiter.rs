@@ -7,7 +7,7 @@
 //! edge. Every operation takes the coordinator before entering a backing byte
 //! leaf, establishing the fixed coordinator -> backing lock order.
 
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 
@@ -184,7 +184,7 @@ pub(crate) fn notify(location: WaitLocation, count: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{WaitLocation, WaitOutcome, notify, wait, with_seq_cst};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use core::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
     use std::time::Duration;
 

@@ -13,7 +13,7 @@
 //! atoms whose record caches the index, so key ordering still treats them as
 //! indices.
 
-use std::fmt;
+use core::fmt;
 
 use super::arena::Arena;
 use super::hash::FxHashMap;

@@ -307,5 +307,5 @@ pub struct UnitLayout {
     /// its three-byte form, as QuickJS's `JS_ToCStringLen2` keeps it).
     pub source: Option<Box<[u8]>>,
     /// The script or module the function belongs to.
-    pub filename: Option<std::rc::Rc<str>>,
+    pub filename: Option<alloc::rc::Rc<str>>,
 }

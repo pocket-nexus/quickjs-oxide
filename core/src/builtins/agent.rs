@@ -5,7 +5,7 @@
 //! and waits until each has taken them; reports are strings in a shared queue.
 
 use crate::float;
-use std::collections::VecDeque;
+use alloc::collections::VecDeque;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -57,7 +57,7 @@ impl AgentHub {
 
     /// Joins every agent thread.
     pub fn join(&self) {
-        let threads = std::mem::take(&mut self.lock().threads);
+        let threads = core::mem::take(&mut self.lock().threads);
         for thread in threads {
             let _ = thread.join();
         }

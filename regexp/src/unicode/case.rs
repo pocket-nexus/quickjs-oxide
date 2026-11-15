@@ -8,7 +8,7 @@
 
 use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, is_in_table};
 #[cfg(any(test, feature = "test-hooks"))]
-use std::cell::Cell;
+use core::cell::Cell;
 
 mod tables {
     include!("generated/unicode/unicode_case_tables.rs");
@@ -121,7 +121,7 @@ impl CaseStringBuffer {
 
     fn widen(&mut self, size: usize) -> Result<(), StringError> {
         let CaseStorage::Latin1(narrow) =
-            std::mem::replace(&mut self.storage, CaseStorage::Latin1(Vec::new()))
+            core::mem::replace(&mut self.storage, CaseStorage::Latin1(Vec::new()))
         else {
             unreachable!("case buffer was widened twice")
         };
