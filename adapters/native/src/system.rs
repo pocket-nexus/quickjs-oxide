@@ -4,20 +4,23 @@
 //! lookup to the host. The default provider preserves those native algorithms;
 //! alternate embedders implement the public typed boundary instead.
 
+#[cfg(test)]
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
 use std::cell::RefCell;
 use std::env;
 
 use std::ffi::{OsStr, OsString};
-use std::sync::OnceLock;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use quickjs_oxide::engine::api::core::{Host, Monotonic};
+use quickjs_oxide::engine::api::core::{Host, Monotonic, Stream};
 use tz::TimeZone;
 
-/// The core's host over the system clock and the host TZif/POSIX
-/// rules; output and files are the process's.
+/// The process's own host (streams, clock, files, UTC) with the host's
+/// TZif/POSIX time-zone rules on top — the one service `quickjs-oxide`'s host
+/// leaves at UTC.
 #[derive(Debug, Default)]
 pub struct SystemHost {
+    process: quickjs_oxide::engine::api::core::SystemHost,
     cached_time_zone: RefCell<Option<CachedTimeZone>>,
 }
 
@@ -68,8 +71,12 @@ impl SystemHost {
 }
 
 impl Host for SystemHost {
+    fn write(&mut self, stream: Stream, text: &[u8]) {
+        self.process.write(stream, text);
+    }
+
     fn now_ms(&mut self) -> f64 {
-        system_time_millis(SystemTime::now()) as f64
+        self.process.now_ms()
     }
 
     fn local_tz_offset_minutes(&mut self, utc_ms: f64) -> i32 {
@@ -81,18 +88,16 @@ impl Host for SystemHost {
     }
 
     fn random_seed(&mut self) -> u64 {
-        system_time_random_seed(SystemTime::now())
+        self.process.random_seed()
+    }
+
+    fn read_file(&mut self, path: &str) -> Option<String> {
+        self.process.read_file(path)
     }
 
     fn monotonic(&mut self) -> Monotonic {
-        Monotonic::new(monotonic_ns)
+        self.process.monotonic()
     }
-}
-
-/// Nanoseconds from the first call, for the collector's pause statistics.
-fn monotonic_ns() -> u64 {
-    static START: OnceLock<Instant> = OnceLock::new();
-    START.get_or_init(Instant::now).elapsed().as_nanos() as u64
 }
 
 fn timezone_offset_at(time_zone: &TimeZone, unix_seconds: i64) -> i32 {
@@ -112,6 +117,9 @@ fn load_host_time_zone(environment: Option<&OsStr>) -> Result<TimeZone, tz::Erro
     }
 }
 
+/// The process host's own reading, kept for the tests that pin QuickJS's
+/// millisecond truncation.
+#[cfg(test)]
 fn system_time_millis(time: SystemTime) -> i64 {
     match time.duration_since(UNIX_EPOCH) {
         Ok(duration) => duration_millis_saturating(duration),
@@ -124,10 +132,12 @@ fn system_time_millis(time: SystemTime) -> i64 {
     }
 }
 
+#[cfg(test)]
 fn duration_millis_saturating(duration: Duration) -> i64 {
     i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
 }
 
+#[cfg(test)]
 fn system_time_random_seed(time: SystemTime) -> u64 {
     match time.duration_since(UNIX_EPOCH) {
         Ok(duration) => duration.as_micros() as u64,

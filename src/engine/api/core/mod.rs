@@ -8,6 +8,7 @@ mod context;
 mod convert;
 mod error;
 mod function;
+mod host;
 mod module;
 mod ops;
 mod promise;
@@ -22,6 +23,7 @@ pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, 
 pub use convert::{FromJs, IntoJs};
 pub use error::RuntimeError;
 pub use function::{FunctionOptions, HostFunction, Raw, Scope};
+pub use host::SystemHost;
 pub use module::{CompiledModule, ModuleLoader, ModuleScope, ModuleSource};
 pub use ops::{Js, JsResult};
 pub use promise::PromiseCapability;
@@ -31,7 +33,6 @@ pub use property::{
 };
 pub use runtime::{
     GcPolicy, GcStats, InterruptHandle, PendingJobOutcome, PromiseSnapshot, PromiseState, Runtime,
-    SystemHost,
 };
 pub use value::{CallableRef, ObjectRef, SymbolRef, Value};
 

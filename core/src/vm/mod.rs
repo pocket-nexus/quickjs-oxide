@@ -325,7 +325,7 @@ impl Default for Services {
         // (`Runtime::set_host`), because the core cannot reach a clock.
         Services {
             output: Output::default(),
-            hooks: Box::new(crate::host::SystemHost),
+            hooks: Box::new(crate::host::NoHost),
             random_state: 1,
             symbol_registry: Default::default(),
             can_block: true,
