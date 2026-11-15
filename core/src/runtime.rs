@@ -1,6 +1,12 @@
 //! The `Runtime`: the heap, the code store and the realm. Every operation is
 //! `fn(&mut Runtime, …)`; there is no shared interior mutability.
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use crate::PropertyKey;
 use crate::bytecode::{self, CodeStore, CodeUnit, CodeUnitId, ValidateError};
 use crate::heap::atom::KeyKind;

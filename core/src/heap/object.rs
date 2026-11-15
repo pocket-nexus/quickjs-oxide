@@ -1,5 +1,8 @@
 //! Object headers and the kind-specific payload arenas.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
+
 use super::arena::{Arena, Record};
 use super::values::Range;
 use crate::value::{ShapeId, Value};

@@ -3,6 +3,8 @@
 //! one implementation on every port. `round` is QuickJS's half-up on the
 //! bits, `random` its xorshift64*, `sumPrecise` an exact (Shewchuk) summation.
 
+use alloc::vec::Vec;
+
 use super::{Native, define, methods, plain_object, to_string_tag};
 use crate::float;
 use crate::heap::HeapError;

@@ -2,6 +2,8 @@
 //! ASCII pass, from the tables of `quickjs-oxide-regexp`, including the final-sigma
 //! rule and the multi-unit expansions.
 
+use alloc::vec::Vec;
+
 use oxide_regexp::unicode::case::convert_case_with_limit;
 use oxide_regexp::unicode::{CodeUnitBuf, MAX_STRING_LEN};
 

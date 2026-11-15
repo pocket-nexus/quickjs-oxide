@@ -9,6 +9,11 @@
 //! slow paths call them through the re-entrant [`call`](super::call). No
 //! accessor is cached.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 use super::error;
 use super::ic::{IcEntry, IcKind, STRING_RECEIVER_TAG};
 use super::{Cx, Throw};

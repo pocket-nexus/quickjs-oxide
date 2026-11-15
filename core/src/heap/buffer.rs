@@ -6,6 +6,10 @@
 //! operates on them directly. A typed array or `DataView` is a [`View`]
 //! over a buffer object held in its internal slot 0.
 
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use alloc::sync::Arc;
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 

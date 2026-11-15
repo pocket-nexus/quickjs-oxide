@@ -6,6 +6,8 @@
 //! allocates neither the iterator nor any `{value, done}` result; every
 //! other iterable goes through its `next` method.
 
+use alloc::vec::Vec;
+
 use super::error;
 use super::object;
 use super::ops;

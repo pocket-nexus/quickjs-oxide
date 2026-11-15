@@ -8,6 +8,8 @@
 //! abandoned iterator costs nothing once collected) is moved to the same
 //! entry's new position.
 
+use alloc::vec::Vec;
+
 use alloc::rc::{Rc, Weak};
 use core::cell::Cell;
 

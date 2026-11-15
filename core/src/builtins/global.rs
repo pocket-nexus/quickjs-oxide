@@ -1,6 +1,9 @@
 //! The global functions: qjs's `print`, `parseInt`, `parseFloat`, `isNaN`
 //! and `isFinite`.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use super::to_string_id;
 use crate::value::Value;
 use crate::vm::native::CallSite;

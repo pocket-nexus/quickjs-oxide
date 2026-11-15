@@ -7,6 +7,9 @@
 //! initializer defines that symbol on each instance; a private method or
 //! accessor checks the receiver for the brand of its home object.
 
+use alloc::format;
+use alloc::vec::Vec;
+
 use super::error::{self, ErrorKind};
 use super::object;
 use super::ops;

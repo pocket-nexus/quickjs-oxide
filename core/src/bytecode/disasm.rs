@@ -1,6 +1,10 @@
 //! The disassembler: one instruction per line, registers by role (`this`,
 //! `p0`, `l3`, `t2`, or `r300` above a frame's temporaries).
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+
 use core::fmt::Write;
 
 use super::{Capture, CodeUnit, Format, Insn};

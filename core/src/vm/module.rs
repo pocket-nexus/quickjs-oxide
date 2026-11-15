@@ -15,7 +15,12 @@
 //! top-level `await`). Modules load synchronously through the host's
 //! [`ModuleHost`] when they are first requested.
 
-use core::cell::Cell;
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use super::compile::{CompileError, Compiler};
 use super::native::CallSite;
@@ -256,9 +261,12 @@ const ERROR: usize = 3;
 const CAPABILITY: usize = 4;
 const SLOTS: usize = 7;
 
-thread_local! {
-    static ASYNC_ORDER: Cell<u64> = const { Cell::new(0) };
-}
+/// The order async module evaluations started in. A thread-local counter
+/// would do the same job on a target with threads and would not exist on one
+/// without; the counter is only ever handed out, never read back, so one
+/// process-wide number is indistinguishable — and a target whose pointer width
+/// is atomic, which `usize` is wherever the core builds.
+static ASYNC_ORDER: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 fn data<'a>(cx: &'a Cx<'_>, module: ObjectId) -> &'a ModuleData {
     match &cx.heap.internal(module).data {
@@ -945,10 +953,7 @@ fn inner_evaluate(
     }
     let record = data(cx, module);
     if record.pending_async_dependencies > 0 || record.tables.has_top_level_await {
-        let order = ASYNC_ORDER.with(|order| {
-            order.set(order.get() + 1);
-            order.get()
-        });
+        let order = ASYNC_ORDER.fetch_add(1, core::sync::atomic::Ordering::Relaxed) as u64 + 1;
         data_mut(cx, module).async_evaluation = Some(order);
         if data(cx, module).pending_async_dependencies == 0 {
             execute_async(cx, module)?;

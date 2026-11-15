@@ -3,6 +3,8 @@
 //! The calendar, formatting and parsing kernels follow QuickJS 2026-06-04; the
 //! clock and the time zone come from the host.
 
+use alloc::string::String;
+
 mod calendar;
 mod format;
 mod parse;

@@ -3,6 +3,12 @@
 //! accessor, proxy trap, coercion or lazy intrinsic. It matches the pinned
 //! QuickJS.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::Cx;
 use crate::heap::atom::{KeyKind, PropertyKey};
 use crate::heap::object::{InternalData, InternalTag, NONE, ObjectKind, flags};

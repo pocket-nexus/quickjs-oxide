@@ -1,6 +1,9 @@
 //! The `Uint8Array` base64 and hex codecs (`FromBase64`, `FromHex` and the
 //! encoders of the proposal), over UTF-16 input.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 const URL_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 

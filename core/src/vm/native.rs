@@ -5,6 +5,8 @@
 //! call on the root stack, which is cut back when it returns. The natives
 //! themselves are the realm's builtins (`crate::builtins`).
 
+use alloc::vec::Vec;
+
 use alloc::rc::Rc;
 
 use super::{Cx, Throw};

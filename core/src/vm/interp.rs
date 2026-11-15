@@ -4,6 +4,12 @@
 //! and `new` on bytecode functions stay in the loop; a throw unwinds through
 //! the handler tables.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use alloc::rc::Rc;
 use core::cmp::Ordering;
 

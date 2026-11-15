@@ -4,6 +4,9 @@
 //! Locale-named methods intentionally retain QuickJS's fixed US-style output;
 //! QuickJS does not consult ICU, a locale argument, or an options object here.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+
 use super::DateStringMethod;
 use super::calendar::DateFields;
 use core::fmt;

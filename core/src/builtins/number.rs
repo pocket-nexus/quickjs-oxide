@@ -4,6 +4,8 @@
 //! `toFixed`, `toExponential`, `toPrecision`, `toLocaleString` and `valueOf`
 //! with QuickJS's digits.
 
+use alloc::vec::Vec;
+
 use super::{Native, define, install_constructor, link_constructor, methods, string_text};
 use crate::float;
 use crate::heap::HeapError;

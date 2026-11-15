@@ -4,6 +4,10 @@
 //! Each method asserts (in debug builds) that the opcode has the format it is
 //! built with; the publication validator checks the operand values.
 
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use super::{Capture, CodeUnit, CodeUnitId, DebugInfo, Format, Handler, Insn, Opcode};
 use crate::heap::atom::PropertyKey;
 use crate::vm::ic::{FIELD_NO_SITE, GLOBAL_NO_SITE, IcKind};

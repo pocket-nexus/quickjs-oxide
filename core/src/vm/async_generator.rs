@@ -7,6 +7,8 @@
 //! returned value and the value of a `return` resumption in bytecode, so the
 //! driver only completes requests and drains the queue.
 
+use alloc::vec::Vec;
+
 use super::error;
 use super::iter;
 use super::jobs;

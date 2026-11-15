@@ -9,6 +9,10 @@
 //! at run time live in the heap, which frees each once no function, frame
 //! or job reaches it.
 
+use alloc::boxed::Box;
+use alloc::vec;
+use alloc::vec::Vec;
+
 pub mod builder;
 pub(crate) mod call_plan;
 pub mod disasm;

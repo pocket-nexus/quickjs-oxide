@@ -1,6 +1,9 @@
 //! `Object`: the constructor and its static functions, and `Object.prototype`
 //! with the Annex B accessors.
 
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::{
     Native, accessor, install_constructor, link_constructor, methods, string_text, this_object,
 };

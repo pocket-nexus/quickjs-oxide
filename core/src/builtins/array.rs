@@ -6,6 +6,10 @@
 //! instance create a plain array. `sort` is QuickJS's `rqsort` with its
 //! comparison and write-back shortcuts.
 
+use alloc::format;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use core::cmp::Ordering;
 
 use super::{

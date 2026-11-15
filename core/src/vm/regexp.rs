@@ -6,6 +6,10 @@
 //! a `RegExp` object's payload names its program, a collection marks the
 //! programs of the live objects (and their two atoms), and sweeps the rest.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use oxide_regexp::CompiledRegExp;
 
 use super::error::{self, ErrorKind};

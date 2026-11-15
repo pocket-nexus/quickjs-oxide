@@ -8,6 +8,10 @@
 //! their own work (`sort` with a comparator, `replace` with a function) use the
 //! same re-entrant call.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::vec::Vec;
+
 pub mod agent;
 mod array;
 mod atomics;

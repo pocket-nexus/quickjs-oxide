@@ -14,6 +14,8 @@
 //! cache entries to the [`IcStore`](crate::vm::ic::IcStore) and its bytes to
 //! the heap's account.
 
+use alloc::vec::Vec;
+
 use alloc::rc::Rc;
 
 use crate::bytecode::{CodeUnit, CodeUnitId, DYNAMIC};

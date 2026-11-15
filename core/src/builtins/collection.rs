@@ -7,6 +7,9 @@
 //! 0 is its target; a registry's slot 0 is the cleanup callback, then a cell
 //! of three slots (target, held value, unregister token) per registration.
 
+use alloc::boxed::Box;
+use alloc::format;
+
 use alloc::rc::Rc;
 use core::cell::Cell;
 
