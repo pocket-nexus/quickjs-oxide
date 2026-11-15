@@ -11,6 +11,7 @@
 //! completion, which closes the iterators.
 
 use super::{Native, methods, plain_object, to_string_tag};
+use crate::float;
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind};
 use crate::runtime::{Intrinsic, Names, WellKnown};
@@ -368,10 +369,10 @@ fn create_helper(cx: &mut Cx<'_>, site: CallSite, kind: Kind) -> Result<Value, T
             };
             // ToIntegerOrInfinity (27.1.4.13, 27.1.4.4): a count past 2^53 - 1
             // never runs out, as +Infinity does not.
-            count = if limit.is_nan() || limit.trunc() < 0.0 {
+            count = if limit.is_nan() || float::trunc(limit) < 0.0 {
                 -1
             } else {
-                limit.trunc().min(((1u64 << 53) - 1) as f64) as i64
+                float::trunc(limit).min(((1u64 << 53) - 1) as f64) as i64
             };
             if count < 0 {
                 let throw = error::range_error(cx, "must be positive");

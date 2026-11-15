@@ -6,6 +6,7 @@ use super::{
     Native, define_name_length, getter, install_constructor, link_constructor, methods,
     string_text, symbol_method,
 };
+use crate::float;
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind, flags};
 use crate::runtime::{Intrinsic, Names};
@@ -290,7 +291,7 @@ pub(super) fn bind(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             if number == f64::INFINITY {
                 length = f64::INFINITY;
             } else if number.is_finite() {
-                let integer = number.trunc();
+                let integer = float::trunc(number);
                 length = (integer - site.argc.saturating_sub(1) as f64).max(0.0);
             }
         }

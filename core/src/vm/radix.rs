@@ -10,6 +10,7 @@
 //! are `2^a * radix^b`, so every division is a shift or a run of one-limb
 //! divisions.
 
+use crate::float;
 use std::cmp::Ordering;
 
 use super::bigint::{Big, BigError};
@@ -52,7 +53,7 @@ pub fn to_string_radix(value: f64, radix: u32) -> String {
     let magnitude = value.abs();
     let body = if radix.is_power_of_two() {
         power_of_two_digits(magnitude, radix)
-    } else if magnitude < 9_007_199_254_740_992.0 && magnitude.trunc() == magnitude {
+    } else if magnitude < 9_007_199_254_740_992.0 && float::trunc(magnitude) == magnitude {
         // Every integer below 2^53 is a double, so no shorter digit string
         // can round-trip: the shortest digits are the exact ones.
         u64_digits(magnitude as u64, radix)
@@ -438,7 +439,7 @@ fn radix_exponent(significand: u64, binary_exponent: i32, radix: u32, approximat
             scaled.cmp(&shl(&Big::from_u64(1), shift)) == Ordering::Less
         }
     };
-    let mut exponent = approximate.log(f64::from(radix)).floor() as i32 + 1;
+    let mut exponent = float::floor(float::log_base(approximate, f64::from(radix))) as i32 + 1;
     while !below(exponent) {
         exponent += 1;
     }
@@ -1040,8 +1041,8 @@ mod tests {
         // 7.1202363472230444e-307); an exact digit tie still rounds to
         // even as in QuickJS, where Rust's shortest formatting does not.
         for (value, expected) in [
-            (2f64.powi(-1017), "7.120236347223045e-307"),
-            (2f64.powi(-24), "5.960464477539063e-8"),
+            (crate::float::pow2(-1017), "7.120236347223045e-307"),
+            (crate::float::pow2(-24), "5.960464477539063e-8"),
             // 192181864906432.125 exactly.
             (f64::from_bits(0x42e5_d93a_7947_d804), "192181864906432.12"),
         ] {
@@ -1172,8 +1173,11 @@ mod tests {
         assert_same(plus(two(53), 3).to_f64(), 9_007_199_254_740_996.0);
         // A sticky bit far below the rounding position breaks the tie up.
         let above = plus(shl(&plus(two(53), 1), 100), 1);
-        assert_same(above.to_f64(), 9_007_199_254_740_994.0 * 2f64.powi(100));
-        assert_same(two(1023).to_f64(), 2f64.powi(1023));
+        assert_same(
+            above.to_f64(),
+            9_007_199_254_740_994.0 * crate::float::pow2(100),
+        );
+        assert_same(two(1023).to_f64(), crate::float::pow2(1023));
         assert_same(two(1024).to_f64(), f64::INFINITY);
         assert_same(Big::from_i64(-5).to_f64(), -5.0);
         assert_same(Big::zero().to_f64(), 0.0);

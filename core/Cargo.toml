@@ -18,6 +18,8 @@ name = "oxide_core"
 workspace = true
 
 [dependencies]
+# The one floating-point implementation; see src/float.rs.
+libm = { workspace = true }
 # The regular-expression engine.
 oxide-regexp = { workspace = true }
 

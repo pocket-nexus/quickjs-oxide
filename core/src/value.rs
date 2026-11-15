@@ -409,7 +409,7 @@ mod tests {
             f64::from_bits(1),                      // smallest subnormal
             -f64::from_bits(0x000F_FFFF_FFFF_FFFF), // largest negative subnormal
             f64::EPSILON,
-            2f64.powi(53),
+            crate::float::pow2(53),
         ];
         for case in cases {
             let value = Value::number(case);
