@@ -2241,7 +2241,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     if let Err(throw) = error::poll_interrupts(cx) {
                         break $failure Err(throw);
                     }
-                    regs = window!();
+                    pc = target;
+                    break $failure Ok(());
                 }
             }
             pc = target;
@@ -2569,7 +2570,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             if let Err(throw) = error::poll_interrupts(cx) {
                                 break 'op Err(throw);
                             }
-                            regs = window!();
+                            pc = insn.imm as usize;
+                            break 'op Ok(());
                         }
                         pc = insn.imm as usize;
                         continue 'dispatch;
