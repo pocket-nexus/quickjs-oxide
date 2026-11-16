@@ -201,7 +201,10 @@ fn calls_overlap_the_callee_window() {
         code.contains(&"GetGlobal t1, .unit, ic0".to_owned()),
         "{code:#?}"
     );
-    assert!(code.contains(&"Call t1, t1, 0".to_owned()), "{code:#?}");
+    assert!(
+        code.contains(&"Call t1, t1, 0, ic1".to_owned()),
+        "{code:#?}"
+    );
     assert!(code.contains(&"Add l0, l0, t1".to_owned()), "{code:#?}");
     let code = function("function m(o) { return o.f(1, 2); }", "m");
     // The method is read from the receiver in place; the receiver is then
@@ -213,7 +216,7 @@ fn calls_overlap_the_callee_window() {
             "Mov t0, p0".to_owned(),
             "LoadInt t2, 1".to_owned(),
             "LoadInt t3, 2".to_owned(),
-            "CallMethod t0, t0, 2".to_owned(),
+            "CallMethod t0, t0, 2, ic1".to_owned(),
         ]
     );
 }
