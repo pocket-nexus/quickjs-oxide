@@ -37,6 +37,21 @@ pub(crate) enum CallPlan {
         op: Opcode,
         imm: u32,
     },
+    Update {
+        base: u8,
+        read: u8,
+        global: u16,
+        op: Opcode,
+        write: u8,
+    },
+    BitTestOrCompare {
+        base: u8,
+        left: u8,
+        left_global: u8,
+        right: u8,
+        right_global: u8,
+        op: Opcode,
+    },
     GlobalStore {
         base: u8,
         global: u16,
@@ -87,6 +102,93 @@ impl CallPlan {
             load.op == LoadUndefined && ret.op == Return && load.a == ret.a
         };
         match &*unit.code {
+            [
+                left,
+                global,
+                and,
+                zero,
+                test,
+                copy,
+                branch,
+                right,
+                other,
+                compare,
+                ret,
+            ] if left.op == GetField
+                && input(left.b)
+                && !input(left.a)
+                && matches!(global.op, GetGlobal | GetGlobalOrUndefined)
+                && !input(global.a)
+                && global.a != left.a
+                && global.c == 0
+                && and.op == BitAnd
+                && and.a == left.a
+                && and.b == left.a
+                && and.c == global.a
+                && zero.op == LoadInt
+                && zero.int() == 0
+                && !input(zero.a)
+                && zero.a != and.a
+                && matches!(test.op, Neq | StrictNeq)
+                && test.a == left.a
+                && test.b == and.a
+                && test.c == zero.a
+                && copy.op == Mov
+                && copy.b == test.a
+                && !input(copy.a)
+                && branch.op == JTrue
+                && branch.a == copy.a
+                && branch.imm == 10
+                && right.op == GetField
+                && right.b == left.b
+                && !input(right.a)
+                && matches!(other.op, GetGlobal | GetGlobalOrUndefined)
+                && !input(other.a)
+                && other.a != right.a
+                && other.c == 0
+                && matches!(
+                    compare.op,
+                    Lt | Lte | Gt | Gte | Eq | Neq | StrictEq | StrictNeq
+                )
+                && compare.b == right.a
+                && compare.c == other.a
+                && ret.op == Return
+                && ret.a == test.a
+                && ret.a == compare.a =>
+            {
+                Self::BitTestOrCompare {
+                    base: left.b,
+                    left: left.c,
+                    left_global: global.b,
+                    right: right.c,
+                    right_global: other.b,
+                    op: compare.op,
+                }
+            }
+            [read, global, op, write, undef, ret]
+                if read.op == GetField
+                    && input(read.b)
+                    && !input(read.a)
+                    && matches!(global.op, GetGlobal | GetGlobalOrUndefined)
+                    && !input(global.a)
+                    && global.a != read.a
+                    && matches!(op.op, BitAnd | BitOr | BitXor | Shl | Sar | Shr)
+                    && op.a == read.a
+                    && op.b == read.a
+                    && op.c == global.a
+                    && write.op == SetField
+                    && write.a == read.b
+                    && write.b == op.a
+                    && returns_undefined(undef, ret) =>
+            {
+                Self::Update {
+                    base: read.b,
+                    read: read.c,
+                    global: u16::from(global.b) | (u16::from(global.c) << 8),
+                    op: op.op,
+                    write: write.c,
+                }
+            }
             [left, global, right, branch, yes, jump, no, ret]
                 if left.op == GetField
                     && input(left.b)
@@ -324,5 +426,47 @@ mod tests {
         assert_eq!(plan(&[write, get, ret], 2), CallPlan::None);
         let call = Insn::new(Opcode::Call, 3, 1, 0, 0);
         assert_eq!(plan(&[call, ret], 2), CallPlan::None);
+    }
+
+    #[test]
+    fn bit_plans_require_original_receivers_and_exact_short_circuit_targets() {
+        let get = Insn::new(Opcode::GetField, 1, 0, 0, 0);
+        let global = Insn::new(Opcode::GetGlobal, 2, 0, 0, 0);
+        let ret = Insn::new(Opcode::Return, 1, 0, 0, 0);
+        let update = [
+            get,
+            global,
+            Insn::new(Opcode::BitOr, 1, 1, 2, 0),
+            Insn::new(Opcode::SetField, 0, 1, 0, 0),
+            Insn::new(Opcode::LoadUndefined, 1, 0, 0, 0),
+            ret,
+        ];
+        assert!(matches!(plan(&update, 0), CallPlan::Update { base: 0, .. }));
+        let mut alias = update;
+        alias[1].a = 0;
+        assert_eq!(plan(&alias, 0), CallPlan::None);
+        let test = [
+            get,
+            global,
+            Insn::new(Opcode::BitAnd, 1, 1, 2, 0),
+            Insn::new(Opcode::LoadInt, 2, 0, 0, 0),
+            Insn::new(Opcode::Neq, 1, 1, 2, 0),
+            Insn::new(Opcode::Mov, 2, 1, 0, 0),
+            Insn::new(Opcode::JTrue, 2, 0, 0, 10),
+            get,
+            global,
+            Insn::new(Opcode::Eq, 1, 1, 2, 0),
+            ret,
+        ];
+        assert!(matches!(
+            plan(&test, 0),
+            CallPlan::BitTestOrCompare { base: 0, .. }
+        ));
+        let mut alias = test;
+        alias[5].a = 0;
+        assert_eq!(plan(&alias, 0), CallPlan::None);
+        let mut wrong_target = test;
+        wrong_target[6].imm = 9;
+        assert_eq!(plan(&wrong_target, 0), CallPlan::None);
     }
 }

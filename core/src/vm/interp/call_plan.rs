@@ -65,12 +65,91 @@ pub(super) fn value(
         Opcode::LoadFalse => Value::FALSE,
         _ => unreachable!("a planned constant"),
     };
-    let mut global_hit = false;
+    let global = |site: u16| {
+        let entry = heap.ics.entries[ic_base + site as usize];
+        if entry.w0 != heap.global_generation {
+            return None;
+        }
+        let start = heap.objects.get(entry.w3).slots_start;
+        Some(heap.values.get_at(start + entry.w1))
+    };
+    let mut global_hits = 0;
     let mut store_hit = false;
     let (value, hits) = match *plan {
         CallPlan::None => return Value::EMPTY,
         CallPlan::Register(r) => (reg(r), 0),
         CallPlan::Constant { op, imm } => (constant(op, imm), 0),
+        CallPlan::BitTestOrCompare {
+            base,
+            left,
+            left_global,
+            right,
+            right_global,
+            op,
+        } => {
+            let receiver = reg(base);
+            let Some(left) = get(receiver, left).and_then(Value::as_int32) else {
+                return Value::EMPTY;
+            };
+            let Some(mask) = global(u16::from(left_global)).and_then(Value::as_int32) else {
+                return Value::EMPTY;
+            };
+            global_hits = 1;
+            if left & mask != 0 {
+                (Value::TRUE, 1)
+            } else {
+                // The other arm is not read until the bit test is false.
+                let Some(right) = get(receiver, right) else {
+                    return Value::EMPTY;
+                };
+                let Some(other) = global(u16::from(right_global)) else {
+                    return Value::EMPTY;
+                };
+                let Some(order) = order(right, other) else {
+                    return Value::EMPTY;
+                };
+                global_hits = 2;
+                (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
+            }
+        }
+        CallPlan::Update {
+            base,
+            read,
+            global: site,
+            op,
+            write,
+        } => {
+            let receiver = reg(base);
+            let Some(left) = get(receiver, read).and_then(Value::as_int32) else {
+                return Value::EMPTY;
+            };
+            let Some(right) = global(site).and_then(Value::as_int32) else {
+                return Value::EMPTY;
+            };
+            let value = match op {
+                Opcode::BitAnd => Value::int32(left & right),
+                Opcode::BitOr => Value::int32(left | right),
+                Opcode::BitXor => Value::int32(left ^ right),
+                Opcode::Shl => Value::int32(left.wrapping_shl(right as u32 & 31)),
+                Opcode::Sar => Value::int32(left >> (right as u32 & 31)),
+                Opcode::Shr => number::number(((left as u32) >> (right as u32 & 31)) as f64),
+                _ => unreachable!("a planned integer update"),
+            };
+            let entry = heap.ics.entries[ic_base + write as usize];
+            if !ic::set_hit(
+                &mut heap.objects,
+                &heap.cells,
+                &mut heap.values,
+                entry,
+                receiver,
+                value,
+            ) {
+                return Value::EMPTY;
+            }
+            global_hits = 1;
+            store_hit = true;
+            (Value::UNDEFINED, 1)
+        }
         CallPlan::Field { base, site } => {
             let Some(value) = get(reg(base), site) else {
                 return Value::EMPTY;
@@ -149,7 +228,7 @@ pub(super) fn value(
             let Some(order) = order(left, right) else {
                 return Value::EMPTY;
             };
-            global_hit = true;
+            global_hits = 1;
             (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
         }
         CallPlan::Select {
@@ -185,7 +264,7 @@ pub(super) fn value(
             let Some(value) = get(receiver, site) else {
                 return Value::EMPTY;
             };
-            global_hit = true;
+            global_hits = 1;
             (value, 3)
         }
         CallPlan::Store { base, value, site } => {
@@ -252,7 +331,7 @@ pub(super) fn value(
             ) {
                 return Value::EMPTY;
             }
-            global_hit = true;
+            global_hits = 1;
             store_hit = true;
             (Value::UNDEFINED, 1)
         }
@@ -272,7 +351,7 @@ pub(super) fn value(
     for _ in 0..hits {
         heap.ics.count_hit(IcKind::Get);
     }
-    if global_hit {
+    for _ in 0..global_hits {
         heap.ics.count_hit(IcKind::Global);
     }
     if store_hit {

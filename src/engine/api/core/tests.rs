@@ -400,6 +400,83 @@ fn conditional_backedges_poll_numeric_and_truthiness_loops() {
 }
 
 #[test]
+fn planned_bit_tests_keep_short_circuit_reads_and_coercions() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime
+        .context()
+        .eval(
+            "globalThis.BITS_MASK=4; globalThis.BITS_TARGET=2;
+         var reads=0, conversions=0;
+         function ready() { return (this.bits & BITS_MASK)!==0 || this.other===BITS_TARGET; }
+         var o={bits:0,other:2,ready:ready},ok=true;
+         for(var i=0;i<30;i++) { o.bits=i&7; ok=ok&&o.ready(); }
+         Object.defineProperty(o,'other',{get:function(){ ++reads; return 2; }});
+         Object.defineProperty(globalThis,'BITS_TARGET',{get:function(){ ++reads; return 2; }});
+         o.bits=4; ok=ok&&o.ready()&&reads===0;
+         o.bits=0; ok=ok&&o.ready()&&reads===2;
+         BITS_MASK={valueOf:function(){ ++conversions; return 4; }};
+         o.bits=4; ok=ok&&o.ready()&&conversions===1&&reads===2;
+         o.bits=0; ok&&o.ready()&&conversions===2&&reads===4;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn planned_bit_updates_fall_back_before_any_observable_write() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime.context().eval(
+        "globalThis.BITS_MASK=4;
+         var reads=0,writes=0,conversions=0,stored=0;
+         function update() { 'use strict'; this.bits=this.bits|BITS_MASK; }
+         function grow(n) { return n?grow(n-1)+1:1; }
+         var o={bits:0,update:update},ok=true;
+         for(var i=0;i<30;i++) { o.bits=i; o.update(); ok=ok&&o.bits===(i|4); }
+         Object.defineProperty(o,'bits',{get:function(){ ++reads; return stored; },set:function(v){ ++writes; stored=v; },configurable:true});
+         o.update(); ok=ok&&reads===1&&writes===1&&stored===4;
+         BITS_MASK={valueOf:function(){ ++conversions; grow(400); return 8; }};
+         o.update(); ok=ok&&reads===2&&writes===2&&conversions===1&&stored===12;
+         Object.defineProperty(o,'bits',{value:1,writable:false});
+         var threw=false;
+         try { o.update(); } catch(e) { threw=e instanceof TypeError; }
+         ok&&threw&&conversions===2&&writes===2&&o.bits===1;"
+    ).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn planned_bit_updates_preserve_unsigned_results_and_shift_counts() {
+    let runtime = Runtime::new();
+    let result = runtime
+        .context()
+        .eval(
+            "globalThis.BITS_SHIFT=1;
+         function shl() { this.bits=this.bits<<BITS_SHIFT; }
+         function sar() { this.bits=this.bits>>BITS_SHIFT; }
+         function shr() { this.bits=this.bits>>>BITS_SHIFT; }
+         function xor() { this.bits=this.bits^BITS_SHIFT; }
+         var o={bits:0,shl:shl,sar:sar,shr:shr,xor:xor},ok=true;
+         for(var i=0;i<30;i++) {
+             o.bits=-1; o.shr(); ok=ok&&o.bits===2147483647;
+             o.bits=-2; o.sar(); ok=ok&&o.bits===-1;
+             o.bits=1073741824; o.shl(); ok=ok&&o.bits===-2147483648;
+             o.bits=7; o.xor(); ok=ok&&o.bits===6;
+         }
+         BITS_SHIFT=0; o.bits=-1; o.shr(); ok=ok&&o.bits===4294967295;
+         BITS_SHIFT=33; o.shr(); ok=ok&&o.bits===2147483647;
+         BITS_SHIFT=-1; o.bits=1; o.shl(); ok&&o.bits===-2147483648;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
 fn arithmetic_comparisons_complete_each_conversion_once() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {
