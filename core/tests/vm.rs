@@ -358,8 +358,8 @@ fn a_planned_constant_call_keeps_the_stack_limit_check() {
 fn a_delegated_read_checks_the_live_callees_stack_capacity() {
     let mut runtime = runtime();
     runtime.set_stack_limit(4096);
-    let inner = key(&mut runtime, "inner");
-    let method = key(&mut runtime, "method");
+    let inner = runtime.heap_mut().property_key_pinned("inner").unwrap();
+    let method = runtime.heap_mut().property_key_pinned("method").unwrap();
     let small = publish(&mut runtime, layout(1), |b| {
         b.a(Opcode::Return, 0);
     });
