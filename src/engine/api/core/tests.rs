@@ -103,6 +103,99 @@ fn transient_code_is_freed_once_nothing_names_it() {
     );
 }
 
+#[test]
+fn call_entry_keeps_static_and_dynamic_units_through_rewrites_and_construction() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let context = runtime.context();
+    context
+        .eval(
+            "function staticStep(next, n) { return n ? next(staticStep, n - 1) + 1 : 1; }
+             function StaticCtor(x) { this.x = x; this.target = new.target; }
+             function sloppy() { return typeof this + ':' + this.valueOf(); }
+             function strict() { 'use strict'; return this; }",
+        )
+        .unwrap();
+    let transient = EvalOptions::default().transient();
+    let result = context
+        .eval_with_options(
+            "(function () {
+                function dynamicStep(next, n) { return n ? next(dynamicStep, n - 1) + 1 : 1; }
+                function DynamicCtor(x) { this.x = x; this.target = new.target; }
+                function collect(a, ...rest) { return a + rest.length + arguments.length; }
+                class Derived extends StaticCtor {}
+                var a = new StaticCtor(11);
+                var b = new DynamicCtor(...[13]);
+                var c = new Derived(...[17]);
+                return staticStep(dynamicStep, 20) === 21
+                    && dynamicStep(staticStep, 21) === 22
+                    && sloppy.call(7) === 'object:7'
+                    && (function temporary() { return temporary; }).call(7).name === 'temporary'
+                    && strict.apply(null, []) === null
+                    && Function.prototype.call.call(collect, null, 3, 4, 5) === 8
+                    && collect(...[5, 6, 7, 8]) === 12
+                    && a.x === 11 && a.target === StaticCtor
+                    && b.x === 13 && b.target === DynamicCtor
+                    && c.x === 17 && c.target === Derived;
+             })()",
+            &transient,
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn failed_call_entry_keeps_the_callers_handlers_and_code() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let context = runtime.context();
+    context
+        .eval("var notConstructor = () => 1; function staticThrow() { throw 23; }")
+        .unwrap();
+    let result = context
+        .eval_with_options(
+            "(function () {
+                var caught = 0;
+                try { staticThrow(); } catch (e) { caught += e; }
+                try { new notConstructor(); } catch (e) { caught += e instanceof TypeError; }
+                try { new notConstructor(...[]); } catch (e) { caught += e instanceof TypeError; }
+                try { (0)(...[]); } catch (e) { caught += e instanceof TypeError; }
+                return caught;
+             })()",
+            &EvalOptions::default().transient(),
+        )
+        .unwrap();
+    assert_eq!(result, Value::Int(26));
+}
+
+#[test]
+fn call_returns_restore_callers_after_native_calls_and_suspension() {
+    assert_eq!(
+        run_api(
+            "function tailNative(n) { return Math.abs(n); }
+             function tailConstruct(n) { return new Number(n); }
+             function actual(a, b) { return [a, b, arguments.length].join(':'); }
+             function* values(n) { yield n; return n + 1; }
+             async function ready(n) { return n + 2; }
+             function caller() {
+                 var keep = { value: 19 };
+                 var a = tailNative(-7);
+                 var b = tailConstruct(11);
+                 var c = actual(3, 5, 8, 13);
+                 var it = values(17);
+                 var d = it.next().value + it.next().value;
+                 ready(23).then(function (e) { print(keep.value, a, b.valueOf(), c, d, e); });
+             }
+             caller();"
+        ),
+        "19 7 11 3:5:4 35 25\n"
+    );
+}
+
 /// Defines a core host function as the global `name`, as the API's host
 /// functions will be.
 fn define_core_host(
