@@ -3025,6 +3025,23 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     if !id.is_dynamic() {
                                         let (next, plan) = cx.static_code.call_entry(id);
                                         let next_base = base + at;
+                                        if !matches!(
+                                            plan,
+                                            crate::bytecode::call_plan::CallPlan::None
+                                        ) {
+                                            let value = call_plan::value(
+                                                cx,
+                                                next,
+                                                plan,
+                                                next_base,
+                                                insn.c as usize,
+                                                this,
+                                                bytecode,
+                                            );
+                                            if !value.is_empty() {
+                                                set!('dispatch, insn.a, value)
+                                            }
+                                        }
                                         match prepare_frame(
                                             cx,
                                             next,
@@ -3034,21 +3051,6 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                             object,
                                         ) {
                                             Ok(end) => {
-                                                if !matches!(
-                                                    plan,
-                                                    crate::bytecode::call_plan::CallPlan::None
-                                                ) {
-                                                    let value = call_plan::value(
-                                                        cx.heap,
-                                                        plan,
-                                                        next.ic_base as usize,
-                                                        next_base,
-                                                        bytecode,
-                                                    );
-                                                    if !value.is_empty() {
-                                                        set!('dispatch, insn.a, value)
-                                                    }
-                                                }
                                                 let next_frame = Frame {
                                                     unit: id,
                                                     function: object,

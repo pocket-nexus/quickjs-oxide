@@ -1,6 +1,6 @@
-//! Execute a validated read-only return expression after ordinary entry has
-//! polled and prepared the window. `EMPTY` means miss: publish the frame and
-//! run the unchanged body. Nothing here may allocate, call JS or mutate guest
+//! Execute a validated read-only return expression with the ordinary no-allocation entry
+//! admission (poll counter, reserved stack window and receiver normalization). `EMPTY` means miss: publish the frame and
+//! run the unchanged body with ordinary entry. Nothing here may allocate, call JS or mutate guest
 //! state; cache-hit statistics are committed only when the whole plan succeeds.
 
 use super::*;
@@ -8,13 +8,39 @@ use crate::bytecode::call_plan::CallPlan;
 
 #[inline(never)]
 pub(super) fn value(
-    heap: &mut Heap,
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
     plan: &CallPlan,
-    ic_base: usize,
     base: usize,
+    argc: usize,
+    this: Value,
     bytecode: BytecodeId,
 ) -> Value {
-    let reg = |r: u8| heap.vm.registers[base + r as usize];
+    let end = base + unit.register_count as usize;
+    if cx.heap.vm.poll <= 1
+        || end + SPAN > cx.heap.vm.registers.len()
+        || (unit.has(flags::ARGUMENTS) && argc > unit.parameter_count as usize)
+    {
+        return Value::EMPTY;
+    }
+    let this = if unit.has(flags::STRICT) || this.as_object().is_some() {
+        this
+    } else if this.is_undefined() || this.is_null() {
+        Value::object(cx.realm.global())
+    } else {
+        return Value::EMPTY;
+    };
+    let heap = &mut *cx.heap;
+    let ic_base = unit.ic_base as usize;
+    let reg = |r: u8| {
+        if r == 0 {
+            this
+        } else if r as usize <= argc {
+            heap.vm.registers[base + r as usize]
+        } else {
+            Value::UNDEFINED
+        }
+    };
     let get = |receiver, site: u8| {
         ic::get_hit(
             &heap.objects,
@@ -82,6 +108,10 @@ pub(super) fn value(
             (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
         }
     };
+    if value.is_empty() {
+        return Value::EMPTY;
+    }
+    heap.vm.poll -= 1;
     for _ in 0..hits {
         heap.ics.count_hit(IcKind::Get);
     }
