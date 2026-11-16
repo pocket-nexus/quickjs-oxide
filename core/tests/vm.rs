@@ -3,7 +3,7 @@
 //! Passes under `--features gc-stress`.
 
 use oxide_core::bytecode::builder::UnitLayout;
-use oxide_core::bytecode::{CodeBuilder, CodeUnitId, Opcode, flags};
+use oxide_core::bytecode::{CodeBuilder, CodeUnitId, Handler, Opcode, flags};
 use oxide_core::heap::gc::HeapLimits;
 use oxide_core::{ErrorKind, PropertyKey, Runtime, Value};
 
@@ -255,6 +255,31 @@ fn a_native_tail_return_restores_roots_before_writing_a_high_destination() {
     });
     assert_eq!(run(&mut runtime, root), Ok(Value::int32(7)));
     assert_eq!(runtime.vm_stack().depth(), 0);
+}
+
+#[test]
+fn catching_an_unwind_restores_roots_before_a_high_destination() {
+    let mut runtime = runtime();
+    let child = publish(&mut runtime, layout(3), |b| {
+        b.a_count(Opcode::NewObject, 2, 1);
+        b.a_int(Opcode::LoadInt, 1, 37);
+        b.a(Opcode::Throw, 1);
+    });
+    let mut root_layout = layout(64);
+    root_layout.children = vec![child];
+    let root = publish(&mut runtime, root_layout, |b| {
+        b.a_child(Opcode::MakeClosure, 1, 0);
+        b.call(Opcode::Call, 2, 1, 0);
+        b.a(Opcode::Return, 2);
+        b.a(Opcode::Return, 63);
+        b.handler(Handler {
+            start: 1,
+            end: 2,
+            target: 3,
+            register: 63,
+        });
+    });
+    assert_eq!(run(&mut runtime, root), Ok(Value::int32(37)));
 }
 
 #[test]

@@ -3176,38 +3176,47 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 regs = window!();
                 continue 'dispatch;
             };
-            let mut at = pc - 1;
-            // Unconditional: a test of `unpositioned` here costs the loop's code
-            // about 4%.
-            error::place_frame(cx, thrown, unit, at as u32);
-            // An interrupt is caught by no handler (QuickJS's uncatchable error).
+            // Place the fault before unwinding removes any backtrace frames.
+            error::place_frame(cx, thrown, unit, (pc - 1) as u32);
             if cx.heap.vm.interrupted {
                 return Err(unwind_uncatchable(cx, thrown));
             }
-            loop {
-                if let Some(handler) = unit
-                    .handlers
-                    .iter()
-                    .find(|handler| handler.start as usize <= at && at < handler.end as usize)
-                {
-                    cx.heap.vm.registers[base + handler.register as usize] = thrown;
-                    pc = handler.target as usize;
-                    break;
-                }
-                let done = cx.heap.vm.frames.pop().expect("a frame");
-                if done.flags & frame_flags::ENTRY != 0 {
-                    return Err(Throw(thrown));
-                }
-                load_frame!();
-                at = done.return_pc as usize - 1;
-            }
-            regs = window!();
-            continue 'dispatch;
+            break 'restore unwind_catchable(cx, thrown, pc - 1)?;
         };
         load_frame!();
         cx.heap.vm.registers[resume.dst as usize] = resume.value;
         pc = resume.pc as usize;
         regs = window!();
+    }
+}
+
+/// Handler search is cold. No allocation occurs while frames are popped;
+/// the shared continuation restores the handler's roots before writing its value.
+#[cold]
+#[inline(never)]
+fn unwind_catchable(cx: &mut Cx<'_>, thrown: Value, mut at: usize) -> Result<Resume, Throw> {
+    loop {
+        let frame = top_frame(&cx.heap.vm.frames);
+        let unit = cx.unit(frame.unit);
+        if let Some(handler) = unit
+            .handlers
+            .iter()
+            .find(|handler| handler.start as usize <= at && at < handler.end as usize)
+        {
+            return Ok(Resume {
+                pc: handler.target,
+                dst: frame.base + u32::from(handler.register),
+                value: thrown,
+            });
+        }
+        let done = cx.heap.vm.frames.pop().expect("an unwinding frame");
+        if done.flags & frame_flags::ENTRY != 0 {
+            return Err(Throw(thrown));
+        }
+        let caller = top_frame(&cx.heap.vm.frames);
+        let caller_unit = cx.unit(caller.unit);
+        raise_top(cx, frame_end(&caller, &caller_unit));
+        at = done.return_pc as usize - 1;
     }
 }
 
