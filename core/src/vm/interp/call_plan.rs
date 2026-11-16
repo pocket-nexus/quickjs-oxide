@@ -119,10 +119,14 @@ pub(super) fn value(
             {
                 return Value::EMPTY;
             }
-            let Some((value, hits)) =
-                delegated_read(heap, next, next_plan, receiver, reg(argument), argc)
-            else {
+            let value = delegated_read(heap, next, next_plan, receiver, reg(argument), argc);
+            if value.is_empty() {
                 return Value::EMPTY;
+            }
+            let hits = match next_plan {
+                CallPlan::Chain { .. } => 2,
+                CallPlan::Field { .. } | CallPlan::Element { .. } => 1,
+                _ => 0,
             };
             polls = 2;
             clear_end = end.max(next_end);
@@ -420,7 +424,15 @@ fn delegated_read(
     this: Value,
     argument: Value,
     argc: u8,
-) -> Option<(Value, u8)> {
+) -> Value {
+    macro_rules! need {
+        ($value:expr) => {
+            match $value {
+                Some(value) => value,
+                None => return Value::EMPTY,
+            }
+        };
+    }
     let reg = |r| match r {
         0 => this,
         1 if argc == 1 => argument,
@@ -437,28 +449,31 @@ fn delegated_read(
         )
     };
     match *plan {
-        CallPlan::Register(r) => Some((reg(r), 0)),
-        CallPlan::Field { base, site } => Some((get(reg(base), site)?, 1)),
+        CallPlan::Register(r) => reg(r),
+        CallPlan::Field { base, site } => need!(get(reg(base), site)),
         CallPlan::Chain {
             base,
             first,
             second,
-        } => Some((get(get(reg(base), first)?, second)?, 2)),
+        } => {
+            let first = need!(get(reg(base), first));
+            need!(get(first, second))
+        }
         CallPlan::Element { base, site, index } => {
-            let receiver = get(reg(base), site)?.as_object()?;
-            let index = reg(index).as_int32()?;
+            let receiver = need!(need!(get(reg(base), site)).as_object());
+            let index = need!(reg(index).as_int32());
             if index < 0 {
-                return None;
+                return Value::EMPTY;
             }
             let header = heap.objects.get(receiver.index());
             let elements = header.elements();
             if index as u32 >= elements.len
                 || (header.kind == ObjectKind::Array && index as u32 >= header.payload)
             {
-                return None;
+                return Value::EMPTY;
             }
-            Some((heap.values.get(elements, index as u32), 1))
+            heap.values.get(elements, index as u32)
         }
-        _ => None,
+        _ => Value::EMPTY,
     }
 }
