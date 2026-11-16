@@ -258,6 +258,25 @@ fn a_native_tail_return_restores_roots_before_writing_a_high_destination() {
 }
 
 #[test]
+fn a_method_callee_at_register_256_fits_the_reserved_window() {
+    let mut runtime = runtime();
+    let child = publish(&mut runtime, layout(2), |b| {
+        b.a_int(Opcode::LoadInt, 1, 41);
+        b.a(Opcode::Return, 1);
+    });
+    let mut root_layout = layout(257);
+    root_layout.children = vec![child];
+    let root = publish(&mut runtime, root_layout, |b| {
+        b.a_child(Opcode::MakeClosure, 1, 0);
+        b.a_wide(Opcode::StoreWide, 1, 256);
+        b.a(Opcode::LoadUndefined, 255);
+        b.call(Opcode::CallMethod, 1, 255, 0);
+        b.a(Opcode::Return, 1);
+    });
+    assert_eq!(run(&mut runtime, root), Ok(Value::int32(41)));
+}
+
+#[test]
 fn calls_from_rust_pass_this_and_arguments() {
     let mut runtime = runtime();
     let root = publish(
