@@ -714,8 +714,42 @@ impl Runtime {
 
         use crate::vm::ic::IcKind;
         let ics = self.heap.ics();
-        let stats = ics.stats()?;
         let mut out = String::new();
+        let mut rows = Vec::new();
+        for (id, unit) in self.units().all() {
+            if !id.is_dynamic() {
+                let counts = self
+                    .heap
+                    .vm
+                    .call_profile
+                    .get(id.0 as usize)
+                    .copied()
+                    .unwrap_or_default();
+                if counts != [0; 3] {
+                    rows.push((counts, id, unit));
+                }
+            }
+        }
+        rows.sort_by_key(|(counts, _, _)| std::cmp::Reverse(counts[2]));
+        for (counts, id, unit) in rows {
+            let _ = writeln!(
+                out,
+                "profile {} calls={} hits={} ops={} name={:?} definition={:?} body={:?}",
+                id.0,
+                counts[0],
+                counts[1],
+                counts[2],
+                unit.debug.name,
+                unit.debug.definition,
+                unit.source.as_deref().map(|s| String::from_utf8_lossy(s)
+                    .chars()
+                    .take(90)
+                    .collect::<String>())
+            );
+        }
+        let Some(stats) = ics.stats() else {
+            return Some(out);
+        };
         let _ = writeln!(
             out,
             "{:<10}{:>14}{:>14}{:>14}{:>14}{:>9}",
