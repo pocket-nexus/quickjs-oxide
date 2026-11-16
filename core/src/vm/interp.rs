@@ -2142,6 +2142,7 @@ fn local_binding_error(cx: &mut Cx<'_>, insn: Insn) -> Throw {
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
 pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
+    cx.heap.vm.call_profile.resize(cx.static_code.len(), [0; 3]);
     let entry = top_frame(&cx.heap.vm.frames);
 
     // The running unit: borrowed from the code store, or from `held`, which
@@ -2280,6 +2281,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     }
 
     'dispatch: loop {
+        let id = current_frame!().unit;
+        if !id.is_dynamic() {
+            cx.heap.vm.call_profile[id.0 as usize][2] += 1;
+        }
         // Keep the dispatch descriptor borrowed; operand-heavy arms copy it
         // locally so their inputs can be decoded together.
         let insn = &code[pc];
@@ -3040,6 +3045,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     let bytecode = BytecodeId(record.bytecode);
                                     let id = cx.heap.bytecode_unit(bytecode);
                                     if !id.is_dynamic() {
+                                        cx.heap.vm.call_profile[id.0 as usize][0] += 1;
                                         let (next, plan) = cx.static_code.call_entry(id);
                                         let next_base = base + at;
                                         if !matches!(
@@ -3056,6 +3062,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                                 bytecode,
                                             );
                                             if !value.is_empty() {
+                                                cx.heap.vm.call_profile[id.0 as usize][1] += 1;
                                                 set!('dispatch, insn.a, value)
                                             }
                                         }
