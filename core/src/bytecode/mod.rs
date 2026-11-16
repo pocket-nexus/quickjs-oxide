@@ -66,7 +66,7 @@ impl Insn {
     }
 
     /// The cache site of an instruction that has one: `c` for `GetField` and
-    /// `SetField`, `b | c << 8` for the global forms, `imm` for `New`, `Call` and `CallMethod`. An index
+    /// `SetField`, `b | c << 8` for the global forms, `imm` for `New`. An index
     /// into the unit's entries of the [`IcStore`](crate::vm::ic::IcStore).
     #[inline]
     pub const fn site(self) -> Option<u32> {
@@ -75,7 +75,7 @@ impl Insn {
             Opcode::GetGlobal | Opcode::GetGlobalOrUndefined | Opcode::SetGlobal => {
                 Some(self.b as u32 | (self.c as u32) << 8)
             }
-            Opcode::New | Opcode::Call | Opcode::CallMethod => Some(self.imm),
+            Opcode::New => Some(self.imm),
             _ => None,
         }
     }
