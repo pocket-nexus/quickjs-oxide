@@ -81,6 +81,88 @@ pub(super) fn value(
         CallPlan::None => return Value::EMPTY,
         CallPlan::Register(r) => (reg(r), 0),
         CallPlan::Constant { op, imm } => (constant(op, imm), 0),
+        CallPlan::Transfer {
+            base: receiver_base,
+            target,
+            source,
+            target_call,
+            source_call,
+            read,
+            write,
+        } => {
+            if heap.vm.poll <= 3 {
+                return Value::EMPTY;
+            }
+            let receiver = reg(receiver_base);
+            if receiver.as_object().is_none() {
+                return Value::EMPTY;
+            }
+            let Some(target) = get(receiver, target) else {
+                return Value::EMPTY;
+            };
+            let Some((target_unit, target_plan)) = read_target(cx.static_code, heap, target) else {
+                return Value::EMPTY;
+            };
+            let target_end = base + target_call as usize + 1 + target_unit.register_count as usize;
+            if target_end + SPAN > heap.vm.registers.len() {
+                return Value::EMPTY;
+            }
+            let target = delegated_read(
+                heap,
+                target_unit,
+                target_plan,
+                receiver,
+                Value::UNDEFINED,
+                0,
+            );
+            if target.as_object().is_none() {
+                return Value::EMPTY;
+            }
+            let Some(source) = get(receiver, source) else {
+                return Value::EMPTY;
+            };
+            let Some((source_unit, source_plan)) = read_target(cx.static_code, heap, source) else {
+                return Value::EMPTY;
+            };
+            let source_end = base + source_call as usize + 1 + source_unit.register_count as usize;
+            if source_end + SPAN > heap.vm.registers.len() {
+                return Value::EMPTY;
+            }
+            let source = delegated_read(
+                heap,
+                source_unit,
+                source_plan,
+                receiver,
+                Value::UNDEFINED,
+                0,
+            );
+            let Some(value) = get(source, read) else {
+                return Value::EMPTY;
+            };
+            if value.is_empty() {
+                return Value::EMPTY;
+            }
+            let entry = heap.ics.entries[ic_base + write as usize];
+            // This is the sole observable effect, after both calls and the
+            // source read have been admitted. Nothing below can miss.
+            if !ic::set_hit(
+                &mut heap.objects,
+                &heap.cells,
+                &mut heap.values,
+                entry,
+                target,
+                value,
+            ) {
+                return Value::EMPTY;
+            }
+            let (target_hits, target_globals) = read_hits(target_plan);
+            let (source_hits, source_globals) = read_hits(source_plan);
+            global_hits = target_globals + source_globals;
+            store_hit = true;
+            polls = 3;
+            clear_end = end.max(target_end).max(source_end);
+            (Value::UNDEFINED, 3 + target_hits + source_hits)
+        }
         CallPlan::Delegate {
             base: receiver_base,
             receiver: receiver_site,
@@ -98,21 +180,12 @@ pub(super) fn value(
             if receiver.as_object().is_none() {
                 return Value::EMPTY;
             }
-            let Some(function) = get(receiver, method).and_then(Value::as_object) else {
+            let Some(function) = get(receiver, method) else {
                 return Value::EMPTY;
             };
-            if heap.object_kind(function) != ObjectKind::Function {
+            let Some((next, next_plan)) = read_target(cx.static_code, heap, function) else {
                 return Value::EMPTY;
-            }
-            let record = heap.function_record(function);
-            if record.bytecode == NONE {
-                return Value::EMPTY;
-            }
-            let id = heap.bytecode_unit(BytecodeId(record.bytecode));
-            if id.is_dynamic() {
-                return Value::EMPTY;
-            }
-            let (next, next_plan) = cx.static_code.call_entry(id);
+            };
             let next_end = base + call as usize + 1 + next.register_count as usize;
             if next_end + SPAN > heap.vm.registers.len()
                 || (next.has(flags::ARGUMENTS) && u16::from(argc) > next.parameter_count)
@@ -123,11 +196,8 @@ pub(super) fn value(
             if value.is_empty() {
                 return Value::EMPTY;
             }
-            let hits = match next_plan {
-                CallPlan::Chain { .. } => 2,
-                CallPlan::Field { .. } | CallPlan::Element { .. } => 1,
-                _ => 0,
-            };
+            let (hits, globals) = read_hits(next_plan);
+            global_hits = globals;
             polls = 2;
             clear_end = end.max(next_end);
             (value, hits + 2)
@@ -474,6 +544,62 @@ fn delegated_read(
             }
             heap.values.get(elements, index as u32)
         }
+        CallPlan::Select {
+            base,
+            left_site,
+            global,
+            right_site,
+            op,
+            taken,
+            fallthrough,
+        } => {
+            let receiver = reg(base);
+            let left = need!(get(receiver, left_site));
+            let entry = heap.ics.entries[unit.ic_base as usize + global as usize];
+            if entry.w0 != heap.global_generation {
+                return Value::EMPTY;
+            }
+            let start = heap.objects.get(entry.w3).slots_start;
+            let right = need!(get(heap.values.get_at(start + entry.w1), right_site));
+            let order = need!(order(left, right));
+            let site = if JUMP_MASKS[op as usize] & order != 0 {
+                taken
+            } else {
+                fallthrough
+            };
+            need!(get(receiver, site))
+        }
         _ => Value::EMPTY,
+    }
+}
+
+#[inline]
+fn read_target<'a>(
+    code: &'a CodeStore,
+    heap: &Heap,
+    function: Value,
+) -> Option<(&'a CodeUnit, &'a CallPlan)> {
+    let function = function.as_object()?;
+    if heap.object_kind(function) != ObjectKind::Function {
+        return None;
+    }
+    let record = heap.function_record(function);
+    if record.bytecode == NONE {
+        return None;
+    }
+    let id = heap.bytecode_unit(BytecodeId(record.bytecode));
+    if id.is_dynamic() {
+        return None;
+    }
+    Some(code.call_entry(id))
+}
+
+#[inline]
+fn read_hits(plan: &CallPlan) -> (u8, u8) {
+    match plan {
+        CallPlan::Field { .. } | CallPlan::Element { .. } => (1, 0),
+        CallPlan::Chain { .. } => (2, 0),
+        CallPlan::Select { .. } => (3, 1),
+        _ => (0, 0),
     }
 }
