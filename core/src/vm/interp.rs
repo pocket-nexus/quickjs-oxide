@@ -2030,25 +2030,6 @@ fn complete_call<'a>(
     }
 }
 
-/// An ordinary native or exotic call cannot enter the dispatch loop's next
-/// frame. Carry its value/throw directly, retaining the caller's root end
-/// instead of copying its Frame through the generic call completion.
-#[inline(never)]
-fn plain_call(
-    cx: &mut Cx<'_>,
-    target: Callee,
-    function: Value,
-    at: usize,
-    this: Value,
-    argc: usize,
-    pc: usize,
-) -> Result<Value, Throw> {
-    let top = cx.heap.vm.top;
-    let result = call_other(cx, target, function, at, this, argc, false, pc);
-    cx.heap.vm.top = top;
-    result
-}
-
 /// Tail calls, construction and spread stay out of the ordinary call's loop
 /// arm. A spread expands before resolving the callee, preserving error order.
 #[inline(never)]
@@ -3097,24 +3078,6 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             } else {
                                 Callee::NotCallable
                             };
-                            if !matches!(
-                                target,
-                                Callee::Bytecode(..)
-                                    | Callee::Native(Native::FunctionCall | Native::FunctionApply)
-                            ) {
-                                match plain_call(
-                                    cx,
-                                    target,
-                                    function,
-                                    base + at,
-                                    this,
-                                    insn.c as usize,
-                                    pc - 1,
-                                ) {
-                                    Ok(value) => set!('dispatch, insn.a, value),
-                                    Err(throw) => break 'op Err(throw),
-                                }
-                            }
                             next_frame = current_frame!();
                             invoke::<false, false>(
                                 cx,
