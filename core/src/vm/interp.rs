@@ -2997,22 +2997,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     }
 
                     // ---- allocation ----
-                    Opcode::NewObject => {
-                        let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
-                        let slots = if insn.imm == 0 {
-                            MIN_OPEN_SLOTS
-                        } else {
-                            insn.imm
-                        };
-                        let object =
-                            cx.heap
-                                .alloc_object(ObjectKind::Ordinary, Some(prototype), slots);
-                        write!('dispatch, insn.a,
-                            object
-                                .map(Value::object)
-                                .map_err(|error| error::heap_error(cx, error))
-                        )
-                    }
+                    Opcode::NewObject => write!('dispatch, insn.a, new_object(cx, insn.imm)),
                     Opcode::NewArray => write!('dispatch, insn.a, new_array(cx, base, *insn)),
                     Opcode::MakeClosure => {
                         let frame = current_frame!();
@@ -3248,6 +3233,16 @@ fn unwind_uncatchable(cx: &mut Cx<'_>, thrown: Value) -> Throw {
 }
 
 /// `NewArray a, b, imm`: an array of the `imm` registers from `b`.
+#[inline(never)]
+fn new_object(cx: &mut Cx<'_>, slots: u32) -> Result<Value, Throw> {
+    let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
+    let slots = if slots == 0 { MIN_OPEN_SLOTS } else { slots };
+    cx.heap
+        .alloc_object(ObjectKind::Ordinary, Some(prototype), slots)
+        .map(Value::object)
+        .map_err(|error| error::heap_error(cx, error))
+}
+
 #[inline(never)]
 fn new_array(cx: &mut Cx<'_>, base: usize, insn: Insn) -> Result<Value, Throw> {
     let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);

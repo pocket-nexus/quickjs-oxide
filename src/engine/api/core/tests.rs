@@ -348,6 +348,33 @@ fn planned_reads_and_writes_miss_before_observable_callbacks() {
 }
 
 #[test]
+fn planned_field_choices_read_only_the_selected_branch() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime
+        .context()
+        .eval(
+            "var Mode = { value: 1 }, o = { k: 0, a: 3, b: 5 }, seen = 0, ok = true;
+         function pick(o) { return o.k == Mode.value ? o.a : o.b; }
+         for (var i = 0; i < 20; ++i) {
+             o.k = 0; ok = ok && pick(o) === 5;
+             o.k = 1; ok = ok && pick(o) === 3;
+         }
+         Object.defineProperty(o, 'a', { get: function () { ++seen; return 17; } });
+         o.k = 0; ok = ok && pick(o) === 5 && seen === 0;
+         o.k = 1; ok = ok && pick(o) === 17 && seen === 1;
+         Mode.value = { valueOf: function () { ++seen; return 1; } };
+         ok = ok && pick(o) === 17 && seen === 3;
+         Object.defineProperty(Mode, 'value', { get: function () { ++seen; return 0; } });
+         ok && pick(o) === 5 && seen === 4;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
 fn read_only_call_plans_fall_back_on_accessor_invalidation_and_coercion() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {

@@ -43,6 +43,15 @@ pub(crate) enum CallPlan {
         read_site: u8,
         write_site: u8,
     },
+    Select {
+        base: u8,
+        left_site: u8,
+        global: u8,
+        right_site: u8,
+        op: Opcode,
+        taken: u8,
+        fallthrough: u8,
+    },
     GlobalCompare {
         left: u8,
         left_site: u8,
@@ -78,6 +87,55 @@ impl CallPlan {
             load.op == LoadUndefined && ret.op == Return && load.a == ret.a
         };
         match &*unit.code {
+            [left, global, right, branch, yes, jump, no, ret]
+                if left.op == GetField
+                    && input(left.b)
+                    && !input(left.a)
+                    && matches!(global.op, GetGlobal | GetGlobalOrUndefined)
+                    && !input(global.a)
+                    && global.a != left.a
+                    && global.c == 0
+                    && right.op == GetField
+                    && right.b == global.a
+                    && !input(right.a)
+                    && right.a != left.a
+                    && matches!(
+                        branch.op,
+                        JLt | JLte
+                            | JGt
+                            | JGte
+                            | JNlt
+                            | JNlte
+                            | JNgt
+                            | JNgte
+                            | JEq
+                            | JNeq
+                            | JStrictEq
+                            | JStrictNeq
+                    )
+                    && branch.a == left.a
+                    && branch.b == right.a
+                    && branch.imm == 6
+                    && yes.op == GetField
+                    && no.op == GetField
+                    && yes.b == left.b
+                    && no.b == left.b
+                    && jump.op == Jmp
+                    && jump.imm == 7
+                    && ret.op == Return
+                    && ret.a == yes.a
+                    && ret.a == no.a =>
+            {
+                Self::Select {
+                    base: left.b,
+                    left_site: left.c,
+                    global: global.b,
+                    right_site: right.c,
+                    op: branch.op,
+                    taken: no.c,
+                    fallthrough: yes.c,
+                }
+            }
             [ret] if ret.op == Return && input(ret.a) => Self::Register(ret.a),
             [load, ret] if ret.op == Return && ret.a == load.a => match load.op {
                 LoadInt | LoadConst | LoadUndefined | LoadNull | LoadTrue | LoadFalse => {
