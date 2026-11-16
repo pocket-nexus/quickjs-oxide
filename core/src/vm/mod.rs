@@ -169,8 +169,6 @@ pub struct VmStack {
     /// An interrupt is unwinding: no handler catches it, and no native turns
     /// it into a completion.
     pub(crate) interrupted: bool,
-    // Temporary diagnostic: ordinary calls, planned completions, dispatches.
-    pub(crate) call_profile: Vec<[u64; 3]>,
 }
 
 /// Back-edges and calls between two interrupt polls. QuickJS's
@@ -199,7 +197,6 @@ impl Default for VmStack {
             proxy_refused: false,
             poll: INTERRUPT_INTERVAL,
             interrupted: false,
-            call_profile: Vec::new(),
         }
     }
 }

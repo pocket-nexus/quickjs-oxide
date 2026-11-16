@@ -624,7 +624,9 @@ fn format_exception(runtime: &Runtime, exception: &Value) -> Option<String> {
 
 /// `--gc-stats`, `--ic-stats` and `--memory-report`, to stderr at exit.
 fn report_statistics(runtime: &Runtime, options: &Options) {
-    if let Ok(Some(report)) = runtime.ic_report(10) {
+    if options.ic_stats
+        && let Ok(Some(report)) = runtime.ic_report(10)
+    {
         eprint!("{report}");
     }
     if options.gc_stats
