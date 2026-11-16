@@ -21,12 +21,23 @@ pub(super) fn run(
     bytecode: BytecodeId,
 ) -> Outcome {
     let ic_base = unit.ic_base as usize;
+    let Heap {
+        vm,
+        objects,
+        cells,
+        values,
+        strings,
+        ics,
+        payloads,
+        ..
+    } = heap;
+    let regs = window(&mut vm.registers, base);
     let mut pc = 0;
     loop {
         let insn = unit.code[pc];
         macro_rules! reg {
             ($r:expr) => {
-                heap.vm.registers[base + $r as usize]
+                regs[$r as usize]
             };
         }
         let value = match insn.op {
@@ -37,9 +48,9 @@ pub(super) fn run(
             Opcode::Mov => reg!(insn.b),
             Opcode::LoadInt => Value::int32(insn.int()),
             Opcode::LoadConst => {
-                let constants = heap.payloads.bytecode.get(bytecode.index());
+                let constants = payloads.bytecode.get(bytecode.index());
                 debug_assert!(insn.imm < constants.constant_count);
-                heap.values.get(constants.constants, insn.imm)
+                values.get(constants.constants, insn.imm)
             }
             Opcode::LoadUndefined => Value::UNDEFINED,
             Opcode::LoadNull => Value::NULL,
@@ -50,36 +61,23 @@ pub(super) fn run(
             Opcode::ReturnUndefined => return Outcome::Returned(Value::UNDEFINED),
             Opcode::GetField => {
                 let site = ic_base + insn.c as usize;
-                let entry = heap.ics.entries[site];
-                let Some(value) = ic::get_hit(
-                    &heap.objects,
-                    &heap.cells,
-                    &heap.values,
-                    &heap.strings,
-                    entry,
-                    reg!(insn.b),
-                ) else {
+                let entry = ics.entries[site];
+                let Some(value) = ic::get_hit(objects, cells, values, strings, entry, reg!(insn.b))
+                else {
                     return Outcome::Publish(pc);
                 };
-                heap.ics.count_hit(IcKind::Get);
+                ics.count_hit(IcKind::Get);
                 value
             }
             Opcode::SetField => {
                 let object = reg!(insn.a);
                 let value = reg!(insn.b);
                 let site = ic_base + insn.c as usize;
-                let entry = heap.ics.entries[site];
-                if !ic::set_hit(
-                    &mut heap.objects,
-                    &heap.cells,
-                    &mut heap.values,
-                    entry,
-                    object,
-                    value,
-                ) {
+                let entry = ics.entries[site];
+                if !ic::set_hit(objects, cells, values, entry, object, value) {
                     return Outcome::Publish(pc);
                 }
-                heap.ics.count_hit(IcKind::Set);
+                ics.count_hit(IcKind::Set);
                 pc += 1;
                 continue;
             }
@@ -118,7 +116,12 @@ pub(super) fn run(
                 };
                 Value::int32(value)
             }
-            Opcode::Not => Value::bool(!ops::to_boolean(heap, reg!(insn.b))),
+            Opcode::Not => {
+                let Some(value) = reg!(insn.b).as_bool() else {
+                    return Outcome::Publish(pc);
+                };
+                Value::bool(!value)
+            }
             Opcode::Lt | Opcode::Lte | Opcode::Gt | Opcode::Gte | Opcode::Eq | Opcode::Neq => {
                 let Some(order) = order(reg!(insn.b), reg!(insn.c)) else {
                     return Outcome::Publish(pc);
@@ -126,7 +129,16 @@ pub(super) fn run(
                 Value::bool(JUMP_MASKS[insn.op as usize] & order != 0)
             }
             Opcode::StrictEq | Opcode::StrictNeq => {
-                let equal = ops::strict_eq(heap, reg!(insn.b), reg!(insn.c));
+                let (x, y) = (reg!(insn.b), reg!(insn.c));
+                let equal = if x.is_number() && y.is_number() {
+                    x.as_f64() == y.as_f64()
+                } else if x.as_string().is_some() && y.as_string().is_some()
+                    || x.as_bigint().is_some() && y.as_bigint().is_some()
+                {
+                    return Outcome::Publish(pc);
+                } else {
+                    x == y
+                };
                 Value::bool(equal == (insn.op == Opcode::StrictEq))
             }
             Opcode::Jmp | Opcode::JTrue | Opcode::JFalse | Opcode::JUndefinedOrNull => {
@@ -135,7 +147,12 @@ pub(super) fn run(
                     Opcode::JUndefinedOrNull => {
                         reg!(insn.a).is_undefined() || reg!(insn.a).is_null()
                     }
-                    _ => ops::to_boolean(heap, reg!(insn.a)) == (insn.op == Opcode::JTrue),
+                    _ => {
+                        let Some(truthy) = reg!(insn.a).as_bool() else {
+                            return Outcome::Publish(pc);
+                        };
+                        truthy == (insn.op == Opcode::JTrue)
+                    }
                 };
                 if taken {
                     let target = insn.imm as usize;
