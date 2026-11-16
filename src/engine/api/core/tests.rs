@@ -222,6 +222,68 @@ fn element_hits_and_reentrant_misses_preserve_the_register_window() {
     );
 }
 
+#[test]
+fn short_calls_publish_at_the_first_unexecuted_operation() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime
+        .context()
+        .eval(
+            "function grow(n) { return n ? grow(n - 1) + 1 : 1; }
+         function read(o) { return o.x; }
+         function step(o) { o.n++; return o.x; }
+         function store(o, x) { o.n++; o.x = x; }
+         function add(o, x) { o.n++; return x + 1; }
+         function callback(o, f) { o.n++; return f(); }
+         var o = { n: 0, x: 3 }, ok = true;
+         for (var i = 0; i < 20; ++i) {
+             ok = ok && read(o) === i + 3 && step(o) === i + 3;
+             store(o, i + 4);
+             ok = ok && add(o, i) === i + 1;
+         }
+         var seen = 0;
+         Object.defineProperty(o, 'x', {
+             configurable: true,
+             get: function () { ++seen; return grow(400); },
+             set: function (v) { seen += v + grow(300); }
+         });
+         ok = ok && step(o) === 401 && seen === 1;
+         store(o, 7);
+         ok = ok && seen === 309;
+         ok = ok && add(o, { valueOf: function () { return grow(200); } }) === 202;
+         ok = ok && callback(o, function () { return grow(100); }) === 101;
+         Object.defineProperty(o, 'x', { get: function () { throw 17; } });
+         try { step(o); } catch (e) { ok = ok && e === 17; }
+         ok && o.n === 65;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn short_calls_keep_numeric_identity_and_receiver_semantics() {
+    assert_eq!(
+        run_api(
+            "function id(x) { return x; }
+             function sum(x, y) { return x + y; }
+             function sub(x, y) { return x - y; }
+             function lt(x, y) { return x < y; }
+             function eq(x, y) { return x === y; }
+             function choose(x, y) { return x ? x : y; }
+             function receiver() { 'use strict'; return this; }
+             function self() { return self; }
+             var a = {}, b = {};
+             print(1 / id(-0), sum(2147483647, 1), sub(-2147483648, 1),
+                 sum('a', 2), lt(NaN, 1), eq(a, a), eq(a, b),
+                 eq('ab', ['a', 'b'].join('')), eq(1n, BigInt('1')),
+                 choose('', 7), choose(NaN, 9), receiver.call(null), self() === self);"
+        ),
+        "-Infinity 2147483648 -2147483649 a2 false true false true true 7 9 null true\n"
+    );
+}
+
 /// Defines a core host function as the global `name`, as the API's host
 /// functions will be.
 fn define_core_host(
