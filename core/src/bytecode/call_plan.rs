@@ -60,6 +60,15 @@ pub(crate) enum CallPlan {
         argument: u8,
         argc: u8,
     },
+    Transfer {
+        base: u8,
+        target: u8,
+        source: u8,
+        target_call: u8,
+        source_call: u8,
+        read: u8,
+        write: u8,
+    },
     GlobalStore {
         base: u8,
         global: u16,
@@ -126,6 +135,56 @@ impl CallPlan {
                 && ret.a == call.a
         };
         match &*unit.code {
+            [
+                target,
+                target_this,
+                target_call,
+                source,
+                source_this,
+                source_call,
+                read,
+                write,
+                undef,
+                ret,
+            ] if target.op == GetField
+                && input(target.b)
+                && target_this.op == Mov
+                && target_this.b == target.b
+                && !input(target_this.a)
+                && target_call.op == CallMethod
+                && target_call.b == target_this.a
+                && target_call.a == target_call.b
+                && target_call.c == 0
+                && u16::from(target.a) == u16::from(target_call.b) + 1
+                && source.op == GetField
+                && source.b == target.b
+                && source_this.op == Mov
+                && source_this.b == target.b
+                && !input(source_this.a)
+                && source_call.op == CallMethod
+                && source_call.b == source_this.a
+                && source_call.a == source_call.b
+                && source_call.c == 0
+                && source_call.b > target_call.b
+                && u16::from(source.a) == u16::from(source_call.b) + 1
+                && read.op == GetField
+                && read.b == source_call.a
+                && read.a == source_call.a
+                && write.op == SetField
+                && write.a == target_call.a
+                && write.b == read.a
+                && returns_undefined(undef, ret) =>
+            {
+                Self::Transfer {
+                    base: target.b,
+                    target: target.c,
+                    source: source.c,
+                    target_call: target_call.b,
+                    source_call: source_call.b,
+                    read: read.c,
+                    write: write.c,
+                }
+            }
             [receiver, method, call, ret]
                 if delegate(receiver, method, call, ret) && call.c == 0 =>
             {
@@ -546,5 +605,31 @@ mod tests {
         let mut alias = code;
         alias[2].a = 3;
         assert_eq!(plan(&alias, 1), CallPlan::None);
+    }
+
+    #[test]
+    fn transfers_keep_the_first_result_below_the_second_call_window() {
+        let code = [
+            Insn::new(Opcode::GetField, 2, 0, 0, 0),
+            Insn::new(Opcode::Mov, 1, 0, 0, 0),
+            Insn::new(Opcode::CallMethod, 1, 1, 0, 0),
+            Insn::new(Opcode::GetField, 3, 0, 0, 0),
+            Insn::new(Opcode::Mov, 2, 0, 0, 0),
+            Insn::new(Opcode::CallMethod, 2, 2, 0, 0),
+            Insn::new(Opcode::GetField, 2, 2, 0, 0),
+            Insn::new(Opcode::SetField, 1, 2, 0, 0),
+            Insn::new(Opcode::LoadUndefined, 1, 0, 0, 0),
+            Insn::new(Opcode::Return, 1, 0, 0, 0),
+        ];
+        assert!(matches!(plan(&code, 0), CallPlan::Transfer { .. }));
+        let mut alias = code;
+        alias[3].a = 2;
+        alias[4].a = 1;
+        alias[5].a = 1;
+        alias[5].b = 1;
+        alias[6].a = 1;
+        alias[6].b = 1;
+        alias[7].b = 1;
+        assert_eq!(plan(&alias, 0), CallPlan::None);
     }
 }

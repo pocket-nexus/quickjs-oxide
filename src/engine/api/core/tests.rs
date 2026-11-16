@@ -530,6 +530,59 @@ fn delegated_read_calls_poll_without_loop_backedges() {
 }
 
 #[test]
+fn planned_transfers_commit_once_after_selector_and_property_guards() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime.context().eval(
+        "var Mode={forward:1},reads=0,writes=0,coercions=0,stored;
+         function output(){return this.direction==Mode.forward?this.out:this.inputObject;}
+         function input(){return this.direction==Mode.forward?this.inputObject:this.out;}
+         function execute(){'use strict';this.output().value=this.input().value;}
+         function grow(n){return n?grow(n-1)+1:1;}
+         var x={tag:7},a={value:x},b={value:x};
+         var p={direction:1,inputObject:a,out:b,input:input,output:output,execute:execute},ok=true;
+         for(var i=0;i<30;i++){p.direction=i&1;p.execute();ok=ok&&a.value===x&&b.value===x;}
+         p.direction=1;
+         Object.defineProperty(a,'value',{get:function(){++reads;grow(300);return x;},configurable:true});
+         Object.defineProperty(b,'value',{set:function(v){++writes;stored=v;},configurable:true});
+         p.execute();ok=ok&&reads===1&&writes===1&&stored===x;
+         Mode.forward={valueOf:function(){++coercions;grow(300);return 1;}};
+         p.execute();ok=ok&&reads===2&&writes===2&&coercions===2;
+         Object.defineProperty(b,'value',{value:0,writable:false});
+         var threw=false;try{p.execute();}catch(e){threw=e instanceof TypeError;}
+         ok&&threw&&reads===3&&writes===2&&coercions===4&&b.value===0;"
+    ).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn planned_transfers_preserve_method_lookup_order_and_live_replacements() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime.context().eval(
+        "var Mode={forward:1},seen=0;
+         function output(){return this.direction==Mode.forward?this.out:this.inputObject;}
+         function input(){return this.direction==Mode.forward?this.inputObject:this.out;}
+         function execute(){this.output().value=this.input().value;}
+         var a={value:13},b={value:7};
+         var p={direction:1,inputObject:a,out:b,input:input,output:output,execute:execute},ok=true;
+         for(var i=0;i<30;i++){p.execute();ok=ok&&b.value===13;}
+         b.value=7;
+         Object.defineProperty(p,'input',{get:function(){++seen;p.direction=0;return input;},configurable:true});
+         p.execute();ok=ok&&seen===1&&b.value===7&&a.value===13;
+         Object.defineProperty(p,'input',{value:Function('return this.inputObject'),writable:true});
+         p.direction=1;p.execute();ok=ok&&b.value===13;
+         p.input=input.bind({direction:1,inputObject:{value:17},out:b});
+         p.execute();ok&&b.value===17;"
+    ).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
 fn arithmetic_comparisons_complete_each_conversion_once() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {
