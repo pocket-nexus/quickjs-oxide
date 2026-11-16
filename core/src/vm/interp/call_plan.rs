@@ -75,10 +75,59 @@ pub(super) fn value(
     };
     let mut global_hits = 0;
     let mut store_hit = false;
+    let mut polls = 1;
+    let mut clear_end = end;
     let (value, hits) = match *plan {
         CallPlan::None => return Value::EMPTY,
         CallPlan::Register(r) => (reg(r), 0),
         CallPlan::Constant { op, imm } => (constant(op, imm), 0),
+        CallPlan::Delegate {
+            base: receiver_base,
+            receiver: receiver_site,
+            method,
+            call,
+            argument,
+            argc,
+        } => {
+            if heap.vm.poll <= 2 {
+                return Value::EMPTY;
+            }
+            let Some(receiver) = get(reg(receiver_base), receiver_site) else {
+                return Value::EMPTY;
+            };
+            if receiver.as_object().is_none() {
+                return Value::EMPTY;
+            }
+            let Some(function) = get(receiver, method).and_then(Value::as_object) else {
+                return Value::EMPTY;
+            };
+            if heap.object_kind(function) != ObjectKind::Function {
+                return Value::EMPTY;
+            }
+            let record = heap.function_record(function);
+            if record.bytecode == NONE {
+                return Value::EMPTY;
+            }
+            let id = heap.bytecode_unit(BytecodeId(record.bytecode));
+            if id.is_dynamic() {
+                return Value::EMPTY;
+            }
+            let (next, next_plan) = cx.static_code.call_entry(id);
+            let next_end = base + call as usize + 1 + next.register_count as usize;
+            if next_end + SPAN > heap.vm.registers.len()
+                || (next.has(flags::ARGUMENTS) && u16::from(argc) > next.parameter_count)
+            {
+                return Value::EMPTY;
+            }
+            let Some((value, hits)) =
+                delegated_read(heap, next, next_plan, receiver, reg(argument), argc)
+            else {
+                return Value::EMPTY;
+            };
+            polls = 2;
+            clear_end = end.max(next_end);
+            (value, hits + 2)
+        }
         CallPlan::BitTestOrCompare {
             base,
             left,
@@ -339,11 +388,11 @@ pub(super) fn value(
     if value.is_empty() {
         return Value::EMPTY;
     }
-    heap.vm.poll -= 1;
+    heap.vm.poll -= polls;
     // The call-clobbered part still covered by the caller's root range must
     // not retain old objects. Unrooted temporaries need no initialization.
     let first = base + 1 + argc.min(unit.parameter_count as usize);
-    let rooted_end = end.min(heap.vm.top as usize);
+    let rooted_end = clear_end.min(heap.vm.top as usize);
     if first < rooted_end {
         heap.vm.registers[first..rooted_end].fill(Value::UNDEFINED);
     }
@@ -358,4 +407,58 @@ pub(super) fn value(
         heap.ics.count_hit(IcKind::Set);
     }
     value
+}
+
+/// A delegated leaf performs only guarded reads. Resolving its live method
+/// value above preserves replacement, invalidation and closure identity;
+/// unsupported plans return before publishing either activation.
+#[inline(never)]
+fn delegated_read(
+    heap: &Heap,
+    unit: &CodeUnit,
+    plan: &CallPlan,
+    this: Value,
+    argument: Value,
+    argc: u8,
+) -> Option<(Value, u8)> {
+    let reg = |r| match r {
+        0 => this,
+        1 if argc == 1 => argument,
+        _ => Value::UNDEFINED,
+    };
+    let get = |receiver, site: u8| {
+        ic::get_hit(
+            &heap.objects,
+            &heap.cells,
+            &heap.values,
+            &heap.strings,
+            heap.ics.entries[unit.ic_base as usize + site as usize],
+            receiver,
+        )
+    };
+    match *plan {
+        CallPlan::Register(r) => Some((reg(r), 0)),
+        CallPlan::Field { base, site } => Some((get(reg(base), site)?, 1)),
+        CallPlan::Chain {
+            base,
+            first,
+            second,
+        } => Some((get(get(reg(base), first)?, second)?, 2)),
+        CallPlan::Element { base, site, index } => {
+            let receiver = get(reg(base), site)?.as_object()?;
+            let index = reg(index).as_int32()?;
+            if index < 0 {
+                return None;
+            }
+            let header = heap.objects.get(receiver.index());
+            let elements = header.elements();
+            if index as u32 >= elements.len
+                || (header.kind == ObjectKind::Array && index as u32 >= header.payload)
+            {
+                return None;
+            }
+            Some((heap.values.get(elements, index as u32), 1))
+        }
+        _ => None,
+    }
 }
