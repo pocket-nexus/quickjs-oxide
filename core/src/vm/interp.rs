@@ -29,6 +29,8 @@ use crate::runtime::{Intrinsic, Names};
 use crate::shape::PropertyFlags;
 use crate::value::{BytecodeId, ObjectId, ScopeId, ShapeId, Value};
 
+mod call_plan;
+
 /// What a call's callee value is.
 enum Callee {
     Bytecode(ObjectId, BytecodeId),
@@ -3021,7 +3023,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     let bytecode = BytecodeId(record.bytecode);
                                     let id = cx.heap.bytecode_unit(bytecode);
                                     if !id.is_dynamic() {
-                                        let next = cx.static_code.get(id);
+                                        let (next, plan) = cx.static_code.call_entry(id);
                                         let next_base = base + at;
                                         match prepare_frame(
                                             cx,
@@ -3032,6 +3034,21 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                             object,
                                         ) {
                                             Ok(end) => {
+                                                if !matches!(
+                                                    plan,
+                                                    crate::bytecode::call_plan::CallPlan::None
+                                                ) {
+                                                    let value = call_plan::value(
+                                                        cx.heap,
+                                                        plan,
+                                                        next.ic_base as usize,
+                                                        next_base,
+                                                        bytecode,
+                                                    );
+                                                    if !value.is_empty() {
+                                                        set!('dispatch, insn.a, value)
+                                                    }
+                                                }
                                                 let next_frame = Frame {
                                                     unit: id,
                                                     function: object,

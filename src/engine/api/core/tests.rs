@@ -314,6 +314,33 @@ fn call_caches_follow_replaced_collected_and_dynamic_functions() {
     assert_eq!(result, Value::Bool(true));
 }
 
+#[test]
+fn read_only_call_plans_fall_back_on_accessor_invalidation_and_coercion() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime
+        .context()
+        .eval(
+            "function read(o) { return o.x; }
+         function chain(o) { return o.x.y; }
+         function less(a, b) { return a.x < b.x; }
+         var proto = { x: 3 }, a = Object.create(proto), b = { x: 7 }, c = { x: { y: 11 } };
+         var ok = true, reads = 0, conversions = 0;
+         for (var i = 0; i < 20; ++i) { ok = ok && read(a) === 3 && chain(c) === 11 && less(a, b); }
+         Object.defineProperty(proto, 'x', { get: function () { ++reads; return 5; } });
+         ok = ok && read(a) === 5 && less(a, b) && reads === 2;
+         b.x = { valueOf: function () { ++conversions; return 9; } };
+         ok = ok && less(a, b) && reads === 3 && conversions === 1;
+         Object.defineProperty(c.x, 'y', { get: function () { ++reads; throw 23; } });
+         try { chain(c); ok = false; } catch (e) { ok = ok && e === 23; }
+         ok && reads === 4;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
 /// Defines a core host function as the global `name`, as the API's host
 /// functions will be.
 fn define_core_host(
