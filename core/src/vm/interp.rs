@@ -2229,6 +2229,25 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
         }};
     }
 
+    // Every taken conditional back-edge polls too. Conversions finish before
+    // polling, and an interrupt is attributed to the original branch PC.
+    macro_rules! branch {
+        ($failure:lifetime, $target:expr) => {{
+            let target: usize = $target;
+            if target < pc {
+                let poll = &mut cx.heap.vm.poll;
+                *poll -= 1;
+                if *poll == 0 {
+                    if let Err(throw) = error::poll_interrupts(cx) {
+                        break $failure Err(throw);
+                    }
+                    regs = window!();
+                }
+            }
+            pc = target;
+        }};
+    }
+
     // Uncommon calls materialize the caller only for the helper's duration.
     macro_rules! called {
         ($dispatch:lifetime, $restore:lifetime, $insn:ident, $next_frame:ident => $result:expr) => {{
@@ -2332,13 +2351,18 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     Opcode::ThrowConstAssign => Err(local_binding_error(cx, *insn)),
 
                     // ---- unary operators ----
-                    Opcode::Inc => {
+                    Opcode::Inc | Opcode::IncJump => {
                         let insn = *insn;
                         let x = reg!(insn.b);
                         if let Some(i) = x.as_int32()
                             && let Some(value) = i.checked_add(1)
                         {
                             reg!(insn.a) = Value::int32(value);
+                            if insn.op == Opcode::IncJump
+                                && let Some(next) = fused_jump(regs, &mut cx.heap.vm.poll, code, pc)
+                            {
+                                pc = next;
+                            }
                             continue 'dispatch;
                         }
                         write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
@@ -2465,6 +2489,23 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         }
                         write!('dispatch, insn.a, ops::add(cx, x, y))
                     }
+                    Opcode::AddJump | Opcode::AddIJump => {
+                        let insn = *insn;
+                        let x = reg!(insn.b);
+                        let y = if insn.op == Opcode::AddJump {
+                            reg!(insn.c)
+                        } else {
+                            Value::int32(insn.int())
+                        };
+                        if let Some(value) = numeric_add(x, y) {
+                            reg!(insn.a) = value;
+                            if let Some(next) = fused_jump(regs, &mut cx.heap.vm.poll, code, pc) {
+                                pc = next;
+                            }
+                            continue 'dispatch;
+                        }
+                        write!('dispatch, insn.a, ops::add(cx, x, y))
+                    }
                     Opcode::Sub | Opcode::SubI => {
                         let x = reg!(insn.b);
                         let y = if insn.op == Opcode::Sub {
@@ -2566,14 +2607,14 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             }
                         };
                         if truthy == (insn.op == Opcode::JTrue) {
-                            pc = insn.imm as usize;
+                            branch!('op, insn.imm as usize);
                         }
                         continue 'dispatch;
                     }
                     Opcode::JUndefinedOrNull => {
                         let x = reg!(insn.a);
                         if x.is_undefined() || x.is_null() {
-                            pc = insn.imm as usize;
+                            branch!('op, insn.imm as usize);
                         }
                         continue 'dispatch;
                     }
@@ -2632,7 +2673,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             }
                         };
                         if taken {
-                            pc = insn.imm as usize;
+                            branch!('op, insn.imm as usize);
                         }
                         continue 'dispatch;
                     }
@@ -3277,6 +3318,47 @@ fn order(x: Value, y: Value) -> Option<u8> {
         Some(Ordering::Greater) => GREATER,
         None => UNORDERED,
     })
+}
+
+/// The same number-only addition as the ordinary Add arm. Conversions keep
+/// the original instruction and its fault PC in the dispatch loop.
+#[inline(always)]
+fn numeric_add(x: Value, y: Value) -> Option<Value> {
+    if let (Some(i), Some(j)) = (x.as_int32(), y.as_int32())
+        && let Some(sum) = i.checked_add(j)
+    {
+        return Some(Value::int32(sum));
+    }
+    Some(Value::number(x.as_f64()? + y.as_f64()?))
+}
+
+/// The arithmetic has already committed. Consume only a number-only branch
+/// that cannot call JS or poll the host. A miss leaves pc at that branch;
+/// in particular a due interrupt is polled at its original PC, exactly once.
+#[inline(always)]
+fn fused_jump(regs: &Window, poll: &mut u32, code: &[Insn], pc: usize) -> Option<usize> {
+    let jump = *code.get(pc)?;
+    if !jump.op.is_compare_jump() {
+        return None;
+    }
+    let mask = JUMP_MASKS[jump.op as usize];
+    let x = regs[jump.a as usize];
+    let y = if mask & IMMEDIATE != 0 {
+        Value::int32(jump.short().into())
+    } else {
+        regs[jump.b as usize]
+    };
+    if mask & order(x, y)? == 0 {
+        return Some(pc + 1);
+    }
+    let target = jump.imm as usize;
+    if target <= pc {
+        if *poll <= 1 {
+            return None;
+        }
+        *poll -= 1;
+    }
+    Some(target)
 }
 
 const LESS: u8 = 1 << 0;

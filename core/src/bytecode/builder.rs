@@ -204,6 +204,18 @@ impl CodeBuilder {
                 insn.op = Opcode::JmpBack;
             }
         }
+        // Retain the branch and its PC: a conversion, overflow or interrupt
+        // miss completes the arithmetic and dispatches that branch normally.
+        for pc in 0..self.code.len().saturating_sub(1) {
+            if self.code[pc + 1].op.is_compare_jump() {
+                self.code[pc].op = match self.code[pc].op {
+                    Opcode::Inc => Opcode::IncJump,
+                    Opcode::Add => Opcode::AddJump,
+                    Opcode::AddI => Opcode::AddIJump,
+                    other => other,
+                };
+            }
+        }
     }
 
     /// The unit, with the layout and counts the lowering decided, and its cache
