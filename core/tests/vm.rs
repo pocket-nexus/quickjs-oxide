@@ -355,6 +355,54 @@ fn a_planned_constant_call_keeps_the_stack_limit_check() {
 }
 
 #[test]
+fn a_delegated_read_checks_the_live_callees_stack_capacity() {
+    let mut runtime = runtime();
+    runtime.set_stack_limit(4096);
+    let inner = key(&mut runtime, "inner");
+    let method = key(&mut runtime, "method");
+    let small = publish(&mut runtime, layout(1), |b| {
+        b.a(Opcode::Return, 0);
+    });
+    let large = publish(&mut runtime, layout(5000), |b| {
+        b.a(Opcode::Return, 0);
+    });
+    let forward = publish(&mut runtime, layout(3), |b| {
+        b.ab_key(Opcode::GetField, 1, 0, inner);
+        b.ab_key(Opcode::GetField, 2, 1, method);
+        b.call(Opcode::CallMethod, 1, 1, 0);
+        b.a(Opcode::Return, 1);
+    });
+    let mut root_layout = layout(10);
+    root_layout.children = vec![small, large, forward];
+    let root = publish(&mut runtime, root_layout, |b| {
+        b.a_child(Opcode::MakeClosure, 1, 0);
+        b.a_child(Opcode::MakeClosure, 2, 1);
+        b.a_child(Opcode::MakeClosure, 3, 2);
+        b.a_count(Opcode::NewObject, 4, 0);
+        b.a_count(Opcode::NewObject, 5, 0);
+        b.ab_key(Opcode::SetField, 4, 1, method);
+        b.ab_key(Opcode::SetField, 5, 4, inner);
+        // Train the two reads, then complete the small delegate once.
+        for _ in 0..2 {
+            b.ab(Opcode::Mov, 6, 5);
+            b.ab(Opcode::Mov, 7, 3);
+            b.call(Opcode::CallMethod, 8, 6, 0);
+        }
+        // Same slots and shapes, but a new live method with a large window.
+        b.ab_key(Opcode::SetField, 4, 2, method);
+        b.ab(Opcode::Mov, 6, 5);
+        b.ab(Opcode::Mov, 7, 3);
+        b.call(Opcode::CallMethod, 8, 6, 0);
+        b.a(Opcode::Return, 8);
+    });
+    let thrown = run(&mut runtime, root).unwrap_err();
+    assert_eq!(
+        runtime.display(thrown.0).unwrap(),
+        "InternalError: stack overflow"
+    );
+}
+
+#[test]
 fn calls_from_rust_pass_this_and_arguments() {
     let mut runtime = runtime();
     let root = publish(
