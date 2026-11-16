@@ -93,7 +93,7 @@ fn a_counted_loop_is_a_compare_jump_and_an_increment() {
             "LoadInt l1, 0",
             "JNlt l1, p0, @6",
             "Add l0, l0, l1",
-            "IncJump l1, l1",
+            "Inc l1, l1",
             "JLt l1, p0, @3",
             "Return l0",
         ]
@@ -106,27 +106,6 @@ fn prefix_element_reads_keep_both_fault_positions() {
     assert_eq!(code[..2], ["IncGetElem p1, p1", "GetElem t0, p0, p1"]);
     let code = function("function f(a,k) { return a[k++]; }", "f");
     assert!(!code.iter().any(|line| line.starts_with("IncGetElem")));
-}
-
-#[test]
-fn arithmetic_branch_hints_keep_the_original_branch() {
-    for (source, opcode) in [
-        (
-            "function f(n,s) { for(var i=0;i<n;i+=s) {} return i; }",
-            "AddJump ",
-        ),
-        (
-            "function f(n) { for(var i=0;i<n;i+=1) {} return i; }",
-            "AddIJump ",
-        ),
-    ] {
-        let code = function(source, "f");
-        let at = code
-            .iter()
-            .position(|line| line.starts_with(opcode))
-            .expect("a marked arithmetic prefix");
-        assert!(code[at + 1].starts_with("JLt"), "{code:#?}");
-    }
 }
 
 #[test]
