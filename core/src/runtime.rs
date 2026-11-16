@@ -727,6 +727,7 @@ impl Runtime {
             IcKind::Global,
             IcKind::Construct,
             IcKind::Literal,
+            IcKind::Call,
         ];
         for kind in kinds {
             let k = kind as usize;

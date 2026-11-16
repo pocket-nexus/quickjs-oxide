@@ -284,6 +284,36 @@ fn short_calls_keep_numeric_identity_and_receiver_semantics() {
     );
 }
 
+#[test]
+fn call_caches_follow_replaced_collected_and_dynamic_functions() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let context = runtime.context();
+    let result = context
+        .eval(
+            "function apply(f, x) { return f(x); }
+         function method(o, x) { return o.f(x); }
+         function make(n) { return function (x) { return n + x; }; }
+         var o = { f: make(0) }, ok = true;
+         for (var n = 0; n < 60; ++n) {
+             var f = make(n); o.f = f;
+             for (var i = 0; i < 4; ++i) {
+                 ok = ok && apply(f, i) === n + i && method(o, i) === n + i;
+             }
+             o.f = Math.abs;
+             ok = ok && apply(Math.abs, -n) === n && method(o, -n) === n;
+             o.f = Function('x', 'return x + 2');
+             ok = ok && method(o, n) === n + 2;
+             try { apply({}, n); ok = false; } catch (e) { ok = ok && e instanceof TypeError; }
+         }
+         ok;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
 /// Defines a core host function as the global `name`, as the API's host
 /// functions will be.
 fn define_core_host(

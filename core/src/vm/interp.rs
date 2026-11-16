@@ -55,6 +55,46 @@ fn callee(heap: &Heap, value: Value) -> Callee {
     }
 }
 
+enum CallTarget {
+    Static(ObjectId, BytecodeId, CodeUnitId),
+    Other(Callee),
+}
+
+/// A function's bytecode identity is immutable for its lifetime. Call sites
+/// cache only static units; GC prunes the weak function key before recycling
+/// its object id. An eval/Function-created unit keeps the owning path.
+#[inline(always)]
+fn call_target(heap: &mut Heap, site: usize, function: Value) -> CallTarget {
+    if let Some(object) = function.as_object() {
+        let entry = heap.ics.entries[site];
+        if entry.w0 == object.index() {
+            heap.ics.count_hit(IcKind::Call);
+            return CallTarget::Static(object, BytecodeId(entry.w1), CodeUnitId(entry.w2));
+        }
+    }
+    call_target_miss(heap, site, function)
+}
+
+#[inline(never)]
+fn call_target_miss(heap: &mut Heap, site: usize, function: Value) -> CallTarget {
+    let target = callee(heap, function);
+    if let Callee::Bytecode(object, bytecode) = target {
+        let unit = heap.bytecode_unit(bytecode);
+        if !unit.is_dynamic() {
+            heap.ics.entries[site] = IcEntry {
+                w0: object.index(),
+                w1: bytecode.index(),
+                w2: unit.0,
+                w3: NONE,
+            };
+            heap.ics.count_miss(site, true);
+            return CallTarget::Static(object, bytecode, unit);
+        }
+    }
+    heap.ics.count_miss(site, false);
+    CallTarget::Other(target)
+}
+
 /// Pushes a frame for a bytecode function whose window starts at `base`, where
 /// `this` and `frame.argc` arguments already are. Clears the rest of the window
 /// (missing parameters, locals, temporaries) and coerces a sloppy function's
@@ -3013,14 +3053,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             let at = b + usize::from(method);
                             let function = reg!(at);
                             let this = if method { reg!(b) } else { Value::UNDEFINED };
-                            let target = if let Some(object) = function.as_object()
-                                && cx.heap.object_kind(object) == ObjectKind::Function
-                            {
-                                let record = cx.heap.function_record(object);
-                                if record.bytecode != NONE {
-                                    let bytecode = BytecodeId(record.bytecode);
-                                    let id = cx.heap.bytecode_unit(bytecode);
-                                    if !id.is_dynamic() {
+                            let target =
+                                match call_target(cx.heap, ic_base + insn.imm as usize, function) {
+                                    CallTarget::Static(object, bytecode, id) => {
                                         let next = cx.static_code.get(id);
                                         let next_base = base + at;
                                         match prepare_frame(
@@ -3064,16 +3099,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                             }
                                         }
                                     }
-                                    Callee::Bytecode(object, bytecode)
-                                } else {
-                                    match Native::from_index(record.native) {
-                                        Some(native) => Callee::Native(native),
-                                        None => Callee::NotCallable,
-                                    }
-                                }
-                            } else {
-                                Callee::NotCallable
-                            };
+                                    CallTarget::Other(target) => target,
+                                };
                             next_frame = current_frame!();
                             invoke::<false, false>(
                                 cx,
