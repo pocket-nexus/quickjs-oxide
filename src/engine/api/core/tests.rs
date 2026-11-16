@@ -375,7 +375,7 @@ fn planned_field_choices_read_only_the_selected_branch() {
 }
 
 #[test]
-fn conditional_backedges_poll_with_and_without_arithmetic_fusion() {
+fn conditional_backedges_poll_numeric_and_truthiness_loops() {
     struct Stop;
     impl oxide_core::host::Host for Stop {
         fn interrupt(&mut self) -> bool {
@@ -400,7 +400,7 @@ fn conditional_backedges_poll_with_and_without_arithmetic_fusion() {
 }
 
 #[test]
-fn arithmetic_branch_misses_complete_each_conversion_once() {
+fn arithmetic_comparisons_complete_each_conversion_once() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {
         runtime.set_gc_stress(Some(1)).unwrap();

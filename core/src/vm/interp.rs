@@ -2351,19 +2351,13 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     Opcode::ThrowConstAssign => Err(local_binding_error(cx, *insn)),
 
                     // ---- unary operators ----
-                    Opcode::Inc | Opcode::IncJump => {
+                    Opcode::Inc => {
                         let insn = *insn;
                         let x = reg!(insn.b);
                         if let Some(i) = x.as_int32()
                             && let Some(value) = i.checked_add(1)
                         {
                             reg!(insn.a) = Value::int32(value);
-                            if insn.op == Opcode::IncJump {
-                                let next = fused_jump(regs, &mut cx.heap.vm.poll, code, pc);
-                                if next != usize::MAX {
-                                    pc = next;
-                                }
-                            }
                             continue 'dispatch;
                         }
                         write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
@@ -2486,24 +2480,6 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         }
                         if let (Some(f), Some(g)) = (x.as_f64(), y.as_f64()) {
                             reg!(insn.a) = Value::number(f + g);
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, ops::add(cx, x, y))
-                    }
-                    Opcode::AddJump | Opcode::AddIJump => {
-                        let insn = *insn;
-                        let x = reg!(insn.b);
-                        let y = if insn.op == Opcode::AddJump {
-                            reg!(insn.c)
-                        } else {
-                            Value::int32(insn.int())
-                        };
-                        if let Some(value) = numeric_add(x, y) {
-                            reg!(insn.a) = value;
-                            let next = fused_jump(regs, &mut cx.heap.vm.poll, code, pc);
-                            if next != usize::MAX {
-                                pc = next;
-                            }
                             continue 'dispatch;
                         }
                         write!('dispatch, insn.a, ops::add(cx, x, y))
@@ -3320,52 +3296,6 @@ fn order(x: Value, y: Value) -> Option<u8> {
         Some(Ordering::Greater) => GREATER,
         None => UNORDERED,
     })
-}
-
-/// The same number-only addition as the ordinary Add arm. Conversions keep
-/// the original instruction and its fault PC in the dispatch loop.
-#[inline(always)]
-fn numeric_add(x: Value, y: Value) -> Option<Value> {
-    if let (Some(i), Some(j)) = (x.as_int32(), y.as_int32())
-        && let Some(sum) = i.checked_add(j)
-    {
-        return Some(Value::int32(sum));
-    }
-    Some(Value::number(x.as_f64()? + y.as_f64()?))
-}
-
-/// The arithmetic has already committed. Consume only a number-only branch
-/// that cannot call JS or poll the host. A miss leaves pc at that branch;
-/// in particular a due interrupt is polled at its original PC, exactly once.
-#[inline(never)]
-fn fused_jump(regs: &Window, poll: &mut u32, code: &[Insn], pc: usize) -> usize {
-    let Some(&jump) = code.get(pc) else {
-        return usize::MAX;
-    };
-    if !jump.op.is_compare_jump() {
-        return usize::MAX;
-    }
-    let mask = JUMP_MASKS[jump.op as usize];
-    let x = regs[jump.a as usize];
-    let y = if mask & IMMEDIATE != 0 {
-        Value::int32(jump.short().into())
-    } else {
-        regs[jump.b as usize]
-    };
-    let Some(order) = order(x, y) else {
-        return usize::MAX;
-    };
-    if mask & order == 0 {
-        return pc + 1;
-    }
-    let target = jump.imm as usize;
-    if target <= pc {
-        if *poll <= 1 {
-            return usize::MAX;
-        }
-        *poll -= 1;
-    }
-    target
 }
 
 const LESS: u8 = 1 << 0;

@@ -514,12 +514,6 @@ opcodes! {
     InitField: ABKey,
     /// Publishes the completed shape at the NewObjectLit instruction `imm`.
     FinishObjectLit: AInt,
-    /// `Inc` with a hint to consume a following numeric compare-jump.
-    IncJump: AB,
-    /// `Add` with the same compare-jump hint; both PCs remain in the code.
-    AddJump: ABC,
-    /// `AddI` with the same compare-jump hint.
-    AddIJump: ABInt,
 }
 
 /// The flags of `CheckGlobalVar`, `DeclareGlobal` and `DefineGlobal`, in
@@ -545,37 +539,6 @@ pub mod method {
 }
 
 impl Opcode {
-    /// A comparison branch, including the forms with an immediate operand.
-    pub const fn is_compare_jump(self) -> bool {
-        matches!(
-            self,
-            Self::JLt
-                | Self::JLte
-                | Self::JGt
-                | Self::JGte
-                | Self::JNlt
-                | Self::JNlte
-                | Self::JNgt
-                | Self::JNgte
-                | Self::JEq
-                | Self::JNeq
-                | Self::JStrictEq
-                | Self::JStrictNeq
-                | Self::JLtI
-                | Self::JLteI
-                | Self::JGtI
-                | Self::JGteI
-                | Self::JNltI
-                | Self::JNlteI
-                | Self::JNgtI
-                | Self::JNgteI
-                | Self::JEqI
-                | Self::JNeqI
-                | Self::JStrictEqI
-                | Self::JStrictNeqI
-        )
-    }
-
     /// Whether control never falls through to the next instruction.
     pub const fn is_terminator(self) -> bool {
         matches!(
