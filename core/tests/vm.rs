@@ -277,6 +277,59 @@ fn a_method_callee_at_register_256_fits_the_reserved_window() {
 }
 
 #[test]
+fn frameless_calls_still_poll_interrupts_without_loop_backedges() {
+    struct Stop;
+    impl oxide_core::host::Host for Stop {
+        fn interrupt(&mut self) -> bool {
+            true
+        }
+    }
+    let mut runtime = runtime();
+    runtime.set_host(Box::new(Stop));
+    let child = publish(&mut runtime, layout(2), |b| {
+        b.a_int(Opcode::LoadInt, 1, 7);
+        b.a(Opcode::Return, 1);
+    });
+    let mut root_layout = layout(4);
+    root_layout.children = vec![child];
+    let root = publish(&mut runtime, root_layout, |b| {
+        b.a_child(Opcode::MakeClosure, 1, 0);
+        for _ in 0..1100 {
+            b.ab(Opcode::Mov, 2, 1);
+            b.call(Opcode::Call, 2, 2, 0);
+        }
+        b.a(Opcode::Return, 2);
+    });
+    let thrown = run(&mut runtime, root).unwrap_err();
+    assert_eq!(
+        runtime.display(thrown.0).unwrap(),
+        "InternalError: interrupted"
+    );
+}
+
+#[test]
+fn a_planned_constant_call_keeps_the_stack_limit_check() {
+    let mut runtime = runtime();
+    runtime.set_stack_limit(4096);
+    let child = publish(&mut runtime, layout(5000), |b| {
+        b.a_int(Opcode::LoadInt, 1, 7);
+        b.a(Opcode::Return, 1);
+    });
+    let mut root_layout = layout(3);
+    root_layout.children = vec![child];
+    let root = publish(&mut runtime, root_layout, |b| {
+        b.a_child(Opcode::MakeClosure, 1, 0);
+        b.call(Opcode::Call, 1, 1, 0);
+        b.a(Opcode::Return, 1);
+    });
+    let thrown = run(&mut runtime, root).unwrap_err();
+    assert_eq!(
+        runtime.display(thrown.0).unwrap(),
+        "InternalError: stack overflow"
+    );
+}
+
+#[test]
 fn calls_from_rust_pass_this_and_arguments() {
     let mut runtime = runtime();
     let root = publish(

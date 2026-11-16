@@ -1,7 +1,8 @@
-//! Execute a validated read-only return expression with the ordinary no-allocation entry
-//! admission (poll counter, reserved stack window and receiver normalization). `EMPTY` means miss: publish the frame and
-//! run the unchanged body with ordinary entry. Nothing here may allocate, call JS or mutate guest
-//! state; cache-hit statistics are committed only when the whole plan succeeds.
+//! Complete a planned call without publishing a frame. Admission preserves
+//! polling, stack capacity and receiver normalization. `EMPTY` means miss:
+//! ordinary entry runs the unchanged body. Reads may not allocate or call JS;
+//! a store is the last guest operation and can never fall back after writing.
+//! Hit statistics and dead-root cleanup are committed only on success.
 
 use super::*;
 use crate::bytecode::call_plan::CallPlan;
@@ -51,26 +52,25 @@ pub(super) fn value(
             receiver,
         )
     };
+    let constant = |op, imm| match op {
+        Opcode::LoadInt => Value::int32(imm as i32),
+        Opcode::LoadConst => {
+            let constants = heap.payloads.bytecode.get(bytecode.index());
+            debug_assert!(imm < constants.constant_count);
+            heap.values.get(constants.constants, imm)
+        }
+        Opcode::LoadUndefined => Value::UNDEFINED,
+        Opcode::LoadNull => Value::NULL,
+        Opcode::LoadTrue => Value::TRUE,
+        Opcode::LoadFalse => Value::FALSE,
+        _ => unreachable!("a planned constant"),
+    };
     let mut global_hit = false;
+    let mut store_hit = false;
     let (value, hits) = match *plan {
         CallPlan::None => return Value::EMPTY,
         CallPlan::Register(r) => (reg(r), 0),
-        CallPlan::Constant { op, imm } => (
-            match op {
-                Opcode::LoadInt => Value::int32(imm as i32),
-                Opcode::LoadConst => {
-                    let constants = heap.payloads.bytecode.get(bytecode.index());
-                    debug_assert!(imm < constants.constant_count);
-                    heap.values.get(constants.constants, imm)
-                }
-                Opcode::LoadUndefined => Value::UNDEFINED,
-                Opcode::LoadNull => Value::NULL,
-                Opcode::LoadTrue => Value::TRUE,
-                Opcode::LoadFalse => Value::FALSE,
-                _ => unreachable!("a planned constant"),
-            },
-            0,
-        ),
+        CallPlan::Constant { op, imm } => (constant(op, imm), 0),
         CallPlan::Field { base, site } => {
             let Some(value) = get(reg(base), site) else {
                 return Value::EMPTY;
@@ -152,16 +152,95 @@ pub(super) fn value(
             global_hit = true;
             (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
         }
+        CallPlan::Store { base, value, site } => {
+            let (object, value) = (reg(base), reg(value));
+            let entry = heap.ics.entries[ic_base + site as usize];
+            if !ic::set_hit(
+                &mut heap.objects,
+                &heap.cells,
+                &mut heap.values,
+                entry,
+                object,
+                value,
+            ) {
+                return Value::EMPTY;
+            }
+            store_hit = true;
+            (Value::UNDEFINED, 0)
+        }
+        CallPlan::StoreConstant {
+            base,
+            site,
+            op,
+            imm,
+        } => {
+            let (object, value) = (reg(base), constant(op, imm));
+            let entry = heap.ics.entries[ic_base + site as usize];
+            if !ic::set_hit(
+                &mut heap.objects,
+                &heap.cells,
+                &mut heap.values,
+                entry,
+                object,
+                value,
+            ) {
+                return Value::EMPTY;
+            }
+            store_hit = true;
+            (Value::UNDEFINED, 0)
+        }
+        CallPlan::GlobalStore {
+            base,
+            global,
+            read_site,
+            write_site,
+        } => {
+            let object = reg(base);
+            let entry = heap.ics.entries[ic_base + global as usize];
+            if entry.w0 != heap.global_generation {
+                return Value::EMPTY;
+            }
+            let start = heap.objects.get(entry.w3).slots_start;
+            let global = heap.values.get_at(start + entry.w1);
+            let Some(value) = get(global, read_site) else {
+                return Value::EMPTY;
+            };
+            let entry = heap.ics.entries[ic_base + write_site as usize];
+            if !ic::set_hit(
+                &mut heap.objects,
+                &heap.cells,
+                &mut heap.values,
+                entry,
+                object,
+                value,
+            ) {
+                return Value::EMPTY;
+            }
+            global_hit = true;
+            store_hit = true;
+            (Value::UNDEFINED, 1)
+        }
     };
     if value.is_empty() {
         return Value::EMPTY;
     }
     heap.vm.poll -= 1;
+    // The call-clobbered part still covered by the caller's root range must
+    // not retain old objects. Unrooted temporaries need no initialization.
+    let first = base + 1 + argc.min(unit.parameter_count as usize);
+    let rooted_end = end.min(heap.vm.top as usize);
+    if first < rooted_end {
+        heap.vm.registers[first..rooted_end].fill(Value::UNDEFINED);
+    }
+    heap.vm.registers[base] = this;
     for _ in 0..hits {
         heap.ics.count_hit(IcKind::Get);
     }
     if global_hit {
         heap.ics.count_hit(IcKind::Global);
+    }
+    if store_hit {
+        heap.ics.count_hit(IcKind::Set);
     }
     value
 }
