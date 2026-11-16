@@ -29,6 +29,8 @@ use crate::runtime::{Intrinsic, Names};
 use crate::shape::PropertyFlags;
 use crate::value::{BytecodeId, ObjectId, ScopeId, ShapeId, Value};
 
+mod leaf;
+
 /// What a call's callee value is.
 enum Callee {
     Bytecode(ObjectId, BytecodeId),
@@ -3032,6 +3034,18 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                             object,
                                         ) {
                                             Ok(end) => {
+                                                let start = if next.code.len() <= 8 {
+                                                    match leaf::run(
+                                                        cx.heap, next, next_base, object, bytecode,
+                                                    ) {
+                                                        leaf::Outcome::Returned(value) => {
+                                                            set!('dispatch, insn.a, value)
+                                                        }
+                                                        leaf::Outcome::Publish(pc) => pc,
+                                                    }
+                                                } else {
+                                                    0
+                                                };
                                                 let next_frame = Frame {
                                                     unit: id,
                                                     function: object,
@@ -3052,7 +3066,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                                 base = next_frame.base as usize;
 
                                                 ic_base = unit.ic_base as usize;
-                                                pc = 0;
+                                                pc = start;
                                                 regs = window!();
                                                 continue 'dispatch;
                                             }
