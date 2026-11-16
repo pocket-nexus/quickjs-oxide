@@ -196,6 +196,32 @@ fn call_returns_restore_callers_after_native_calls_and_suspension() {
     );
 }
 
+#[test]
+fn element_hits_and_reentrant_misses_preserve_the_register_window() {
+    assert_eq!(
+        run_api(
+            "function grow(n) { return n ? grow(n - 1) + 1 : 1; }
+             var bump = (function () { var n = 0; return function () { return ++n; }; })();
+             var written = 0;
+             Object.defineProperty(Array.prototype, '1', {
+                 configurable: true,
+                 get: function () { bump(); return grow(600); },
+                 set: function (v) { bump(); written = v + grow(400); }
+             });
+             var a = [2, , 4];
+             a[1] = 5;
+             var total = a[0] + a[1] + a[2];
+             delete Array.prototype[1];
+             var t = new Int16Array(2);
+             t[0] = 7;
+             t[1] = { valueOf: function () { return grow(700); } };
+             function mapped(x) { arguments[0] = 3; return x; }
+             print(total, written, t[0], t[1], mapped(9), bump());"
+        ),
+        "607 406 7 701 3 3\n"
+    );
+}
+
 /// Defines a core host function as the global `name`, as the API's host
 /// functions will be.
 fn define_core_host(

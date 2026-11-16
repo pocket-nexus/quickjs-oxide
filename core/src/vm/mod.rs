@@ -90,7 +90,7 @@ const _: () = assert!(size_of::<Frame>() == 32);
 
 /// Registers a frame addresses without a bounds check: an 8-bit operand, or
 /// a call's `b + 1` (see `interp::window`).
-pub(crate) const SPAN: usize = 512;
+pub(crate) const SPAN: usize = u8::MAX as usize + 2;
 
 /// Native stack bytes nested re-entries may use (debug builds have large
 /// loop frames; the default thread stack of a test is 2 MiB).
