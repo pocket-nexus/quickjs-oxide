@@ -51,6 +51,7 @@ pub(super) fn value(
             receiver,
         )
     };
+    let mut global_hit = false;
     let (value, hits) = match *plan {
         CallPlan::None => return Value::EMPTY,
         CallPlan::Register(r) => (reg(r), 0),
@@ -107,6 +108,50 @@ pub(super) fn value(
             };
             (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
         }
+        CallPlan::Element { base, site, index } => {
+            let Some(receiver) = get(reg(base), site) else {
+                return Value::EMPTY;
+            };
+            let (Some(object), Some(index)) = (receiver.as_object(), reg(index).as_int32()) else {
+                return Value::EMPTY;
+            };
+            if index < 0 {
+                return Value::EMPTY;
+            }
+            let header = heap.objects.get(object.index());
+            let elements = header.elements();
+            if index as u32 >= elements.len
+                || (header.kind == ObjectKind::Array && index as u32 >= header.payload)
+            {
+                return Value::EMPTY;
+            }
+            (heap.values.get(elements, index as u32), 1)
+        }
+        CallPlan::GlobalCompare {
+            left,
+            left_site,
+            global,
+            right_site,
+            op,
+        } => {
+            let Some(left) = get(reg(left), left_site) else {
+                return Value::EMPTY;
+            };
+            let entry = heap.ics.entries[ic_base + global as usize];
+            if entry.w0 != heap.global_generation {
+                return Value::EMPTY;
+            }
+            let start = heap.objects.get(entry.w3).slots_start;
+            let global = heap.values.get_at(start + entry.w1);
+            let Some(right) = get(global, right_site) else {
+                return Value::EMPTY;
+            };
+            let Some(order) = order(left, right) else {
+                return Value::EMPTY;
+            };
+            global_hit = true;
+            (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
+        }
     };
     if value.is_empty() {
         return Value::EMPTY;
@@ -114,6 +159,9 @@ pub(super) fn value(
     heap.vm.poll -= 1;
     for _ in 0..hits {
         heap.ics.count_hit(IcKind::Get);
+    }
+    if global_hit {
+        heap.ics.count_hit(IcKind::Global);
     }
     value
 }
