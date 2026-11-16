@@ -223,6 +223,41 @@ fn tail_call_to_a_native() {
 }
 
 #[test]
+fn a_native_tail_return_restores_roots_before_writing_a_high_destination() {
+    let mut runtime = runtime();
+    let math = key(&mut runtime, "Math");
+    let abs = key(&mut runtime, "abs");
+    let child = publish(
+        &mut runtime,
+        UnitLayout {
+            register_count: 5,
+            parameter_count: 1,
+            flags: flags::STRICT,
+            ..UnitLayout::default()
+        },
+        |b| {
+            // Under gc-stress this collection lowers stale_from while the
+            // caller's high temporaries lie above the callee's root range.
+            b.a_count(Opcode::NewObject, 2, 1);
+            b.a_key(Opcode::GetGlobal, 2, math);
+            b.ab_key(Opcode::GetField, 3, 2, abs);
+            b.ab(Opcode::Mov, 4, 1);
+            b.call(Opcode::TailCallMethod, 0, 2, 1);
+        },
+    );
+    let mut root_layout = layout(64);
+    root_layout.children = vec![child];
+    let root = publish(&mut runtime, root_layout, |b| {
+        b.a_child(Opcode::MakeClosure, 1, 0);
+        b.a_int(Opcode::LoadInt, 2, -7);
+        b.call(Opcode::Call, 63, 1, 1);
+        b.a(Opcode::Return, 63);
+    });
+    assert_eq!(run(&mut runtime, root), Ok(Value::int32(7)));
+    assert_eq!(runtime.vm_stack().depth(), 0);
+}
+
+#[test]
 fn calls_from_rust_pass_this_and_arguments() {
     let mut runtime = runtime();
     let root = publish(

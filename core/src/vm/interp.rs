@@ -19,7 +19,7 @@ use super::typed;
 use super::{Cx, Frame, SPAN, Throw, frame_flags};
 use crate::builtins::Native;
 use crate::bytecode::opcode::global as global_flags;
-use crate::bytecode::{Capture, CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, flags};
+use crate::bytecode::{Capture, CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, UnitRef, flags};
 use crate::heap::Heap;
 use crate::heap::atom::PropertyKey;
 use crate::heap::object::{NONE, ObjectKind};
@@ -61,7 +61,8 @@ fn callee(heap: &Heap, value: Value) -> Callee {
 /// where `NewArguments` and `Rest` find them.
 #[inline]
 fn enter(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
-    enter_frame(cx, unit, frame)
+    let this = cx.heap.vm.registers[frame.base as usize];
+    enter_frame(cx, unit, &frame, this)
 }
 
 /// A call whose frame could not be entered (`throw`, a stack overflow): an
@@ -89,38 +90,112 @@ fn entry_failed(
     Ok(Value::object(promise))
 }
 
-/// [`enter`], inlined into the loop's call.
+/// Prepares the window before publishing its frame. The ordinary call builds
+/// its continuation only after these fallible operations have succeeded.
 #[inline(always)]
-fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Throw> {
+fn prepare_frame(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    base: usize,
+    argc: usize,
+    this: Value,
+    function: ObjectId,
+) -> Result<u32, Throw> {
     let poll = &mut cx.heap.vm.poll;
     *poll -= 1;
     if *poll == 0 {
         error::poll_interrupts(cx)?;
     }
-    let base = frame.base as usize;
-    let argc = frame.argc as usize;
     let parameters = unit.parameter_count as usize;
     let registers_end = base + unit.register_count as usize;
-    let end = frame_end(&frame, unit) as usize;
+    if unit.has(flags::ARGUMENTS) && argc > parameters {
+        return prepare_extra_frame(cx, unit, base, argc, this, function);
+    }
+    if !cx.heap.vm.reserve(registers_end) {
+        return Err(error::stack_overflow(cx));
+    }
+    initialize_window(
+        cx,
+        unit,
+        base,
+        argc.min(parameters),
+        registers_end,
+        registers_end,
+        this,
+        function,
+    )?;
+    Ok(registers_end as u32)
+}
+
+/// Only a function that reads its extra actual arguments needs to preserve
+/// them above its registers. Ordinary entry neither computes nor moves them.
+#[cold]
+#[inline(never)]
+fn prepare_extra_frame(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    base: usize,
+    argc: usize,
+    this: Value,
+    function: ObjectId,
+) -> Result<u32, Throw> {
+    let parameters = unit.parameter_count as usize;
+    let registers_end = base + unit.register_count as usize;
+    let end = registers_end + argc - parameters;
     if !cx.heap.vm.reserve(end) {
         return Err(error::stack_overflow(cx));
     }
-    if end > registers_end {
-        keep_extra_arguments(cx, base + 1 + parameters..base + 1 + argc, registers_end);
-    }
+    keep_extra_arguments(cx, base + 1 + parameters..base + 1 + argc, registers_end);
+    initialize_window(
+        cx,
+        unit,
+        base,
+        parameters,
+        registers_end,
+        end,
+        this,
+        function,
+    )?;
+    Ok(end as u32)
+}
+
+#[inline(always)]
+#[allow(clippy::too_many_arguments)]
+fn initialize_window(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    base: usize,
+    arguments: usize,
+    registers_end: usize,
+    root_end: usize,
+    this: Value,
+    function: ObjectId,
+) -> Result<(), Throw> {
     let registers = &mut cx.heap.vm.registers;
-    let first = base + 1 + argc.min(parameters);
+    let first = base + 1 + arguments;
     registers[first..registers_end].fill(Value::UNDEFINED);
     if !unit.has(flags::STRICT) {
-        let this = registers[base];
         if this.is_undefined() || this.is_null() {
             registers[base] = Value::object(cx.realm.global());
         } else if this.as_object().is_none() {
-            box_receiver(cx, base, end)?;
+            box_receiver(cx, base, root_end, function)?;
         }
     }
-    cx.heap.vm.frames.push(frame);
-    cx.heap.vm.top = end as u32;
+    Ok(())
+}
+
+#[inline(always)]
+fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: &Frame, this: Value) -> Result<(), Throw> {
+    let end = prepare_frame(
+        cx,
+        unit,
+        frame.base as usize,
+        frame.argc as usize,
+        this,
+        frame.function,
+    )?;
+    cx.heap.vm.frames.push(*frame);
+    cx.heap.vm.top = end;
     Ok(())
 }
 
@@ -128,11 +203,16 @@ fn enter_frame(cx: &mut Cx<'_>, unit: &CodeUnit, frame: Frame) -> Result<(), Thr
 /// window is rooted for the allocation.
 #[cold]
 #[inline(never)]
-fn box_receiver(cx: &mut Cx<'_>, base: usize, end: usize) -> Result<(), Throw> {
+fn box_receiver(cx: &mut Cx<'_>, base: usize, end: usize, function: ObjectId) -> Result<(), Throw> {
     let top = cx.heap.vm.top;
     cx.heap.vm.top = top.max(end as u32);
     let this = cx.heap.vm.registers[base];
+    // The callee's operand was replaced with its receiver, but the frame is
+    // not published yet. Boxing may collect an otherwise temporary closure.
+    let mark = cx.heap.roots().mark();
+    cx.heap.roots().push(Value::object(function));
     let result = super::object::to_object(cx, this);
+    cx.heap.roots().truncate(mark);
     cx.heap.vm.top = top;
     cx.heap.vm.registers[base] = Value::object(result?);
     Ok(())
@@ -732,46 +812,30 @@ enum Entry {
 /// Enters `frame` over `unit` for a call from the loop: for a construction
 /// (its frame flags say so), the receiver first; `site` is the `New` cache.
 #[inline(always)]
-fn enter_callee(
+fn enter_callee<const CONSTRUCT: bool, const TAIL: bool>(
     cx: &mut Cx<'_>,
     unit: &CodeUnit,
-    frame: Frame,
+    frame: &Frame,
     function: Value,
     mut this: Value,
     site: Option<usize>,
 ) -> Entry {
     let at = frame.base as usize;
-    let construct = frame.flags & frame_flags::CONSTRUCT != 0;
     let mut new_target = Value::UNDEFINED;
-    if construct {
+    if CONSTRUCT {
         match construct_this(cx, frame.function, function, unit, at, site) {
             Ok(pair) => (this, new_target) = pair,
             Err(throw) => return Entry::Threw(throw),
         }
     }
     cx.heap.vm.registers[at] = this;
-    let tail = frame.flags & frame_flags::TAIL != 0;
-    if let Err(throw) = enter_frame(cx, unit, frame) {
-        return Entry::Failed(entry_failed(cx, unit, throw, tail));
+    if let Err(throw) = enter_frame(cx, unit, frame, this) {
+        return Entry::Failed(entry_failed(cx, unit, throw, TAIL));
     }
-    if construct {
+    if CONSTRUCT {
         write_new_target(cx, at, unit, new_target);
     }
     Entry::Entered
-}
-
-/// [`enter_callee`] for a dynamic unit, held while it is entered.
-#[cold]
-#[inline(never)]
-fn enter_dynamic_callee(
-    cx: &mut Cx<'_>,
-    frame: Frame,
-    function: Value,
-    this: Value,
-    site: Option<usize>,
-) -> Entry {
-    let unit = cx.heap.code.get(frame.unit);
-    enter_callee(cx, &unit, frame, function, this, site)
 }
 
 /// Writes `new.target` into the register a unit that reads it reserves: its
@@ -1782,6 +1846,20 @@ fn switch_unit<'h>(
     held.insert(heap.code.get(id))
 }
 
+/// Transfer an already resolved dynamic callee without looking it up again.
+/// Keep reference-count cleanup off the static call's entry path.
+#[cold]
+#[inline(never)]
+fn hold_dynamic_unit(held: &mut Option<Rc<CodeUnit>>, next: Rc<CodeUnit>) -> &CodeUnit {
+    held.insert(next)
+}
+
+#[cold]
+#[inline(never)]
+fn clear_dynamic_unit(held: &mut Option<Rc<CodeUnit>>) {
+    *held = None;
+}
+
 /// Starts a resumed entry frame by throwing `thrown` at the instruction before
 /// `pc`: its handler takes it, or the frame is popped and the throw returned.
 pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<Value, Throw> {
@@ -1801,13 +1879,223 @@ pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<
     Err(Throw(thrown))
 }
 
+/// Completion of a call from the loop. A successful bytecode entry updates
+/// the caller's local Frame in place and carries only the resolved code owner.
+enum Called<'a> {
+    Entered(UnitRef<'a>),
+    Value(Value),
+    Threw(Throw),
+    Exit(Value),
+    Resume(Resume),
+}
+
+/// The uncommon entry logic. Ordinary static bytecode calls enter directly;
+/// construction and tail-call kinds remain compile-time constants here.
+#[inline(never)]
+#[allow(clippy::too_many_arguments)]
+fn invoke<'a, const CONSTRUCT: bool, const TAIL: bool>(
+    cx: &mut Cx<'a>,
+    frame: &mut Frame,
+    caller: &CodeUnit,
+    mut function: Value,
+    mut target: Callee,
+    mut window: usize,
+    mut this: Value,
+    mut argc: usize,
+    pc: usize,
+    dst: u8,
+    site: Option<usize>,
+) -> Called<'a> {
+    let base = frame.base as usize;
+    let mut via = 0;
+    if let Callee::Native(Native::FunctionCall | Native::FunctionApply) = target
+        && !CONSTRUCT
+    {
+        match rewrite_call(cx, base, window, function, this, argc) {
+            Ok(rewritten) => (target, function, window, this, argc, via) = rewritten,
+            Err(throw) => return Called::Threw(throw),
+        }
+    }
+    match target {
+        Callee::Bytecode(object, bytecode) => {
+            let unit_id = cx.heap.bytecode_unit(bytecode);
+            let mut flags = via;
+            if CONSTRUCT {
+                flags |= frame_flags::CONSTRUCT;
+            }
+            if TAIL {
+                flags |= frame_flags::TAIL;
+            }
+            let next_frame = Frame {
+                unit: unit_id,
+                function: object,
+                bytecode,
+                base: (base + window) as u32,
+                return_pc: pc as u32,
+                return_dst: (base + dst as usize) as u32,
+                argc: argc as u32,
+                flags,
+            };
+            let next = cx.unit(unit_id);
+            match enter_callee::<CONSTRUCT, TAIL>(cx, &next, &next_frame, function, this, site) {
+                Entry::Entered => {
+                    *frame = next_frame;
+                    Called::Entered(next)
+                }
+                Entry::Threw(throw) | Entry::Failed(Err(throw)) => Called::Threw(throw),
+                Entry::Failed(Ok(value)) => Called::Value(value),
+            }
+        }
+        other => {
+            let result = call_other(
+                cx,
+                other,
+                function,
+                base + window,
+                this,
+                argc,
+                CONSTRUCT,
+                pc - 1,
+            );
+            complete_call(cx, frame_end(frame, caller), result, TAIL)
+        }
+    }
+}
+
+/// Native/exotic completion is shared out of line; bytecode entries never
+/// need this restoration or the tail-call return rules.
+#[inline(never)]
+fn complete_call<'a>(
+    cx: &mut Cx<'_>,
+    end: u32,
+    result: Result<Value, Throw>,
+    tail: bool,
+) -> Called<'a> {
+    cx.heap.vm.top = end;
+    match result {
+        Ok(value) if tail => match finish_return(cx, value) {
+            Returned::Exit(value) => Called::Exit(value),
+            Returned::Resume(pc) => Called::Resume(pc),
+        },
+        Ok(value) => Called::Value(value),
+        Err(throw) => Called::Threw(throw),
+    }
+}
+
+/// Tail calls, construction and spread stay out of the ordinary call's loop
+/// arm. A spread expands before resolving the callee, preserving error order.
+#[inline(never)]
+fn special_call<'a>(
+    cx: &mut Cx<'a>,
+    frame: &mut Frame,
+    unit: &CodeUnit,
+    insn: Insn,
+    pc: usize,
+) -> Called<'a> {
+    let base = frame.base as usize;
+    let b = insn.b as usize;
+    match insn.op {
+        Opcode::New | Opcode::NewSpread => {
+            let function = cx.heap.vm.registers[base + b];
+            let (argc, site) = if insn.op == Opcode::NewSpread {
+                let argc = match arguments::spread(cx, base + b + 1) {
+                    Ok(count) => count,
+                    Err(throw) => return Called::Threw(throw),
+                };
+                (argc, None)
+            } else {
+                (
+                    insn.c as usize,
+                    Some(unit.ic_base as usize + insn.imm as usize),
+                )
+            };
+            invoke::<true, false>(
+                cx,
+                frame,
+                unit,
+                function,
+                callee(cx.heap, function),
+                b + 1,
+                Value::UNDEFINED,
+                argc,
+                pc,
+                insn.a,
+                site,
+            )
+        }
+        Opcode::CallSpread => {
+            let function = cx.heap.vm.registers[base + b];
+            let this = cx.heap.vm.registers[base + b + 1];
+            let argc = match arguments::spread(cx, base + b + 1) {
+                Ok(count) => count,
+                Err(throw) => return Called::Threw(throw),
+            };
+            invoke::<false, false>(
+                cx,
+                frame,
+                unit,
+                function,
+                callee(cx.heap, function),
+                b + 1,
+                this,
+                argc,
+                pc,
+                insn.a,
+                None,
+            )
+        }
+        Opcode::TailCall | Opcode::TailCallMethod => {
+            let method = insn.op == Opcode::TailCallMethod;
+            let at = b + usize::from(method);
+            let function = cx.heap.vm.registers[base + at];
+            let this = if method {
+                cx.heap.vm.registers[base + b]
+            } else {
+                Value::UNDEFINED
+            };
+            invoke::<false, true>(
+                cx,
+                frame,
+                unit,
+                function,
+                callee(cx.heap, function),
+                at,
+                this,
+                insn.c as usize,
+                pc,
+                insn.a,
+                None,
+            )
+        }
+        _ => unreachable!("a special call"),
+    }
+}
+
+/// Read the published frame without keeping a second full activation live.
+#[inline(always)]
+fn top_frame(frames: &[Frame]) -> Frame {
+    *frames.last().expect("a frame")
+}
+
+/// Binding failures are cold; keep message setup outside dispatch.
+#[cold]
+#[inline(never)]
+fn local_binding_error(cx: &mut Cx<'_>, insn: Insn) -> Throw {
+    if insn.op == Opcode::CheckInit {
+        key_error(cx, ErrorKind::Reference, insn, "", " is not initialized")
+    } else {
+        key_error(cx, ErrorKind::Type, insn, "'", "' is read-only")
+    }
+}
+
 /// Runs the top frame from instruction `pc` until the entry frame returns.
 ///
 /// `regs` is the running frame's window. It borrows the register file, so
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
 pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
-    let mut frame = *cx.heap.vm.frames.last().expect("an entry frame");
+    let entry = top_frame(&cx.heap.vm.frames);
+
     // The running unit: borrowed from the code store, or from `held`, which
     // keeps a dynamic unit alive while it runs.
     let mut held: Option<Rc<CodeUnit>> = None;
@@ -1822,9 +2110,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             };
         }};
     }
-    set_unit!(frame.unit);
+    set_unit!(entry.unit);
     let mut code: &[Insn] = &unit.code;
-    let mut base = frame.base as usize;
+    let mut base = entry.base as usize;
     let mut ic_base = unit.ic_base as usize;
     let mut pc = start;
 
@@ -1839,14 +2127,21 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             regs[$register as usize]
         };
     }
-    // Reloads the frame-derived locals from the top frame.
+    // Frames remain published for GC and backtraces. Read their fields when
+    // needed instead of keeping a second full activation live across dispatch.
+    macro_rules! current_frame {
+        () => {
+            top_frame(&cx.heap.vm.frames)
+        };
+    }
     macro_rules! load_frame {
         () => {{
-            frame = *cx.heap.vm.frames.last().expect("a frame");
-            set_unit!(frame.unit);
+            let caller = current_frame!();
+            set_unit!(caller.unit);
             code = &unit.code;
-            base = frame.base as usize;
+            base = caller.base as usize;
             ic_base = unit.ic_base as usize;
+            raise_top(cx, frame_end(&caller, unit));
         }};
     }
     // Writes a value computed from the heap, then continues.
@@ -1885,8 +2180,45 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
         }};
     }
 
+    // Uncommon calls materialize the caller only for the helper's duration.
+    macro_rules! called {
+        ($dispatch:lifetime, $insn:ident, $next_frame:ident => $result:expr) => {{
+            match $result {
+                Called::Entered(next) => {
+                    unit = match next {
+                        UnitRef::Static(next) => {
+                            if held.is_some() {
+                                clear_dynamic_unit(&mut held);
+                            }
+                            next
+                        }
+                        UnitRef::Dynamic(next) => hold_dynamic_unit(&mut held, next),
+                    };
+                    code = &unit.code;
+                    base = $next_frame.base as usize;
+                    ic_base = unit.ic_base as usize;
+                    pc = 0;
+                    regs = window!();
+                    continue $dispatch;
+                }
+                Called::Value(value) => set!($dispatch, $insn.a, value),
+                Called::Threw(throw) => Err(throw),
+                Called::Exit(value) => return Ok(value),
+                Called::Resume(resume) => {
+                    load_frame!();
+                    cx.heap.vm.registers[resume.dst as usize] = resume.value;
+                    pc = resume.pc as usize;
+                    regs = window!();
+                    continue $dispatch;
+                }
+            }
+        }};
+    }
+
     'dispatch: loop {
-        let insn = code[pc];
+        // Copying the whole instruction makes LLVM eagerly unpack operands
+        // shared by many arms. Borrow it so each arm reads only its fields.
+        let insn = &code[pc];
         pc += 1;
         let outcome: Result<(), Throw> = 'op: {
             match insn.op {
@@ -1916,7 +2248,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     continue 'dispatch;
                 }
                 Opcode::LoadConst => {
-                    set!('dispatch, insn.a, cx.heap.bytecode_constant(frame.bytecode, insn.imm))
+                    set!('dispatch, insn.a, cx.heap.bytecode_constant(current_frame!().bytecode, insn.imm))
                 }
                 Opcode::LoadUndefined => {
                     reg!(insn.a) = Value::UNDEFINED;
@@ -1939,24 +2271,16 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     continue 'dispatch;
                 }
                 Opcode::LoadFunction => {
-                    reg!(insn.a) = Value::object(frame.function);
+                    reg!(insn.a) = Value::object(current_frame!().function);
                     continue 'dispatch;
                 }
                 Opcode::CheckInit => {
                     if !reg!(insn.a).is_empty() {
                         continue 'dispatch;
                     }
-                    Err(key_error(
-                        cx,
-                        ErrorKind::Reference,
-                        insn,
-                        "",
-                        " is not initialized",
-                    ))
+                    Err(local_binding_error(cx, *insn))
                 }
-                Opcode::ThrowConstAssign => {
-                    Err(key_error(cx, ErrorKind::Type, insn, "'", "' is read-only"))
-                }
+                Opcode::ThrowConstAssign => Err(local_binding_error(cx, *insn)),
 
                 // ---- unary operators ----
                 Opcode::Inc => {
@@ -2386,7 +2710,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 // ---- globals ----
                 Opcode::GetGlobal | Opcode::GetGlobalOrUndefined => {
                     // One generation compare and a load.
-                    let site = ic_base + global_site(insn);
+                    let site = ic_base + global_site(*insn);
                     let entry = cx.heap.ics.entries[site];
                     if entry.w0 == cx.heap.global_generation {
                         let start = cx.heap.objects.get(entry.w3).slots_start;
@@ -2394,11 +2718,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         cx.heap.ics.count_hit(IcKind::Global);
                         continue 'dispatch;
                     }
-                    write!('dispatch, insn.a, get_global(cx, insn, site))
+                    write!('dispatch, insn.a, get_global(cx, *insn, site))
                 }
                 Opcode::SetGlobal => {
                     let value = reg!(insn.a);
-                    let site = ic_base + global_site(insn);
+                    let site = ic_base + global_site(*insn);
                     let entry = cx.heap.ics.entries[site];
                     if entry.w0 == cx.heap.global_generation
                         && entry.w2 & u32::from(PropertyFlags::WRITABLE) != 0
@@ -2408,7 +2732,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         cx.heap.ics.count_hit(IcKind::Global);
                         continue 'dispatch;
                     }
-                    set_global(cx, insn, value, unit.has(flags::STRICT), site)
+                    set_global(cx, *insn, value, unit.has(flags::STRICT), site)
                 }
                 Opcode::DefineGlobal => {
                     let value = reg!(insn.a);
@@ -2419,7 +2743,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::DeclareGlobalLet
                 | Opcode::DeclareGlobalConst
                 | Opcode::CheckGlobalVar
-                | Opcode::CheckGlobalLexical => declare_global(cx, insn),
+                | Opcode::CheckGlobalLexical => declare_global(cx, *insn),
                 Opcode::DeleteGlobal => write!('dispatch, insn.a, delete_global(cx, insn.key())),
 
                 // ---- captured bindings ----
@@ -2449,21 +2773,15 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         regs = window!();
                         continue 'dispatch;
                     }
-                    Err(key_error(
-                        cx,
-                        ErrorKind::Reference,
-                        insn,
-                        "",
-                        " is not initialized",
-                    ))
+                    Err(local_binding_error(cx, *insn))
                 }
                 Opcode::LoadCaptured => {
-                    let cell = captured_cell(cx.heap, frame.function, insn.imm);
+                    let cell = captured_cell(cx.heap, current_frame!().function, insn.imm);
                     set!('dispatch, insn.a, cx.heap.scope_get(cell, 0, 0))
                 }
                 Opcode::StoreCaptured => {
                     let value = reg!(insn.a);
-                    let cell = captured_cell(cx.heap, frame.function, insn.imm);
+                    let cell = captured_cell(cx.heap, current_frame!().function, insn.imm);
                     cx.heap.scope_set(cell, 0, 0, value);
                     regs = window!();
                     continue 'dispatch;
@@ -2497,7 +2815,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::ThrowType
                 | Opcode::ThrowReference
                 | Opcode::ImportCall
-                | Opcode::ConcatN => rare_op(cx, &frame, unit, insn),
+                | Opcode::ConcatN => {
+                    let frame = current_frame!();
+                    rare_op(cx, &frame, unit, *insn)
+                }
                 Opcode::IterStart
                 | Opcode::IterNext
                 | Opcode::IterClose
@@ -2507,7 +2828,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::IterCheckObject
                 | Opcode::IterStartAsync
                 | Opcode::IterNextRaw
-                | Opcode::IterResult => super::iter::iter_op(cx, &frame, insn),
+                | Opcode::IterResult => {
+                    let frame = current_frame!();
+                    super::iter::iter_op(cx, &frame, *insn)
+                }
                 Opcode::MakeClass
                 | Opcode::InstallFields
                 | Opcode::InitFields
@@ -2536,7 +2860,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::CopyDataExcluded
                 | Opcode::GlobalRef
                 | Opcode::GetRef
-                | Opcode::PutRef => super::class::class_op(cx, &frame, unit, insn),
+                | Opcode::PutRef => {
+                    let frame = current_frame!();
+                    super::class::class_op(cx, &frame, unit, *insn)
+                }
                 Opcode::ForInNext => {
                     let iterator = reg!(insn.b);
                     match property::for_in_next(cx, iterator) {
@@ -2566,8 +2893,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             .map_err(|error| error::heap_error(cx, error))
                     )
                 }
-                Opcode::NewArray => write!('dispatch, insn.a, new_array(cx, base, insn)),
+                Opcode::NewArray => write!('dispatch, insn.a, new_array(cx, base, *insn)),
                 Opcode::MakeClosure => {
+                    let frame = current_frame!();
                     write!('dispatch, insn.a, make_closure(cx, &frame, unit, insn.imm))
                 }
 
@@ -2579,108 +2907,91 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::New
                 | Opcode::CallSpread
                 | Opcode::NewSpread => {
-                    let b = insn.b as usize;
-                    let (callee_register, mut window) = match insn.op {
-                        Opcode::Call | Opcode::TailCall => (b, b),
-                        Opcode::New | Opcode::CallSpread | Opcode::NewSpread => (b, b + 1),
-                        _ => (b + 1, b + 1),
-                    };
-                    let mut function = reg!(callee_register);
-                    let mut this = match insn.op {
-                        Opcode::CallMethod | Opcode::TailCallMethod => reg!(b),
-                        Opcode::CallSpread => reg!(b + 1),
-                        _ => Value::UNDEFINED,
-                    };
-                    let mut argc = insn.c as usize;
-                    let tail = matches!(insn.op, Opcode::TailCall | Opcode::TailCallMethod);
-                    let construct = matches!(insn.op, Opcode::New | Opcode::NewSpread);
-                    if matches!(insn.op, Opcode::CallSpread | Opcode::NewSpread) {
-                        match arguments::spread(cx, base + window) {
-                            Ok(count) => argc = count,
-                            Err(throw) => break 'op Err(throw),
-                        }
-                    }
-                    // `f.call(…)` and `f.apply(…)` move the window onto their
-                    // `thisArg` and dispatch on `f`.
-                    let mut target = callee(cx.heap, function);
-                    let mut via = 0;
-                    if let Callee::Native(Native::FunctionCall | Native::FunctionApply) = target
-                        && !construct
-                    {
-                        match rewrite_call(cx, base, window, function, this, argc) {
-                            Ok(rewritten) => {
-                                (target, function, window, this, argc, via) = rewritten;
-                            }
-                            Err(throw) => break 'op Err(throw),
-                        }
-                    }
-                    match target {
-                        Callee::Bytecode(object, bytecode) => {
-                            let unit_id: CodeUnitId = cx.heap.bytecode_unit(bytecode);
-                            let mut frame_flags = via;
-                            if construct {
-                                frame_flags |= frame_flags::CONSTRUCT;
-                            }
-                            if tail {
-                                frame_flags |= frame_flags::TAIL;
-                            }
-                            let callee_frame = Frame {
-                                unit: unit_id,
-                                function: object,
-                                bytecode,
-                                base: (base + window) as u32,
-                                return_pc: pc as u32,
-                                return_dst: (base + insn.a as usize) as u32,
-                                argc: argc as u32,
-                                flags: frame_flags,
-                            };
-                            let site = (construct && insn.op == Opcode::New)
-                                .then(|| ic_base + insn.imm as usize);
-                            let entry = if unit_id.is_dynamic() {
-                                enter_dynamic_callee(cx, callee_frame, function, this, site)
+                    let mut next_frame;
+                    let result = if matches!(insn.op, Opcode::Call | Opcode::CallMethod) {
+                        let b = insn.b as usize;
+                        let method = insn.op == Opcode::CallMethod;
+                        let at = b + usize::from(method);
+                        let function = reg!(at);
+                        let this = if method { reg!(b) } else { Value::UNDEFINED };
+                        let target = if let Some(object) = function.as_object()
+                            && cx.heap.object_kind(object) == ObjectKind::Function
+                        {
+                            let record = cx.heap.function_record(object);
+                            if record.bytecode != NONE {
+                                let bytecode = BytecodeId(record.bytecode);
+                                let id = cx.heap.bytecode_unit(bytecode);
+                                if !id.is_dynamic() {
+                                    let next = cx.static_code.get(id);
+                                    let next_base = base + at;
+                                    cx.heap.vm.registers[next_base] = this;
+                                    match prepare_frame(
+                                        cx,
+                                        next,
+                                        next_base,
+                                        insn.c as usize,
+                                        this,
+                                        object,
+                                    ) {
+                                        Ok(end) => {
+                                            let next_frame = Frame {
+                                                unit: id,
+                                                function: object,
+                                                bytecode,
+                                                base: (base + at) as u32,
+                                                return_pc: pc as u32,
+                                                return_dst: (base + insn.a as usize) as u32,
+                                                argc: u32::from(insn.c),
+                                                flags: 0,
+                                            };
+                                            cx.heap.vm.frames.push(next_frame);
+                                            cx.heap.vm.top = end;
+                                            if held.is_some() {
+                                                clear_dynamic_unit(&mut held);
+                                            }
+                                            unit = next;
+                                            code = &unit.code;
+                                            base = next_frame.base as usize;
+                                            ic_base = unit.ic_base as usize;
+                                            pc = 0;
+                                            regs = window!();
+                                            continue 'dispatch;
+                                        }
+                                        Err(throw) => match entry_failed(cx, next, throw, false) {
+                                            Ok(value) => set!('dispatch, insn.a, value),
+                                            Err(throw) => break 'op Err(throw),
+                                        },
+                                    }
+                                }
+                                Callee::Bytecode(object, bytecode)
                             } else {
-                                let callee_unit = cx.static_code.get(unit_id);
-                                enter_callee(cx, callee_unit, callee_frame, function, this, site)
-                            };
-                            match entry {
-                                Entry::Entered => {}
-                                Entry::Threw(throw) => break 'op Err(throw),
-                                Entry::Failed(result) => {
-                                    break 'op write!('dispatch, insn.a, result);
+                                match Native::from_index(record.native) {
+                                    Some(native) => Callee::Native(native),
+                                    None => Callee::NotCallable,
                                 }
                             }
-                            load_frame!();
-                            pc = 0;
-                            regs = window!();
-                            continue 'dispatch;
-                        }
-                        other => {
-                            let result = call_other(
-                                cx,
-                                other,
-                                function,
-                                base + window,
-                                this,
-                                argc,
-                                construct,
-                                pc - 1,
-                            );
-                            cx.heap.vm.top = frame_end(&frame, unit);
-                            match result {
-                                Ok(value) if tail => match finish_return(cx, value) {
-                                    Returned::Exit(value) => return Ok(value),
-                                    Returned::Resume(resume) => {
-                                        load_frame!();
-                                        pc = resume as usize;
-                                        regs = window!();
-                                        continue 'dispatch;
-                                    }
-                                },
-                                Ok(value) => set!('dispatch, insn.a, value),
-                                Err(throw) => Err(throw),
-                            }
-                        }
-                    }
+                        } else {
+                            Callee::NotCallable
+                        };
+                        next_frame = current_frame!();
+                        invoke::<false, false>(
+                            cx,
+                            &mut next_frame,
+                            unit,
+                            function,
+                            target,
+                            at,
+                            this,
+                            insn.c as usize,
+                            pc,
+                            insn.a,
+                            None,
+                        )
+                    } else {
+                        next_frame = current_frame!();
+                        special_call(cx, &mut next_frame, unit, *insn, pc)
+                    };
+                    called!('dispatch, insn, next_frame => result)
                 }
                 Opcode::Return | Opcode::ReturnUndefined => {
                     let value = if insn.op == Opcode::Return {
@@ -2688,6 +2999,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     } else {
                         Value::UNDEFINED
                     };
+                    let frame = cx.heap.vm.frames.pop().expect("a returning frame");
                     // A plain call's frame (not an entry, a construction or
                     // a tail call) returns to the frame below, loaded once;
                     // the backtrace's `VIA_*` marks do not matter here.
@@ -2695,24 +3007,23 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         & (frame_flags::ENTRY | frame_flags::CONSTRUCT | frame_flags::TAIL)
                         == 0
                     {
-                        cx.heap.vm.frames.pop();
-                        let caller = *cx.heap.vm.frames.last().expect("a caller");
+                        let caller = top_frame(&cx.heap.vm.frames);
                         set_unit!(caller.unit);
                         raise_top(cx, frame_end(&caller, unit));
                         cx.heap.vm.registers[frame.return_dst as usize] = value;
                         pc = frame.return_pc as usize;
-                        frame = caller;
                         code = &unit.code;
-                        base = frame.base as usize;
+                        base = caller.base as usize;
                         ic_base = unit.ic_base as usize;
                         regs = window!();
                         continue 'dispatch;
                     }
-                    match finish_return(cx, value) {
+                    match finish_popped_return(cx, frame, value) {
                         Returned::Exit(value) => return Ok(value),
                         Returned::Resume(resume) => {
                             load_frame!();
-                            pc = resume as usize;
+                            cx.heap.vm.registers[resume.dst as usize] = resume.value;
+                            pc = resume.pc as usize;
                             regs = window!();
                             continue 'dispatch;
                         }
@@ -2725,16 +3036,20 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 | Opcode::AsyncStart
                 | Opcode::Yield
                 | Opcode::YieldStar
-                | Opcode::Await => match suspend_op(cx, &frame, unit, insn, pc) {
-                    Ok(Returned::Exit(value)) => return Ok(value),
-                    Ok(Returned::Resume(resume)) => {
-                        load_frame!();
-                        pc = resume as usize;
-                        regs = window!();
-                        continue 'dispatch;
+                | Opcode::Await => {
+                    let frame = current_frame!();
+                    match suspend_op(cx, &frame, unit, *insn, pc) {
+                        Ok(Returned::Exit(value)) => return Ok(value),
+                        Ok(Returned::Resume(resume)) => {
+                            load_frame!();
+                            cx.heap.vm.registers[resume.dst as usize] = resume.value;
+                            pc = resume.pc as usize;
+                            regs = window!();
+                            continue 'dispatch;
+                        }
+                        Err(throw) => Err(throw),
                     }
-                    Err(throw) => Err(throw),
-                },
+                }
             }
         };
 
@@ -2766,7 +3081,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 return Err(Throw(thrown));
             }
             load_frame!();
-            raise_top(cx, frame_end(&frame, unit));
+
             at = done.return_pc as usize - 1;
         }
         regs = window!();
@@ -3097,11 +3412,19 @@ fn unary_fast(op: Opcode, x: Value) -> Option<Value> {
     }
 }
 
+/// The completion to install after the dispatch loop restores its caller.
+/// No allocation may occur between popping the callee and rooting this value.
+struct Resume {
+    pc: u32,
+    dst: u32,
+    value: Value,
+}
+
 enum Returned {
     /// The entry frame returned this value.
     Exit(Value),
-    /// The caller is on top again and resumes at this index.
-    Resume(u32),
+    /// The caller is on top; restore its roots before installing the value.
+    Resume(Resume),
 }
 
 /// The suspension opcodes. Each saves the running frame into its activation
@@ -3167,11 +3490,11 @@ fn suspend_op(
             if done.flags & frame_flags::ENTRY != 0 {
                 return Ok(Returned::Exit(promise));
             }
-            let caller = *cx.heap.vm.frames.last().expect("a caller");
-            let caller_unit = cx.unit(caller.unit);
-            raise_top(cx, frame_end(&caller, &caller_unit));
-            cx.heap.vm.registers[done.return_dst as usize] = promise;
-            Ok(Returned::Resume(done.return_pc))
+            Ok(Returned::Resume(Resume {
+                pc: done.return_pc,
+                dst: done.return_dst,
+                value: promise,
+            }))
         }
         Opcode::Yield | Opcode::YieldStar => {
             let record = *cx.heap.vm.active.last().expect("a running generator");
@@ -3195,12 +3518,19 @@ fn suspend_op(
 }
 
 /// Pops the returning frame (and the frames a tail call returns through),
-/// applies a constructor's receiver rule and writes `value` into the
-/// caller's destination register.
+/// applies a constructor's receiver rule and hands the caller's completion
+/// to the dispatch loop, which restores the root range before writing it.
 #[inline]
-fn finish_return(cx: &mut Cx<'_>, mut value: Value) -> Returned {
+fn finish_return(cx: &mut Cx<'_>, value: Value) -> Returned {
+    let done = cx.heap.vm.frames.pop().expect("a frame");
+    finish_popped_return(cx, done, value)
+}
+
+/// A return already detached by the loop; uncommon receiver and tail rules
+/// consume it without looking up or popping the same frame again.
+#[inline(never)]
+fn finish_popped_return(cx: &mut Cx<'_>, mut done: Frame, mut value: Value) -> Returned {
     loop {
-        let done = cx.heap.vm.frames.pop().expect("a frame");
         if done.flags & frame_flags::CONSTRUCT != 0 {
             learn_receiver_size(cx, &done);
             if value.as_object().is_none() {
@@ -3211,13 +3541,14 @@ fn finish_return(cx: &mut Cx<'_>, mut value: Value) -> Returned {
             return Returned::Exit(value);
         }
         if done.flags & frame_flags::TAIL != 0 {
+            done = cx.heap.vm.frames.pop().expect("a tail caller");
             continue;
         }
-        let caller = *cx.heap.vm.frames.last().expect("a caller");
-        let unit = cx.unit(caller.unit);
-        raise_top(cx, frame_end(&caller, &unit));
-        cx.heap.vm.registers[done.return_dst as usize] = value;
-        return Returned::Resume(done.return_pc);
+        return Returned::Resume(Resume {
+            pc: done.return_pc,
+            dst: done.return_dst,
+            value,
+        });
     }
 }
 
