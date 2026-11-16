@@ -1,6 +1,6 @@
-//! Read-only return expressions planned once, after bytecode validation.
-//! A plan performs no guest call, allocation or write. A cache/type miss can
-//! therefore restart the original body without replaying observable effects.
+//! Short completions planned once, after bytecode validation. Reads perform
+//! no guest call or allocation. A store commits only after every guard has
+//! passed, with no later miss, so fallback never replays an observable write.
 
 use super::{CodeUnit, Opcode, flags};
 
@@ -25,6 +25,23 @@ pub(crate) enum CallPlan {
         base: u8,
         site: u8,
         index: u8,
+    },
+    Store {
+        base: u8,
+        value: u8,
+        site: u8,
+    },
+    StoreConstant {
+        base: u8,
+        site: u8,
+        op: Opcode,
+        imm: u32,
+    },
+    GlobalStore {
+        base: u8,
+        global: u16,
+        read_site: u8,
+        write_site: u8,
     },
     GlobalCompare {
         left: u8,
@@ -51,6 +68,15 @@ impl CallPlan {
             return Self::None;
         }
         let input = |r: u8| u16::from(r) <= unit.parameter_count;
+        let constant = |op| {
+            matches!(
+                op,
+                LoadInt | LoadConst | LoadUndefined | LoadNull | LoadTrue | LoadFalse
+            )
+        };
+        let returns_undefined = |load: &super::Insn, ret: &super::Insn| {
+            load.op == LoadUndefined && ret.op == Return && load.a == ret.a
+        };
         match &*unit.code {
             [ret] if ret.op == Return && input(ret.a) => Self::Register(ret.a),
             [load, ret] if ret.op == Return && ret.a == load.a => match load.op {
@@ -66,6 +92,51 @@ impl CallPlan {
                 },
                 _ => Self::None,
             },
+            [first, second, ret]
+                if first.op == SetField
+                    && input(first.a)
+                    && input(first.b)
+                    && returns_undefined(second, ret) =>
+            {
+                Self::Store {
+                    base: first.a,
+                    value: first.b,
+                    site: first.c,
+                }
+            }
+            [load, write, undef, ret]
+                if constant(load.op)
+                    && write.op == SetField
+                    && input(write.a)
+                    && write.b == load.a
+                    && write.a != load.a
+                    && returns_undefined(undef, ret) =>
+            {
+                Self::StoreConstant {
+                    base: write.a,
+                    site: write.c,
+                    op: load.op,
+                    imm: load.imm,
+                }
+            }
+            [global, read, write, undef, ret]
+                if matches!(global.op, GetGlobal | GetGlobalOrUndefined)
+                    && read.op == GetField
+                    && read.b == global.a
+                    && write.op == SetField
+                    && input(write.a)
+                    && write.b == read.a
+                    && write.a != global.a
+                    && write.a != read.a
+                    && returns_undefined(undef, ret) =>
+            {
+                Self::GlobalStore {
+                    base: write.a,
+                    global: u16::from(global.b) | (u16::from(global.c) << 8),
+                    read_site: read.c,
+                    write_site: write.c,
+                }
+            }
             [first, second, ret]
                 if first.op == GetField
                     && second.op == GetElem
@@ -171,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn only_complete_read_only_expressions_are_planned() {
+    fn only_complete_expressions_or_single_stores_are_planned() {
         let get = Insn::new(Opcode::GetField, 3, 1, 0, 0);
         let right = Insn::new(Opcode::GetField, 4, 2, 1, 0);
         let compare = Insn::new(Opcode::Lt, 3, 3, 4, 0);

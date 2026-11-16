@@ -285,7 +285,7 @@ fn short_calls_keep_numeric_identity_and_receiver_semantics() {
 }
 
 #[test]
-fn call_caches_follow_replaced_collected_and_dynamic_functions() {
+fn calls_follow_replaced_collected_and_dynamic_functions() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {
         runtime.set_gc_stress(Some(1)).unwrap();
@@ -311,6 +311,39 @@ fn call_caches_follow_replaced_collected_and_dynamic_functions() {
          ok;",
         )
         .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn planned_reads_and_writes_miss_before_observable_callbacks() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime.context().eval(
+        "var Mode = { none: 0 };
+         function active(o) { return o.x !== Mode.none; }
+         function clear(o) { o.x = Mode.none; }
+         function mark(o) { o.x = false; }
+         function set(o, v) { o.x = v; }
+         function at(o, i) { return o.a[i]; }
+         var o = { x: 1, a: [3, 5] }, ok = true, seen = 0;
+         for (var i = 0; i < 20; ++i) {
+             set(o, 1); ok = ok && active(o) && at(o, 1) === 5;
+             clear(o); ok = ok && !active(o);
+             mark(o); ok = ok && o.x === false;
+         }
+         Mode.none = 2; clear(o); ok = ok && o.x === 2;
+         Object.defineProperty(o, 'x', { set: function (v) { ++seen; }, configurable: true });
+         set(o, 7); clear(o); mark(o);
+         ok = ok && seen === 3;
+         Object.defineProperty(Mode, 'none', { get: function () { ++seen; return 9; } });
+         clear(o); ok = ok && seen === 5;
+         Object.defineProperty(Array.prototype, '1', { get: function () { ++seen; return 11; }, configurable: true });
+         delete o.a[1]; ok = ok && at(o, 1) === 11 && seen === 6;
+         delete Array.prototype[1]; o.a.length = 1;
+         ok && at(o, 1) === undefined;"
+    ).unwrap();
     assert_eq!(result, Value::Bool(true));
 }
 
