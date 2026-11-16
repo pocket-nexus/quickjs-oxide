@@ -3232,7 +3232,7 @@ fn unwind_uncatchable(cx: &mut Cx<'_>, thrown: Value) -> Throw {
     Throw(thrown)
 }
 
-/// `NewArray a, b, imm`: an array of the `imm` registers from `b`.
+/// An ordinary object with the requested slots, or the open-object minimum.
 #[inline(never)]
 fn new_object(cx: &mut Cx<'_>, slots: u32) -> Result<Value, Throw> {
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
@@ -3243,6 +3243,7 @@ fn new_object(cx: &mut Cx<'_>, slots: u32) -> Result<Value, Throw> {
         .map_err(|error| error::heap_error(cx, error))
 }
 
+/// `NewArray a, b, imm`: an array of the `imm` registers from `b`.
 #[inline(never)]
 fn new_array(cx: &mut Cx<'_>, base: usize, insn: Insn) -> Result<Value, Throw> {
     let prototype = cx.realm.intrinsic(Intrinsic::ArrayPrototype);
