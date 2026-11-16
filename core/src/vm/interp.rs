@@ -2358,10 +2358,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(value) = i.checked_add(1)
                         {
                             reg!(insn.a) = Value::int32(value);
-                            if insn.op == Opcode::IncJump
-                                && let Some(next) = fused_jump(regs, &mut cx.heap.vm.poll, code, pc)
-                            {
-                                pc = next;
+                            if insn.op == Opcode::IncJump {
+                                let next = fused_jump(regs, &mut cx.heap.vm.poll, code, pc);
+                                if next != usize::MAX {
+                                    pc = next;
+                                }
                             }
                             continue 'dispatch;
                         }
@@ -2499,7 +2500,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         };
                         if let Some(value) = numeric_add(x, y) {
                             reg!(insn.a) = value;
-                            if let Some(next) = fused_jump(regs, &mut cx.heap.vm.poll, code, pc) {
+                            let next = fused_jump(regs, &mut cx.heap.vm.poll, code, pc);
+                            if next != usize::MAX {
                                 pc = next;
                             }
                             continue 'dispatch;
@@ -3335,11 +3337,13 @@ fn numeric_add(x: Value, y: Value) -> Option<Value> {
 /// The arithmetic has already committed. Consume only a number-only branch
 /// that cannot call JS or poll the host. A miss leaves pc at that branch;
 /// in particular a due interrupt is polled at its original PC, exactly once.
-#[inline(always)]
-fn fused_jump(regs: &Window, poll: &mut u32, code: &[Insn], pc: usize) -> Option<usize> {
-    let jump = *code.get(pc)?;
+#[inline(never)]
+fn fused_jump(regs: &Window, poll: &mut u32, code: &[Insn], pc: usize) -> usize {
+    let Some(&jump) = code.get(pc) else {
+        return usize::MAX;
+    };
     if !jump.op.is_compare_jump() {
-        return None;
+        return usize::MAX;
     }
     let mask = JUMP_MASKS[jump.op as usize];
     let x = regs[jump.a as usize];
@@ -3348,17 +3352,20 @@ fn fused_jump(regs: &Window, poll: &mut u32, code: &[Insn], pc: usize) -> Option
     } else {
         regs[jump.b as usize]
     };
-    if mask & order(x, y)? == 0 {
-        return Some(pc + 1);
+    let Some(order) = order(x, y) else {
+        return usize::MAX;
+    };
+    if mask & order == 0 {
+        return pc + 1;
     }
     let target = jump.imm as usize;
     if target <= pc {
         if *poll <= 1 {
-            return None;
+            return usize::MAX;
         }
         *poll -= 1;
     }
-    Some(target)
+    target
 }
 
 const LESS: u8 = 1 << 0;
