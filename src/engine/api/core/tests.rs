@@ -412,7 +412,10 @@ fn planned_bit_tests_keep_short_circuit_reads_and_coercions() {
          var reads=0, conversions=0;
          function ready() { return (this.bits & BITS_MASK)!==0 || this.other===BITS_TARGET; }
          var o={bits:0,other:2,ready:ready},ok=true;
-         for(var i=0;i<30;i++) { o.bits=i&7; ok=ok&&o.ready(); }
+         for(var i=0;i<30;i++) {
+             o.bits=i&7;o.other=i&3;
+             ok=ok&&o.ready()===(((i&7)&4)!==0||(i&3)===2);
+         }
          Object.defineProperty(o,'other',{get:function(){ ++reads; return 2; }});
          Object.defineProperty(globalThis,'BITS_TARGET',{get:function(){ ++reads; return 2; }});
          o.bits=4; ok=ok&&o.ready()&&reads===0;
@@ -543,8 +546,12 @@ fn planned_transfers_commit_once_after_selector_and_property_guards() {
          function grow(n){return n?grow(n-1)+1:1;}
          var x={tag:7},a={value:x},b={value:x};
          var p={direction:1,inputObject:a,out:b,input:input,output:output,execute:execute},ok=true;
-         for(var i=0;i<30;i++){p.direction=i&1;p.execute();ok=ok&&a.value===x&&b.value===x;}
-         p.direction=1;
+         for(var i=0;i<30;i++) {
+             p.direction=i&1;
+             if(p.direction){a.value=i;b.value=-1;}else{b.value=i;a.value=-1;}
+             p.execute();ok=ok&&a.value===i&&b.value===i;
+         }
+         p.direction=1;a.value=x;b.value=null;p.execute();ok=ok&&b.value===x;
          Object.defineProperty(a,'value',{get:function(){++reads;grow(300);return x;},configurable:true});
          Object.defineProperty(b,'value',{set:function(v){++writes;stored=v;},configurable:true});
          p.execute();ok=ok&&reads===1&&writes===1&&stored===x;
