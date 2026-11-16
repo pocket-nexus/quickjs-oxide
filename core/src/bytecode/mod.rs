@@ -10,6 +10,7 @@
 //! or job reaches it.
 
 pub mod builder;
+pub(crate) mod call_plan;
 pub mod disasm;
 pub mod opcode;
 pub mod validate;
@@ -331,7 +332,12 @@ impl std::ops::Deref for UnitRef<'_> {
 /// ([`DynamicUnits`](crate::heap::code::DynamicUnits)).
 #[derive(Default)]
 pub struct CodeStore {
-    units: Vec<CodeUnit>,
+    units: Vec<StoredUnit>,
+}
+
+struct StoredUnit {
+    unit: CodeUnit,
+    call: call_plan::CallPlan,
 }
 
 impl CodeStore {
@@ -348,7 +354,8 @@ impl CodeStore {
             .ok()
             .filter(|&id| id < DYNAMIC)
             .expect("code store overflow");
-        self.units.push(unit);
+        let call = call_plan::CallPlan::of(&unit);
+        self.units.push(StoredUnit { unit, call });
         CodeUnitId(id)
     }
 
@@ -357,14 +364,21 @@ impl CodeStore {
         if id.is_dynamic() {
             return None;
         }
-        self.units.get(id.0 as usize)
+        self.units.get(id.0 as usize).map(|entry| &entry.unit)
     }
 
     /// The static unit `id`.
     #[inline]
     pub fn get(&self, id: CodeUnitId) -> &CodeUnit {
         debug_assert!(!id.is_dynamic(), "a unit of the code store");
-        &self.units[id.0 as usize]
+        &self.units[id.0 as usize].unit
+    }
+
+    #[inline]
+    pub(crate) fn call_entry(&self, id: CodeUnitId) -> (&CodeUnit, &call_plan::CallPlan) {
+        debug_assert!(!id.is_dynamic(), "a static call plan");
+        let entry = &self.units[id.0 as usize];
+        (&entry.unit, &entry.call)
     }
 
     pub fn len(&self) -> usize {
@@ -376,7 +390,7 @@ impl CodeStore {
         self.units
             .iter()
             .enumerate()
-            .map(|(index, unit)| (CodeUnitId(index as u32), unit))
+            .map(|(index, entry)| (CodeUnitId(index as u32), &entry.unit))
     }
 
     pub fn is_empty(&self) -> bool {
