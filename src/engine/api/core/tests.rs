@@ -375,6 +375,56 @@ fn planned_field_choices_read_only_the_selected_branch() {
 }
 
 #[test]
+fn conditional_backedges_poll_with_and_without_arithmetic_fusion() {
+    struct Stop;
+    impl oxide_core::host::Host for Stop {
+        fn interrupt(&mut self) -> bool {
+            true
+        }
+    }
+    for source in [
+        "function f(n) { for(var i=0;i<n;i++) {} return i; } f(3000)",
+        "function f(n,s) { for(var i=0;i<n;i+=s) {} return i; } f(3000,1)",
+        "function f(n) { for(var i=0;i<n;i+=1) {} return i; } f(3000)",
+        "function f(n) { var x; for(var i=0;i<n;) { i++; x=i*i; } return x; } f(3000)",
+        "function f(n) { while(n) --n; return n; } f(3000)",
+        "function f(n) { var i=0,done=false; while(!done) { i++; done=i>=n; } return i; } f(3000)",
+    ] {
+        let runtime = Runtime::with_host(Stop, RuntimeOptions::default());
+        assert_eq!(
+            runtime.context().eval(source),
+            Err(RuntimeError::Interrupted),
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn arithmetic_branch_misses_complete_each_conversion_once() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime
+        .context()
+        .eval(
+            "function grow(n) { return n ? grow(n-1)+1 : 1; }
+         function inc(n) { for(var i=0;i<n;i++) {} return i; }
+         function add(n,s) { for(var i=0;i<n;i+=s) {} return i; }
+         function imm(n) { for(var i=2147483646;i<n;i+=1) {} return i; }
+         function text() { for(var i='';i<3;i+=1) {} return i; }
+         function big() { for(var i=0n;i<3n;i++) {} return i; }
+         var reads=0;
+         var bound={valueOf:function(){ ++reads; grow(600); return 3; }};
+         var step={valueOf:function(){ ++reads; grow(400); return 1; }};
+         inc(bound)===3 && reads===4 && add(3,step)===3 && reads===7
+             && imm(2147483650)===2147483650 && text()==='11' && big()===3n;",
+        )
+        .unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
 fn read_only_call_plans_fall_back_on_accessor_invalidation_and_coercion() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {
