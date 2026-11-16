@@ -52,6 +52,14 @@ pub(crate) enum CallPlan {
         right_global: u8,
         op: Opcode,
     },
+    Delegate {
+        base: u8,
+        receiver: u8,
+        method: u8,
+        call: u8,
+        argument: u8,
+        argc: u8,
+    },
     GlobalStore {
         base: u8,
         global: u16,
@@ -101,7 +109,52 @@ impl CallPlan {
         let returns_undefined = |load: &super::Insn, ret: &super::Insn| {
             load.op == LoadUndefined && ret.op == Return && load.a == ret.a
         };
+        let delegate = |receiver: &super::Insn,
+                        method: &super::Insn,
+                        call: &super::Insn,
+                        ret: &super::Insn| {
+            receiver.op == GetField
+                && input(receiver.b)
+                && !input(receiver.a)
+                && method.op == GetField
+                && method.b == receiver.a
+                && !input(method.a)
+                && call.op == CallMethod
+                && call.b == receiver.a
+                && u16::from(method.a) == u16::from(call.b) + 1
+                && ret.op == Return
+                && ret.a == call.a
+        };
         match &*unit.code {
+            [receiver, method, call, ret]
+                if delegate(receiver, method, call, ret) && call.c == 0 =>
+            {
+                Self::Delegate {
+                    base: receiver.b,
+                    receiver: receiver.c,
+                    method: method.c,
+                    call: call.b,
+                    argument: 0,
+                    argc: 0,
+                }
+            }
+            [receiver, method, argument, call, ret]
+                if delegate(receiver, method, call, ret)
+                    && call.c == 1
+                    && argument.op == Mov
+                    && input(argument.b)
+                    && !input(argument.a)
+                    && u16::from(argument.a) == u16::from(call.b) + 2 =>
+            {
+                Self::Delegate {
+                    base: receiver.b,
+                    receiver: receiver.c,
+                    method: method.c,
+                    call: call.b,
+                    argument: argument.b,
+                    argc: 1,
+                }
+            }
             [
                 left,
                 global,
@@ -468,5 +521,30 @@ mod tests {
         let mut wrong_target = test;
         wrong_target[6].imm = 9;
         assert_eq!(plan(&wrong_target, 0), CallPlan::None);
+    }
+
+    #[test]
+    fn delegated_calls_preserve_the_original_argument_and_method_window() {
+        let code = [
+            Insn::new(Opcode::GetField, 2, 0, 0, 0),
+            Insn::new(Opcode::GetField, 3, 2, 0, 0),
+            Insn::new(Opcode::Mov, 4, 1, 0, 0),
+            Insn::new(Opcode::CallMethod, 2, 2, 1, 0),
+            Insn::new(Opcode::Return, 2, 0, 0, 0),
+        ];
+        assert!(matches!(
+            plan(&code, 1),
+            CallPlan::Delegate {
+                argument: 1,
+                argc: 1,
+                ..
+            }
+        ));
+        let mut overwritten = code;
+        overwritten[0].a = 1;
+        assert_eq!(plan(&overwritten, 1), CallPlan::None);
+        let mut alias = code;
+        alias[2].a = 3;
+        assert_eq!(plan(&alias, 1), CallPlan::None);
     }
 }

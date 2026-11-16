@@ -477,6 +477,59 @@ fn planned_bit_updates_preserve_unsigned_results_and_shift_counts() {
 }
 
 #[test]
+fn delegated_read_plans_follow_live_methods_and_fall_back_before_callbacks() {
+    let runtime = Runtime::new();
+    if Runtime::GC_STRESS_AVAILABLE {
+        runtime.set_gc_stress(Some(1)).unwrap();
+    }
+    let result = runtime.context().eval(
+        "function size(){return this.a.length;}
+         function at(i){return this.a[i];}
+         function forwardSize(){return this.inner.size();}
+         function forwardAt(i){return this.inner.at(i);}
+         function grow(n){return n?grow(n-1)+1:1;}
+         var leaf={a:[11,17],size:size,at:at},p={inner:leaf,size:forwardSize,at:forwardAt},ok=true,seen=0;
+         for(var i=0;i<30;i++) { ok=ok&&p.size()===2&&p.at(1)===17&&p.at()===undefined; }
+         Object.defineProperty(leaf,'a',{get:function(){++seen;grow(400);return [19,23];},configurable:true});
+         ok=ok&&p.at(1)===23&&seen===1&&p.size()===2&&seen===2;
+         Object.defineProperty(leaf,'a',{value:[29,31],writable:true});
+         leaf.at=Function('i','return this.a[i]+1');
+         ok=ok&&p.at(1)===32;
+         leaf.at=Array.prototype.at; leaf[0]=37; leaf.length=1;
+         ok=ok&&p.at(0)===37;
+         leaf.at=at.bind({a:[41]}); ok=ok&&p.at(0)===41;
+         leaf.at=at;
+         var other={a:[43],at:at,size:size};
+         Object.defineProperty(leaf,'at',{get:function(){++seen;grow(400);p.inner=other;return at;}});
+         ok=ok&&p.at(0)===29&&seen===3&&p.at(0)===43;
+         delete other.a[0];
+         Object.defineProperty(Array.prototype,'0',{get:function(){++seen;return 47;},configurable:true});
+         var hole=p.at(0);delete Array.prototype[0];
+         ok&&hole===47&&seen===4;"
+    ).unwrap();
+    assert_eq!(result, Value::Bool(true));
+}
+
+#[test]
+fn delegated_read_calls_poll_without_loop_backedges() {
+    struct Stop;
+    impl oxide_core::host::Host for Stop {
+        fn interrupt(&mut self) -> bool {
+            true
+        }
+    }
+    let runtime = Runtime::with_host(Stop, RuntimeOptions::default());
+    let source = "var leaf={a:[3],at:function(i){return this.a[i];}};
+                  var p={inner:leaf,at:function(i){return this.inner.at(i);}};"
+        .to_owned()
+        + &"p.at(0);".repeat(2000);
+    assert_eq!(
+        runtime.context().eval(&source),
+        Err(RuntimeError::Interrupted)
+    );
+}
+
+#[test]
 fn arithmetic_comparisons_complete_each_conversion_once() {
     let runtime = Runtime::new();
     if Runtime::GC_STRESS_AVAILABLE {
