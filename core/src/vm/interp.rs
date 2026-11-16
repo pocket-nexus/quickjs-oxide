@@ -55,73 +55,6 @@ fn callee(heap: &Heap, value: Value) -> Callee {
     }
 }
 
-/// Two words returned as one scalar: a bytecode record and its unit, or
-/// `NONE` and a native index (`NONE` again for a non-callable). This keeps
-/// cache hits and misses on the same return interface without an aggregate
-/// result spilled to the dispatch loop's stack.
-struct CallTarget(u64);
-
-impl CallTarget {
-    #[inline(always)]
-    fn new(bytecode: u32, unit_or_native: u32) -> Self {
-        Self(u64::from(bytecode) | (u64::from(unit_or_native) << 32))
-    }
-
-    #[inline(always)]
-    fn bytecode(&self) -> Option<BytecodeId> {
-        let id = self.0 as u32;
-        (id != NONE).then_some(BytecodeId(id))
-    }
-
-    #[inline(always)]
-    fn target(&self) -> u32 {
-        (self.0 >> 32) as u32
-    }
-}
-
-/// A function's bytecode identity is immutable for its lifetime. Call sites
-/// cache only static units; GC prunes the weak function key before recycling
-/// its object id. An eval/Function-created unit keeps the owning path.
-#[inline(always)]
-fn call_target(heap: &mut Heap, site: usize, function: Value) -> CallTarget {
-    if let Some(object) = function.as_object() {
-        let entry = heap.ics.entries[site];
-        if entry.w0 == object.index() {
-            heap.ics.count_hit(IcKind::Call);
-            return CallTarget::new(entry.w1, entry.w2);
-        }
-    }
-    call_target_miss(heap, site, function)
-}
-
-#[inline(never)]
-fn call_target_miss(heap: &mut Heap, site: usize, function: Value) -> CallTarget {
-    match callee(heap, function) {
-        Callee::Bytecode(object, bytecode) => {
-            let unit = heap.bytecode_unit(bytecode);
-            let cached = !unit.is_dynamic();
-            if cached {
-                heap.ics.entries[site] = IcEntry {
-                    w0: object.index(),
-                    w1: bytecode.index(),
-                    w2: unit.0,
-                    w3: NONE,
-                };
-            }
-            heap.ics.count_miss(site, cached);
-            CallTarget::new(bytecode.index(), unit.0)
-        }
-        Callee::Native(native) => {
-            heap.ics.count_miss(site, false);
-            CallTarget::new(NONE, native.index())
-        }
-        Callee::NotCallable => {
-            heap.ics.count_miss(site, false);
-            CallTarget::new(NONE, NONE)
-        }
-    }
-}
-
 /// Pushes a frame for a bytecode function whose window starts at `base`, where
 /// `this` and `frame.argc` arguments already are. Clears the rest of the window
 /// (missing parameters, locals, temporaries) and coerces a sloppy function's
@@ -3080,59 +3013,66 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             let at = b + usize::from(method);
                             let function = reg!(at);
                             let this = if method { reg!(b) } else { Value::UNDEFINED };
-                            let resolved =
-                                call_target(cx.heap, ic_base + insn.imm as usize, function);
-                            let target = if let Some(bytecode) = resolved.bytecode() {
-                                let object = function.as_object().expect("a bytecode function");
-                                let id = CodeUnitId(resolved.target());
-                                if !id.is_dynamic() {
-                                    let next = cx.static_code.get(id);
-                                    let next_base = base + at;
-                                    match prepare_frame(
-                                        cx,
-                                        next,
-                                        next_base,
-                                        insn.c as usize,
-                                        this,
-                                        object,
-                                    ) {
-                                        Ok(end) => {
-                                            let next_frame = Frame {
-                                                unit: id,
-                                                function: object,
-                                                bytecode,
-                                                base: (base + at) as u32,
-                                                return_pc: pc as u32,
-                                                return_dst: (base + insn.a as usize) as u32,
-                                                argc: u32::from(insn.c),
-                                                flags: 0,
-                                            };
-                                            cx.heap.vm.frames.push(next_frame);
-                                            cx.heap.vm.top = end;
-                                            if held.is_some() {
-                                                clear_dynamic_unit(&mut held);
-                                            }
-                                            unit = next;
-                                            code = &unit.code;
-                                            base = next_frame.base as usize;
+                            let target = if let Some(object) = function.as_object()
+                                && cx.heap.object_kind(object) == ObjectKind::Function
+                            {
+                                let record = cx.heap.function_record(object);
+                                if record.bytecode != NONE {
+                                    let bytecode = BytecodeId(record.bytecode);
+                                    let id = cx.heap.bytecode_unit(bytecode);
+                                    if !id.is_dynamic() {
+                                        let next = cx.static_code.get(id);
+                                        let next_base = base + at;
+                                        match prepare_frame(
+                                            cx,
+                                            next,
+                                            next_base,
+                                            insn.c as usize,
+                                            this,
+                                            object,
+                                        ) {
+                                            Ok(end) => {
+                                                let next_frame = Frame {
+                                                    unit: id,
+                                                    function: object,
+                                                    bytecode,
+                                                    base: (base + at) as u32,
+                                                    return_pc: pc as u32,
+                                                    return_dst: (base + insn.a as usize) as u32,
+                                                    argc: u32::from(insn.c),
+                                                    flags: 0,
+                                                };
+                                                cx.heap.vm.frames.push(next_frame);
+                                                cx.heap.vm.top = end;
+                                                if held.is_some() {
+                                                    clear_dynamic_unit(&mut held);
+                                                }
+                                                unit = next;
+                                                code = &unit.code;
+                                                base = next_frame.base as usize;
 
-                                            ic_base = unit.ic_base as usize;
-                                            pc = 0;
-                                            regs = window!();
-                                            continue 'dispatch;
+                                                ic_base = unit.ic_base as usize;
+                                                pc = 0;
+                                                regs = window!();
+                                                continue 'dispatch;
+                                            }
+                                            Err(throw) => {
+                                                match entry_failed(cx, next, throw, false) {
+                                                    Ok(value) => set!('dispatch, insn.a, value),
+                                                    Err(throw) => break 'op Err(throw),
+                                                }
+                                            }
                                         }
-                                        Err(throw) => match entry_failed(cx, next, throw, false) {
-                                            Ok(value) => set!('dispatch, insn.a, value),
-                                            Err(throw) => break 'op Err(throw),
-                                        },
+                                    }
+                                    Callee::Bytecode(object, bytecode)
+                                } else {
+                                    match Native::from_index(record.native) {
+                                        Some(native) => Callee::Native(native),
+                                        None => Callee::NotCallable,
                                     }
                                 }
-                                Callee::Bytecode(object, bytecode)
                             } else {
-                                match Native::from_index(resolved.target()) {
-                                    Some(native) => Callee::Native(native),
-                                    None => Callee::NotCallable,
-                                }
+                                Callee::NotCallable
                             };
                             next_frame = current_frame!();
                             invoke::<false, false>(

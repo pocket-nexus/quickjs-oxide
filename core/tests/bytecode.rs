@@ -197,7 +197,7 @@ fn every_opcode_round_trips_through_the_disassembler() {
         lines.next(),
         Some(
             "every: params 2, locals 2, registers 400, constants 3, children 1, this slots 0, \
-             cache sites 9"
+             cache sites 7"
         )
     );
     for (pc, (op, operands)) in expected.iter().enumerate() {
@@ -589,7 +589,7 @@ fn runtime_disassembly_spells_atom_keys() {
 }
 
 /// Cache-site numbering: field sites first in instruction order, then the
-/// global forms, then construction and ordinary calls; one entry per site.
+/// global forms, then `new`; one entry per site.
 #[test]
 fn cache_sites_are_numbered_per_unit() {
     let key = PropertyKey::index(7).unwrap();
@@ -599,30 +599,16 @@ fn cache_sites_are_numbered_per_unit() {
         b.ab_key(Opcode::GetField, 5, 5, key);
         b.a_key(Opcode::SetGlobal, 5, key);
         b.ab_key(Opcode::SetField, 5, 5, key);
-        b.call(Opcode::Call, 5, 5, 0);
-        b.call(Opcode::CallMethod, 5, 5, 0);
         b.op(Opcode::ReturnUndefined);
     });
     let sites: Vec<Option<u32>> = unit.code.iter().map(|insn| insn.site()).collect();
-    assert_eq!(
-        sites,
-        [
-            Some(4),
-            Some(2),
-            Some(0),
-            Some(3),
-            Some(1),
-            Some(5),
-            Some(6),
-            None
-        ]
-    );
-    assert_eq!(unit.ic_count, 7);
+    assert_eq!(sites, [Some(4), Some(2), Some(0), Some(3), Some(1), None]);
+    assert_eq!(unit.ic_count, 5);
     assert_eq!(validate(&unit), Ok(()));
 
     let mut bad = unit.clone();
-    bad.code[2].c = 7;
-    assert_eq!(validate(&bad), Err(ValidateErrorKind::Site(7)));
+    bad.code[2].c = 5;
+    assert_eq!(validate(&bad), Err(ValidateErrorKind::Site(5)));
     let mut bad = unit;
     bad.code[0].imm = 9;
     assert_eq!(validate(&bad), Err(ValidateErrorKind::Site(9)));

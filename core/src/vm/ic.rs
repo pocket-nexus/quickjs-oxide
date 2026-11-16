@@ -39,8 +39,6 @@ pub enum IcKind {
     Construct,
     /// `NewObjectLit`: the final shape, cached weakly in `w0`.
     Literal,
-    /// `Call` / `CallMethod`: function object, bytecode record, static unit.
-    Call,
 }
 
 impl IcKind {
@@ -54,7 +52,6 @@ impl IcKind {
             }
             Opcode::New => Some(IcKind::Construct),
             Opcode::NewObjectLit => Some(IcKind::Literal),
-            Opcode::Call | Opcode::CallMethod => Some(IcKind::Call),
             _ => None,
         }
     }
@@ -66,7 +63,6 @@ impl IcKind {
             IcKind::Global => "global",
             IcKind::Construct => "construct",
             IcKind::Literal => "literal",
-            IcKind::Call => "call",
         }
     }
 }
@@ -229,14 +225,14 @@ pub(crate) fn set_hit(
 #[derive(Clone, Debug, Default)]
 pub struct IcStats {
     /// Inline entry hits, including a polymorphic site's latest shape.
-    pub mono_hits: [u64; 6],
+    pub mono_hits: [u64; 5],
     /// Hits on the out-of-line probe of a polymorphic row.
-    pub poly_hits: [u64; 6],
+    pub poly_hits: [u64; 5],
     /// Misses that filled or refilled an entry.
-    pub fills: [u64; 6],
+    pub fills: [u64; 5],
     /// Misses that did not: an accessor, a dictionary, a complete miss, a
     /// megamorphic site.
-    pub unfilled: [u64; 6],
+    pub unfilled: [u64; 5],
     /// Misses per entry, both kinds.
     pub site_misses: Vec<u64>,
     /// `IterStart`s that walked a pristine array by index, and the ones that
@@ -708,9 +704,6 @@ fn records(kind: IcKind, entry: IcEntry) -> impl Iterator<Item = Record> {
         }
         IcKind::Global => {}
         IcKind::Construct | IcKind::Literal => found[0] = Some(Record::Shape(entry.w0)),
-        // The function strongly owns its bytecode record. Only static units
-        // are cached, so no independent weak dynamic-code owner is needed.
-        IcKind::Call => found[0] = Some(Record::Object(entry.w0)),
     }
     found.into_iter().flatten()
 }
@@ -737,23 +730,6 @@ mod tests {
         let mut unit = unit(sites);
         store.reserve(&mut unit);
         unit
-    }
-
-    #[test]
-    fn call_targets_are_weak_and_cleared_before_function_ids_are_reused() {
-        let mut store = IcStore::default();
-        reserve(&mut store, 1);
-        store.kinds[0] = IcKind::Call;
-        store.entries[0] = IcEntry {
-            w0: 7,
-            w1: 11,
-            w2: 13,
-            w3: NONE,
-        };
-        assert_eq!(store.prune(|record| record == Record::Object(7)), 0);
-        assert!(store.entries[0].is_filled());
-        assert_eq!(store.prune(|_| false), 1);
-        assert!(store.entries[0].is_empty());
     }
 
     #[test]

@@ -208,7 +208,7 @@ impl CodeBuilder {
 
     /// The unit, with the layout and counts the lowering decided, and its cache
     /// sites numbered: the named-property sites first, in instruction order,
-    /// then the global, construction and ordinary call sites.
+    /// then the global and `new` sites.
     pub fn finish(mut self, layout: UnitLayout) -> CodeUnit {
         let ic_count = number_sites(&mut self.code);
         CodeUnit {
@@ -245,7 +245,7 @@ impl CodeBuilder {
 /// number of entries the unit needs. `GetField` and `SetField` get 0 to 254
 /// in `c`; past 255 sites they share [`FIELD_NO_SITE`], whose entry is
 /// reserved and never filled. The global forms follow in `b | c << 8`, with
-/// the same rule at [`GLOBAL_NO_SITE`]; `New`, `Call` and `CallMethod` sites come last, in `imm`.
+/// the same rule at [`GLOBAL_NO_SITE`]; `New` sites come last, in `imm`.
 fn number_sites(code: &mut [Insn]) -> u32 {
     let is_field = |insn: &Insn| {
         matches!(
@@ -277,10 +277,7 @@ fn number_sites(code: &mut [Insn]) -> u32 {
     if first_global + globals > GLOBAL_NO_SITE {
         next = GLOBAL_NO_SITE + 1;
     }
-    for insn in code
-        .iter_mut()
-        .filter(|insn| matches!(insn.op, Opcode::New | Opcode::Call | Opcode::CallMethod))
-    {
+    for insn in code.iter_mut().filter(|insn| insn.op == Opcode::New) {
         insn.imm = next;
         next += 1;
     }
