@@ -152,6 +152,42 @@ pub(super) fn value(
             global_hit = true;
             (Value::bool(JUMP_MASKS[op as usize] & order != 0), 2)
         }
+        CallPlan::Select {
+            base,
+            left_site,
+            global,
+            right_site,
+            op,
+            taken,
+            fallthrough,
+        } => {
+            let receiver = reg(base);
+            let Some(left) = get(receiver, left_site) else {
+                return Value::EMPTY;
+            };
+            let entry = heap.ics.entries[ic_base + global as usize];
+            if entry.w0 != heap.global_generation {
+                return Value::EMPTY;
+            }
+            let start = heap.objects.get(entry.w3).slots_start;
+            let global = heap.values.get_at(start + entry.w1);
+            let Some(right) = get(global, right_site) else {
+                return Value::EMPTY;
+            };
+            let Some(order) = order(left, right) else {
+                return Value::EMPTY;
+            };
+            let site = if JUMP_MASKS[op as usize] & order != 0 {
+                taken
+            } else {
+                fallthrough
+            };
+            let Some(value) = get(receiver, site) else {
+                return Value::EMPTY;
+            };
+            global_hit = true;
+            (value, 3)
+        }
         CallPlan::Store { base, value, site } => {
             let (object, value) = (reg(base), reg(value));
             let entry = heap.ics.entries[ic_base + site as usize];
