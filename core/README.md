@@ -10,9 +10,11 @@ how they fit together. This page is the core's design record: its module
 layout, the rooting rule every heap user follows, and the design decisions
 behind the bytecode, the loop, the caches and the heap.
 
-The crate has `#![forbid(unsafe_code)]` and one dependency, the
-regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
-crate depends on it; it does not depend on the root crate.
+The crate has `#![forbid(unsafe_code)]` and depends on the regular-expression
+crate `quickjs-oxide-regexp` (`regexp/`) and `hashbrown`. Internal maps retain
+the engine's existing `FxHasher` and seed; only their allocation-only table
+backend changes. The root compiler uses the same public aliases. The core does
+not depend on the root crate.
 
 The migration targets a single `no_std` + `alloc` implementation. Portable
 standard-library reexports already name `core` and `alloc`; the core's `Host`
@@ -24,8 +26,8 @@ realm initialization, including collections during startup.
 
 The std embedding API retains process-backed defaults, including for partial
 custom hosts. Its waiter is process-wide; agent hubs remain lazy. This is not
-yet a bare-metal build: standard-library hash tables and floating-point methods
-remain separate migration work. Production core and RegExp state no longer
+yet a bare-metal build: the floating-point backend and explicit `no_std`
+compilation remain separate migration work. Production core and RegExp state no longer
 requires TLS: one bounded RegExp scratch cache and the async-module evaluation
 counter belong to each runtime. The scratch cache retains its four reusable
 buffers, 32 KiB bound and reentrant leases.
