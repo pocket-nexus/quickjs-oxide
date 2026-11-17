@@ -1,13 +1,52 @@
-//! The core's single floating-point math backend, backed by `libm`.
+//! The core's floating-point backend: `libm` and native Wasm operations.
 //!
 //! Keep operations available in `core` (such as `abs`, `copysign` and bit
 //! conversions) native. Transcendentals may differ in their last bits from
-//! platform libm; architecture-specific optimizations remain enabled in `libm`.
+//! platform libm; its architecture-specific optimizations remain enabled.
 
 pub(crate) use libm::{
-    acos, asin, asinh, atan, atan2, cbrt, ceil, cos, cosh, exp, expm1, floor, log, log1p,
-    log2, log10, pow, sin, sinh, sqrt, tan, tanh, trunc,
+    acos, asin, asinh, atan, atan2, cbrt, cos, cosh, exp, expm1, log, log1p, log2, log10, pow, sin,
+    sinh, tan, tanh,
 };
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use libm::{ceil, floor, sqrt, trunc};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use wasm::{ceil, floor, sqrt, trunc};
+
+#[cfg(target_arch = "wasm32")]
+mod wasm {
+    use core::arch::wasm32::{
+        f64x2_ceil, f64x2_extract_lane, f64x2_floor, f64x2_splat, f64x2_sqrt, f64x2_trunc,
+    };
+
+    // Scalar Wasm intrinsics are nightly-only. These stable, safe SIMD forms
+    // scalarize to f64 instructions when only lane zero is observed (Rust 1.99).
+    // Keep the feature local; do not enable SIMD for the rest of the engine.
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) fn sqrt(value: f64) -> f64 {
+        f64x2_extract_lane::<0>(f64x2_sqrt(f64x2_splat(value)))
+    }
+
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) fn floor(value: f64) -> f64 {
+        f64x2_extract_lane::<0>(f64x2_floor(f64x2_splat(value)))
+    }
+
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) fn ceil(value: f64) -> f64 {
+        f64x2_extract_lane::<0>(f64x2_ceil(f64x2_splat(value)))
+    }
+
+    #[inline]
+    #[target_feature(enable = "simd128")]
+    pub(crate) fn trunc(value: f64) -> f64 {
+        f64x2_extract_lane::<0>(f64x2_trunc(f64x2_splat(value)))
+    }
+}
 
 /// Match `f64::rem_euclid`: correct a negative remainder with the absolute
 /// modulus. An exact negative multiple retains -0; rounding can produce the
@@ -45,7 +84,10 @@ mod tests {
         assert_eq!(fract(-1.25), -0.25);
         assert_eq!(fract(-1.0).to_bits(), 0.0f64.to_bits());
         assert_eq!(fract(-0.0).to_bits(), 0.0f64.to_bits());
-        assert_eq!(fract(-f64::from_bits(1)).to_bits(), (-f64::from_bits(1)).to_bits());
+        assert_eq!(
+            fract(-f64::from_bits(1)).to_bits(),
+            (-f64::from_bits(1)).to_bits()
+        );
         assert!(fract(f64::INFINITY).is_nan());
         assert!(fract(f64::NEG_INFINITY).is_nan());
         assert!(fract(f64::NAN).is_nan());
