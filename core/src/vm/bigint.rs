@@ -79,7 +79,7 @@ impl Big {
 
     /// The exact value of an integral double.
     pub fn from_f64(value: f64) -> Option<Big> {
-        if !value.is_finite() || value.trunc() != value {
+        if !value.is_finite() || crate::float::trunc(value) != value {
             return None;
         }
         let bits = value.abs().to_bits();

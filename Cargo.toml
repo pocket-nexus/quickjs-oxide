@@ -82,6 +82,8 @@ num-bigint = "=0.5.1"
 num-traits = "=0.2.19"
 # Internal maps keep the engine's existing FxHasher, without a default hasher.
 hashbrown = { version = "=0.17.1", default-features = false }
+# One explicit floating-point backend; retain its default architecture paths.
+libm = "=0.2.16"
 tz-rs = "=0.7.3"
 js-sys = { version = "=0.3.103", default-features = false }
 wasm-bindgen = "=0.2.126"

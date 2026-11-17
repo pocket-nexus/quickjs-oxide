@@ -150,7 +150,7 @@ pub(super) fn sleep(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 }
 
 pub(super) fn monotonic_now(cx: &mut Cx<'_>, _site: CallSite) -> Result<Value, Throw> {
-    Ok(Value::number(cx.host.hooks.performance_now_ms().floor()))
+    Ok(Value::number(crate::float::floor(cx.host.hooks.performance_now_ms())))
 }
 
 /// `$262.agent.receiveBroadcast(callback)` in an agent.

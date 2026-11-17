@@ -52,7 +52,7 @@ pub fn to_string_radix(value: f64, radix: u32) -> String {
     let magnitude = value.abs();
     let body = if radix.is_power_of_two() {
         power_of_two_digits(magnitude, radix)
-    } else if magnitude < 9_007_199_254_740_992.0 && magnitude.trunc() == magnitude {
+    } else if magnitude < 9_007_199_254_740_992.0 && crate::float::trunc(magnitude) == magnitude {
         // Every integer below 2^53 is a double, so no shorter digit string
         // can round-trip: the shortest digits are the exact ones.
         u64_digits(magnitude as u64, radix)
@@ -438,7 +438,7 @@ fn radix_exponent(significand: u64, binary_exponent: i32, radix: u32, approximat
             scaled.cmp(&shl(&Big::from_u64(1), shift)) == Ordering::Less
         }
     };
-    let mut exponent = approximate.log(f64::from(radix)).floor() as i32 + 1;
+    let mut exponent = crate::float::floor(crate::float::log_base(approximate, f64::from(radix))) as i32 + 1;
     while !below(exponent) {
         exponent += 1;
     }

@@ -275,7 +275,7 @@ pub(super) fn is_lock_free(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     let size = site.arg(cx, 0);
     let size = internal::to_integer_or_infinity(cx, size)?;
     Ok(Value::bool(
-        matches!(size as i64, 1 | 2 | 4 | 8) && size.fract() == 0.0,
+        matches!(size as i64, 1 | 2 | 4 | 8) && crate::float::fract(size) == 0.0,
     ))
 }
 
@@ -372,7 +372,7 @@ pub(super) fn pause(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let iterations = site.arg(cx, 0);
     if !iterations.is_undefined() {
         match iterations.as_f64() {
-            Some(number) if number.is_finite() && number.fract() == 0.0 => {}
+            Some(number) if number.is_finite() && crate::float::fract(number) == 0.0 => {}
             _ => return Err(error::type_error(cx, "not an integral number")),
         }
     }

@@ -8,7 +8,7 @@ The three engine crates and the workspace members that consume them:
 
 | Crate | Path | Depends on | Content |
 | --- | --- | --- | --- |
-| `quickjs-oxide-core` | `core/` | `quickjs-oxide-regexp`, `hashbrown` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
+| `quickjs-oxide-core` | `core/` | `quickjs-oxide-regexp`, `hashbrown`, `libm` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
 | `quickjs-oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
 | `quickjs-oxide` | `src/` | `quickjs-oxide-core`, `quickjs-oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
 | `quickjs-oxide-cli` | `apps/cli` | the root crate, `quickjs-oxide-host` | the `qjs` binary |
@@ -19,7 +19,7 @@ The three engine crates and the workspace members that consume them:
 
 The core's and the regular-expression crate's libraries are named `oxide_core` and `oxide_regexp` in Rust code. Every crate but the two web packages and the Test262 runner is published to crates.io ([releases](release.md)).
 
-Dependencies point one way: `quickjs-oxide-core` depends only on `quickjs-oxide-regexp` and the allocation-only `hashbrown` table backend, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. Its public `FxHashMap`/`FxHashSet` aliases retain the existing hasher and seed, including for the front end. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
+Dependencies point one way: `quickjs-oxide-core` depends only on `quickjs-oxide-regexp`, the allocation-only `hashbrown` table backend and the pinned `libm` math backend, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. Its public `FxHashMap`/`FxHashSet` aliases retain the existing hasher and seed, including for the front end. Platform-libm last bits are not part of the transcendental-result contract; exact conversion and formatting algorithms remain engine-owned. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
 
 ## Source owners
 

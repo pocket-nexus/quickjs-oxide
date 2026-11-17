@@ -290,7 +290,7 @@ pub(super) fn bind(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             if number == f64::INFINITY {
                 length = f64::INFINITY;
             } else if number.is_finite() {
-                let integer = number.trunc();
+                let integer = crate::float::trunc(number);
                 length = (integer - site.argc.saturating_sub(1) as f64).max(0.0);
             }
         }

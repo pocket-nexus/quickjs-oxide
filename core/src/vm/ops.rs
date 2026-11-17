@@ -782,7 +782,7 @@ fn compare_big_number(a: &Big, b: f64) -> Option<Ordering> {
             Ordering::Greater
         });
     }
-    let floor = b.floor();
+    let floor = crate::float::floor(b);
     let order = a.cmp(&Big::from_f64(floor).expect("finite integral"));
     Some(if order == Ordering::Equal && floor != b {
         Ordering::Less

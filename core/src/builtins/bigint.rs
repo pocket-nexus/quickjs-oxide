@@ -97,7 +97,7 @@ pub(super) fn constructor(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thro
                 "cannot convert NaN or Infinity to BigInt",
             ));
         }
-        if number.trunc() != number {
+        if crate::float::trunc(number) != number {
             return Err(error::range_error(
                 cx,
                 "cannot convert to BigInt: not an integer",
