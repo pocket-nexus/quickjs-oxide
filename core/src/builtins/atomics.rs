@@ -179,7 +179,7 @@ fn modify(
         old
     };
     if shared {
-        waiter::with_seq_cst(cx.host.waiter.as_deref(), run)
+        waiter::with_seq_cst(cx.host.waiter, run)
     } else {
         run()
     }
@@ -321,16 +321,15 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let size = view.kind.size();
     let mask = mask(kind);
     let buffer = typed::buffer(cx.heap, store);
-    let outcome =
-        cx.host
-            .waiter
-            .as_deref()
-            .expect("a blocking waiter")
-            .wait(place, timeout, &mut || {
-                let mut bytes = [0u8; 8];
-                buffer.read(byte_index, &mut bytes[..size]);
-                u64::from_le_bytes(bytes) & mask == expected & mask
-            });
+    let outcome = cx
+        .host
+        .waiter
+        .expect("a blocking waiter")
+        .wait(place, timeout, &mut || {
+            let mut bytes = [0u8; 8];
+            buffer.read(byte_index, &mut bytes[..size]);
+            u64::from_le_bytes(bytes) & mask == expected & mask
+        });
     let text = match outcome {
         WaitOutcome::NotEqual => "not-equal",
         WaitOutcome::Ok => "ok",
@@ -362,7 +361,6 @@ pub(super) fn notify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let notified = cx
         .host
         .waiter
-        .as_deref()
         .map_or(0, |waiter| waiter.notify(place, count));
     Ok(Value::number(notified as f64))
 }

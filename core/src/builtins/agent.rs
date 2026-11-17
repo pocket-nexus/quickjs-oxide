@@ -173,10 +173,10 @@ pub(super) fn report(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let value = site.arg(cx, 0);
     let text = ops::to_string(cx, value)?;
     let text = cx.heap.string_text(text.as_string().unwrap());
-    if cx.host.agent.is_some() {
-        if let Some(host) = agent_host(cx.host) {
-            host.report(text);
-        }
+    if cx.host.agent.is_some()
+        && let Some(host) = agent_host(cx.host)
+    {
+        host.report(text);
     }
     Ok(Value::UNDEFINED)
 }
