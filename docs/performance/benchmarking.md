@@ -82,6 +82,12 @@ For a Look run, `cargo build --release -p quickjs-oxide-cli --bin qjs` in each
 worktree is enough; Sweep, Claim and Publish runs use `build` for both sides,
 so the two binaries differ only in source.
 
+Source refactors can rename Rust's mangled symbols without changing their
+instructions. Keep the matching `apps/cli/qjs.order` entries current: stale
+names are silently ignored and can move unchanged code. For full regeneration,
+`scripts/release/gen-symbol-order.py --layout-reference <previous-qjs>` can
+preserve the previous binary's function placement.
+
 **Suite programs.** Check out the three pinned suites outside the repository
 and generate the 37 programs once per series:
 
