@@ -12,7 +12,9 @@ use std::path::Path;
 
 fn main() {
     let order = Path::new(&env::var("CARGO_MANIFEST_DIR").unwrap()).join("qjs.order");
+    let layout = order.with_file_name("qjs-layout.ld");
     println!("cargo:rerun-if-changed={}", order.display());
+    println!("cargo:rerun-if-changed={}", layout.display());
     println!("cargo:rerun-if-env-changed=CARGO_ENCODED_RUSTFLAGS");
     // The toolchain links this target with its bundled lld; a linker chosen
     // in Cargo's configuration (`RUSTC_LINKER`) or in the flags may not take
@@ -30,4 +32,8 @@ fn main() {
         order.display()
     );
     println!("cargo:rustc-link-arg-bins=-Wl,--no-warn-symbol-ordering");
+    println!(
+        "cargo:rustc-link-arg-bins=-Wl,--script={}",
+        layout.display()
+    );
 }
