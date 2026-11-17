@@ -89,9 +89,9 @@ names are silently ignored and can move unchanged code. For full regeneration,
 preserve the previous binary's function placement.
 
 On the same bundled-lld target, `apps/cli/qjs-layout.ld` keeps the first
-interpreter entry at 16 modulo 32 bytes, matching main's and the pre-TLS-removal
-binary's alignment. Read-only metadata growth must not move an otherwise
-unchanged dispatch loop across this boundary. This adds at most 47 bytes before
+interpreter entry at 16 modulo 64 bytes, matching the pre-TLS-removal binary's
+cache-line alignment. Read-only metadata growth must not move an otherwise
+unchanged dispatch loop across this boundary. This adds at most 79 bytes before
 the ordered text and does not change the loop's instructions.
 
 **Suite programs.** Check out the three pinned suites outside the repository
