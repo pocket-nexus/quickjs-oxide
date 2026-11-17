@@ -6,7 +6,7 @@
 
 use super::DateStringMethod;
 use super::calendar::DateFields;
-use std::fmt;
+use core::fmt;
 
 const MONTH_NAMES: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -72,7 +72,7 @@ impl fmt::Display for InvalidIsoDate {
     }
 }
 
-impl std::error::Error for InvalidIsoDate {}
+impl core::error::Error for InvalidIsoDate {}
 
 /// Formats already-decomposed fields for a pinned QuickJS Date method.
 ///

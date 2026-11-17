@@ -5,6 +5,8 @@
 
 #![forbid(unsafe_code)]
 
+extern crate alloc;
+
 pub mod builtins;
 pub mod bytecode;
 mod clock;

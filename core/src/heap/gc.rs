@@ -5,8 +5,8 @@
 //! arena. Collection happens only at an allocation safepoint
 //! ([`Heap::safepoint`]) or on an explicit [`Heap::collect`].
 
-use std::mem;
-use std::time::Duration;
+use core::mem;
+use core::time::Duration;
 
 use super::hash::FxHashMap;
 use super::object::{InternalTag, NONE, ObjectKind};

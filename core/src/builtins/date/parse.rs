@@ -773,7 +773,7 @@ mod tests {
     #[test]
     fn every_pinned_time_zone_abbreviation_has_its_exact_offset() {
         for (name, offset) in TIME_ZONE_ABBREVIATIONS {
-            let name = std::str::from_utf8(name).unwrap();
+            let name = core::str::from_utf8(name).unwrap();
             let source = format!("Jan 1 2000 00:00 {name}");
             let parsed = parse(&source).unwrap();
             assert_eq!(parsed.fields[8], offset, "{source}");

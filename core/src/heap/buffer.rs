@@ -6,8 +6,8 @@
 //! operates on them directly. A typed array or `DataView` is a [`View`]
 //! over a buffer object held in its internal slot 0.
 
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use alloc::sync::Arc;
+use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 /// The bytes of a shared buffer, which other agents may hold too.
 #[derive(Debug)]

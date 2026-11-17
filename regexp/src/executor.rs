@@ -6,10 +6,10 @@
 //! through the Rust call stack and never delegates to a host regular-expression
 //! engine.
 
-use std::cell::RefCell;
-use std::error::Error as StdError;
-use std::fmt;
-use std::ops::Range;
+use core::cell::RefCell;
+use core::error::Error as StdError;
+use core::fmt;
+use core::ops::Range;
 
 use super::{CharacterRange, ClassRepeat, CompiledRegExp, Instruction, RegExpFlags};
 use crate::unicode::case::regexp_canonicalize as canonicalize;
@@ -776,7 +776,7 @@ impl Drop for Scratch {
             let _ = SCRATCH.try_with(|slot| {
                 let mut slot = slot.borrow_mut();
                 if slot.is_none() {
-                    *slot = Some(std::mem::take(state));
+                    *slot = Some(core::mem::take(state));
                 }
             });
         }
@@ -1739,7 +1739,7 @@ mod tests {
         for flags in ["y", "uy"] {
             let compiled = compile("abc", flags);
             let mut input = units("xa");
-            input.extend(std::iter::repeat_n(u16::from(b'x'), 30_000));
+            input.extend(core::iter::repeat_n(u16::from(b'x'), 30_000));
             input.extend(units("abc"));
             assert_eq!(
                 execute_with_interrupt(&compiled, &input, 1, || {

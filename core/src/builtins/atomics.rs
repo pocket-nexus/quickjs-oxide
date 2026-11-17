@@ -2,7 +2,7 @@
 //! coordinator of `vm::waiter`, which orders them sequentially consistently
 //! across agents; `wait` and `notify` queue on the same coordinator.
 
-use std::time::Duration;
+use core::time::Duration;
 
 use super::bigint::to_index;
 use super::{Native, methods, to_string_tag};
@@ -284,7 +284,7 @@ fn location(cx: &Cx<'_>, object: ObjectId, byte_index: usize) -> Option<WaitLoca
     let (_, store) = typed::view(cx.heap, object);
     match &typed::buffer(cx.heap, store).store {
         Store::Shared(shared) => Some(WaitLocation::new(
-            std::sync::Arc::as_ptr(shared) as *const () as usize as u64,
+            alloc::sync::Arc::as_ptr(shared) as *const () as usize as u64,
             byte_index,
         )),
         Store::Owned(_) => None,
@@ -367,6 +367,6 @@ pub(super) fn pause(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             _ => return Err(error::type_error(cx, "not an integral number")),
         }
     }
-    std::hint::spin_loop();
+    core::hint::spin_loop();
     Ok(Value::UNDEFINED)
 }

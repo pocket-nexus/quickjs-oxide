@@ -2,7 +2,7 @@
 //! without one (`wasm32-unknown-unknown`, the web build's) reports
 //! zero-length pauses instead of panicking.
 
-use std::time::Duration;
+use core::time::Duration;
 
 /// A started measurement.
 #[derive(Clone, Copy, Debug)]

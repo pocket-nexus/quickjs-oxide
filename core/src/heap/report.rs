@@ -3,7 +3,7 @@
 //! [`MemoryReport::reserved_bytes`] equals [`Heap::bytes`], the total the heap
 //! cap compares against.
 
-use std::fmt;
+use core::fmt;
 
 use super::Heap;
 use super::arena::{Arena, Record};

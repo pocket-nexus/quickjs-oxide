@@ -4,10 +4,12 @@
 //! shared bytes of a `SharedArrayBuffer` (an `Arc`, so no heap crosses threads)
 //! and waits until each has taken them; reports are strings in a shared queue.
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use core::time::Duration;
+use std::sync::{Condvar, Mutex, MutexGuard};
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use super::{Native, define, plain_object};
 use crate::heap::HeapError;
@@ -56,7 +58,7 @@ impl AgentHub {
 
     /// Joins every agent thread.
     pub fn join(&self) {
-        let threads = std::mem::take(&mut self.lock().threads);
+        let threads = core::mem::take(&mut self.lock().threads);
         for thread in threads {
             let _ = thread.join();
         }

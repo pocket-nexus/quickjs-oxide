@@ -7,9 +7,11 @@
 //! edge. Every operation takes the coordinator before entering a backing byte
 //! leaf, establishing the fixed coordinator -> backing lock order.
 
-use std::collections::VecDeque;
-use std::sync::{Arc, Condvar, Mutex, MutexGuard};
-use std::time::{Duration, Instant};
+use alloc::collections::VecDeque;
+use alloc::sync::Arc;
+use core::time::Duration;
+use std::sync::{Condvar, Mutex, MutexGuard};
+use std::time::Instant;
 
 static ATOMIC_COORDINATOR: Mutex<AtomicCoordinator> = Mutex::new(AtomicCoordinator::new());
 
@@ -184,9 +186,9 @@ pub(crate) fn notify(location: WaitLocation, count: usize) -> usize {
 #[cfg(test)]
 mod tests {
     use super::{WaitLocation, WaitOutcome, notify, wait, with_seq_cst};
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use core::sync::atomic::{AtomicU64, Ordering};
+    use core::time::Duration;
     use std::sync::mpsc;
-    use std::time::Duration;
 
     static NEXT_TEST_BACKING_ID: AtomicU64 = AtomicU64::new(u64::MAX / 2);
 

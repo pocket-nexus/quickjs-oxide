@@ -3,7 +3,7 @@
 //! A failure is an internal error of the lowering, never a JavaScript
 //! exception.
 
-use std::fmt;
+use core::fmt;
 
 use super::{Capture, CodeUnit, Format, NO_SPILL, Opcode, flags};
 
@@ -62,7 +62,7 @@ impl fmt::Display for ValidateError {
     }
 }
 
-impl std::error::Error for ValidateError {}
+impl core::error::Error for ValidateError {}
 
 fn fail<T>(at: Option<u32>, kind: ValidateErrorKind) -> Result<T, ValidateError> {
     Err(ValidateError { at, kind })

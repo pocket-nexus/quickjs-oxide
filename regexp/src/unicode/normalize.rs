@@ -8,8 +8,8 @@
 
 use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, index_position};
 #[cfg(any(test, feature = "test-hooks"))]
-use std::cell::Cell;
-use std::cmp::Ordering;
+use core::cell::Cell;
+use core::cmp::Ordering;
 
 mod tables {
     include!("generated/unicode/unicode_normalize_tables.rs");

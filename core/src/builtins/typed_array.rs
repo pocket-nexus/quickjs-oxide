@@ -3,7 +3,7 @@
 //! `Symbol.species` is not consulted: the methods that create a typed array
 //! make one of the receiver's kind through its intrinsic constructor.
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 use super::bigint::to_index;
 use super::buffer::{is_buffer, new_array_buffer};

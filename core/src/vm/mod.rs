@@ -34,7 +34,7 @@ pub(crate) mod waiter;
 pub mod radix;
 pub mod regexp;
 
-use std::fmt;
+use core::fmt;
 
 use crate::bytecode::{CodeStore, CodeUnitId, UnitRef};
 use crate::heap::Heap;
@@ -231,7 +231,7 @@ impl VmStack {
     #[inline]
     pub(crate) fn enter_native(&mut self) -> bool {
         let marker = 0u8;
-        let here = std::ptr::addr_of!(marker) as usize;
+        let here = core::ptr::addr_of!(marker) as usize;
         if self.nesting == 0 {
             self.native_base = here;
         } else if self.native_base.abs_diff(here) > self.native_budget
@@ -249,7 +249,7 @@ impl VmStack {
             return self.native_budget;
         }
         let marker = 0u8;
-        let here = std::ptr::addr_of!(marker) as usize;
+        let here = core::ptr::addr_of!(marker) as usize;
         self.native_budget
             .saturating_sub(self.native_base.abs_diff(here))
     }
@@ -299,7 +299,7 @@ pub struct Services {
     /// The embedder's script runner, for `$262.agent.start`.
     pub(crate) script_runner: Option<crate::builtins::agent::ScriptRunner>,
     /// The agents this (main) agent started.
-    pub(crate) agent_hub: Option<std::sync::Arc<crate::builtins::agent::AgentHub>>,
+    pub(crate) agent_hub: Option<alloc::sync::Arc<crate::builtins::agent::AgentHub>>,
     /// This runtime as an agent of another.
     pub(crate) agent: Option<crate::builtins::agent::AgentSelf>,
     /// Whether unhandled rejected promises are kept in
@@ -307,10 +307,10 @@ pub struct Services {
     pub(crate) track_rejections: bool,
     /// Set from any thread to interrupt the running script at the next
     /// poll; it stays set until cleared.
-    pub(crate) interrupt: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    pub(crate) interrupt: alloc::sync::Arc<core::sync::atomic::AtomicBool>,
 }
 
-impl std::fmt::Debug for Services {
+impl core::fmt::Debug for Services {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Services")
             .field("output", &self.output)

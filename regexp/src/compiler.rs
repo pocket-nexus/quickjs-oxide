@@ -11,7 +11,7 @@ use super::flags::{FlagParseErrorKind, parse_flags};
 use super::group_name::GroupName;
 use super::group_name::{self, CaptureSummary};
 use super::opcode::{CharacterRange, Instruction};
-use std::collections::BTreeSet;
+use alloc::collections::BTreeSet;
 
 mod search;
 pub(super) use search::SearchPlan;
@@ -167,28 +167,28 @@ impl CompiledRegExp {
     /// overhead. Includes compiler search metadata and instruction payloads.
     #[must_use]
     pub fn owned_bytes(&self) -> usize {
-        std::mem::size_of_val(self.instructions())
+        core::mem::size_of_val(self.instructions())
             + self
                 .instructions()
                 .iter()
                 .map(|instruction| match instruction {
-                    Instruction::Range { ranges, .. } => std::mem::size_of_val(&**ranges),
+                    Instruction::Range { ranges, .. } => core::mem::size_of_val(&**ranges),
                     Instruction::ClassRepeat(repeat) => {
-                        size_of::<super::ClassRepeat>() + std::mem::size_of_val(&*repeat.ranges)
+                        size_of::<super::ClassRepeat>() + core::mem::size_of_val(&*repeat.ranges)
                     }
                     Instruction::BackReference { captures, .. }
                     | Instruction::BackwardBackReference { captures, .. } => {
-                        std::mem::size_of_val(&**captures)
+                        core::mem::size_of_val(&**captures)
                     }
                     _ => 0,
                 })
                 .sum::<usize>()
             + self.group_names().map_or(0, |names| {
-                std::mem::size_of_val(names)
+                core::mem::size_of_val(names)
                     + names
                         .iter()
                         .flatten()
-                        .map(|name| std::mem::size_of_val(&**name))
+                        .map(|name| core::mem::size_of_val(&**name))
                         .sum::<usize>()
             })
             + self.0.search.owned_bytes()
@@ -281,8 +281,8 @@ impl CompileError {
     }
 }
 
-impl std::fmt::Display for CompileError {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for CompileError {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(
             formatter,
             "{} at {:?} UTF-16 offset {}",
@@ -291,7 +291,7 @@ impl std::fmt::Display for CompileError {
     }
 }
 
-impl std::error::Error for CompileError {}
+impl core::error::Error for CompileError {}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Expression {
@@ -2539,19 +2539,19 @@ fn canonicalize_unicode_set(set: &mut UnicodeSet, unicode: bool) {
     if set.strings.is_empty() {
         return;
     }
-    let strings = std::mem::take(&mut set.strings);
+    let strings = core::mem::take(&mut set.strings);
     for mut string in strings {
         for character in &mut string {
             *character = crate::unicode::case::regexp_canonicalize(*character, unicode);
         }
         add_unicode_set_sequence(set, &string);
     }
-    set.ranges = normalize_ranges(std::mem::take(&mut set.ranges));
+    set.ranges = normalize_ranges(core::mem::take(&mut set.ranges));
 }
 
 fn unicode_set_union(target: &mut UnicodeSet, mut operand: UnicodeSet) {
     target.ranges.append(&mut operand.ranges);
-    target.ranges = normalize_ranges(std::mem::take(&mut target.ranges));
+    target.ranges = normalize_ranges(core::mem::take(&mut target.ranges));
     target.strings.append(&mut operand.strings);
 }
 

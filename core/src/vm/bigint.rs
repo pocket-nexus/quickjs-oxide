@@ -2,7 +2,7 @@
 //! high zero limbs), the representation of the heap's `BigIntRecord`. Plain
 //! schoolbook algorithms.
 
-use std::cmp::Ordering;
+use core::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Big {

@@ -676,9 +676,9 @@ pub(super) fn locale_compare(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
     };
     let (a, b) = (normalize(units(cx, string)), normalize(units(cx, that)));
     Ok(Value::int32(match a.cmp(&b) {
-        std::cmp::Ordering::Less => -1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 1,
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
     }))
 }
 

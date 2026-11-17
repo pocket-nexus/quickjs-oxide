@@ -14,6 +14,12 @@ The crate has `#![forbid(unsafe_code)]` and one dependency, the
 regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
 crate depends on it; it does not depend on the root crate.
 
+The first preparation for a single `no_std` + `alloc` implementation names
+portable standard-library reexports through `core` and `alloc`. The crate
+still requires `std`: its process services, hash tables and floating-point
+methods remain in place, as does the regular-expression engine's thread-local
+scratch cache. This namespace-only step does not yet enable bare-metal builds.
+
 ## Layout
 
 | Module | Content |

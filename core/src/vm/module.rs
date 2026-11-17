@@ -15,7 +15,7 @@
 //! top-level `await`). Modules load synchronously through the host's
 //! [`ModuleHost`] when they are first requested.
 
-use std::cell::Cell;
+use core::cell::Cell;
 
 use super::compile::{CompileError, Compiler};
 use super::native::CallSite;
@@ -664,7 +664,7 @@ pub(crate) fn namespace(cx: &mut Cx<'_>, module: ObjectId) -> Result<ObjectId, T
                 None,
                 1,
                 &slots,
-                InternalData::Exports(std::mem::take(&mut keys).into_boxed_slice()),
+                InternalData::Exports(core::mem::take(&mut keys).into_boxed_slice()),
                 0,
             )
             .map_err(|e| error::heap_error(cx, e))
