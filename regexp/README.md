@@ -4,7 +4,9 @@ The regular-expression engine of quickjs-oxide and the checksum-pinned
 Unicode 17 tables it and the String intrinsics use, as a workspace crate the
 root crate and `quickjs-oxide-core` depend on.
 
-The crate has `#![forbid(unsafe_code)]` and no dependencies. Its API works on
+The crate unconditionally uses `#![no_std]` with `alloc`, has
+`#![forbid(unsafe_code)]` and no dependencies. Hosts provide an allocator;
+production code uses only `core` and `alloc`. Its API works on
 UTF-16 code units (`&[u16]`, or Latin-1 `&[u8]` where a function takes
 `CodeUnits`) and plain `u32` code points; it never sees an engine string. The
 front end validates regular-expression literals through `compile`;
@@ -29,7 +31,9 @@ their capacity and never replace an already returned spare.
 | `unicode::property` | the property sets of RegExp `\p{…}` escapes |
 
 The `test-hooks` feature exposes the thread-local allocation-failure hooks of
-the case and normalization buffers to the root crate's String tests.
+the case and normalization buffers to the root crate's String tests. Only
+tests and this host-only feature link `std`; there is no production `std`
+feature or alternate engine implementation.
 
 ```sh
 cargo test -p quickjs-oxide-regexp

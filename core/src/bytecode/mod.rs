@@ -15,6 +15,7 @@ pub mod disasm;
 pub mod opcode;
 pub mod validate;
 
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::fmt;
 
 pub use self::builder::CodeBuilder;

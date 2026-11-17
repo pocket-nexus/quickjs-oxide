@@ -5,6 +5,12 @@
 //! the handler tables.
 
 use alloc::rc::Rc;
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core::cmp::Ordering;
 
 use super::arguments;

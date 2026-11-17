@@ -2,6 +2,12 @@
 //! high zero limbs), the representation of the heap's `BigIntRecord`. Plain
 //! schoolbook algorithms.
 
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use core::cmp::Ordering;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

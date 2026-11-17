@@ -21,6 +21,7 @@ pub mod table;
 pub mod values;
 mod verify;
 
+use alloc::{boxed::Box, string::String, vec, vec::Vec};
 use core::fmt;
 
 use self::arena::Arena;

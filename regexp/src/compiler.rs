@@ -11,7 +11,13 @@ use super::flags::{FlagParseErrorKind, parse_flags};
 use super::group_name::GroupName;
 use super::group_name::{self, CaptureSummary};
 use super::opcode::{CharacterRange, Instruction};
+use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
 use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
 
 mod search;
 pub(super) use search::SearchPlan;

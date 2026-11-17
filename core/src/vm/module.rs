@@ -15,6 +15,8 @@
 //! top-level `await`). Modules load synchronously through the host's
 //! [`ModuleHost`] when they are first requested.
 
+use alloc::{borrow::ToOwned, boxed::Box, format, string::String, vec, vec::Vec};
+
 use super::compile::{CompileError, Compiler};
 use super::native::CallSite;
 use super::{Cx, Throw, error};

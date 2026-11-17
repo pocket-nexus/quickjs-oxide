@@ -1,5 +1,7 @@
 //! Number conversions: `Number::toString(10)`, `StringToNumber`, `ToInt32`.
 
+use alloc::string::{String, ToString};
+
 use crate::value::Value;
 
 /// A number result: an `Int32` when the double is one (not `-0`), so integer
@@ -181,6 +183,8 @@ pub(crate) fn to_float16_bits(value: f64) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
 
     #[test]

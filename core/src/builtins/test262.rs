@@ -2,6 +2,8 @@
 //! `gc` collects, `global` is the global object; `evalScript`,
 //! `detachArrayBuffer` and `agent` arrive with the compile host and buffers.
 
+use alloc::vec::Vec;
+
 use super::{Native, define, plain_object};
 use crate::heap::HeapError;
 use crate::runtime::Intrinsic;

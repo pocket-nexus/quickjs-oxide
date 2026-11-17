@@ -15,25 +15,34 @@ crate `quickjs-oxide-regexp` (`regexp/`), `hashbrown` and `libm`. Internal maps
 retain the engine's existing `FxHasher` and seed; only their allocation-only
 table backend changes. The root compiler uses the same public aliases.
 Floating-point math uses the pinned `libm` backend rather than the platform's
-libm; transcendental results can differ in their last bits. Exact formatting,
-conversion and compensated-summation algorithms remain engine-owned. The core
+libm, with safe Wasm intrinsics for square root and rounding. Transcendental
+results can differ in their last bits. Exact formatting, conversion and
+compensated-summation algorithms remain engine-owned. The core
 does not depend on the root crate.
 
-The migration targets a single `no_std` + `alloc` implementation. Portable
-standard-library reexports already name `core` and `alloc`; the core's `Host`
-defaults no longer reach the process. A raw runtime has no streams, clock or
-files and starts its random state from one. Ports provide `Host`, a shared
-`vm::waiter::Waiter` for blocking atomics, and `builtins::agent::AgentHost` for
-agent execution. `Runtime::with_host` installs its collection clock before
-realm initialization, including collections during startup.
+The core and regular-expression crates have one unconditional `no_std` + `alloc`
+implementation, not separate std and no_std feature variants. Tests can use
+the standard-library harness. The core's `Host` defaults do not reach the
+process: a raw runtime has no streams, clock or files and starts its random
+state from one. Ports provide `Host`, a shared `vm::waiter::Waiter` for blocking
+atomics, and `builtins::agent::AgentHost` for agent execution.
+`Runtime::with_host` installs its collection clock before realm initialization,
+including collections during startup.
 
 The std embedding API retains process-backed defaults, including for partial
-custom hosts. Its waiter is process-wide; agent hubs remain lazy. This is not
-yet a bare-metal build: explicit `no_std` compilation remains separate migration
-work. Production core and RegExp state no longer requires TLS: one bounded
-RegExp scratch cache and the async-module evaluation counter belong to each
-runtime. The scratch cache retains its four reusable buffers, 32 KiB bound and
+custom hosts. Its waiter is process-wide; agent hubs remain lazy. A bare-metal
+consumer supplies its allocator, panic handler and host capabilities.
+Production core and RegExp state does not require TLS: one bounded RegExp
+scratch cache and the async-module evaluation counter belong to each runtime.
+The scratch cache retains its four reusable buffers, 32 KiB bound and
 reentrant leases.
+
+The dependency closure can be checked without a standard library:
+
+```sh
+rustup target add thumbv7em-none-eabi
+cargo check --locked -p quickjs-oxide-core --lib --target thumbv7em-none-eabi
+```
 
 ## Layout
 

@@ -4,6 +4,12 @@
 //! `SerializeJSONProperty` over the internal methods, so proxies, getters and
 //! `toJSON` are observed in spec order.
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::{Native, define, methods, to_string_tag};
 use crate::ErrorKind;
 use crate::PropertyKey;

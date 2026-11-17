@@ -8,6 +8,8 @@
 //! `await` resumes. Nothing drains the queue implicitly: the host calls
 //! [`run_jobs`] at its boundary.
 
+use alloc::vec::Vec;
+
 use super::error;
 use super::object;
 use super::ops;

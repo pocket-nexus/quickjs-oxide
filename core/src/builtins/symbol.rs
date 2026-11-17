@@ -1,6 +1,8 @@
 //! `Symbol`: the constructor (callable, not constructible), the registry
 //! (`for`, `keyFor`), the well-known symbols, and `Symbol.prototype`.
 
+use alloc::vec::Vec;
+
 use super::{
     Native, define, getter, install_constructor, link_constructor, methods, symbol_method,
     to_string_tag,

@@ -2,6 +2,8 @@
 //! crate's `libm` backend. `round` is QuickJS's half-up on the bits, `random`
 //! its xorshift64*, `sumPrecise` an exact (Shewchuk) summation.
 
+use alloc::vec::Vec;
+
 use super::{Native, define, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;
 use crate::runtime::Intrinsic;
@@ -177,7 +179,9 @@ fn fdlibm_acosh(value: f64) -> f64 {
         return crate::float::log1p(delta + crate::float::sqrt(delta * delta + 2.0 * delta));
     }
     if value < 268_435_456.0 {
-        return crate::float::log(2.0 * value - 1.0 / (value + crate::float::sqrt(value * value - 1.0)));
+        return crate::float::log(
+            2.0 * value - 1.0 / (value + crate::float::sqrt(value * value - 1.0)),
+        );
     }
     crate::float::log(value) + core::f64::consts::LN_2
 }

@@ -514,6 +514,10 @@ fn fields_are_valid(fields: &[i32; 9]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use alloc::borrow::ToOwned;
+    use alloc::format;
+    use alloc::vec::Vec;
+
     use super::*;
 
     fn js_string(text: &str) -> Vec<u16> {

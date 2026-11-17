@@ -7,6 +7,7 @@
 //! UTF-16 surrogates that Rust scalar-value APIs cannot represent.
 
 use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, index_position};
+use alloc::vec::Vec;
 #[cfg(any(test, feature = "test-hooks"))]
 use core::cell::Cell;
 use core::cmp::Ordering;
@@ -55,7 +56,7 @@ impl NormalizationForm {
 }
 
 #[cfg(any(test, feature = "test-hooks"))]
-thread_local! {
+std::thread_local! {
     static FAIL_NEXT_NORMALIZE_RESERVATION: Cell<bool> = const { Cell::new(false) };
 }
 
@@ -577,6 +578,8 @@ mod tests {
         normalize_code_points, normalize_with_limit, push_fallible, tables,
     };
     use crate::unicode::{CodeUnitBuf, StringError};
+    use alloc::string::String;
+    use alloc::vec::Vec;
 
     fn js(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()

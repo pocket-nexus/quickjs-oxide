@@ -21,6 +21,11 @@ The core's and the regular-expression crate's libraries are named `oxide_core` a
 
 Dependencies point one way: `quickjs-oxide-core` depends only on `quickjs-oxide-regexp`, the allocation-only `hashbrown` table backend and the pinned `libm` math backend, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. Its public `FxHashMap`/`FxHashSet` aliases retain the existing hasher and seed, including for the front end. Platform-libm last bits are not part of the transcendental-result contract; exact conversion and formatting algorithms remain engine-owned. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
 
+The core and RegExp crates are unconditionally `#![no_std]` with `alloc`;
+neither has a std/no_std implementation switch. The root crate and the native
+and web adapters retain the standard-library boundary. Building the core
+for `thumbv7em-none-eabi` checks its production dependency closure without std.
+
 ## Source owners
 
 The core's modules are listed in the "Layout" table of [`core/README.md`](../core/README.md#layout). The root crate:

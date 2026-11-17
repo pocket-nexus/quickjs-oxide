@@ -19,6 +19,8 @@
 //! rooted on the root stack. Keys returned by [`own_property_keys`] stay
 //! rooted until the caller cuts the stack back.
 
+use alloc::{format, string::ToString, vec::Vec};
+
 use super::arguments;
 use super::error::{self, ErrorKind};
 use super::ops;

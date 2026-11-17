@@ -2,6 +2,8 @@
 //! combinators, over `vm::jobs`. `Symbol.species` is dropped: `then` and
 //! `finally` use `%Promise%`.
 
+use alloc::vec::Vec;
+
 use super::{
     Native, accessor, install_constructor, link_constructor, methods, native_closure, native_data,
     to_string_tag,

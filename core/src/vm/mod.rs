@@ -7,6 +7,8 @@
 //! argument is copied. Both tables live inside the [`Heap`] as fixed roots:
 //! a safepoint marks `registers[..top]` and every frame's function.
 
+use alloc::{boxed::Box, string::String, vec::Vec};
+
 pub(crate) mod arguments;
 pub(crate) mod async_generator;
 pub(crate) mod bigint;

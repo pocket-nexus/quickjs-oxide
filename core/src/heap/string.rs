@@ -6,6 +6,7 @@
 //! flattens on the first use of its units ([`super::Heap::string`]); its
 //! length and width are known without flattening.
 
+use alloc::{boxed::Box, string::String, vec::Vec};
 use core::cell::{Cell, OnceCell};
 
 use super::arena::Record;

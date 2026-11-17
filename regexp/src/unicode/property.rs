@@ -136,6 +136,7 @@ pub fn sequence_property(name: &str, mut visit: impl FnMut(&[u32])) -> Option<()
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
     use std::collections::HashSet;
 
     use super::{

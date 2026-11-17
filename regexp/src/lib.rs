@@ -6,9 +6,13 @@
 //! plain `u32` code points. Heap objects and ECMAScript intrinsics are wired
 //! by the engines that depend on it (the root crate and `quickjs-oxide-core`).
 
+#![no_std]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
+
+#[cfg(any(test, feature = "test-hooks"))]
+extern crate std;
 
 mod compiler;
 mod executor;

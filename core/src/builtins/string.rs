@@ -5,6 +5,11 @@
 //! method first. `localeCompare` is QuickJS's code-unit comparison; the locale
 //! case mappings are the plain ones.
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::{
     Native, install_constructor, link_constructor, methods, string_repr, string_units, this_string,
     to_string_id,

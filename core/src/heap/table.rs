@@ -9,6 +9,7 @@
 //! entry's new position.
 
 use alloc::rc::{Rc, Weak};
+use alloc::vec::Vec;
 use core::cell::Cell;
 
 use super::object::InternalData;

@@ -15,6 +15,7 @@
 //! the heap's account.
 
 use alloc::rc::Rc;
+use alloc::vec::Vec;
 
 use crate::bytecode::{CodeUnit, CodeUnitId, DYNAMIC};
 

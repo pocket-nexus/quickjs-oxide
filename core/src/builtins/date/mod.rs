@@ -3,6 +3,8 @@
 //! The calendar, formatting and parsing kernels follow QuickJS 2026-06-04; the
 //! clock and the time zone come from the host.
 
+use alloc::string::String;
+
 mod calendar;
 mod format;
 mod parse;
@@ -354,7 +356,10 @@ pub(super) fn get_timezone_offset(cx: &mut Cx<'_>, site: CallSite) -> Result<Val
     if value.is_nan() {
         return Ok(Value::number(f64::NAN));
     }
-    let offset = cx.host.hooks.local_tz_offset_minutes(crate::float::trunc(value));
+    let offset = cx
+        .host
+        .hooks
+        .local_tz_offset_minutes(crate::float::trunc(value));
     Ok(Value::int32(offset))
 }
 

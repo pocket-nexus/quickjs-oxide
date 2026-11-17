@@ -1,3 +1,5 @@
+use alloc::boxed::Box;
+
 use super::super::object::InternalData;
 use super::super::table::Table;
 use super::*;

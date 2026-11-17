@@ -6,6 +6,11 @@
 //! or two-byte storage. `Symbol.species` is dropped: `matchAll` and `split`
 //! construct `%RegExp%`.
 
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
 use oxide_regexp::{ExecError, RegExpFlags, RegExpMatch};
 
 use super::string::{substitution, substring_value};

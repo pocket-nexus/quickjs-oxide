@@ -1,6 +1,9 @@
 //! `BigInt`: the function (callable, not constructible), `asIntN`, `asUintN`,
 //! and `BigInt.prototype`'s `toString(radix)`, `toLocaleString` and `valueOf`.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use super::{Native, install_constructor, link_constructor, methods, string_text, to_string_tag};
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;

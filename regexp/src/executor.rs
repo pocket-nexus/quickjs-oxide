@@ -6,6 +6,8 @@
 //! through the Rust call stack and never delegates to a host regular-expression
 //! engine.
 
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::error::Error as StdError;
 use core::fmt;
@@ -1607,6 +1609,7 @@ fn range_contains(ranges: &[CharacterRange], character: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::{format, vec};
 
     fn program(
         flags: RegExpFlags,

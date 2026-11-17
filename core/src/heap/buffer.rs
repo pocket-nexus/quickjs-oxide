@@ -7,6 +7,7 @@
 //! over a buffer object held in its internal slot 0.
 
 use alloc::sync::Arc;
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
 
 /// The bytes of a shared buffer, which other agents may hold too.

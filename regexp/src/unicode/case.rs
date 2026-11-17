@@ -7,6 +7,7 @@
 //! UTF-16 surrogates.
 
 use super::{CodeUnitBuf, CodeUnits, MAX_STRING_LEN, StringError, is_in_table};
+use alloc::vec::Vec;
 #[cfg(any(test, feature = "test-hooks"))]
 use core::cell::Cell;
 
@@ -30,7 +31,7 @@ const RUN_TYPE_LF_EXT2: u32 = 12;
 const RUN_TYPE_UF_EXT3: u32 = 13;
 
 #[cfg(any(test, feature = "test-hooks"))]
-thread_local! {
+std::thread_local! {
     static FAIL_CASE_RESERVATION_AFTER: Cell<Option<usize>> = const { Cell::new(None) };
 }
 
@@ -678,6 +679,8 @@ mod tests {
         regexp_case_change_mask, tables,
     };
     use crate::unicode::{CodeUnitBuf, MAX_STRING_LEN, StringError};
+    use alloc::string::String;
+    use alloc::vec::Vec;
 
     fn js(text: &str) -> Vec<u16> {
         text.encode_utf16().collect()

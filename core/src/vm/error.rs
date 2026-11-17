@@ -2,6 +2,7 @@
 //! `ERROR`, with the kind's prototype and an own `message`; `name` lives on the
 //! prototype. Each carries QuickJS's `stack` backtrace.
 
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
 use core::fmt::Write;
 
 use super::{Cx, Throw, frame_flags};

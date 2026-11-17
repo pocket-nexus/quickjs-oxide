@@ -10,7 +10,7 @@
 //! and holds before its next entry). Results are unrooted; hold them before
 //! the next call that can allocate.
 
-use alloc::rc::Rc;
+use alloc::{rc::Rc, string::String, vec::Vec};
 use core::any::Any;
 
 use crate::bytecode::CodeStore;

@@ -17,6 +17,7 @@
 //! lists, every cell downstream. A shape caches its prototype's cell; the
 //! prototype IC records `(holder, slot, cell)` and tests one boolean.
 
+use alloc::{boxed::Box, vec, vec::Vec};
 use core::cell::OnceCell;
 use core::fmt;
 

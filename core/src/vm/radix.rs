@@ -10,6 +10,12 @@
 //! are `2^a * radix^b`, so every division is a shift or a run of one-limb
 //! divisions.
 
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::cmp::Ordering;
 
 use super::bigint::{Big, BigError};
@@ -438,7 +444,8 @@ fn radix_exponent(significand: u64, binary_exponent: i32, radix: u32, approximat
             scaled.cmp(&shl(&Big::from_u64(1), shift)) == Ordering::Less
         }
     };
-    let mut exponent = crate::float::floor(crate::float::log_base(approximate, f64::from(radix))) as i32 + 1;
+    let mut exponent =
+        crate::float::floor(crate::float::log_base(approximate, f64::from(radix))) as i32 + 1;
     while !below(exponent) {
         exponent += 1;
     }

@@ -6,6 +6,7 @@
 //! themselves are the realm's builtins (`crate::builtins`).
 
 use alloc::rc::Rc;
+use alloc::vec::Vec;
 
 use super::{Cx, Throw};
 use crate::builtins::Native;

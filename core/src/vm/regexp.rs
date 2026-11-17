@@ -6,6 +6,8 @@
 //! a `RegExp` object's payload names its program, a collection marks the
 //! programs of the live objects (and their two atoms), and sweeps the rest.
 
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+
 use oxide_regexp::CompiledRegExp;
 
 use super::error::{self, ErrorKind};
@@ -287,6 +289,8 @@ pub(crate) fn regexp_object_with(
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     fn assert_owned_payload_bytes(pattern: &str, payload_bytes: usize) {
         let program =
             oxide_regexp::compile(&pattern.encode_utf16().collect::<Vec<_>>(), &[]).unwrap();

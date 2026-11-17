@@ -1,5 +1,7 @@
 //! Typed flags from pinned QuickJS `libregexp.h` lines 30-38.
 
+use alloc::string::String;
+
 /// Flags recorded by one compiled regular-expression program.
 ///
 /// Bit values intentionally match pinned QuickJS so a later packed-bytecode
