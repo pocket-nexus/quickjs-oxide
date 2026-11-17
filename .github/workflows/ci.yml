@@ -128,7 +128,7 @@ jobs:
         run: |
           # Each package carries copies of the license and notices.
           for crate in core regexp adapters/native apps/cli; do
-            for file in LICENSE NOTICE LICENSES/QuickJS-MIT.txt LICENSES/Unicode-3.0.txt; do
+            for file in LICENSE NOTICE LICENSES/QuickJS-MIT.txt LICENSES/Unicode-3.0.txt LICENSES/Libm.txt; do
               cmp "${file}" "${crate}/${file}"
             done
           done

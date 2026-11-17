@@ -15,10 +15,12 @@ crate `quickjs-oxide-regexp` (`regexp/`), `hashbrown` and `libm`. Internal maps
 retain the engine's existing `FxHasher` and seed; only their allocation-only
 table backend changes. The root compiler uses the same public aliases.
 Floating-point math uses the pinned `libm` backend rather than the platform's
-libm, with safe Wasm intrinsics for square root and rounding. Transcendental
-results can differ in their last bits. Exact formatting, conversion and
-compensated-summation algorithms remain engine-owned. The core
-does not depend on the root crate.
+libm, with safe Wasm intrinsics for square root and rounding. Wasm `asin`,
+`acos` and `asinh` retain libm 0.2.16's formulas with internal square roots
+routed through those intrinsics; half-power dispatch retains the same shortcut.
+Native targets keep the dependency's implementation. Transcendental results can
+differ in their last bits. Exact formatting, conversion and compensated
+summation remain engine-owned. The core does not depend on the root crate.
 
 The core and regular-expression crates have one unconditional `no_std` + `alloc`
 implementation, not separate std and no_std feature variants. Tests can use

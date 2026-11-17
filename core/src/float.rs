@@ -5,14 +5,22 @@
 //! platform libm; its architecture-specific optimizations remain enabled.
 
 pub(crate) use libm::{
-    acos, asin, asinh, atan, atan2, cbrt, cos, cosh, exp, expm1, log, log1p, log2, log10, pow, sin,
-    sinh, tan, tanh,
+    atan, atan2, cbrt, cos, cosh, exp, expm1, log, log1p, log2, log10, sin, sinh, tan, tanh,
 };
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) use libm::{ceil, floor, sqrt, trunc};
+#[cfg(any(test, target_arch = "wasm32"))]
+mod acos;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod asin;
+#[cfg(any(test, target_arch = "wasm32"))]
+mod asinh;
+
 #[cfg(target_arch = "wasm32")]
-pub(crate) use wasm::{ceil, floor, sqrt, trunc};
+pub(crate) use self::{acos::acos, asin::asin, asinh::asinh};
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) use libm::{acos, asin, asinh, ceil, floor, pow, sqrt, trunc};
+#[cfg(target_arch = "wasm32")]
+pub(crate) use wasm::{ceil, floor, pow, sqrt, trunc};
 
 #[cfg(target_arch = "wasm32")]
 mod wasm {
@@ -45,6 +53,17 @@ mod wasm {
     #[target_feature(enable = "simd128")]
     pub(crate) fn trunc(value: f64) -> f64 {
         f64x2_extract_lane::<0>(f64x2_trunc(f64x2_splat(value)))
+    }
+
+    #[inline]
+    pub(crate) fn pow(base: f64, exponent: f64) -> f64 {
+        // libm's existing half-power shortcut also needs the hardware sqrt.
+        // Both signs of zero produce +0 for a positive, noninteger exponent.
+        if exponent == 0.5 && base >= 0.0 {
+            sqrt(base.abs())
+        } else {
+            libm::pow(base, exponent)
+        }
     }
 }
 
@@ -101,5 +120,75 @@ mod tests {
         assert!(rem_euclid(1.0, 0.0).is_nan());
         assert!(rem_euclid(f64::INFINITY, 3.0).is_nan());
         assert!(rem_euclid(f64::NAN, 3.0).is_nan());
+    }
+}
+
+#[cfg(test)]
+mod inverse_tests {
+    fn same(actual: f64, expected: f64) {
+        if expected.is_nan() {
+            assert!(actual.is_nan());
+        } else {
+            assert_eq!(actual.to_bits(), expected.to_bits());
+        }
+    }
+
+    #[test]
+    fn inverse_functions_keep_libm_boundaries_and_signed_zero() {
+        for value in [
+            0.0,
+            -0.0,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::MIN_POSITIVE,
+            0.5,
+            -0.5,
+            0.975,
+            -0.975,
+            1.0,
+            -1.0,
+            2.0,
+            -2.0,
+            67_108_864.0,
+            -67_108_864.0,
+            f64::MAX,
+            -f64::MAX,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ] {
+            same(super::acos::acos(value), libm::acos(value));
+            same(super::asin::asin(value), libm::asin(value));
+            same(super::asinh::asinh(value), libm::asinh(value));
+        }
+        for boundary in [
+            0x0010_0000_0000_0000u64,
+            0x3c60_0000_0000_0000,
+            0x3c60_0001_0000_0000,
+            0x3e50_0000_0000_0000,
+            0x3fe0_0000_0000_0000,
+            0x3fef_3333_0000_0000,
+            0x3ff0_0000_0000_0000,
+            0x4000_0000_0000_0000,
+            0x4190_0000_0000_0000,
+        ] {
+            for bits in [boundary - 1, boundary, boundary + 1] {
+                for bits in [bits, bits | (1 << 63)] {
+                    let value = f64::from_bits(bits);
+                    same(super::acos::acos(value), libm::acos(value));
+                    same(super::asin::asin(value), libm::asin(value));
+                    same(super::asinh::asinh(value), libm::asinh(value));
+                }
+            }
+        }
+        for index in 1..2048 {
+            let bits = (f64::from(index) / 1024.0 - 1.0).to_bits();
+            for bits in [bits.wrapping_sub(1), bits, bits.wrapping_add(1)] {
+                let value = f64::from_bits(bits);
+                same(super::acos::acos(value), libm::acos(value));
+                same(super::asin::asin(value), libm::asin(value));
+                same(super::asinh::asinh(value), libm::asinh(value));
+            }
+        }
     }
 }
