@@ -28,7 +28,7 @@ pub(crate) mod proxy;
 pub(crate) mod suspend;
 pub(crate) mod typed;
 pub(crate) mod via;
-pub(crate) mod waiter;
+pub mod waiter;
 // Public for the root crate's differential test.
 #[doc(hidden)]
 pub mod radix;
@@ -290,6 +290,8 @@ pub struct Services {
     pub(crate) symbol_registry: crate::heap::hash::FxHashMap<Vec<u16>, crate::SymbolId>,
     /// Whether `Atomics.wait` may block this agent.
     pub can_block: bool,
+    /// The shared-memory ordering and blocking capability, when installed.
+    pub(crate) waiter: Option<&'static dyn waiter::Waiter>,
     /// The embedder's compiler.
     pub(crate) compile: Option<compile::CompileFn>,
     /// The embedder's module loader.
@@ -298,8 +300,10 @@ pub struct Services {
     pub(crate) modules: crate::heap::hash::FxHashMap<String, ObjectId>,
     /// The embedder's script runner, for `$262.agent.start`.
     pub(crate) script_runner: Option<crate::builtins::agent::ScriptRunner>,
-    /// The agents this (main) agent started.
-    pub(crate) agent_hub: Option<alloc::sync::Arc<crate::builtins::agent::AgentHub>>,
+    /// The host's agent execution and broadcast capability.
+    pub(crate) agent_host: Option<alloc::sync::Arc<dyn crate::builtins::agent::AgentHost>>,
+    /// A lazily initialized agent host for embeddings that may not use agents.
+    pub(crate) agent_host_factory: Option<crate::builtins::agent::AgentHostFactory>,
     /// This runtime as an agent of another.
     pub(crate) agent: Option<crate::builtins::agent::AgentSelf>,
     /// Whether unhandled rejected promises are kept in
@@ -320,20 +324,19 @@ impl core::fmt::Debug for Services {
 
 impl Default for Services {
     fn default() -> Self {
-        // QuickJS seeds from the clock; programs that compare output replace
-        // `Math.random`, as the benchmark harness does.
-        let seed = crate::clock::time_seed();
         Services {
             output: Output::default(),
-            hooks: Box::new(crate::host::SystemHost),
-            random_state: seed.max(1),
+            hooks: Box::new(crate::host::NoHost),
+            random_state: 1,
             symbol_registry: Default::default(),
-            can_block: true,
+            can_block: false,
+            waiter: None,
             compile: None,
             module_host: None,
             modules: Default::default(),
             script_runner: None,
-            agent_hub: None,
+            agent_host: None,
+            agent_host_factory: None,
             agent: None,
             track_rejections: false,
             interrupt: Default::default(),

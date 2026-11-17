@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
+use quickjs_oxide::engine::api::core::Host;
 use quickjs_oxide::engine::api::core::test262::{
     Diagnostic, Failure, ModuleResolver, ModuleStep, Settled, Worker,
 };
@@ -107,7 +108,7 @@ pub(super) fn run_worker(test: WorkerTest<'_>) -> Result<WorkerResult, String> {
     let async_test = metadata.is_async();
     let mut worker = Worker::new(
         !metadata.flags.contains("CanBlockIsFalse"),
-        Box::new(quickjs_oxide_host::SystemHost::default()),
+        Box::new(quickjs_oxide_host::SystemHost::default().into_core()),
     )
     .map_err(|error| format!("create worker runtime: {error}"))?;
     let goal = if exact_module.is_some_and(ExactModuleTest::is_fixture_graph) {

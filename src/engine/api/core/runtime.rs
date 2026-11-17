@@ -11,12 +11,12 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use oxide_core::Handle;
-use oxide_core::host::Host;
 use oxide_core::vm::module::ModuleTables;
 use oxide_core::{MemoryReport, NativeCx, RuntimeOptions};
 
 use super::RuntimeError;
 use super::context::Context;
+use super::host::{Host, Hosted, SystemHost};
 use super::module::ModuleLoader;
 use super::ops::View;
 use super::property::{
@@ -234,9 +234,6 @@ pub enum GcPolicy {
 /// The collector's statistics.
 pub use oxide_core::heap::gc::GcStats;
 
-/// A default host over the process: its streams, the system clock, UTC.
-pub use oxide_core::host::SystemHost;
-
 impl Default for Runtime {
     fn default() -> Self {
         Self::new()
@@ -255,9 +252,9 @@ impl Runtime {
 
     /// A runtime over `host` (the clock, the time zone, output, files).
     pub fn with_host(host: impl Host + 'static, options: RuntimeOptions) -> Self {
-        let mut core = oxide_core::Runtime::new(options)
+        let mut core = oxide_core::Runtime::with_host(options, Box::new(Hosted(host)))
             .expect("the initial realm fits any heap cap the options allow");
-        core.set_host(Box::new(host));
+        core.set_waiter(super::waiter::ProcessWaiter::shared());
         core.set_compiler(super::compile::compile_for_core);
         core.set_module_host(oxide_core::vm::module::ModuleHost {
             normalize: super::module::normalize_shim,

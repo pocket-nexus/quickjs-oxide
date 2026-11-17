@@ -1,41 +1,27 @@
-//! The monotonic clock the collector times its pauses with. A target
-//! without one (`wasm32-unknown-unknown`, the web build's) reports
-//! zero-length pauses instead of panicking.
+//! Collector measurements over the monotonic capability installed by a host.
 
 use core::time::Duration;
+
+use crate::host::Monotonic;
 
 /// A started measurement.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Stopwatch {
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-    start: std::time::Instant,
+    clock: Monotonic,
+    start: u64,
 }
 
 impl Stopwatch {
     #[inline]
-    pub(crate) fn start() -> Stopwatch {
-        Stopwatch {
-            #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-            start: std::time::Instant::now(),
+    pub(crate) fn start(clock: Monotonic) -> Self {
+        Self {
+            clock,
+            start: clock.read(),
         }
     }
 
     #[inline]
     pub(crate) fn elapsed(self) -> Duration {
-        #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-        return self.start.elapsed();
-        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-        return Duration::ZERO;
+        Duration::from_nanos(self.clock.read().saturating_sub(self.start))
     }
-}
-
-/// A seed from the system clock's microseconds; a constant on a target
-/// without one (its embedder's host seeds `Math.random` instead).
-pub(crate) fn time_seed() -> u64 {
-    #[cfg(not(all(target_arch = "wasm32", target_os = "unknown")))]
-    return std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(1, |elapsed| elapsed.as_nanos() as u64);
-    #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-    return 1;
 }

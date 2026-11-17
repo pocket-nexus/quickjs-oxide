@@ -370,8 +370,27 @@ pub struct ThrownSummary {
 
 impl Runtime {
     pub fn new(options: impl Into<RuntimeOptions>) -> Result<Runtime, HeapError> {
-        let options = options.into();
+        Self::initialize(options.into(), None)
+    }
+
+    /// Installs platform services before realm initialization, including any
+    /// collections triggered by the initial allocation budget.
+    pub fn with_host(
+        options: impl Into<RuntimeOptions>,
+        hooks: Box<dyn crate::host::Host>,
+    ) -> Result<Runtime, HeapError> {
+        Self::initialize(options.into(), Some(hooks))
+    }
+
+    fn initialize(
+        options: RuntimeOptions,
+        mut hooks: Option<Box<dyn crate::host::Host>>,
+    ) -> Result<Runtime, HeapError> {
+        let clock = hooks
+            .as_mut()
+            .map_or(crate::host::Monotonic::NONE, |hooks| hooks.monotonic());
         let mut heap = Heap::new(options.heap);
+        heap.gc.clock = clock;
         let reserved = heap.bytes();
         heap.gc
             .configure(options.min_heap, options.growth, reserved);
@@ -459,11 +478,16 @@ impl Runtime {
             regexp_flags: core::cell::Cell::new(None),
             regexp_instance_shape: core::cell::Cell::new(None),
         };
+        let mut services = Services::default();
+        if let Some(mut hooks) = hooks {
+            services.seed_random(hooks.random_seed());
+            services.hooks = hooks;
+        }
         let mut runtime = Runtime {
             heap,
             code: CodeStore::default(),
             realm,
-            host: Services::default(),
+            host: services,
         };
         let out_of_memory = crate::builtins::install(&mut runtime.cx())?;
         runtime.set_intrinsic(Intrinsic::OutOfMemoryError, out_of_memory);
@@ -513,10 +537,18 @@ impl Runtime {
         self.host.can_block = can_block;
     }
 
+    /// Installs a process-lifetime shared-memory ordering and wait service.
+    /// Every runtime sharing buffers must use the same coordinator.
+    pub fn set_waiter(&mut self, waiter: &'static dyn crate::vm::waiter::Waiter) {
+        self.host.waiter = Some(waiter);
+        self.host.can_block = true;
+    }
+
     /// Installs the embedder's hooks and seeds `Math.random` from
     /// [`Host::random_seed`](crate::host::Host::random_seed).
     pub fn set_host(&mut self, mut hooks: Box<dyn crate::host::Host>) {
         let seed = hooks.random_seed();
+        self.heap.gc.clock = hooks.monotonic();
         self.host.seed_random(seed);
         self.host.hooks = hooks;
     }

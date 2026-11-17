@@ -48,7 +48,7 @@ src/
 
 ## Host boundary
 
-The core asks its embedder for one trait, `oxide_core::host::Host`, which the API re-exports as `api::core::Host`:
+The core asks its embedder for the portable trait `oxide_core::host::Host`. Its defaults need no operating system. The std API's `api::core::Host` is a process-backed facade: existing partial custom hosts keep their process defaults, and a generic adapter forwards their services to the core without another allocation or trait-object layer. The following defaults are the std facade's:
 
 | Method | Used by | Default |
 | --- | --- | --- |
@@ -59,8 +59,13 @@ The core asks its embedder for one trait, `oxide_core::host::Host`, which the AP
 | `promise_rejection(event, promise)` | `HostPromiseRejectionTracker` (`Rejected`, `Handled`) | ignored |
 | `read_file(path)` | `load` and `read` under `qjs --std` | the process's file system |
 | `interrupt()` | the loop's interrupt poll, about every thousand back-edges and calls | never interrupts |
+| `monotonic()` | collection pause measurements, including realm initialization | an independent nanosecond clock; absent on unsupported targets |
+| `performance_now_ms()` | `performance.now`, `$262.agent.monotonicNow` | the original process-shared performance origin, independent of collection timing |
+| `sleep_ms(milliseconds)` | `$262.agent.sleep` | the thread's sleep service |
 
-The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output; the page that embeds it shows results itself.
+The API's `SystemHost` uses every std default. `adapters/native`'s `SystemHost` retains its pre-epoch clock and seed handling and takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date`, `performance` and `Math.random` and discards output. A std host's `into_core()` adapts it for a raw core runtime without allocating.
+
+The core's own defaults discard output, use the epoch and UTC, seed from one, and find no files. Blocking and agents cross separate capability boundaries: `vm::waiter::Waiter` keeps shared-memory ordering and wait/notify atomicity, while `builtins::agent::AgentHost` owns agent execution and communication. The std API installs its process-lifetime waiter by reference, without allocation or reference counting, and lazily creates each Test262 worker's agent hub. A bare port sharing buffers between agents must install the same waiter coordinator on all of them. The timeout crosses as `core::time::Duration`, retaining its existing conversion and range.
 
 Compilation and module loading are function pointers on the core's services, because the host object lives inside the runtime they borrow. The API installs the front end as the core's compile function (`set_compiler`) and its module shims as the core's `ModuleHost`; an embedder supplies module-loading policy through the API's `ModuleLoader` trait (`normalize`, `load`), whose callbacks receive a `ModuleScope`. A host function, the embedder's Rust closure as a JavaScript function, is a core native closure whose body the API wraps: the core lends it a `NativeCx` while it runs, and the API turns that into the closure's `Scope`. Applications choose input, output, module policy and when the job queue drains. [`src/engine/api/README.md`](../src/engine/api/README.md) describes the API's types.
 

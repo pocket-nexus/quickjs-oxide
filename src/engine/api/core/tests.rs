@@ -11,7 +11,7 @@ use crate::engine::compiler::register::run_tests::{corpus, run_on_core};
 #[derive(Default)]
 struct Capture(Rc<RefCell<String>>);
 
-impl oxide_core::host::Host for Capture {
+impl super::Host for Capture {
     fn write(&mut self, _: oxide_core::host::Stream, text: &[u8]) {
         self.0.borrow_mut().push_str(&String::from_utf8_lossy(text));
     }
@@ -377,7 +377,7 @@ fn planned_field_choices_read_only_the_selected_branch() {
 #[test]
 fn conditional_backedges_poll_numeric_and_truthiness_loops() {
     struct Stop;
-    impl oxide_core::host::Host for Stop {
+    impl super::Host for Stop {
         fn interrupt(&mut self) -> bool {
             true
         }
@@ -516,7 +516,7 @@ fn delegated_read_plans_follow_live_methods_and_fall_back_before_callbacks() {
 #[test]
 fn delegated_read_calls_poll_without_loop_backedges() {
     struct Stop;
-    impl oxide_core::host::Host for Stop {
+    impl super::Host for Stop {
         fn interrupt(&mut self) -> bool {
             true
         }

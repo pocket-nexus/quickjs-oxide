@@ -1,6 +1,6 @@
-//! `Atomics`. Every operation on shared memory runs inside the process-wide
-//! coordinator of `vm::waiter`, which orders them sequentially consistently
-//! across agents; `wait` and `notify` queue on the same coordinator.
+//! `Atomics`. Every operation on shared memory runs inside the host waiter's
+//! coordinator, which orders them sequentially consistently across agents;
+//! `wait` and `notify` queue on the same coordinator.
 
 use core::time::Duration;
 
@@ -179,7 +179,7 @@ fn modify(
         old
     };
     if shared {
-        waiter::with_seq_cst(run)
+        waiter::with_seq_cst(cx.host.waiter.as_deref(), run)
     } else {
         run()
     }
@@ -314,19 +314,23 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         // than panicking, while keeping NaN/+Infinity as untimed waits.
         Some(Duration::try_from_secs_f64(timeout.max(0.0) / 1000.0).unwrap_or(Duration::MAX))
     };
-    if !cx.host.can_block {
+    if !cx.host.can_block || cx.host.waiter.is_none() {
         return Err(error::type_error(cx, "cannot block in this thread"));
     }
     let (view, store) = typed::view(cx.heap, object);
     let size = view.kind.size();
     let mask = mask(kind);
     let buffer = typed::buffer(cx.heap, store);
-    let outcome = waiter::wait(place, timeout, || {
-        let mut bytes = [0u8; 8];
-        buffer.read(byte_index, &mut bytes[..size]);
-        Ok::<_, ()>(u64::from_le_bytes(bytes) & mask == expected & mask)
-    })
-    .unwrap_or(WaitOutcome::NotEqual);
+    let outcome =
+        cx.host
+            .waiter
+            .as_deref()
+            .expect("a blocking waiter")
+            .wait(place, timeout, &mut || {
+                let mut bytes = [0u8; 8];
+                buffer.read(byte_index, &mut bytes[..size]);
+                u64::from_le_bytes(bytes) & mask == expected & mask
+            });
     let text = match outcome {
         WaitOutcome::NotEqual => "not-equal",
         WaitOutcome::Ok => "ok",
@@ -355,7 +359,12 @@ pub(super) fn notify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let Some(place) = location(cx, object, byte_index) else {
         return Ok(Value::int32(0));
     };
-    Ok(Value::number(waiter::notify(place, count) as f64))
+    let notified = cx
+        .host
+        .waiter
+        .as_deref()
+        .map_or(0, |waiter| waiter.notify(place, count));
+    Ok(Value::number(notified as f64))
 }
 
 /// `Atomics.pause(N)`.

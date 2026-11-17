@@ -26,7 +26,7 @@ options and report types.
 | `ObjectRef`, `SymbolRef`, `CallableRef` | a handle in the core's handle table, released on the last drop |
 | `PropertyKey`, `OrdinaryPropertyDescriptor`, `CompleteOrdinaryPropertyDescriptor`, `DescriptorField`, `AccessorValue`, `WellKnownSymbol` | keys and descriptors |
 | `RuntimeError` | `Exception(Value)` (the thrown value), `Interrupted`, `Reentered`, `Poisoned`, `Unsupported`, `Compile(Error)`, `OutOfMemory`, `Invariant`, `Internal` |
-| `Host`, `Stream`, `RejectionEvent`, `SystemHost` | the core's host trait and its default, re-exported |
+| `Host`, `Stream`, `RejectionEvent`, `SystemHost`, `Monotonic` | process-backed host defaults, shared stream/event types and the collector's clock capability |
 | `ModuleLoader`, `ModuleSource`, `CompiledModule`, `ModuleScope` | module loading |
 | `RuntimeOptions`, `HeapLimits`, `MemoryReport`, `GcStats` | the core's configuration and reports, re-exported |
 | `api::core::test262` | the Test262 runner's worker, behind the `test262-host` feature |
@@ -75,13 +75,21 @@ describes how dynamic units are reached and freed.
 
 ## Host
 
-`Host` is `oxide_core::host::Host`: `write`, `now_ms`,
-`local_tz_offset_minutes`, `random_seed`, `promise_rejection`, `read_file`
-and `interrupt`, each with a default over the process. `Runtime::new` uses the
-core's `SystemHost`; the adapters supply `quickjs-oxide-host`'s `SystemHost`
-(the host's time-zone rules) and `quickjs-oxide-web-host`'s `WebHost`. The
-application owns input, module-loading policy, output and when the job
-queue drains.
+`Host` is the std-facing embedding trait: `write`, `now_ms`,
+`local_tz_offset_minutes`, `random_seed`, `promise_rejection`, `read_file`,
+`interrupt`, `monotonic`, `performance_now_ms` and `sleep_ms`. Its process
+defaults remain available when a custom host overrides only some methods.
+`Runtime::new` uses this API's `SystemHost`; the adapters retain the native
+time-zone rules and the browser's clocks and random source.
+
+The portable `oxide_core::host::Host` has defaults requiring no OS services.
+For direct core embedding, a std host's `into_core()` provides the adapter:
+`oxide_core::Runtime::with_host(options, Box::new(host.into_core()))`.
+Collection timing is installed before the initial realm allocations; the
+performance clock keeps its independent, process-shared origin. Blocking
+atomics and Test262 agents use separate host capabilities, installed by the
+std runtime and worker respectively. The application still owns input,
+module-loading policy, output and when the job queue drains.
 
 ## Host functions
 

@@ -14,11 +14,19 @@ The crate has `#![forbid(unsafe_code)]` and one dependency, the
 regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
 crate depends on it; it does not depend on the root crate.
 
-The first preparation for a single `no_std` + `alloc` implementation names
-portable standard-library reexports through `core` and `alloc`. The crate
-still requires `std`: its process services, hash tables and floating-point
-methods remain in place, as does the regular-expression engine's thread-local
-scratch cache. This namespace-only step does not yet enable bare-metal builds.
+The migration targets a single `no_std` + `alloc` implementation. Portable
+standard-library reexports already name `core` and `alloc`; the core's `Host`
+defaults no longer reach the process. A raw runtime has no streams, clock or
+files and starts its random state from one. Ports provide `Host`, a shared
+`vm::waiter::Waiter` for blocking atomics, and `builtins::agent::AgentHost` for
+agent execution. `Runtime::with_host` installs its collection clock before
+realm initialization, including collections during startup.
+
+The std embedding API retains process-backed defaults, including for partial
+custom hosts. Its waiter is process-wide; agent hubs remain lazy. This is not
+yet a bare-metal build: standard-library hash tables, floating-point methods
+and remaining TLS dependencies are separate migration work. The RegExp scratch
+cache's thread-level reuse and bounds are unchanged.
 
 ## Layout
 
@@ -39,7 +47,7 @@ scratch cache. This namespace-only step does not yet enable bare-metal builds.
 | `builtins` | the realm's constructors, prototypes and globals as natives over the re-entrant `call`, one file per builtin object, plus `$262` (`test262`, `agent`) |
 | `host` | the `Host` trait: output, clock, time zone, random seed, promise-rejection events and files |
 | `embed` | the embedder's entries the root crate's API calls, on `NativeCx`, which a `Runtime` lends between entries and the loop lends to a host function: objects, properties, conversions, value construction, host functions and host objects |
-| `clock` | the monotonic clock the collector times its pauses with |
+| `clock` | a stopwatch over the host's installed `Monotonic` capability, without platform access |
 | `runtime` | `Runtime`: the heap, the static code store beside it, the single realm and the host services |
 
 ## The rooting rule

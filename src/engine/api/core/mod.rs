@@ -2,12 +2,15 @@
 //! Rust data or handles, the host as one trait, host functions with a
 //! [`Scope`], module loaders with a [`ModuleScope`].
 
+#[cfg(feature = "test262-host")]
+mod agent;
 mod buffer;
 pub(crate) mod compile;
 mod context;
 mod convert;
 mod error;
 mod function;
+mod host;
 mod module;
 mod ops;
 mod promise;
@@ -16,12 +19,14 @@ mod runtime;
 #[cfg(feature = "test262-host")]
 pub mod test262;
 mod value;
+mod waiter;
 
 pub use buffer::{TypedArrayKind, TypedArrayView};
 pub use context::{Context, EvalOptions, FunctionBytecodeRef, ModuleBytecodeRef, QjsHelpers};
 pub use convert::{FromJs, IntoJs};
 pub use error::RuntimeError;
 pub use function::{FunctionOptions, HostFunction, Raw, Scope};
+pub use host::{Host, SystemHost};
 pub use module::{CompiledModule, ModuleLoader, ModuleScope, ModuleSource};
 pub use ops::{Js, JsResult};
 pub use promise::PromiseCapability;
@@ -31,7 +36,6 @@ pub use property::{
 };
 pub use runtime::{
     GcPolicy, GcStats, InterruptHandle, PendingJobOutcome, PromiseSnapshot, PromiseState, Runtime,
-    SystemHost,
 };
 pub use value::{CallableRef, ObjectRef, SymbolRef, Value};
 
@@ -44,7 +48,7 @@ pub use crate::engine::value::bigint::{BigIntError, JsBigInt};
 pub use crate::engine::value::{JsString, JsStringError};
 /// The core's value, which [`Host::promise_rejection`] receives.
 pub use oxide_core::Value as CoreValue;
-pub use oxide_core::host::{Host, RejectionEvent, Stream};
+pub use oxide_core::host::{Monotonic, RejectionEvent, Stream};
 pub use oxide_core::{HeapLimits, MemoryReport, RuntimeOptions};
 
 #[cfg(test)]

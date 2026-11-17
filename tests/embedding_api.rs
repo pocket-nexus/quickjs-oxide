@@ -389,6 +389,102 @@ fn the_host_receives_output_time_and_rejections() {
     assert_eq!(first, second);
 }
 
+#[test]
+fn partial_hosts_keep_the_process_file_service() {
+    let path = std::env::temp_dir().join(format!(
+        "oxide-host-default-file-{}.txt",
+        std::process::id()
+    ));
+    std::fs::write(&path, "process file contents\n").unwrap();
+    let runtime = Runtime::with_host(Recorder::default(), RuntimeOptions::default());
+    let context = runtime.context();
+    context
+        .install_qjs_helpers(&QjsHelpers {
+            std: true,
+            ..QjsHelpers::default()
+        })
+        .unwrap();
+    let result = context.eval(&format!("read({:?})", path.to_string_lossy()));
+    std::fs::remove_file(path).unwrap();
+    assert_eq!(
+        result.unwrap(),
+        Value::String(JsString::from_static("process file contents\n"))
+    );
+}
+
+#[test]
+fn collection_and_performance_use_their_own_host_clocks() {
+    use quickjs_oxide::engine::api::core::Monotonic;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::Duration;
+
+    static TICKS: AtomicU64 = AtomicU64::new(0);
+    fn now_ns() -> u64 {
+        TICKS.fetch_add(100, Ordering::Relaxed)
+    }
+    struct Clocks;
+    impl Host for Clocks {
+        fn monotonic(&mut self) -> Monotonic {
+            Monotonic::new(now_ns)
+        }
+
+        fn performance_now_ms(&mut self) -> f64 {
+            123.75
+        }
+    }
+
+    let runtime = Runtime::with_host(
+        Clocks,
+        RuntimeOptions {
+            min_heap: 0,
+            ..RuntimeOptions::default()
+        },
+    );
+    let context = runtime.context();
+    context.install_qjs_helpers(&QjsHelpers::default()).unwrap();
+    assert_eq!(
+        context.eval("performance.now()").unwrap(),
+        Value::Float(123.75)
+    );
+    let before = runtime.gc_stats().unwrap();
+    assert!(before.collections > 0);
+    assert_eq!(
+        before.total_pause,
+        Duration::from_nanos(before.collections * 100)
+    );
+    runtime.run_gc().unwrap();
+    let after = runtime.gc_stats().unwrap();
+    assert_eq!(after.collections - before.collections, 1);
+    assert_eq!(
+        after.total_pause - before.total_pause,
+        Duration::from_nanos(100)
+    );
+}
+
+#[cfg(feature = "test262-host")]
+#[test]
+fn spawned_agents_keep_blocking_wait_support() {
+    use quickjs_oxide::engine::api::core::{SystemHost, test262::Worker};
+
+    let mut worker = Worker::new(true, Box::new(SystemHost.into_core())).unwrap();
+    let script = worker
+        .compile_script(
+            r#"$262.agent.start(`
+                const values = new Int32Array(new SharedArrayBuffer(4));
+                $262.agent.report(Atomics.wait(values, 0, 0, 0));
+            `);"#,
+            "agent-wait.js",
+        )
+        .unwrap();
+    worker.run_script(script).unwrap();
+    worker.join_agents();
+    let report = worker
+        .compile_script("print($262.agent.getReport())", "agent-report.js")
+        .unwrap();
+    worker.run_script(report).unwrap();
+    assert_eq!(worker.take_print_log(), ["timed-out"]);
+}
+
 struct Files;
 
 impl ModuleLoader for Files {
