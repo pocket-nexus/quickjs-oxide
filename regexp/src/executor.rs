@@ -730,11 +730,59 @@ struct AttemptState {
     controls: Vec<ControlFrame>,
 }
 
-// One bounded spare per thread. No borrow survives acquisition, so an interrupt
-// hook may reenter the regexp engine without aliasing an active execution.
+// Storage-independent policy: one bounded spare, with no borrow held while the
+// executor uses it. TLS is only the current owner of this cache.
 const MAX_SCRATCH_BYTES: usize = 32 * 1024;
+
+struct ScratchCache {
+    spare: Option<AttemptState>,
+}
+
+impl ScratchCache {
+    const fn new() -> Self {
+        Self { spare: None }
+    }
+
+    fn take(&mut self) -> Option<AttemptState> {
+        self.spare.take()
+    }
+
+    // Check the bound and clear the workspace before borrowing cache storage.
+    fn prepare_return(state: &mut AttemptState) -> bool {
+        let bytes = state
+            .captures
+            .capacity()
+            .saturating_mul(size_of::<Option<usize>>())
+            .saturating_add(
+                state
+                    .registers
+                    .capacity()
+                    .saturating_mul(size_of::<RegisterValue>()),
+            )
+            .saturating_add(state.undo.capacity().saturating_mul(size_of::<Undo>()))
+            .saturating_add(
+                state
+                    .controls
+                    .capacity()
+                    .saturating_mul(size_of::<ControlFrame>()),
+            );
+        if bytes > MAX_SCRATCH_BYTES {
+            return false;
+        }
+        state.reset(0);
+        true
+    }
+
+    // The caller has prepared this workspace outside the storage borrow.
+    fn put_prepared(&mut self, state: &mut AttemptState) {
+        if self.spare.is_none() {
+            self.spare = Some(core::mem::take(state));
+        }
+    }
+}
+
 thread_local! {
-    static SCRATCH: RefCell<Option<AttemptState>> = const { RefCell::new(None) };
+    static SCRATCH: RefCell<ScratchCache> = const { RefCell::new(ScratchCache::new()) };
 }
 
 struct Scratch {
@@ -753,32 +801,8 @@ impl Scratch {
 
 impl Drop for Scratch {
     fn drop(&mut self) {
-        let state = &mut self.state;
-        let bytes = state
-            .captures
-            .capacity()
-            .saturating_mul(size_of::<Option<usize>>())
-            .saturating_add(
-                state
-                    .registers
-                    .capacity()
-                    .saturating_mul(size_of::<RegisterValue>()),
-            )
-            .saturating_add(state.undo.capacity().saturating_mul(size_of::<Undo>()))
-            .saturating_add(
-                state
-                    .controls
-                    .capacity()
-                    .saturating_mul(size_of::<ControlFrame>()),
-            );
-        if bytes <= MAX_SCRATCH_BYTES {
-            state.reset(0);
-            let _ = SCRATCH.try_with(|slot| {
-                let mut slot = slot.borrow_mut();
-                if slot.is_none() {
-                    *slot = Some(core::mem::take(state));
-                }
-            });
+        if ScratchCache::prepare_return(&mut self.state) {
+            let _ = SCRATCH.try_with(|slot| slot.borrow_mut().put_prepared(&mut self.state));
         }
     }
 }
@@ -1907,7 +1931,7 @@ mod tests {
 
     #[test]
     fn scratch_is_reentrant_cleared_after_errors_and_bounded() {
-        SCRATCH.with(|slot| *slot.borrow_mut() = None);
+        SCRATCH.with(|slot| slot.borrow_mut().spare = None);
         let outer = compile("([a-z]+)$", "");
         let inner = compile("(b)+", "");
         let input = vec![u16::from(b'a'); 30_000];
@@ -1938,7 +1962,7 @@ mod tests {
         );
         SCRATCH.with(|slot| {
             let slot = slot.borrow();
-            let state = slot.as_ref().unwrap();
+            let state = slot.spare.as_ref().unwrap();
             assert!(state.captures.iter().all(Option::is_none));
             assert!(state.controls.is_empty() && state.undo.is_empty());
         });
@@ -1948,7 +1972,42 @@ mod tests {
             .controls
             .reserve(MAX_SCRATCH_BYTES / size_of::<ControlFrame>() + 1);
         drop(large);
-        SCRATCH.with(|slot| assert!(slot.borrow().is_none()));
+        SCRATCH.with(|slot| assert!(slot.borrow().spare.is_none()));
+    }
+
+    #[test]
+    fn scratch_cache_reuses_all_buffers_and_keeps_the_first_spare() {
+        let mut cache = ScratchCache::new();
+        let mut outer = cache.take().unwrap_or_default();
+        outer.prepare(2, 1, 0).unwrap();
+        let mut inner = cache.take().unwrap_or_default();
+        inner.prepare(1, 1, 0).unwrap();
+        inner.push_backtrack(0).unwrap();
+        inner.undo.push(Undo::Capture {
+            slot: 0,
+            previous: None,
+        });
+        let buffers = (
+            inner.captures.as_ptr(),
+            inner.registers.as_ptr(),
+            inner.undo.as_ptr(),
+            inner.controls.as_ptr(),
+        );
+        assert!(ScratchCache::prepare_return(&mut inner));
+        cache.put_prepared(&mut inner);
+        assert!(ScratchCache::prepare_return(&mut outer));
+        cache.put_prepared(&mut outer);
+        let mut reused = cache.take().unwrap();
+        reused.prepare(1, 1, 0).unwrap();
+        assert_eq!(
+            (
+                reused.captures.as_ptr(),
+                reused.registers.as_ptr(),
+                reused.undo.as_ptr(),
+                reused.controls.as_ptr(),
+            ),
+            buffers,
+        );
     }
 
     #[test]

@@ -12,6 +12,14 @@ front end validates regular-expression literals through `compile`;
 re-exports the Unicode functions with thin `JsString` wrappers. RegExp
 objects are `quickjs-oxide-core`'s (`core/src/builtins/regexp.rs`).
 
+Execution scratch is managed by a storage-independent, single-spare cache.
+TLS still owns that cache; matching entry points and thread-level reuse are
+unchanged. An execution takes the spare without retaining a cache borrow, so
+reentrant executions use separate workspaces. Return preparation checks the
+32 KiB bound and clears logical state before borrowing cache storage. Retained
+buffers keep their capacity and never replace an already returned spare.
+This preparation does not yet remove the TLS dependency.
+
 | Module | Content |
 | --- | --- |
 | crate root | `compile`, `CompiledRegExp`, `RegExpFlags`, `Instruction`, `execute` and its interrupt and Latin-1 forms, `RegExpMatch`, the error types, `javascript_compile_error_message` |
