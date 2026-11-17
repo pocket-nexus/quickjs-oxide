@@ -589,10 +589,16 @@ fn run(
 ) -> Result<Option<RegExpMatch>, Throw> {
     let compiled = cx.heap.regexps.program(program);
     let result = match &cx.heap.string(string).repr() {
-        StringRepr::OneByte(bytes) => {
-            oxide_regexp::execute_latin1_with_interrupt(compiled, bytes, start, || false)
+        StringRepr::OneByte(bytes) => oxide_regexp::execute_latin1_with_interrupt(
+            &cx.host.regexp_scratch,
+            compiled,
+            bytes,
+            start,
+            || false,
+        ),
+        StringRepr::TwoByte(units) => {
+            oxide_regexp::execute(&cx.host.regexp_scratch, compiled, units, start)
         }
-        StringRepr::TwoByte(units) => oxide_regexp::execute(compiled, units, start),
     };
     result.map_err(|failure| match failure {
         ExecError::OutOfMemory => error::oom(cx.realm),

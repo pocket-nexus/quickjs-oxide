@@ -298,6 +298,10 @@ pub struct Services {
     pub(crate) module_host: Option<module::ModuleHost>,
     /// The module records by normalized name.
     pub(crate) modules: crate::heap::hash::FxHashMap<String, ObjectId>,
+    /// Async evaluation order shared by every module graph in this runtime.
+    pub(crate) module_async_order: u64,
+    /// One bounded workspace shared by this runtime's RegExp programs.
+    pub(crate) regexp_scratch: oxide_regexp::ScratchCache,
     /// The embedder's script runner, for `$262.agent.start`.
     pub(crate) script_runner: Option<crate::builtins::agent::ScriptRunner>,
     /// The host's agent execution and broadcast capability.
@@ -334,6 +338,8 @@ impl Default for Services {
             compile: None,
             module_host: None,
             modules: Default::default(),
+            module_async_order: 0,
+            regexp_scratch: oxide_regexp::ScratchCache::new(),
             script_runner: None,
             agent_host: None,
             agent_host_factory: None,

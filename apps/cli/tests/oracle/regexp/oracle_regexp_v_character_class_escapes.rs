@@ -301,8 +301,13 @@ fn observe_oxide(case: &MatchCase) -> String {
     let flags = JsString::try_from_utf8(case.flags).unwrap();
     let compiled = compile(&pattern, &flags)
         .unwrap_or_else(|error| panic!("compile failed for {}: {error}", case.label));
-    match execute(&compiled, &case.input, 0)
-        .unwrap_or_else(|error| panic!("execute failed for {}: {error}", case.label))
+    match execute(
+        &oxide_regexp::ScratchCache::new(),
+        &compiled,
+        &case.input,
+        0,
+    )
+    .unwrap_or_else(|error| panic!("execute failed for {}: {error}", case.label))
     {
         Some(found) => {
             let capture = found.capture(0).expect("complete match capture");

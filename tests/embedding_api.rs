@@ -575,6 +575,70 @@ fn modules_load_through_the_loader_and_its_scope() {
     assert_eq!(context.eval("dynamic").unwrap(), Value::Int(42));
 }
 
+#[test]
+fn async_module_order_is_shared_across_interleaved_graphs() {
+    struct Loader;
+    impl ModuleLoader for Loader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            name: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let source = match name {
+                "shared.js" => {
+                    "await new Promise(resolve => { globalThis.release = resolve; }); \
+                     order.push('shared');"
+                }
+                "left.js" => {
+                    "import 'shared.js'; order.push('left-start'); \
+                     await 0; order.push('left-end');"
+                }
+                "right.js" => "import 'shared.js'; order.push('right');",
+                _ => {
+                    return Err(scope
+                        .new_native_error(NativeErrorKind::Reference, name)
+                        .unwrap());
+                }
+            };
+            Ok(ModuleSource::source(source))
+        }
+    }
+    let (runtime, context) = runtime();
+    runtime.set_module_loader(Loader).unwrap();
+    context.eval("globalThis.order = []").unwrap();
+    let left = context
+        .compile_module_with_filename("import 'left.js'; order.push('root-a');", "root-a.js")
+        .unwrap();
+    let right = context
+        .compile_module_with_filename("import 'right.js'; order.push('root-b');", "root-b.js")
+        .unwrap();
+    let Value::Object(left) = context.execute_module(&left).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    let Value::Object(right) = context.execute_module(&right).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    // Another runtime can evaluate and drain its graph while both remain pending.
+    let other = Runtime::new();
+    let mut other_context = other.new_context().unwrap();
+    run_module(&mut other_context, "await 0; globalThis.done = 42;").unwrap();
+    assert_eq!(other_context.eval("done").unwrap(), Value::Int(42));
+    assert_eq!(context.eval("order.join()").unwrap(), string(""));
+    context.eval("release()").unwrap();
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        context.eval("order.join()").unwrap(),
+        string("shared,left-start,right,root-b,left-end,root-a")
+    );
+    for promise in [left, right] {
+        assert_eq!(
+            runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+            PromiseState::Fulfilled
+        );
+    }
+}
+
 struct Reentrant(Runtime);
 
 impl ModuleLoader for Reentrant {

@@ -12,17 +12,17 @@ front end validates regular-expression literals through `compile`;
 re-exports the Unicode functions with thin `JsString` wrappers. RegExp
 objects are `quickjs-oxide-core`'s (`core/src/builtins/regexp.rs`).
 
-Execution scratch is managed by a storage-independent, single-spare cache.
-TLS still owns that cache; matching entry points and thread-level reuse are
-unchanged. An execution takes the spare without retaining a cache borrow, so
-reentrant executions use separate workspaces. Return preparation checks the
-32 KiB bound and clears logical state before borrowing cache storage. Retained
-buffers keep their capacity and never replace an already returned spare.
-This preparation does not yet remove the TLS dependency.
+Every execution receives the caller's `ScratchCache`. The core keeps one cache
+per runtime and shares it across all compiled programs; standalone users retain
+their own cache between calls. No production execution storage uses TLS.
+An execution takes the spare without retaining a cache borrow, so reentrant
+executions use separate workspaces. Return preparation checks the 32 KiB bound
+and clears logical state before borrowing cache storage. Retained buffers keep
+their capacity and never replace an already returned spare.
 
 | Module | Content |
 | --- | --- |
-| crate root | `compile`, `CompiledRegExp`, `RegExpFlags`, `Instruction`, `execute` and its interrupt and Latin-1 forms, `RegExpMatch`, the error types, `javascript_compile_error_message` |
+| crate root | `compile`, `CompiledRegExp`, `RegExpFlags`, `Instruction`, `ScratchCache`, `execute` and its interrupt and Latin-1 forms, `RegExpMatch`, the error types, `javascript_compile_error_message` |
 | `unicode` | `is_id_start`, `is_id_continue`, `CodeUnits`, `CodeUnitBuf`, `StringError`, `MAX_STRING_LEN` |
 | `unicode::case` | `convert_case_with_limit`, `regexp_canonicalize`, `regexp_canonicalize_range_pairs` |
 | `unicode::normalize` | `NormalizationForm`, `normalize`, `normalize_with_limit`, `normalize_code_points` |

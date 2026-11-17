@@ -67,6 +67,14 @@ The API's `SystemHost` uses every std default. `adapters/native`'s `SystemHost` 
 
 The core's own defaults discard output, use the epoch and UTC, seed from one, and find no files. Blocking and agents cross separate capability boundaries: `vm::waiter::Waiter` keeps shared-memory ordering and wait/notify atomicity, while `builtins::agent::AgentHost` owns agent execution and communication. The std API installs its process-lifetime waiter by reference, without allocation or reference counting, and lazily creates each Test262 worker's agent hub. A bare port sharing buffers between agents must install the same waiter coordinator on all of them. The timeout crosses as `core::time::Duration`, retaining its existing conversion and range.
 
+Production core and RegExp state has no TLS dependency. Each runtime owns one
+RegExp `ScratchCache`, shared across its compiled programs and reusable between
+entries, and one async-module evaluation counter, shared across its module
+graphs. A scratch lease holds no cache borrow while executing or invoking an
+interrupt hook. The std API's current-runtime and module-resolver thread
+contexts remain at the std boundary; Unicode allocation-failure TLS is confined
+to tests and `test-hooks`.
+
 Compilation and module loading are function pointers on the core's services, because the host object lives inside the runtime they borrow. The API installs the front end as the core's compile function (`set_compiler`) and its module shims as the core's `ModuleHost`; an embedder supplies module-loading policy through the API's `ModuleLoader` trait (`normalize`, `load`), whose callbacks receive a `ModuleScope`. A host function, the embedder's Rust closure as a JavaScript function, is a core native closure whose body the API wraps: the core lends it a `NativeCx` while it runs, and the API turns that into the closure's `Scope`. Applications choose input, output, module policy and when the job queue drains. [`src/engine/api/README.md`](../src/engine/api/README.md) describes the API's types.
 
 ## Compilation

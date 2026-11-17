@@ -24,9 +24,11 @@ realm initialization, including collections during startup.
 
 The std embedding API retains process-backed defaults, including for partial
 custom hosts. Its waiter is process-wide; agent hubs remain lazy. This is not
-yet a bare-metal build: standard-library hash tables, floating-point methods
-and remaining TLS dependencies are separate migration work. The RegExp scratch
-cache's thread-level reuse and bounds are unchanged.
+yet a bare-metal build: standard-library hash tables and floating-point methods
+remain separate migration work. Production core and RegExp state no longer
+requires TLS: one bounded RegExp scratch cache and the async-module evaluation
+counter belong to each runtime. The scratch cache retains its four reusable
+buffers, 32 KiB bound and reentrant leases.
 
 ## Layout
 

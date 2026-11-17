@@ -33,7 +33,13 @@ fn regexp_compiler_and_executor_match_pinned_quickjs() {
                 case.label
             )
         });
-        let result = execute(&program, &case.input, case.start).unwrap_or_else(|error| {
+        let result = execute(
+            &oxide_regexp::ScratchCache::new(),
+            &program,
+            &case.input,
+            case.start,
+        )
+        .unwrap_or_else(|error| {
             panic!(
                 "Rust RegExp execution failed at case {index} ({}): {error}",
                 case.label

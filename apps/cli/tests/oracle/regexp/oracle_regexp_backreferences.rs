@@ -32,12 +32,13 @@ fn regexp_backreferences_match_pinned_quickjs() {
                 case.label
             )
         });
-        let result = execute(&program, &case.input, 0).unwrap_or_else(|error| {
-            panic!(
-                "Rust RegExp execution failed at case {index} ({}): {error}",
-                case.label
-            )
-        });
+        let result = execute(&oxide_regexp::ScratchCache::new(), &program, &case.input, 0)
+            .unwrap_or_else(|error| {
+                panic!(
+                    "Rust RegExp execution failed at case {index} ({}): {error}",
+                    case.label
+                )
+            });
         let rust_observation = observe_rust(result.as_ref(), &case.input);
         assert_eq!(
             rust_observation, *oracle_observation,

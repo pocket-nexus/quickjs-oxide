@@ -20,7 +20,7 @@ pub use compiler::{
     CompileError, CompileErrorKind, CompileErrorSource, CompiledRegExp, ValidatedProgram,
 };
 pub use executor::{
-    ExecError, ProgramError, RegExpMatch, execute, execute_latin1_with_interrupt,
+    ExecError, ProgramError, RegExpMatch, ScratchCache, execute, execute_latin1_with_interrupt,
     execute_with_interrupt,
 };
 pub use flags::RegExpFlags;
