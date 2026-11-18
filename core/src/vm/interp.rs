@@ -310,7 +310,12 @@ pub(super) fn frame_end(frame: &Frame, unit: &CodeUnit) -> u32 {
 /// loop, which they would otherwise grow past its size gate; each writes its
 /// own result register.
 #[inline(never)]
-fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Result<(), Throw> {
+fn rare_op<const IMAGE: bool>(
+    cx: &mut Cx<'_>,
+    frame: &Frame,
+    unit: &CodeUnit,
+    insn: Insn,
+) -> Result<(), Throw> {
     let base = frame.base as usize;
     let reg = |cx: &Cx<'_>, register: u8| cx.heap.vm.registers[base + register as usize];
     let (register, value) = match insn.op {
@@ -351,7 +356,7 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         }
         Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
         Opcode::NewArrayK => (insn.a, new_array_constants(cx, frame.bytecode, insn)?),
-        Opcode::NewObjectLit => (insn.a, new_object_literal(cx, unit, insn)?),
+        Opcode::NewObjectLit => (insn.a, new_object_literal::<IMAGE>(cx, unit, insn)?),
         Opcode::InitField => {
             let object = reg(cx, insn.a);
             let value = reg(cx, insn.b);
@@ -367,8 +372,18 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         Opcode::FinishObjectLit => {
             let value = reg(cx, insn.a);
             let object = value.as_object().expect("a literal object");
-            let creator = unit.code[insn.imm as usize];
-            let site = unit.ic_base as usize + creator.c as usize;
+            let creator = if IMAGE {
+                unit.instruction(insn.imm as usize)
+                    .expect("an admitted object literal")
+            } else {
+                unit.code[insn.imm as usize]
+            };
+            let base = if IMAGE {
+                unit.cache_base(cx.heap)
+            } else {
+                unit.ic_base as usize
+            };
+            let site = base + creator.c as usize;
             let shape = cx.heap.shape_of(object).index();
             if creator.c == FIELD_NO_SITE || cx.heap.ics.entry(site).w0 != shape {
                 let filled = creator.c != FIELD_NO_SITE
@@ -814,7 +829,7 @@ fn call_other(
 #[inline(never)]
 fn construct_failure(cx: &mut Cx<'_>, function: Value, pc: usize) -> Throw {
     let frame = *cx.heap.vm.frames.last().expect("a frame");
-    let spread = cx.unit(frame.unit).code.get(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
+    let spread = cx.unit(frame.unit).instruction(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
     if spread && !ops::is_callable(cx.heap, function) {
         return error::type_error(cx, "not a function");
     }
@@ -1566,11 +1581,13 @@ fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
     }
     let caller = cx.heap.vm.frames.last().expect("a caller");
     let unit = cx.unit(caller.unit);
-    let insn = unit.code[done.return_pc as usize - 1];
+    let insn = unit
+        .instruction(done.return_pc as usize - 1)
+        .expect("an admitted return site");
     if insn.op != Opcode::New {
         return;
     }
-    let site = unit.ic_base as usize + insn.imm as usize;
+    let site = unit.cache_base(cx.heap) + insn.imm as usize;
     let mut entry = cx.heap.ics.entries[site];
     if !entry.is_filled() || cx.heap.is_dictionary(receiver) {
         return;
@@ -1880,7 +1897,7 @@ fn window(registers: &mut [Value], base: usize) -> &mut Window {
 
 /// Runs the top frame from its start until the entry frame returns.
 fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
-    run_at(cx, 0)
+    resume_at(cx, 0)
 }
 
 /// Unit `id` for the loop, when it or the unit the loop leaves is dynamic:
@@ -1927,7 +1944,7 @@ pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<
         .filter(|_| error::catchable(cx))
     {
         cx.heap.vm.registers[frame.base as usize + handler.register as usize] = thrown;
-        return run_at(cx, handler.target as usize);
+        return resume_at(cx, handler.target as usize);
     }
     cx.heap.vm.frames.pop();
     Err(Throw(thrown))
@@ -2060,7 +2077,7 @@ fn special_call<'a>(
             } else {
                 (
                     insn.c as usize,
-                    Some(unit.ic_base as usize + insn.imm as usize),
+                    Some(unit.cache_base(cx.heap) + insn.imm as usize),
                 )
             };
             invoke::<true, false>(
@@ -2149,1056 +2166,16 @@ fn local_binding_error(cx: &mut Cx<'_>, insn: Insn) -> Throw {
 /// `regs` is the running frame's window. It borrows the register file, so
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
-pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
-    let entry = top_frame(&cx.heap.vm.frames);
-
-    // The running unit: borrowed from the code store, or from `held`, which
-    // keeps a dynamic unit alive while it runs.
-    let mut held: Option<Rc<CodeUnit>> = None;
-    let mut unit: &CodeUnit;
-    macro_rules! set_unit {
-        ($id:expr) => {{
-            let id: CodeUnitId = $id;
-            unit = if id.is_dynamic() | held.is_some() {
-                switch_unit(cx.static_code, cx.heap, &mut held, id)
-            } else {
-                cx.static_code.get(id)
-            };
-        }};
-    }
-    set_unit!(entry.unit);
-    let mut code: &[Insn] = &unit.code;
-    let mut base = entry.base as usize;
-    let mut ic_base = unit.ic_base as usize;
-    let mut pc = start;
-
-    macro_rules! window {
-        () => {
-            window(&mut cx.heap.vm.registers, base)
-        };
-    }
-    let mut regs: &mut Window = window!();
-    macro_rules! reg {
-        ($register:expr) => {
-            regs[$register as usize]
-        };
-    }
-    // Frames remain published for GC and backtraces. Read their fields when
-    // needed instead of keeping a second full activation live across dispatch.
-    macro_rules! current_frame {
-        () => {
-            top_frame(&cx.heap.vm.frames)
-        };
-    }
-    macro_rules! load_frame {
-        () => {{
-            let caller = current_frame!();
-            set_unit!(caller.unit);
-            code = &unit.code;
-            base = caller.base as usize;
-            ic_base = unit.ic_base as usize;
-            raise_top(cx, frame_end(&caller, unit));
-        }};
-    }
-    // Writes a value computed from the heap, then continues.
-    macro_rules! set {
-        ($label:lifetime, $register:expr, $value:expr) => {{
-            let value: Value = $value;
-            regs = window!();
-            regs[$register as usize] = value;
-            continue $label;
-        }};
-    }
-    // Writes a slow path's result and continues, or evaluates to its throw.
-    macro_rules! write {
-        ($label:lifetime, $register:expr, $result:expr) => {
-            match $result {
-                Ok(value) => set!($label, $register, value),
-                Err(throw) => Err(throw),
-            }
-        };
-    }
-    // Carry the operation from the opcode arm as a constant. A shared arm
-    // first mapping Opcode to Arith leaves another hot jump-table dispatch.
-    macro_rules! arith {
-        ($label:lifetime, $insn:ident, $op:ident, $immediate:expr) => {{
-            let $insn = *$insn;
-            let x = reg!($insn.b);
-            let y = if $immediate {
-                Value::int32($insn.int())
-            } else {
-                reg!($insn.c)
-            };
-            if let Some(value) = arith_fast(Arith::$op, x, y) {
-                reg!($insn.a) = value;
-                continue $label;
-            }
-            write!($label, $insn.a, arith_slow(cx, $insn.op, x, y))
-        }};
-    }
-
-    // Every taken conditional back-edge polls too. Conversions finish before
-    // polling, and an interrupt is attributed to the original branch PC.
-    macro_rules! branch {
-        ($failure:lifetime, $target:expr) => {{
-            let target: usize = $target;
-            if target < pc {
-                let poll = &mut cx.heap.vm.poll;
-                *poll -= 1;
-                if *poll == 0 {
-                    if let Err(throw) = error::poll_interrupts(cx) {
-                        break $failure Err(throw);
-                    }
-                    pc = target;
-                    break $failure Ok(());
-                }
-            }
-            pc = target;
-        }};
-    }
-
-    // Uncommon calls materialize the caller only for the helper's duration.
-    macro_rules! called {
-        ($dispatch:lifetime, $restore:lifetime, $insn:ident, $next_frame:ident => $result:expr) => {{
-            match $result {
-                Called::Entered(next) => {
-                    unit = match next {
-                        UnitRef::Static(next) => {
-                            if held.is_some() {
-                                clear_dynamic_unit(&mut held);
-                            }
-                            next
-                        }
-                        UnitRef::Dynamic(next) => hold_dynamic_unit(&mut held, next),
-                    };
-                    code = &unit.code;
-                    base = $next_frame.base as usize;
-
-                    ic_base = unit.ic_base as usize;
-                    pc = 0;
-                    regs = window!();
-                    continue $dispatch;
-                }
-                Called::Value(value) => set!($dispatch, $insn.a, value),
-                Called::Threw(throw) => Err(throw),
-                Called::Exit(value) => return Ok(value),
-                Called::Resume(resume) => break $restore resume,
-            }
-        }};
-    }
-
-    'dispatch: loop {
-        // Keep the dispatch descriptor borrowed; operand-heavy arms copy it
-        // locally so their inputs can be decoded together.
-        let insn = &code[pc];
-        pc += 1;
-        let resume = 'restore: {
-            let outcome: Result<(), Throw> = 'op: {
-                match insn.op {
-                    Opcode::Nop => continue 'dispatch,
-
-                    // ---- moves and constants ----
-                    Opcode::Mov => {
-                        reg!(insn.a) = reg!(insn.b);
-                        continue 'dispatch;
-                    }
-                    Opcode::Swap => {
-                        regs.swap(insn.a as usize, insn.b as usize);
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadWide => {
-                        let value = cx.heap.vm.registers[base + insn.imm as usize];
-                        set!('dispatch, insn.a, value)
-                    }
-                    Opcode::StoreWide => {
-                        let value = reg!(insn.a);
-                        cx.heap.vm.registers[base + insn.imm as usize] = value;
-                        regs = window!();
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadInt => {
-                        reg!(insn.a) = Value::int32(insn.int());
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadConst => {
-                        let bytecode = current_frame!().bytecode;
-                        let constants = cx.heap.payloads.bytecode.get(bytecode.index());
-                        debug_assert!(insn.imm < constants.constant_count);
-                        reg!(insn.a) = cx.heap.values.get(constants.constants, insn.imm);
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadUndefined => {
-                        reg!(insn.a) = Value::UNDEFINED;
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadNull => {
-                        reg!(insn.a) = Value::NULL;
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadTrue => {
-                        reg!(insn.a) = Value::TRUE;
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadFalse => {
-                        reg!(insn.a) = Value::FALSE;
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadEmpty => {
-                        reg!(insn.a) = Value::EMPTY;
-                        continue 'dispatch;
-                    }
-                    Opcode::LoadFunction => {
-                        reg!(insn.a) = Value::object(current_frame!().function);
-                        continue 'dispatch;
-                    }
-                    Opcode::CheckInit => {
-                        if !reg!(insn.a).is_empty() {
-                            continue 'dispatch;
-                        }
-                        Err(local_binding_error(cx, *insn))
-                    }
-                    Opcode::ThrowConstAssign => Err(local_binding_error(cx, *insn)),
-
-                    // ---- unary operators ----
-                    Opcode::Inc => {
-                        let insn = *insn;
-                        let x = reg!(insn.b);
-                        if let Some(i) = x.as_int32()
-                            && let Some(value) = i.checked_add(1)
-                        {
-                            reg!(insn.a) = Value::int32(value);
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
-                    }
-                    Opcode::IncGetElem => {
-                        let insn = *insn;
-                        let x = reg!(insn.b);
-                        if let Some(i) = x.as_int32()
-                            && let Some(value) = i.checked_add(1)
-                        {
-                            reg!(insn.a) = Value::int32(value);
-                            if let Some(read) = code.get(pc).copied()
-                                && read.op == Opcode::GetElem
-                                && let (Some(object), Some(index)) =
-                                    (reg!(read.b).as_object(), reg!(read.c).as_int32())
-                                && index >= 0
-                            {
-                                let header = cx.heap.objects.get(object.index());
-                                let elements = header.elements();
-                                if (index as u32) < elements.len
-                                    && (header.kind != ObjectKind::Array
-                                        || (index as u32) < header.payload)
-                                {
-                                    let element = cx.heap.values.get(elements, index as u32);
-                                    if !element.is_empty() {
-                                        pc += 1;
-                                        reg!(read.a) = element;
-                                        continue 'dispatch;
-                                    }
-                                }
-                            }
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
-                    }
-                    Opcode::Dec => {
-                        let insn = *insn;
-                        let x = reg!(insn.b);
-                        if let Some(i) = x.as_int32()
-                            && let Some(value) = i.checked_sub(1)
-                        {
-                            reg!(insn.a) = Value::int32(value);
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, ops::unary(cx, Unary::Dec, x))
-                    }
-                    Opcode::Neg | Opcode::Plus | Opcode::ToNumeric | Opcode::BitNot => {
-                        let x = reg!(insn.b);
-                        if let Some(value) = unary_fast(insn.op, x) {
-                            reg!(insn.a) = value;
-                            continue 'dispatch;
-                        }
-                        let op = match insn.op {
-                            Opcode::Neg => Unary::Neg,
-                            Opcode::Plus => Unary::Plus,
-                            Opcode::ToNumeric => Unary::ToNumeric,
-                            _ => Unary::BitNot,
-                        };
-                        write!('dispatch, insn.a, ops::unary(cx, op, x))
-                    }
-                    Opcode::Not => {
-                        let x = reg!(insn.b);
-                        if let Some(value) = x.as_bool() {
-                            reg!(insn.a) = Value::bool(!value);
-                            continue 'dispatch;
-                        }
-                        set!('dispatch, insn.a, Value::bool(!ops::to_boolean(cx.heap, x)))
-                    }
-                    Opcode::TypeOf => {
-                        let x = reg!(insn.b);
-                        set!('dispatch, insn.a, ops::type_of(cx, x))
-                    }
-                    // A primitive key converts without side effects: the base
-                    // check of `ToPropertyKeyOf` is left to the read.
-                    Opcode::ToPropertyKey | Opcode::ToPropertyKeyOf => {
-                        let x = reg!(insn.b);
-                        if x.is_int32() || x.as_string().is_some() || x.as_symbol().is_some() {
-                            reg!(insn.a) = x;
-                            continue 'dispatch;
-                        }
-                        let result = if insn.op == Opcode::ToPropertyKey {
-                            ops::to_property_key(cx, x)
-                        } else {
-                            let base = reg!(insn.c);
-                            to_property_key_of(cx, x, base)
-                        };
-                        write!('dispatch, insn.a, result.map(PropertyKey::to_value))
-                    }
-                    Opcode::IsUndefinedOrNull => {
-                        let x = reg!(insn.b);
-                        reg!(insn.a) = Value::bool(x.is_undefined() || x.is_null());
-                        continue 'dispatch;
-                    }
-                    Opcode::IsUndefined | Opcode::TypeOfIsUndefined => {
-                        reg!(insn.a) = Value::bool(reg!(insn.b).is_undefined());
-                        continue 'dispatch;
-                    }
-                    Opcode::IsNull => {
-                        reg!(insn.a) = Value::bool(reg!(insn.b).is_null());
-                        continue 'dispatch;
-                    }
-                    Opcode::TypeOfIsFunction => {
-                        let x = reg!(insn.b);
-                        set!('dispatch, insn.a, Value::bool(ops::is_callable(cx.heap, x)))
-                    }
-
-                    // ---- arithmetic ----
-                    Opcode::Add | Opcode::AddI => {
-                        let x = reg!(insn.b);
-                        let y = if insn.op == Opcode::Add {
-                            reg!(insn.c)
-                        } else {
-                            Value::int32(insn.int())
-                        };
-                        if let (Some(i), Some(j)) = (x.as_int32(), y.as_int32())
-                            && let Some(sum) = i.checked_add(j)
-                        {
-                            reg!(insn.a) = Value::int32(sum);
-                            continue 'dispatch;
-                        }
-                        if let (Some(f), Some(g)) = (x.as_f64(), y.as_f64()) {
-                            reg!(insn.a) = Value::number(f + g);
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, ops::add(cx, x, y))
-                    }
-                    Opcode::Sub | Opcode::SubI => {
-                        let x = reg!(insn.b);
-                        let y = if insn.op == Opcode::Sub {
-                            reg!(insn.c)
-                        } else {
-                            Value::int32(insn.int())
-                        };
-                        if let (Some(i), Some(j)) = (x.as_int32(), y.as_int32())
-                            && let Some(difference) = i.checked_sub(j)
-                        {
-                            reg!(insn.a) = Value::int32(difference);
-                            continue 'dispatch;
-                        }
-                        if let (Some(f), Some(g)) = (x.as_f64(), y.as_f64()) {
-                            reg!(insn.a) = Value::number(f - g);
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, ops::arith(cx, Arith::Sub, x, y))
-                    }
-                    Opcode::Mul | Opcode::MulI => {
-                        arith!('dispatch, insn, Mul, insn.op == Opcode::MulI)
-                    }
-                    Opcode::Div => arith!('dispatch, insn, Div, false),
-                    Opcode::Mod => arith!('dispatch, insn, Mod, false),
-                    Opcode::Pow => arith!('dispatch, insn, Pow, false),
-                    Opcode::Shl | Opcode::ShlI => {
-                        arith!('dispatch, insn, Shl, insn.op == Opcode::ShlI)
-                    }
-                    Opcode::Sar | Opcode::SarI => {
-                        arith!('dispatch, insn, Sar, insn.op == Opcode::SarI)
-                    }
-                    Opcode::Shr | Opcode::ShrI => {
-                        arith!('dispatch, insn, Shr, insn.op == Opcode::ShrI)
-                    }
-                    Opcode::BitAnd | Opcode::BitAndI => {
-                        arith!('dispatch, insn, BitAnd, insn.op == Opcode::BitAndI)
-                    }
-                    Opcode::BitOr | Opcode::BitOrI => {
-                        arith!('dispatch, insn, BitOr, insn.op == Opcode::BitOrI)
-                    }
-                    Opcode::BitXor | Opcode::BitXorI => {
-                        arith!('dispatch, insn, BitXor, insn.op == Opcode::BitXorI)
-                    }
-
-                    // ---- comparisons as values ----
-                    Opcode::Lt
-                    | Opcode::Lte
-                    | Opcode::Gt
-                    | Opcode::Gte
-                    | Opcode::Eq
-                    | Opcode::Neq
-                    | Opcode::StrictEq
-                    | Opcode::StrictNeq => {
-                        let (x, y) = (reg!(insn.b), reg!(insn.c));
-                        if let Some(order) = order(x, y) {
-                            reg!(insn.a) = Value::bool(JUMP_MASKS[insn.op as usize] & order != 0);
-                            continue 'dispatch;
-                        }
-                        let (test, when) = test_of(insn.op);
-                        write!('dispatch,
-                            insn.a,
-                            test.slow(cx, x, y).map(|holds| Value::bool(holds == when))
-                        )
-                    }
-                    Opcode::InstanceOf => {
-                        let (x, y) = (reg!(insn.b), reg!(insn.c));
-                        write!('dispatch, insn.a, ops::instance_of(cx, x, y).map(Value::bool))
-                    }
-                    Opcode::In => {
-                        let (x, y) = (reg!(insn.b), reg!(insn.c));
-                        write!('dispatch, insn.a, ops::has_property(cx, x, y).map(Value::bool))
-                    }
-
-                    // ---- control ----
-                    Opcode::Jmp => {
-                        pc = insn.imm as usize;
-                        continue 'dispatch;
-                    }
-                    Opcode::JmpBack => {
-                        let poll = &mut cx.heap.vm.poll;
-                        *poll -= 1;
-                        if *poll == 0 {
-                            if let Err(throw) = error::poll_interrupts(cx) {
-                                break 'op Err(throw);
-                            }
-                            pc = insn.imm as usize;
-                            break 'op Ok(());
-                        }
-                        pc = insn.imm as usize;
-                        continue 'dispatch;
-                    }
-                    Opcode::JTrue | Opcode::JFalse => {
-                        let x = reg!(insn.a);
-                        let truthy = match x.as_bool() {
-                            Some(value) => value,
-                            None => {
-                                let truthy = ops::to_boolean(cx.heap, x);
-                                regs = window!();
-                                truthy
-                            }
-                        };
-                        if truthy == (insn.op == Opcode::JTrue) {
-                            branch!('op, insn.imm as usize);
-                        }
-                        continue 'dispatch;
-                    }
-                    Opcode::JUndefinedOrNull => {
-                        let x = reg!(insn.a);
-                        if x.is_undefined() || x.is_null() {
-                            branch!('op, insn.imm as usize);
-                        }
-                        continue 'dispatch;
-                    }
-                    Opcode::Gosub => {
-                        reg!(insn.a) = Value::int32(pc as i32);
-                        pc = insn.imm as usize;
-                        continue 'dispatch;
-                    }
-                    Opcode::Ret => {
-                        pc = reg!(insn.a).as_int32().expect("a gosub return index") as usize;
-                        continue 'dispatch;
-                    }
-                    Opcode::JLt
-                    | Opcode::JLte
-                    | Opcode::JGt
-                    | Opcode::JGte
-                    | Opcode::JNlt
-                    | Opcode::JNlte
-                    | Opcode::JNgt
-                    | Opcode::JNgte
-                    | Opcode::JEq
-                    | Opcode::JNeq
-                    | Opcode::JStrictEq
-                    | Opcode::JStrictNeq
-                    | Opcode::JLtI
-                    | Opcode::JLteI
-                    | Opcode::JGtI
-                    | Opcode::JGteI
-                    | Opcode::JNltI
-                    | Opcode::JNlteI
-                    | Opcode::JNgtI
-                    | Opcode::JNgteI
-                    | Opcode::JEqI
-                    | Opcode::JNeqI
-                    | Opcode::JStrictEqI
-                    | Opcode::JStrictNeqI => {
-                        let insn = *insn;
-                        let mask = JUMP_MASKS[insn.op as usize];
-                        let x = reg!(insn.a);
-                        let y = if mask & IMMEDIATE != 0 {
-                            Value::int32(insn.short().into())
-                        } else {
-                            reg!(insn.b)
-                        };
-                        let taken = match order(x, y) {
-                            Some(order) => mask & order != 0,
-                            None => {
-                                let (test, when) = jump_of(insn.op);
-                                match test.slow(cx, x, y) {
-                                    Ok(holds) => {
-                                        regs = window!();
-                                        holds == when
-                                    }
-                                    Err(throw) => break 'op Err(throw),
-                                }
-                            }
-                        };
-                        if taken {
-                            branch!('op, insn.imm as usize);
-                        }
-                        continue 'dispatch;
-                    }
-
-                    // ---- properties ----
-                    Opcode::GetField => {
-                        let insn = *insn;
-                        // The hit reads the heap's arenas as fields, disjoint from
-                        // the register file, so the window stays.
-                        let object = reg!(insn.b);
-                        let site = ic_base + insn.c as usize;
-                        let entry = cx.heap.ics.entries[site];
-                        let heap = &cx.heap.objects;
-                        if let Some(value) = ic::get_hit(
-                            heap,
-                            &cx.heap.cells,
-                            &cx.heap.values,
-                            &cx.heap.strings,
-                            entry,
-                            object,
-                        ) {
-                            reg!(insn.a) = value;
-                            cx.heap.ics.count_hit(IcKind::Get);
-                            continue 'dispatch;
-                        }
-                        let fill = insn.c != FIELD_NO_SITE;
-                        write!('dispatch, insn.a, property::get_cached(cx, object, insn.key(), site, fill))
-                    }
-                    Opcode::SetField => {
-                        let insn = *insn;
-                        // The arenas are borrowed as in `GetField`.
-                        let (object, value) = (reg!(insn.a), reg!(insn.b));
-                        let site = ic_base + insn.c as usize;
-                        let entry = cx.heap.ics.entries[site];
-                        if ic::set_hit(
-                            &mut cx.heap.objects,
-                            &cx.heap.cells,
-                            &mut cx.heap.values,
-                            entry,
-                            object,
-                            value,
-                        ) {
-                            cx.heap.ics.count_hit(IcKind::Set);
-                            continue 'dispatch;
-                        }
-                        let fill = insn.c != FIELD_NO_SITE;
-                        property::set_cached(
-                            cx,
-                            object,
-                            insn.key(),
-                            value,
-                            unit.has(flags::STRICT),
-                            site,
-                            fill,
-                        )
-                    }
-                    Opcode::DefineField => {
-                        let (object, value) = (reg!(insn.a), reg!(insn.b));
-                        let object = object.as_object().expect("an object");
-                        property::define(cx, object, insn.key(), value)
-                    }
-                    Opcode::DeleteField => {
-                        let object = reg!(insn.b);
-                        write!('dispatch, insn.a,
-                            property::delete(cx, object, insn.key(), unit.has(flags::STRICT)).map(Value::bool)
-                        )
-                    }
-                    Opcode::GetElem => {
-                        let insn = *insn;
-                        let (object, key) = (reg!(insn.b), reg!(insn.c));
-                        if let (Some(target), Some(index)) = (object.as_object(), key.as_int32())
-                            && index >= 0
-                        {
-                            let header = cx.heap.objects.get(target.index());
-                            let elements = header.elements();
-                            if (index as u32) < elements.len
-                                && (header.kind != ObjectKind::Array
-                                    || (index as u32) < header.payload)
-                            {
-                                let element = cx.heap.values.get(elements, index as u32);
-                                if !element.is_empty() {
-                                    reg!(insn.a) = element;
-                                    continue 'dispatch;
-                                }
-                            }
-                            // A typed array's element.
-                            if header.kind == ObjectKind::TypedArray
-                                && let Some(element) = typed::fast_get(
-                                    &cx.heap.objects,
-                                    &cx.heap.payloads.internals,
-                                    target,
-                                    index as u32,
-                                )
-                            {
-                                reg!(insn.a) = element;
-                                continue 'dispatch;
-                            }
-                        }
-                        let result = property::get_computed(cx, object, key);
-                        write!('dispatch, insn.a, result)
-                    }
-                    Opcode::SetElem => {
-                        let insn = *insn;
-                        let (object, key, value) = (reg!(insn.a), reg!(insn.b), reg!(insn.c));
-                        if let (Some(target), Some(index)) = (object.as_object(), key.as_int32())
-                            && index >= 0
-                        {
-                            let header = cx.heap.objects.get(target.index());
-                            let elements = header.elements();
-                            // An `arguments` object's mapped indices go through
-                            // its cells: only arrays and ordinary objects take the
-                            // dense write.
-                            if header.kind == ObjectKind::TypedArray {
-                                if typed::fast_set(
-                                    &cx.heap.objects,
-                                    &mut cx.heap.payloads.internals,
-                                    target,
-                                    index as u32,
-                                    value,
-                                ) {
-                                    continue 'dispatch;
-                                }
-                            } else {
-                                let length = match header.kind {
-                                    ObjectKind::Array => header.payload,
-                                    ObjectKind::Ordinary => elements.len,
-                                    _ => 0,
-                                };
-                                // A hole defers to the chain unless no prototype
-                                // can intercept it.
-                                if (index as u32) < elements.len.min(length)
-                                    && (cx.heap.holes_writable
-                                        || !cx.heap.values.get(elements, index as u32).is_empty())
-                                {
-                                    cx.heap.values.set(elements, index as u32, value);
-                                    continue 'dispatch;
-                                }
-                            }
-                        }
-                        ops::to_property_key(cx, key).and_then(|key| {
-                            property::set(cx, object, key, value, unit.has(flags::STRICT))
-                        })
-                    }
-                    Opcode::DefineElem => {
-                        let (object, key, value) = (reg!(insn.a), reg!(insn.b), reg!(insn.c));
-                        let object = object.as_object().expect("an object");
-                        ops::to_property_key(cx, key)
-                            .and_then(|key| property::define(cx, object, key, value))
-                    }
-                    Opcode::DeleteElem => {
-                        let (object, key) = (reg!(insn.b), reg!(insn.c));
-                        let result = ops::to_property_key(cx, key).and_then(|key| {
-                            property::delete(cx, object, key, unit.has(flags::STRICT))
-                        });
-                        write!('dispatch, insn.a, result.map(Value::bool))
-                    }
-
-                    // ---- globals ----
-                    Opcode::GetGlobal | Opcode::GetGlobalOrUndefined => {
-                        // One generation compare and a load.
-                        let site = ic_base + global_site(*insn);
-                        let entry = cx.heap.ics.entries[site];
-                        if entry.w0 == cx.heap.global_generation {
-                            let start = cx.heap.objects.get(entry.w3).slots_start;
-                            reg!(insn.a) = cx.heap.values.get_at(start + entry.w1);
-                            cx.heap.ics.count_hit(IcKind::Global);
-                            continue 'dispatch;
-                        }
-                        write!('dispatch, insn.a, get_global(cx, *insn, site))
-                    }
-                    Opcode::SetGlobal => {
-                        let value = reg!(insn.a);
-                        let site = ic_base + global_site(*insn);
-                        let entry = cx.heap.ics.entries[site];
-                        if entry.w0 == cx.heap.global_generation
-                            && entry.w2 & u32::from(PropertyFlags::WRITABLE) != 0
-                        {
-                            let start = cx.heap.objects.get(entry.w3).slots_start;
-                            cx.heap.values.set_at(start + entry.w1, value);
-                            cx.heap.ics.count_hit(IcKind::Global);
-                            continue 'dispatch;
-                        }
-                        set_global(cx, *insn, value, unit.has(flags::STRICT), site)
-                    }
-                    Opcode::DefineGlobal => {
-                        let value = reg!(insn.a);
-                        let configurable = insn.b & global_flags::EVAL != 0;
-                        define_global(cx, insn.key(), value, true, configurable)
-                    }
-                    Opcode::DeclareGlobal
-                    | Opcode::DeclareGlobalLet
-                    | Opcode::DeclareGlobalConst
-                    | Opcode::CheckGlobalVar
-                    | Opcode::CheckGlobalLexical => declare_global(cx, *insn),
-                    Opcode::DeleteGlobal => {
-                        write!('dispatch, insn.a, delete_global(cx, insn.key()))
-                    }
-
-                    // ---- captured bindings ----
-                    Opcode::NewCell => {
-                        let value = reg!(insn.b);
-                        write!('dispatch, insn.a, new_cell(cx, value))
-                    }
-                    Opcode::NewCellEmpty => write!('dispatch, insn.a, new_cell(cx, Value::EMPTY)),
-                    Opcode::CloseCell => {
-                        let old = cell(reg!(insn.a));
-                        let value = cx.heap.scope_get(old, 0, 0);
-                        write!('dispatch, insn.a, new_cell(cx, value))
-                    }
-                    Opcode::LoadCell => {
-                        let cell = cell(reg!(insn.b));
-                        let slots = cx.heap.objects.get(cell.index()).slots();
-                        reg!(insn.a) = cx.heap.values.get(slots, 0);
-                        continue 'dispatch;
-                    }
-                    Opcode::StoreCell => {
-                        let (cell, value) = (cell(reg!(insn.a)), reg!(insn.b));
-                        let slots = cx.heap.objects.get(cell.index()).slots();
-                        cx.heap.values.set(slots, 0, value);
-                        continue 'dispatch;
-                    }
-                    Opcode::CheckCellInit => {
-                        let cell = cell(reg!(insn.a));
-                        let slots = cx.heap.objects.get(cell.index()).slots();
-                        if !cx.heap.values.get(slots, 0).is_empty() {
-                            continue 'dispatch;
-                        }
-                        Err(local_binding_error(cx, *insn))
-                    }
-                    Opcode::LoadCaptured => {
-                        let cell = captured_cell(
-                            &cx.heap.objects,
-                            &cx.heap.payloads.functions,
-                            &cx.heap.values,
-                            current_frame!().function,
-                            insn.imm,
-                        );
-                        let slots = cx.heap.objects.get(cell.index()).slots();
-                        reg!(insn.a) = cx.heap.values.get(slots, 0);
-                        continue 'dispatch;
-                    }
-                    Opcode::StoreCaptured => {
-                        let value = reg!(insn.a);
-                        let cell = captured_cell(
-                            &cx.heap.objects,
-                            &cx.heap.payloads.functions,
-                            &cx.heap.values,
-                            current_frame!().function,
-                            insn.imm,
-                        );
-                        let slots = cx.heap.objects.get(cell.index()).slots();
-                        cx.heap.values.set(slots, 0, value);
-                        continue 'dispatch;
-                    }
-
-                    // ---- rare forms, out of line ----
-                    Opcode::DefineGetter
-                    | Opcode::DefineSetter
-                    | Opcode::NewSpill
-                    | Opcode::ClearCell
-                    | Opcode::LoadSlot
-                    | Opcode::StoreSlot
-                    | Opcode::NewArguments
-                    | Opcode::Rest
-                    | Opcode::LoadNewTarget
-                    | Opcode::NewRegExp
-                    | Opcode::NewArrayK
-                    | Opcode::NewObjectLit
-                    | Opcode::InitField
-                    | Opcode::FinishObjectLit
-                    | Opcode::ForInStart
-                    | Opcode::AppendSpread
-                    | Opcode::ThrowInternal
-                    | Opcode::CheckCtor
-                    | Opcode::LoadHomeObject
-                    | Opcode::ToObject
-                    | Opcode::SetProto
-                    | Opcode::DefineMethod
-                    | Opcode::DefineMethodComputed
-                    | Opcode::SetFunctionName
-                    | Opcode::ThrowType
-                    | Opcode::ThrowReference
-                    | Opcode::ImportCall
-                    | Opcode::ConcatN => {
-                        let frame = current_frame!();
-                        rare_op(cx, &frame, unit, *insn)
-                    }
-                    Opcode::IterStart
-                    | Opcode::IterNext
-                    | Opcode::IterClose
-                    | Opcode::IterCloseThrow
-                    | Opcode::IterCallNext
-                    | Opcode::IterCall
-                    | Opcode::IterCheckObject
-                    | Opcode::IterStartAsync
-                    | Opcode::IterNextRaw
-                    | Opcode::IterResult => {
-                        let frame = current_frame!();
-                        super::iter::iter_op(cx, &frame, *insn)
-                    }
-                    Opcode::MakeClass
-                    | Opcode::InstallFields
-                    | Opcode::InitFields
-                    | Opcode::RunStaticInit
-                    | Opcode::CallStaticBlock
-                    | Opcode::GetSuper
-                    | Opcode::GetSuperValue
-                    | Opcode::PutSuperValue
-                    | Opcode::InitDerived
-                    | Opcode::InitThis
-                    | Opcode::InitThisCell
-                    | Opcode::InitThisCaptured
-                    | Opcode::CheckDerivedReturn
-                    | Opcode::NewPrivateName
-                    | Opcode::SetHomeObject
-                    | Opcode::NamePrivateMethod
-                    | Opcode::GetPrivate
-                    | Opcode::PutPrivate
-                    | Opcode::DefinePrivate
-                    | Opcode::PrivateIn
-                    | Opcode::GetPrivateMethod
-                    | Opcode::CallPrivateGetter
-                    | Opcode::CallPrivateSetter
-                    | Opcode::PrivateBrandIn
-                    | Opcode::CopyData
-                    | Opcode::CopyDataExcluded
-                    | Opcode::GlobalRef
-                    | Opcode::GetRef
-                    | Opcode::PutRef => {
-                        let frame = current_frame!();
-                        super::class::class_op(cx, &frame, unit, *insn)
-                    }
-                    Opcode::ForInNext => {
-                        let iterator = reg!(insn.b);
-                        match property::for_in_next(cx, iterator) {
-                            Ok(Some(key)) => {
-                                pc = insn.imm as usize;
-                                set!('dispatch, insn.a, key)
-                            }
-                            Ok(None) => Ok(()),
-                            Err(throw) => Err(throw),
-                        }
-                    }
-
-                    // ---- allocation ----
-                    Opcode::NewObject => {
-                        let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
-                        let slots = if insn.imm == 0 {
-                            MIN_OPEN_SLOTS
-                        } else {
-                            insn.imm
-                        };
-                        let object =
-                            cx.heap
-                                .alloc_object(ObjectKind::Ordinary, Some(prototype), slots);
-                        write!('dispatch, insn.a, object.map(Value::object).map_err(|error| error::heap_error(cx, error)))
-                    }
-                    Opcode::NewArray => write!('dispatch, insn.a, new_array(cx, base, *insn)),
-                    Opcode::MakeClosure => {
-                        let frame = current_frame!();
-                        write!('dispatch, insn.a, make_closure(cx, &frame, unit, insn.imm))
-                    }
-
-                    // ---- calls ----
-                    Opcode::Call
-                    | Opcode::CallMethod
-                    | Opcode::TailCall
-                    | Opcode::TailCallMethod
-                    | Opcode::New
-                    | Opcode::CallSpread
-                    | Opcode::NewSpread => {
-                        let mut next_frame;
-                        let result = if matches!(insn.op, Opcode::Call | Opcode::CallMethod) {
-                            let b = insn.b as usize;
-                            let method = insn.op == Opcode::CallMethod;
-                            let at = b + usize::from(method);
-                            let function = reg!(at);
-                            let this = if method { reg!(b) } else { Value::UNDEFINED };
-                            let target = if let Some(object) = function.as_object()
-                                && cx.heap.object_kind(object) == ObjectKind::Function
-                            {
-                                let record = cx.heap.function_record(object);
-                                if record.bytecode != NONE {
-                                    let bytecode = BytecodeId(record.bytecode);
-                                    let id = cx.heap.bytecode_unit(bytecode);
-                                    if !id.is_dynamic() {
-                                        let (next, plan) = cx.static_code.call_entry(id);
-                                        let next_base = base + at;
-                                        if !matches!(
-                                            plan,
-                                            crate::bytecode::call_plan::CallPlan::None
-                                        ) {
-                                            let value = call_plan::value(
-                                                cx,
-                                                next,
-                                                plan,
-                                                next_base,
-                                                insn.c as usize,
-                                                this,
-                                                bytecode,
-                                            );
-                                            if !value.is_empty() {
-                                                set!('dispatch, insn.a, value)
-                                            }
-                                        }
-                                        match prepare_frame(
-                                            cx,
-                                            next,
-                                            next_base,
-                                            insn.c as usize,
-                                            this,
-                                            object,
-                                        ) {
-                                            Ok(end) => {
-                                                let next_frame = Frame {
-                                                    unit: id,
-                                                    function: object,
-                                                    bytecode,
-                                                    base: (base + at) as u32,
-                                                    return_pc: pc as u32,
-                                                    return_dst: (base + insn.a as usize) as u32,
-                                                    argc: u32::from(insn.c),
-                                                    flags: 0,
-                                                };
-                                                cx.heap.vm.frames.push(next_frame);
-                                                cx.heap.vm.top = end;
-                                                if held.is_some() {
-                                                    clear_dynamic_unit(&mut held);
-                                                }
-                                                unit = next;
-                                                code = &unit.code;
-                                                base = next_frame.base as usize;
-
-                                                ic_base = unit.ic_base as usize;
-                                                pc = 0;
-                                                regs = window!();
-                                                continue 'dispatch;
-                                            }
-                                            Err(throw) => {
-                                                match entry_failed(cx, next, throw, false) {
-                                                    Ok(value) => set!('dispatch, insn.a, value),
-                                                    Err(throw) => break 'op Err(throw),
-                                                }
-                                            }
-                                        }
-                                    }
-                                    Callee::Bytecode(object, bytecode)
-                                } else {
-                                    match Native::from_index(record.native) {
-                                        Some(native) => Callee::Native(native),
-                                        None => Callee::NotCallable,
-                                    }
-                                }
-                            } else {
-                                Callee::NotCallable
-                            };
-                            next_frame = current_frame!();
-                            invoke::<false, false>(
-                                cx,
-                                &mut next_frame,
-                                unit,
-                                function,
-                                target,
-                                at,
-                                this,
-                                insn.c as usize,
-                                pc,
-                                insn.a,
-                                None,
-                            )
-                        } else {
-                            next_frame = current_frame!();
-                            special_call(cx, &mut next_frame, unit, *insn, pc)
-                        };
-                        called!('dispatch, 'restore, insn, next_frame => result)
-                    }
-                    Opcode::Return | Opcode::ReturnUndefined => {
-                        let value = if insn.op == Opcode::Return {
-                            reg!(insn.a)
-                        } else {
-                            Value::UNDEFINED
-                        };
-                        let frame = cx.heap.vm.frames.pop().expect("a returning frame");
-                        // A plain call's frame (not an entry, a construction or
-                        // a tail call) returns to the frame below, loaded once;
-                        // the backtrace's `VIA_*` marks do not matter here.
-                        if frame.flags
-                            & (frame_flags::ENTRY | frame_flags::CONSTRUCT | frame_flags::TAIL)
-                            == 0
-                        {
-                            break 'restore Resume {
-                                pc: frame.return_pc,
-                                dst: frame.return_dst,
-                                value,
-                            };
-                        }
-                        match finish_popped_return(cx, frame, value) {
-                            Returned::Exit(value) => return Ok(value),
-                            Returned::Resume(resume) => break 'restore resume,
-                        }
-                    }
-                    Opcode::Throw => Err(Throw(reg!(insn.a))),
-
-                    // ---- suspension, out of line ----
-                    Opcode::InitialYield
-                    | Opcode::AsyncStart
-                    | Opcode::Yield
-                    | Opcode::YieldStar
-                    | Opcode::Await => {
-                        let frame = current_frame!();
-                        match suspend_op(cx, &frame, unit, *insn, pc) {
-                            Ok(Returned::Exit(value)) => return Ok(value),
-                            Ok(Returned::Resume(resume)) => break 'restore resume,
-                            Err(throw) => Err(throw),
-                        }
-                    }
-                }
-            };
-
-            // A slow path finished: continue 'dispatch, or unwind its throw.
-            let Err(Throw(thrown)) = outcome else {
-                regs = window!();
-                continue 'dispatch;
-            };
-            // Place the fault before unwinding removes any backtrace frames.
-            error::place_frame(cx, thrown, unit, (pc - 1) as u32);
-            if cx.heap.vm.interrupted {
-                return Err(unwind_uncatchable(cx, thrown));
-            }
-            break 'restore unwind_catchable(cx, thrown, pc - 1)?;
-        };
-        load_frame!();
-        cx.heap.vm.registers[resume.dst as usize] = resume.value;
-        pc = resume.pc as usize;
-        regs = window!();
+pub(super) fn resume_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
+    if cx.static_code.has_images() {
+        run_image_at(cx, start)
+    } else {
+        run_at(cx, start)
     }
 }
+
+include!("interp/dispatch.rs");
+include!(concat!(env!("OUT_DIR"), "/image-dispatch.rs"));
 
 /// Handler search is cold. No allocation occurs while frames are popped;
 /// the shared continuation restores the handler's roots before writing its value.
@@ -3280,7 +2257,11 @@ fn new_array_constants(cx: &mut Cx<'_>, bytecode: BytecodeId, insn: Insn) -> Res
     Ok(Value::object(array))
 }
 
-fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Value, Throw> {
+fn new_object_literal<const IMAGE: bool>(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    insn: Insn,
+) -> Result<Value, Throw> {
     let count = insn.imm;
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let object = cx
@@ -3288,7 +2269,12 @@ fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Va
         .alloc_object(ObjectKind::Ordinary, Some(prototype), count)
         .map_err(|error| error::heap_error(cx, error))?;
     // Allocation may collect and clear the weak shape. Read it afterwards.
-    let site = unit.ic_base as usize + insn.c as usize;
+    let base = if IMAGE {
+        unit.cache_base(cx.heap)
+    } else {
+        unit.ic_base as usize
+    };
+    let site = base + insn.c as usize;
     let entry = cx.heap.ics.entry(site);
     if insn.c != FIELD_NO_SITE && entry.is_filled() {
         cx.heap.objects.get_mut(object.0).shape = ShapeId(entry.w0);

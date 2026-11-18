@@ -256,7 +256,7 @@ pub(crate) fn add_stack_at(
         };
         // A unit compiled without debug information (`-s`) has no file, and
         // QuickJS's line then stops at the name.
-        let _ = match (&debug.filename, pc.and_then(|pc| debug.position(pc))) {
+        let _ = match (&debug.filename, pc.and_then(|pc| unit.position(pc))) {
             (None, _) => writeln!(text, "    at {name}"),
             (Some(file), Some((line, column))) => {
                 writeln!(text, "    at {name} ({file}:{line}:{column})")
@@ -365,7 +365,7 @@ fn locate_line(
     pc: u32,
     index: usize,
 ) {
-    let Some((line, column)) = unit.debug.position(pc) else {
+    let Some((line, column)) = unit.position(pc) else {
         return;
     };
     let key = Names::key(cx.realm.names.stack);

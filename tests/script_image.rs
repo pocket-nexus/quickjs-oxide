@@ -1,6 +1,7 @@
-use oxide_core::bytecode::image::{ImageError, LoadError, ScriptImage};
+use oxide_core::bytecode::image::{ImageBytes, ImageError, LoadError, ScriptImage};
 use oxide_core::{Runtime, RuntimeOptions, Value};
 use quickjs_oxide::engine::api::image::compile_script_image;
+use std::rc::Rc;
 
 #[test]
 fn image_relocates_literals_onto_a_fresh_host_and_runs_jobs() {
@@ -129,4 +130,53 @@ fn compact_positions_preserve_the_source_backtrace() {
     let source_trace = runtime.thrown_summary(error.0).unwrap().stack.unwrap();
     assert!(image_trace.contains("bundle.js:4"));
     assert_eq!(image_trace, source_trace);
+}
+
+#[test]
+fn shared_admission_reuses_exact_bytes_in_separate_realms() {
+    let source = br#"
+        function read() {
+            const obj = { value: 42 };
+            return obj.value;
+        }
+        read();
+    "#;
+    let image = compile_script_image(source, "bundle.js").unwrap();
+    let backing = Rc::new(
+        [&b"prefix"[..], &image, &b"suffix"[..]]
+            .concat()
+            .into_boxed_slice(),
+    );
+    let end = 6 + image.len();
+    let prepared =
+        ScriptImage::decode_shared(ImageBytes::new(backing.clone(), 6..end).unwrap()).unwrap();
+    assert!(std::ptr::eq(prepared.bytes(), &backing[6..end]));
+
+    for _ in 0..2 {
+        let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+        let script = prepared.clone().instantiate(&mut runtime).unwrap();
+        assert_eq!(runtime.run_script(script).unwrap().as_int32(), Some(42));
+    }
+}
+
+#[test]
+fn repeated_image_frames_keep_the_same_instructions_and_keys() {
+    let source = br#"
+        (() => {
+            function read(object) { return object.answer; }
+            const object = { answer: 21 };
+            return read(object) + read(object);
+        })();
+    "#;
+    let image = compile_script_image(source, "bundle.js").unwrap();
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    let script = runtime.load_image(&image).unwrap();
+    let prior = runtime.memory_report().code.instruction_bytes;
+    let hold = runtime.hold(Value::object(script));
+    assert_eq!(runtime.run_script(script).unwrap().as_int32(), Some(42));
+    let cached = runtime.memory_report().code.instruction_bytes - prior;
+    assert!((1..=32 * 1024).contains(&cached));
+    runtime.heap_mut().collect();
+    assert_eq!(runtime.run_script(script).unwrap().as_int32(), Some(42));
+    runtime.release(hold);
 }

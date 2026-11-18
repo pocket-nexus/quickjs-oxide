@@ -795,12 +795,16 @@ impl Runtime {
         );
         let mut sites = Vec::new();
         for (id, unit) in self.units().all() {
-            for (pc, insn) in unit.code.iter().enumerate() {
+            let Some(cache_base) = unit.active_cache_base() else {
+                continue;
+            };
+            for pc in 0..unit.instruction_count() {
+                let insn = unit.instruction(pc).expect("a unit instruction");
                 if let Some(site) = insn.site() {
-                    let entry = (unit.ic_base + site) as usize;
+                    let entry = (cache_base + site) as usize;
                     let misses = stats.site_misses[entry];
                     if misses > 0 {
-                        sites.push((misses, id, pc, *insn));
+                        sites.push((misses, id, pc, insn));
                     }
                 }
             }
@@ -947,9 +951,14 @@ impl Runtime {
         code.static_units = self.code.len();
         for (_, unit) in self.units().all() {
             code.units += 1;
-            code.instructions += unit.code.len();
-            code.instruction_bytes += core::mem::size_of_val(&*unit.code);
-            code.position_bytes += core::mem::size_of_val(&*unit.debug.positions);
+            code.instructions += unit.instruction_count();
+            if let Some(image) = &unit.image {
+                code.instruction_bytes += image.instruction_bytes();
+                code.position_bytes += image.position_bytes();
+            } else {
+                code.instruction_bytes += core::mem::size_of_val(&*unit.code);
+                code.position_bytes += core::mem::size_of_val(&*unit.debug.positions);
+            }
             code.source_bytes += unit.source.as_ref().map_or(0, |source| source.len());
         }
         report

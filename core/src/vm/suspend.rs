@@ -156,7 +156,7 @@ pub(crate) fn resume(
     };
     cx.heap.vm.frames.push(frame);
     let pc = saved.pc as usize;
-    let point = pc.checked_sub(1).map(|at| unit.code[at]);
+    let point = pc.checked_sub(1).and_then(|at| unit.instruction(at));
     let mut thrown = None;
     match (resumption, point) {
         (Resumption::Start, _) => {}
@@ -183,7 +183,7 @@ pub(crate) fn resume(
         Err(error::stack_overflow(cx))
     } else {
         let result = match thrown {
-            None => interp::run_at(cx, pc),
+            None => interp::resume_at(cx, pc),
             Some(value) => interp::run_throwing(cx, pc, value),
         };
         cx.heap.vm.leave_native();

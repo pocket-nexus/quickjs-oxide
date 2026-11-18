@@ -59,7 +59,7 @@ impl<'a> Reader<'a> {
     }
 
     pub(super) fn count(&mut self, width: usize) -> Result<usize, ImageError> {
-        let count = self.u32()? as usize;
+        let count = self.var_u32()? as usize;
         if count > self.0.len() / width {
             return Err(ImageError::Malformed);
         }
@@ -122,7 +122,7 @@ impl Writer {
     }
 
     pub(super) fn count(&mut self, count: usize) -> Result<(), ImageError> {
-        self.u32(u32::try_from(count).map_err(|_| ImageError::TooLarge)?);
+        self.var_u32(u32::try_from(count).map_err(|_| ImageError::TooLarge)?);
         Ok(())
     }
 
@@ -134,29 +134,123 @@ impl Writer {
 }
 
 pub(super) fn checksum(bytes: &[u8]) -> u32 {
-    const TABLE: [u32; 256] = {
-        let mut table = [0; 256];
+    const TABLES: [[u32; 256]; 4] = {
+        let mut tables = [[0; 256]; 4];
         let mut index = 0;
-        while index < table.len() {
+        while index < 256 {
             let mut crc = index as u32;
             let mut bit = 0;
             while bit < 8 {
                 crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
                 bit += 1;
             }
-            table[index] = crc;
+            tables[0][index] = crc;
             index += 1;
         }
-        table
+        let mut table = 1;
+        while table < tables.len() {
+            let mut index = 0;
+            while index < 256 {
+                let previous = tables[table - 1][index];
+                tables[table][index] = (previous >> 8) ^ tables[0][previous as u8 as usize];
+                index += 1;
+            }
+            table += 1;
+        }
+        tables
     };
-    !bytes.iter().fold(!0, |crc, &byte| {
-        (crc >> 8) ^ TABLE[((crc as u8) ^ byte) as usize]
+    let (words, tail) = bytes.as_chunks::<4>();
+    let mut crc = !0;
+    for &word in words {
+        let [a, b, c, d] = (u32::from_le_bytes(word) ^ crc).to_le_bytes();
+        crc = TABLES[3][a as usize]
+            ^ TABLES[2][b as usize]
+            ^ TABLES[1][c as usize]
+            ^ TABLES[0][d as usize];
+    }
+    !tail.iter().fold(crc, |crc, &byte| {
+        (crc >> 8) ^ TABLES[0][((crc as u8) ^ byte) as usize]
     })
+}
+
+/// A running position in the packed source map.
+pub(super) struct Positions(crate::bytecode::SourcePosition);
+
+impl Positions {
+    pub(super) fn new((line, column): (u32, u32)) -> Self {
+        Self(crate::bytecode::SourcePosition {
+            pc: 0,
+            line,
+            column,
+        })
+    }
+
+    pub(super) fn next(
+        &mut self,
+        reader: &mut Reader<'_>,
+    ) -> Result<crate::bytecode::SourcePosition, ImageError> {
+        let head = reader.u8()?;
+        let (pc, line, column) = if head < 128 {
+            let zigzag = u32::from(head & 15);
+            (
+                u32::from(head >> 4),
+                0,
+                (zigzag >> 1) ^ 0u32.wrapping_sub(zigzag & 1),
+            )
+        } else {
+            let inline_pc = u32::from(head & 0x3f);
+            let pc = if inline_pc == 63 {
+                reader.var_u32()?
+            } else {
+                inline_pc
+            };
+            let line = if head & 0x40 != 0 {
+                reader.signed_delta()?
+            } else {
+                0
+            };
+            (pc, line, reader.signed_delta()?)
+        };
+        self.0.pc = self.0.pc.checked_add(pc).ok_or(ImageError::Malformed)?;
+        self.0.line = self.0.line.wrapping_add(line);
+        self.0.column = self.0.column.wrapping_add(column);
+        Ok(self.0)
+    }
+
+    pub(super) fn write(&mut self, writer: &mut Writer, next: crate::bytecode::SourcePosition) {
+        let pc = next.pc - self.0.pc;
+        let line = next.line.wrapping_sub(self.0.line);
+        let column = next.column.wrapping_sub(self.0.column);
+        let zigzag = (column << 1) ^ ((column as i32 >> 31) as u32);
+        if pc < 8 && line == 0 && zigzag < 16 {
+            writer.u8((pc << 4 | zigzag) as u8);
+        } else {
+            let flags = if line == 0 { 0x80 } else { 0xc0 };
+            writer.u8(flags | pc.min(63) as u8);
+            if pc >= 63 {
+                writer.var_u32(pc);
+            }
+            if line != 0 {
+                writer.signed_delta(line);
+            }
+            writer.signed_delta(column);
+        }
+        self.0 = next;
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageError, Reader, Writer};
+    use super::{ImageError, Reader, Writer, checksum};
+
+    #[test]
+    fn standard_crc32_and_short_tails() {
+        assert_eq!(checksum(b""), 0);
+        assert_eq!(checksum(b"123456"), 0x0972_d361);
+        assert_eq!(checksum(b"1234567"), 0x5003_699f);
+        assert_eq!(checksum(b"12345678"), 0x9ae0_daaf);
+        assert_eq!(checksum(b"123456789"), 0xcbf4_3926);
+    }
 
     #[test]
     fn variable_integers_preserve_full_width_and_negative_deltas() {

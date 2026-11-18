@@ -8,7 +8,7 @@ index b2d36e5d..81643707 100644
   "quickjs-oxide",
 + "quickjs-oxide-core",
  ]
- 
+
  [[package]]
 @@ -2176,6 +2177,7 @@ dependencies = [
  name = "pocket-linux-kms"
@@ -42,7 +42,7 @@ index b2d36e5d..81643707 100644
  version = "0.5.0"
 -source = "registry+https://github.com/rust-lang/crates.io-index"
 -checksum = "02e9e69a508e8525f37a6960701e247c49af67135857ecec61d14d9dc10f6e1a"
- 
+
  [[package]]
  name = "quote"
 diff --git a/Cargo.toml b/Cargo.toml
@@ -59,7 +59,7 @@ index 6ce0fcad..77d22af3 100644
  pocket-idf-runtime = { path = "programs/esp-idf/archive", version = "0.16.0", default-features = false }
  pocket-linux-alsa = { path = "platforms/linux/alsa", version = "0.16.0", default-features = false }
 diff --git a/contracts/spec/pocket-package.ts b/contracts/spec/pocket-package.ts
-index ee732dfd..edab1d46 100644
+index ee732dfd..25b26ee7 100644
 --- a/contracts/spec/pocket-package.ts
 +++ b/contracts/spec/pocket-package.ts
 @@ -77,7 +77,7 @@ export const POCKET_SECTION = {
@@ -76,7 +76,7 @@ index ee732dfd..edab1d46 100644
    if (bytes.length < headerSize) throw new Error("pocket package: truncated Oxide bytecode header");
    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 +  const version = view.getUint16(4, true);
-+  if (view.getUint32(0, true) === 0x4342584f && (version === 2 || version === 3)) {
++  if (view.getUint32(0, true) === 0x4342584f && (version === 2 || version === 3 || version === 4)) {
 +    if (view.getUint16(6, true) !== 24 || bytes.length <= 24 ||
 +        view.getUint32(8, true) !== bytes.length - 24) {
 +      throw new Error("pocket package: invalid Oxide code image length");
@@ -104,7 +104,7 @@ index fcc05cd9..22aa908b 100644
 +default = ["std", "source"]
 +std = []
 +source = ["std", "dep:quickjs-oxide"]
- 
+
  [dependencies]
  pocket-runtime = { path = "../runtime" }
  pocket-drivers = { path = "../drivers" }
@@ -142,7 +142,7 @@ index 7c0755b6..c6bf6c55 100644
 -        KEY.with(|$key| $expression)
 -    }};
 -}
- 
+
  macro_rules! field {
 -    ($js:expr, $object:expr, $name:literal, $value:expr) => {
 -        with_key!($name, key, set($js, $object, key, $value))
@@ -152,7 +152,7 @@ index 7c0755b6..c6bf6c55 100644
 +        put($js, $object, $name, value)
 +    }};
  }
- 
+
 -pub(crate) fn call(context: &Context, frame: &GuestFrame<'_>) -> JsResult<()> {
 -    let mut js = context.clone();
 -    let global = js.global_object()?;
@@ -216,7 +216,7 @@ index 7c0755b6..c6bf6c55 100644
      )?;
      Ok(())
  }
- 
+
 -fn array(js: &mut Context, values: impl Iterator<Item = Value>) -> JsResult<ObjectRef> {
 -    let array = js.new_array()?;
 -    for (i, value) in values.enumerate() {
@@ -228,7 +228,7 @@ index 7c0755b6..c6bf6c55 100644
 +    let array = js.new_array_from(&values)?;
 +    Ok(root(js, array))
  }
- 
+
 -fn text_value(js: &mut Context, events: &[TextEvent]) -> JsResult<ObjectRef> {
 -    let text = js.new_array()?;
 -    let mut index = 0;
@@ -291,7 +291,7 @@ index 7c0755b6..c6bf6c55 100644
 -    Ok(text)
 +    array(js, text.into_iter())
  }
- 
+
 -fn motion_value(js: &mut Context, motion: Option<&MotionState>) -> JsResult<Value> {
 +fn motion_value(js: &mut NativeCx<'_>, motion: Option<&MotionState>) -> JsResult<Value> {
      let Some(motion) = motion else {
@@ -363,20 +363,20 @@ index 7c0755b6..c6bf6c55 100644
 +    Ok(Value::object(motion_object))
  }
 diff --git a/engine/guest-oxide/src/lib.rs b/engine/guest-oxide/src/lib.rs
-index 9b289d01..013d8fc3 100644
+index 9b289d01..ef18f7b4 100644
 --- a/engine/guest-oxide/src/lib.rs
 +++ b/engine/guest-oxide/src/lib.rs
-@@ -1,14 +1,24 @@
+@@ -1,40 +1,84 @@
 -//! Experimental source-only QuickJS Oxide guest for the canonical UI contract.
 +//! PocketJS UI host bindings on the Oxide core. The source frontend is optional.
 +#![cfg_attr(not(feature = "std"), no_std)]
  #![forbid(unsafe_code)]
- 
+
 +extern crate alloc;
 +
  mod frame;
  mod ops;
- 
+
 -use pocket_runtime::{Guest, GuestEnvironment, GuestFrame, OpContext, RuntimeError};
 -use quickjs_oxide::engine::api::core::{
 -    Context, FunctionOptions, HeapLimits, Js, JsResult, JsString, NativeErrorKind, ObjectRef,
@@ -387,19 +387,37 @@ index 9b289d01..013d8fc3 100644
 +    string::{String, ToString},
  };
 +use oxide_core::{
-+    bytecode::image::LoadError, ErrorKind, HeapLimits, Intrinsic, NativeCx, ObjectId,
-+    PropertyDescriptor, PropertyKey, Runtime, RuntimeOptions, Throw, Value,
++    bytecode::image::{ImageBytes, LoadError, ScriptImage},
++    ErrorKind, HeapLimits, Intrinsic, NativeCx, ObjectId, PropertyDescriptor, PropertyKey, Runtime,
++    RuntimeOptions, Throw, Value,
 +};
++use pocket_runtime::pocket_package::source::OxideStorage;
 +use pocket_runtime::{Guest, GuestEnvironment, GuestFrame, OpContext, RuntimeError};
 +
 +type JsResult<T> = Result<T, Throw>;
- 
+
  #[derive(Default)]
  pub struct OxideGuest {
-@@ -21,20 +31,41 @@ impl OxideGuest {
+     runtime: Option<Runtime>,
++    image_storage: Option<ImageBytes>,
++    verified_image: Option<ScriptImage>,
+     last_error: Option<String>,
+ }
+
+ impl OxideGuest {
++    /// Accepts an image admitted by the installer. Only the same immutable
++    /// section can use this result.
++    pub fn with_verified_image(image: ScriptImage) -> Self {
++        Self {
++            verified_image: Some(image),
++            ..Self::default()
++        }
++    }
++
+     pub fn last_error(&self) -> Option<&str> {
          self.last_error.as_deref()
      }
- 
+
 -    fn turn(&mut self, run: impl FnOnce(&Context) -> JsResult<()>) -> Result<(), RuntimeError> {
 -        let Some(runtime) = &self.runtime else {
 -            self.last_error = Some("Oxide guest is not initialized".into());
@@ -451,8 +469,8 @@ index 9b289d01..013d8fc3 100644
 +        }
      }
  }
- 
-@@ -42,67 +73,90 @@ impl Guest for OxideGuest {
+
+@@ -42,67 +86,110 @@ impl Guest for OxideGuest {
      fn initialize(
          &mut self,
          ops: OpContext,
@@ -518,12 +536,19 @@ index 9b289d01..013d8fc3 100644
 +        })?;
 +        #[cfg(feature = "source")]
 +        quickjs_oxide::engine::api::image::install_dynamic_compiler(&mut runtime);
++        self.image_storage = ops.oxide_image_storage().and_then(|storage| match storage {
++            OxideStorage::Owned(bytes, range) => ImageBytes::new(bytes, range),
++            OxideStorage::Static(bytes) => Some(bytes.into()),
++        });
 +        let result = with_roots(&mut runtime, |cx| mount(cx, ops, env));
          self.runtime = Some(runtime);
 -        Ok(())
 +        self.finish(result)
-+    }
-+
+     }
+
+-    fn evaluate(&mut self, code: &[u8]) -> Result<(), RuntimeError> {
+-        let source = code.strip_suffix(&[0]).unwrap_or(code);
+-        self.turn(|context| context.eval_bytes(source).map(drop))
 +    fn evaluate(&mut self, _code: &[u8]) -> Result<(), RuntimeError> {
 +        #[cfg(feature = "source")]
 +        {
@@ -544,13 +569,26 @@ index 9b289d01..013d8fc3 100644
 +        {
 +            Err(RuntimeError::UnsupportedOperation)
 +        }
-     }
- 
--    fn evaluate(&mut self, code: &[u8]) -> Result<(), RuntimeError> {
--        let source = code.strip_suffix(&[0]).unwrap_or(code);
--        self.turn(|context| context.eval_bytes(source).map(drop))
++    }
++
 +    fn evaluate_oxide_bytecode(&mut self, envelope: &[u8]) -> Result<(), RuntimeError> {
-+        match self.runtime()?.load_image(envelope) {
++        let storage = self
++            .image_storage
++            .take()
++            .filter(|bytes| core::ptr::eq(bytes.as_ref(), envelope));
++        let verified = self
++            .verified_image
++            .take()
++            .filter(|image| core::ptr::eq(image.bytes(), envelope));
++        let runtime = self.runtime()?;
++        let script = if let Some(image) = verified {
++            image.instantiate(runtime).map_err(LoadError::Heap)
++        } else if let Some(bytes) = storage {
++            runtime.load_image_shared(bytes)
++        } else {
++            runtime.load_image(envelope)
++        };
++        match script {
 +            Ok(script) => self.execute(script),
 +            Err(LoadError::Rejected(error)) => {
 +                self.last_error = Some(error.to_string());
@@ -562,7 +600,7 @@ index 9b289d01..013d8fc3 100644
 +            }
 +        }
      }
- 
+
      fn frame(&mut self, frame: &GuestFrame<'_>) -> Result<(), RuntimeError> {
 -        self.turn(|context| frame::call(context, frame))
 +        let runtime = self.runtime()?;
@@ -570,7 +608,7 @@ index 9b289d01..013d8fc3 100644
 +            with_roots(runtime, |cx| frame::call(cx, frame)).and_then(|()| runtime.run_jobs());
 +        self.finish(result)
      }
- 
+
      fn collect(&mut self) -> Result<(), RuntimeError> {
 -        if let Some(runtime) = &self.runtime {
 -            if let Err(error) = runtime.run_jobs() {
@@ -582,12 +620,12 @@ index 9b289d01..013d8fc3 100644
 +        let result = self.runtime()?.run_jobs();
 +        self.finish(result)
      }
- 
+
      fn shutdown(&mut self) {
-@@ -110,107 +164,223 @@ impl Guest for OxideGuest {
+@@ -110,107 +197,223 @@ impl Guest for OxideGuest {
      }
  }
- 
+
 -fn engine_error(context: &Context, error: OxideError) -> String {
 -    if let OxideError::Exception(value) = &error {
 -        if let Ok(description) = context.print_value(value) {
@@ -621,13 +659,13 @@ index 9b289d01..013d8fc3 100644
 +    let object = cx.new_object().map_err(|_| oom(cx))?;
 +    Ok(root(cx, object))
  }
- 
+
 -fn key(name: &str) -> JsResult<PropertyKey> {
 -    Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
 +fn key(cx: &mut NativeCx<'_>, name: &str) -> JsResult<PropertyKey> {
 +    cx.heap_mut().property_key(name).map_err(|_| oom(cx))
  }
- 
+
 -fn put(js: &mut impl Js, object: &ObjectRef, name: &str, value: Value) -> JsResult<()> {
 -    set(js, object, &key(name)?, value)
 +fn put(cx: &mut NativeCx<'_>, object: ObjectId, name: &str, value: Value) -> JsResult<()> {
@@ -637,7 +675,7 @@ index 9b289d01..013d8fc3 100644
 +    cx.heap_mut().roots().truncate(mark);
 +    result
  }
- 
+
 -fn set(js: &mut impl Js, object: &ObjectRef, key: &PropertyKey, value: Value) -> JsResult<()> {
 -    if js.set_property(object, key, value)? {
 +fn set(cx: &mut NativeCx<'_>, object: ObjectId, key: PropertyKey, value: Value) -> JsResult<()> {
@@ -648,7 +686,7 @@ index 9b289d01..013d8fc3 100644
 +        Err(throw(cx, ErrorKind::Type, "cannot set property"))
      }
  }
- 
+
  fn number(value: impl Into<f64>) -> Value {
 -    Value::number(value.into())
 +    let value = value.into();
@@ -658,16 +696,20 @@ index 9b289d01..013d8fc3 100644
 +    } else {
 +        Value::number(value)
 +    }
-+}
-+
+ }
+
+-fn string(value: &str) -> JsResult<Value> {
+-    Ok(JsString::try_from_utf8(value)?.into())
 +fn array_buffer(cx: &mut NativeCx<'_>, bytes: &[u8]) -> JsResult<ObjectId> {
 +    let buffer = cx.new_array_buffer(bytes.len())?;
 +    cx.array_buffer_write(buffer, 0, bytes)?;
 +    Ok(buffer)
  }
- 
--fn string(value: &str) -> JsResult<Value> {
--    Ok(JsString::try_from_utf8(value)?.into())
+
+-fn viewport(js: &mut Context, [w, h]: [u32; 2]) -> JsResult<ObjectRef> {
+-    let object = js.new_object()?;
+-    put(js, &object, "w", number(w))?;
+-    put(js, &object, "h", number(h))?;
 +/// The native asset registry handles normal rendering without a JS copy.
 +fn mount_pak(
 +    cx: &mut NativeCx<'_>,
@@ -734,19 +776,15 @@ index 9b289d01..013d8fc3 100644
 +    } else {
 +        Err(throw(cx, ErrorKind::Type, "cannot mount __pak"))
 +    }
- }
- 
--fn viewport(js: &mut Context, [w, h]: [u32; 2]) -> JsResult<ObjectRef> {
--    let object = js.new_object()?;
--    put(js, &object, "w", number(w))?;
--    put(js, &object, "h", number(h))?;
++}
++
 +fn viewport(cx: &mut NativeCx<'_>, [w, h]: [u32; 2]) -> JsResult<ObjectId> {
 +    let object = object(cx)?;
 +    put(cx, object, "w", number(w))?;
 +    put(cx, object, "h", number(h))?;
      Ok(object)
  }
- 
+
 -fn mount(context: &Context, ops: OpContext, env: &GuestEnvironment<'_>) -> JsResult<()> {
 -    // Use a normal realm, not the qjs CLI's file, process or script helpers.
 -    let mut js = context.clone();
@@ -795,7 +833,7 @@ index 9b289d01..013d8fc3 100644
      }
 -    put(&mut js, &global, "console", console.into())?;
 +    put(cx, global, "console", Value::object(console))?;
- 
+
 -    let ui = js.new_object()?;
 -    ops::mount(&mut js, &ui, ops)?;
 -    put(&mut js, &ui, "__host", string(env.host)?)?;
@@ -893,13 +931,13 @@ index 0baf6f52..2eced1bf 100644
 -};
 -
 -use crate::{number, put, set, string};
- 
+
  const MAX_ARGS: usize = 6;
  const _: () = {
 @@ -26,30 +23,33 @@ const _: () = {
      }
  };
- 
+
 -pub(crate) fn mount(js: &mut Context, ui: &ObjectRef, ops: OpContext) -> JsResult<()> {
 +pub(crate) fn mount(cx: &mut NativeCx<'_>, ui: ObjectId, ops: OpContext) -> JsResult<()> {
      for descriptor in OP_DESCRIPTORS {
@@ -926,7 +964,7 @@ index 0baf6f52..2eced1bf 100644
      }
      Ok(())
  }
- 
+
 -pub(crate) fn canonical_string(scope: &mut Scope<'_>, value: Value) -> JsResult<String> {
 -    let text = JsString::from_js(scope, value)?;
 -    if !text.is_wide() {
@@ -948,7 +986,7 @@ index 0baf6f52..2eced1bf 100644
 @@ -58,10 +58,15 @@ pub(crate) fn canonical_string(scope: &mut Scope<'_>, value: Value) -> JsResult<
      Ok(result)
  }
- 
+
 -fn invoke(scope: &mut Scope<'_>, ops: &OpContext, descriptor: &OpDescriptor) -> JsResult<Value> {
 -    let argc = scope.argc();
 +fn invoke(
@@ -1061,12 +1099,12 @@ index 0baf6f52..2eced1bf 100644
 +    let result = result.map_err(|_| throw(cx, ErrorKind::Internal, "UI operation failed"))?;
 +    marshal(cx, descriptor.result, result)
  }
- 
+
  // Passing the array by value shortens its argument lifetimes to the byte
 @@ -152,39 +157,34 @@ fn dispatch_with_bytes<'a>(
      ops.dispatch(descriptor.id, &args[..descriptor.args.len()])
  }
- 
+
 -fn marshal(scope: &mut Scope<'_>, kind: ResultKind, result: OpResult) -> JsResult<Value> {
 +fn marshal(cx: &mut NativeCx<'_>, kind: ResultKind, result: OpResult) -> JsResult<Value> {
      match (kind, result) {
@@ -1134,7 +1172,7 @@ index 7797d262..8b3cf1f0 100644
          Some(js) => js,
 @@ -428,25 +430,6 @@ fn envelope_section(bytes: Option<&[u8]>) -> Result<Option<&[u8]>, GuestError> {
  }
- 
+
  /// Check the outer framing, leaving instruction validation to the engine.
 -fn oxide_envelope_section(bytes: Option<&[u8]>) -> Result<Option<&[u8]>, GuestError> {
 -    const HEADER_SIZE: usize = 16;
@@ -1160,7 +1198,7 @@ index 7797d262..8b3cf1f0 100644
  /// (`has_bytecode`). The bundle ends with NUL like the UI JavaScript.
 @@ -609,7 +592,7 @@ mod tests {
      }
- 
+
      #[test]
 -    fn oxide_admission_checks_framing_even_with_source_and_quickjs() {
 +    fn oxide_admission_leaves_format_checks_to_the_guest() {
@@ -1170,7 +1208,7 @@ index 7797d262..8b3cf1f0 100644
 @@ -637,23 +620,23 @@ mod tests {
          assert_eq!(guest.js, js);
          assert_eq!(guest.bytecode, Some(&quickjs[..]));
- 
+
 -        let reject = |envelope: &[u8]| {
 +        let defer_to_guest = |envelope: &[u8]| {
              let bytes = encode(envelope, true);
@@ -1196,25 +1234,119 @@ index 7797d262..8b3cf1f0 100644
 -        reject(&damaged);
 +        defer_to_guest(&damaged);
      }
- 
+
      #[test]
+diff --git a/engine/package/src/source.rs b/engine/package/src/source.rs
+index 65e52fe9..6161fbd8 100644
+--- a/engine/package/src/source.rs
++++ b/engine/package/src/source.rs
+@@ -12,7 +12,7 @@ use crate::{
+     admission::{HostFacts, Timing},
+     select_guest, GuestError,
+ };
+-use alloc::{boxed::Box, vec::Vec};
++use alloc::{boxed::Box, rc::Rc, vec::Vec};
+ use core::ops::Range;
+ use pocket_drivers::{PackageBytes, PackageSource, SourceError};
+
+@@ -26,8 +26,14 @@ pub enum LoadError {
+     Admission(GuestError),
+ }
+
++/// Immutable backing storage available to an image interpreter.
++pub enum OxideStorage {
++    Owned(Rc<Box<[u8]>>, Range<usize>),
++    Static(&'static [u8]),
++}
++
+ pub struct LoadedPackage {
+-    bytes: PackageBytes,
++    bytes: LoadedBytes,
+     js: Range<usize>,
+     worker_js: Range<usize>,
+     pak: Range<usize>,
+@@ -41,6 +47,20 @@ pub struct LoadedPackage {
+     pub timing: Timing,
+ }
+
++enum LoadedBytes {
++    Owned(Rc<Box<[u8]>>),
++    Other(PackageBytes),
++}
++
++impl AsRef<[u8]> for LoadedBytes {
++    fn as_ref(&self) -> &[u8] {
++        match self {
++            Self::Owned(bytes) => bytes,
++            Self::Other(bytes) => bytes.as_ref(),
++        }
++    }
++}
++
+ impl LoadedPackage {
+     /// The host facts come from the program profile exported at build time,
+     /// never from this source or a package variant. `take_bytes` runs before
+@@ -130,6 +150,10 @@ impl LoadedPackage {
+         let oxide_bytecode = guest.oxide_bytecode.map(range);
+         let (package_hash, variant_hash, timing) =
+             (guest.package_hash, guest.variant_hash, guest.timing);
++        let bytes = match bytes {
++            PackageBytes::Owned(bytes) => LoadedBytes::Owned(Rc::new(bytes)),
++            other => LoadedBytes::Other(other),
++        };
+         Ok(Self {
+             bytes,
+             js,
+@@ -178,6 +202,18 @@ impl LoadedPackage {
+             .clone()
+             .map(|range| &self.bytes.as_ref()[range])
+     }
++    /// Retain the Oxide image for execution directly from the package.
++    pub fn oxide_storage(&self) -> Option<OxideStorage> {
++        let range = self.oxide_bytecode.clone()?;
++        match &self.bytes {
++            LoadedBytes::Owned(bytes) => Some(OxideStorage::Owned(bytes.clone(), range)),
++            LoadedBytes::Other(PackageBytes::Static(bytes)) => {
++                Some(OxideStorage::Static(&bytes[range]))
++            }
++            LoadedBytes::Other(_) => None,
++        }
++    }
++
+     pub fn plan(&self) -> &[u8] {
+         &self.bytes.as_ref()[self.plan.clone()]
+     }
 diff --git a/engine/runtime/src/lib.rs b/engine/runtime/src/lib.rs
-index d1d67d97..4ca2cdbd 100644
+index d1d67d97..1730c4b7 100644
 --- a/engine/runtime/src/lib.rs
 +++ b/engine/runtime/src/lib.rs
-@@ -22,7 +22,7 @@ pub use pocket_package::Timing;
- pub use coordinator::{DisplayId, RendererId};
- 
+@@ -15,19 +15,19 @@ pub mod input;
+ pub mod timing;
+ pub use alloc::borrow::Cow;
+ pub use config::{Profile, RuntimeConfig};
++pub use coordinator::{DisplayId, RendererId};
+ pub use guest::*;
+ pub use pocket_drivers::InputClasses;
+ pub use pocket_package;
+ pub use pocket_package::Timing;
+-pub use coordinator::{DisplayId, RendererId};
+
  use alloc::{boxed::Box, rc::Rc, vec::Vec};
 -use core::cell::{Cell, Ref, RefCell, RefMut};
++use coordinator::{Coordinator, PresentError};
 +use core::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
  use pocket_drivers::{
      DisplayOutput, DisplayRole, InputFrameBuilder, InputSource, PackageSource, Renderer,
  };
+ use pocket_package::source::LoadedPackage;
+-use coordinator::{Coordinator, PresentError};
+ use pocketjs_core::Ui;
+
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 @@ -117,11 +117,14 @@ impl core::ops::DerefMut for CoreState {
      }
  }
- 
+
 +type OpObserver = dyn Fn(u16, &[OpArg<'_>], &Result<OpResult, RuntimeError>);
 +
  #[derive(Clone)]
@@ -1226,15 +1358,26 @@ index d1d67d97..4ca2cdbd 100644
  }
  enum PackageAssets {
      Admitted(Rc<LoadedPackage>),
-@@ -156,6 +159,7 @@ impl OpContext {
+@@ -156,8 +159,18 @@ impl OpContext {
              state: Rc::new(RefCell::new(CoreState::new(ui))),
              active: Rc::new(Cell::new(true)),
              package: Rc::new(RefCell::new(None)),
 +            observer: Rc::default(),
          }
      }
++    /// Shared backing for guest bytecode in a package with transferred storage.
++    pub fn oxide_image_storage(&self) -> Option<pocket_package::source::OxideStorage> {
++        let package = self.package.borrow();
++        let PackageAssets::Admitted(package) = package.as_ref()? else {
++            return None;
++        };
++        package.oxide_storage()
++    }
++
      pub fn core(&self) -> Result<Ref<'_, CoreState>, RuntimeError> {
-@@ -170,6 +174,14 @@ impl OpContext {
+         if !self.active.get() {
+             return Err(RuntimeError::InvalidState);
+@@ -170,6 +183,14 @@ impl OpContext {
          }
          self.state.try_borrow_mut().map_err(|_| RuntimeError::Busy)
      }
@@ -1249,14 +1392,16 @@ index d1d67d97..4ca2cdbd 100644
      /// Install an embedded asset pack for an embedding that owns admission and
      /// guest lifecycle. Full Runtime instances load assets from PackageSource.
      /// Validation completes before any core asset changes; tile loads retain
-@@ -260,7 +272,20 @@ impl OpContext {
+@@ -260,7 +281,22 @@ impl OpContext {
                  .iter()
                  .any(|provider| provider.supports_op(op))
      }
 +    /// Attach a diagnostic observer shared by all operation contexts.
 +    /// The observer must not dispatch operations.
 +    pub fn observe_operations(&self, observer: Rc<OpObserver>) -> Result<(), RuntimeError> {
-+        self.observer.set(observer).map_err(|_| RuntimeError::InvalidState)
++        self.observer
++            .set(observer)
++            .map_err(|_| RuntimeError::InvalidState)
 +    }
      pub fn dispatch(&self, op: u16, args: &[OpArg<'_>]) -> Result<OpResult, RuntimeError> {
 +        let result = self.dispatch_inner(op, args);
@@ -1270,6 +1415,37 @@ index d1d67d97..4ca2cdbd 100644
          if !self.active.get() {
              return Err(RuntimeError::UnsupportedOperation);
          }
+@@ -531,16 +567,26 @@ impl Runtime {
+     /// `physical` first and restores it on failure. The core's auxiliary root
+     /// takes `logical`; the guest's layers under it follow when the guest
+     /// calls `resizeAuxiliarySurface` (@pocketjs/framework/display).
+-    pub fn resize_auxiliary(&mut self, logical: [u32; 2], physical: [u32; 2]) -> Result<(), RuntimeError> {
++    pub fn resize_auxiliary(
++        &mut self,
++        logical: [u32; 2],
++        physical: [u32; 2],
++    ) -> Result<(), RuntimeError> {
+         self.validate_embedded_gpu_resize(physical)?;
+-        if self.profile.auxiliary.is_none() || logical.contains(&0) || logical.iter().any(|v| *v > 32000) {
++        if self.profile.auxiliary.is_none()
++            || logical.contains(&0)
++            || logical.iter().any(|v| *v > 32000)
++        {
+             return Err(RuntimeError::InvalidArgument);
+         }
+         let mut core = self.ops.core_mut()?;
+-        let refreshed = self.presenter.refresh_displays(self.presenter.scale(), self.profile.viewport);
++        let refreshed = self
++            .presenter
++            .refresh_displays(self.presenter.scale(), self.profile.viewport);
+         track_textures(&self.presenter, &mut core.ui);
+         refreshed?;
+-        core.ui.create_auxiliary_surface(logical[0] as f32, logical[1] as f32);
++        core.ui
++            .create_auxiliary_surface(logical[0] as f32, logical[1] as f32);
+         core.mutated();
+         self.profile.auxiliary = Some(physical);
+         self.profile.auxiliary_logical.to_mut()[0] = logical;
 diff --git a/platforms/apple/Cargo.toml b/platforms/apple/Cargo.toml
 index 33f43a5e..6f039996 100644
 --- a/platforms/apple/Cargo.toml
@@ -1282,14 +1458,14 @@ index 33f43a5e..6f039996 100644
 +pocket-guest-oxide = { workspace = true, optional = true, features = ["source"] }
  pocket-guest-rquickjs = { workspace = true, default-features = true }
  log = { workspace = true }
- 
+
 diff --git a/programs/linux-kms/Cargo.toml b/programs/linux-kms/Cargo.toml
 index c0515444..bdb0666c 100644
 --- a/programs/linux-kms/Cargo.toml
 +++ b/programs/linux-kms/Cargo.toml
 @@ -10,9 +10,12 @@ license.workspace = true
  publish = false
- 
+
  [features]
 -default = []
 +default = ["rquickjs-guest"]
@@ -1299,7 +1475,7 @@ index c0515444..bdb0666c 100644
 +oxide-guest = ["oxide-image", "pocket-guest-oxide/source"]
 +oxide-image = ["dep:pocket-guest-oxide", "pocket-guest-oxide/std"]
 +qjbc-compare = ["dep:cc"]
- 
+
  [dependencies]
  pocket-runtime = { workspace = true, default-features = true }
 @@ -21,7 +24,7 @@ pocket-raster = { workspace = true, default-features = true }
@@ -1313,11 +1489,11 @@ index c0515444..bdb0666c 100644
  pocket-linux-fbdev = { workspace = true, default-features = true }
 @@ -30,8 +33,13 @@ pocket-linux-alsa = { workspace = true, default-features = true, optional = true
  libc = "0.2.191"
- 
+
  [build-dependencies]
 +cc = { version = "1", optional = true }
  pocket-profile-build.workspace = true
- 
+
  [[example]]
  name = "guest_compare"
 -required-features = ["oxide-guest"]
@@ -1411,20 +1587,20 @@ index ee28ad17..3760c99c 100644
 @@ -32,12 +34,17 @@ mod profile {
      include!(concat!(env!("OUT_DIR"), "/pocket_profile.rs"));
  }
- 
+
 +#[cfg(feature = "qjbc-compare")]
 +#[path = "guest_compare/qjbc.rs"]
 +mod qjbc;
 +
  const FORMAT: PixelFormat = PixelFormat::Rgba8888;
  const HEAP_LIMIT: usize = 32 * 1024 * 1024;
- 
+
  struct ReplayInput {
      tick: u64,
      classes: InputClasses,
 +    press_hero: bool,
  }
- 
+
  impl InputSource for ReplayInput {
 @@ -49,6 +56,7 @@ impl InputSource for ReplayInput {
          frame.buttons |= match self.tick % 360 {
@@ -1437,7 +1613,7 @@ index ee28ad17..3760c99c 100644
 @@ -159,6 +167,11 @@ impl<G: Guest> Guest for TimedGuest<G> {
          self.record_error(result)
      }
- 
+
 +    fn evaluate_oxide_bytecode(&mut self, envelope: &[u8]) -> Result<(), RuntimeError> {
 +        let result = self.guest.evaluate_oxide_bytecode(envelope);
 +        self.record_error(result)
@@ -1454,7 +1630,7 @@ index ee28ad17..3760c99c 100644
 +        "usage: guest_compare [--package-layout] [--boot-only] [--hero-press] quickjs|qjbc|oxide APP.pocket FRAMES [output.ppm]",
      )
  }
- 
+
  fn peak_rss_kib() -> Option<u64> {
      let status = fs::read_to_string("/proc/self/status").ok()?;
 -    let hwm = status.lines().find_map(|line| line.strip_prefix("VmHWM:"))?;
@@ -1463,7 +1639,7 @@ index ee28ad17..3760c99c 100644
 +        .find_map(|line| line.strip_prefix("VmHWM:"))?;
      hwm.split_ascii_whitespace().next()?.parse().ok()
  }
- 
+
 @@ -224,7 +239,10 @@ fn package_layout(
      } else {
          profile.auxiliary
@@ -1474,7 +1650,7 @@ index ee28ad17..3760c99c 100644
 +        auxiliary,
 +    ))
  }
- 
+
  fn memory_display(
 @@ -239,11 +257,18 @@ fn memory_display(
          .checked_mul(height as usize)
@@ -1707,7 +1883,7 @@ index ee28ad17..3760c99c 100644
 -        .shutdown()
 -        .map_err(|error| measurements.runtime_error("shutdown", error))?;
 -    drop(runtime);
- 
+
      let rgba = output
          .get()
 diff --git a/programs/linux-kms/examples/guest_compare/qjbc.rs b/programs/linux-kms/examples/guest_compare/qjbc.rs

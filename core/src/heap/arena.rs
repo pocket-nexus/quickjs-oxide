@@ -101,7 +101,9 @@ impl<T: Record> Arena<T> {
     /// its index. A growth step is charged to `room`.
     #[inline(always)]
     pub fn alloc(&mut self, value: T, room: &mut Room) -> u32 {
-        self.extra += value.extra_bytes();
+        let extra = value.extra_bytes();
+        self.extra += extra;
+        room.account_arena(extra);
         self.live_count += 1;
         if self.free_count != 0 {
             let index = self.take_free();

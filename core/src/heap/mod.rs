@@ -303,17 +303,25 @@ impl Heap {
     /// them (the ropes' halves, the atom table, the inline caches): what the
     /// cap limits and the budget bounds.
     pub fn bytes(&self) -> usize {
+        self.arena_bytes() + self.auxiliary_bytes()
+    }
+
+    fn arena_bytes(&self) -> usize {
         self.objects.bytes()
             + self.shapes.bytes()
             + self.strings.bytes()
-            + self.rope_bytes.get()
             + self.symbols.bytes()
             + self.bigints.bytes()
             + self.cells.bytes()
             + self.payloads.functions.bytes()
             + self.payloads.bytecode.bytes()
             + self.payloads.internals.bytes()
-            + self.values.bytes()
+            + self.values.backing_bytes()
+    }
+
+    fn auxiliary_bytes(&self) -> usize {
+        self.values.metadata_bytes()
+            + self.rope_bytes.get()
             + self.code.live_bytes()
             + self.regexps.bytes()
             + self.table_bytes()

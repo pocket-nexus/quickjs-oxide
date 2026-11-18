@@ -1,7 +1,9 @@
 use alloc::{vec, vec::Vec};
 
-use super::{HEADER_SIZE, ImageError, MAGIC, NONE, VERSION, Writer, fingerprint, wire};
-use crate::bytecode::{Capture, CodeUnit, Format, flags};
+use super::{
+    HEADER_SIZE, ImageError, MAGIC, NONE, VERSION, Writer, fingerprint, keyed, packed, wire,
+};
+use crate::bytecode::{Capture, CodeUnit, flags};
 use crate::heap::string::StringRepr;
 use crate::{FxHashMap, Heap, KeyKind, Kind, ObjectId, ObjectKind, Runtime, StringId, Value};
 
@@ -14,7 +16,10 @@ pub fn encode_script(runtime: &Runtime, script: ObjectId) -> Result<Vec<u8>, Ima
         .function_bytecode(script)
         .ok_or(ImageError::UnsupportedScript)?;
     let entry_unit = runtime.units().get(heap.bytecode_unit(entry));
-    if !entry_unit.has(flags::SCRIPT) || entry_unit.has(flags::MODULE | flags::EVAL) {
+    if entry_unit.image.is_some()
+        || !entry_unit.has(flags::SCRIPT)
+        || entry_unit.has(flags::MODULE | flags::EVAL)
+    {
         return Err(ImageError::UnsupportedScript);
     }
 
@@ -37,6 +42,16 @@ pub fn encode_script(runtime: &Runtime, script: ObjectId) -> Result<Vec<u8>, Ima
         .map(|(index, &(id, _))| (id, index as u32))
         .collect();
 
+    let mut masks = [packed::NO_IMMEDIATE; packed::MASKS];
+    for &(id, _) in &units {
+        for insn in &runtime.units().get(id).code {
+            let mask = &mut masks[insn.op as usize];
+            *mask |= packed::mode(*insn);
+            if insn.imm != 0 || keyed(insn.op) {
+                *mask &= !packed::NO_IMMEDIATE;
+            }
+        }
+    }
     let mut encoder = Encoder {
         heap,
         raw_key: runtime.realm().names.raw,
@@ -51,7 +66,7 @@ pub fn encode_script(runtime: &Runtime, script: ObjectId) -> Result<Vec<u8>, Ima
             return Err(ImageError::UnsupportedScript);
         }
         let children = unit.children.iter().map(|id| ids[id]);
-        encoder.unit(&unit, children, heap.bytecode_constants(record))?;
+        encoder.unit(&unit, &masks, children, heap.bytecode_constants(record))?;
     }
 
     let mut body = Writer::default();
@@ -79,13 +94,14 @@ pub fn encode_script(runtime: &Runtime, script: ObjectId) -> Result<Vec<u8>, Ima
             }
         }
     }
+    body.0.extend(masks);
     body.0.extend(encoder.units.0);
 
     let mut image = Writer(Vec::with_capacity(usize::from(HEADER_SIZE) + body.0.len()));
     image.0.extend(MAGIC);
     image.u16(VERSION);
     image.u16(HEADER_SIZE);
-    image.count(body.0.len())?;
+    image.u32(u32::try_from(body.0.len()).map_err(|_| ImageError::TooLarge)?);
     image.u64(fingerprint());
     image.u32(wire::checksum(&body.0));
     image.0.extend(body.0);
@@ -112,6 +128,7 @@ impl Encoder<'_> {
     fn unit(
         &mut self,
         unit: &CodeUnit,
+        masks: &[u8; packed::MASKS],
         children: impl Iterator<Item = u32>,
         constants: &[Value],
     ) -> Result<(), ImageError> {
@@ -125,42 +142,52 @@ impl Encoder<'_> {
             unit.spill_slots,
             unit.length,
         ] {
-            self.units.u16(value);
+            self.units.var_u32(u32::from(value));
         }
-        self.units.u32(unit.ic_count);
+        self.units.var_u32(unit.ic_count);
         let name = unit.name_atom.map_or(NONE, |id| self.text(id));
-        self.units.u32(name);
+        self.units.var_u32(name.wrapping_add(1));
         self.units.blob(unit.debug.name.as_bytes())?;
         let (line, column) = unit.debug.definition.unwrap_or_default();
-        self.units.u32(line);
-        self.units.u32(column);
+        self.units.var_u32(line);
+        self.units.var_u32(column);
         self.units
             .blob(unit.source.as_deref().unwrap_or_default())?;
 
-        self.units.count(unit.code.len())?;
-        for &insn in &unit.code {
-            let imm = if matches!(insn.op.format(), Format::Key | Format::AKey | Format::ABKey) {
-                match insn.key().kind() {
-                    KeyKind::String(id) => self.text(id),
-                    KeyKind::Index(_) => insn.imm,
-                    KeyKind::Symbol(_) => return Err(ImageError::UnsupportedScript),
-                }
-            } else {
-                insn.imm
-            };
-            self.units.0.extend([insn.op as u8, insn.a, insn.b, insn.c]);
-            self.units.var_u32(imm);
+        let mut used = [0u8; 3];
+        for insn in &unit.code {
+            used[0] |= insn.a;
+            used[1] |= insn.b;
+            used[2] |= insn.c;
         }
+        let widths = used.map(|bits| 8 - bits.leading_zeros() as u8);
+        let mut instructions = Writer::default();
+        packed::write(
+            &mut instructions,
+            masks,
+            widths,
+            unit.code.iter().copied().map(|mut insn| {
+                if keyed(insn.op) {
+                    insn.imm = match insn.key().kind() {
+                        KeyKind::String(id) => self.text(id),
+                        KeyKind::Index(_) => insn.imm,
+                        KeyKind::Symbol(_) => return Err(ImageError::UnsupportedScript),
+                    };
+                }
+                Ok(insn)
+            }),
+        )?;
+        self.units.0.extend(instructions.0);
         self.units.count(unit.handlers.len())?;
         for handler in &unit.handlers {
-            self.units.u32(handler.start);
-            self.units.u32(handler.end);
-            self.units.u32(handler.target);
-            self.units.u16(handler.register);
+            self.units.var_u32(handler.start);
+            self.units.var_u32(handler.end);
+            self.units.var_u32(handler.target);
+            self.units.var_u32(u32::from(handler.register));
         }
         self.units.count(unit.children.len())?;
         for child in children {
-            self.units.u32(child);
+            self.units.var_u32(child);
         }
         self.units.count(unit.captures.len())?;
         for capture in &unit.captures {
@@ -170,21 +197,16 @@ impl Encoder<'_> {
                 Capture::Outer(index) => (2, index),
                 Capture::Slot(index) => (3, index),
             };
-            self.units.u8(tag);
-            self.units.u16(index);
+            self.units.var_u32((u32::from(index) << 2) | tag);
         }
         self.units.count(unit.debug.positions.len())?;
-        let (mut pc, mut line, mut column) = (0, line, column);
-        for position in &unit.debug.positions {
-            self.units.var_u32(position.pc - pc);
-            self.units.signed_delta(position.line.wrapping_sub(line));
-            self.units
-                .signed_delta(position.column.wrapping_sub(column));
-            (pc, line, column) = (position.pc, position.line, position.column);
+        let mut positions = wire::Positions::new((line, column));
+        for &position in &unit.debug.positions {
+            positions.write(&mut self.units, position);
         }
         self.units.count(unit.direct_eval_sites.len())?;
         for &site in &unit.direct_eval_sites {
-            self.units.u32(site);
+            self.units.var_u32(site);
         }
         self.units.count(constants.len())?;
         for &value in constants {
@@ -209,11 +231,11 @@ impl Encoder<'_> {
             Kind::Symbol => return Err(ImageError::UnsupportedScript),
         });
         match kind {
-            Kind::Int32 => self.units.u32(value.as_int32().unwrap() as u32),
+            Kind::Int32 => self.units.signed_delta(value.as_int32().unwrap() as u32),
             Kind::Number => self.units.u64(value.as_f64().unwrap().to_bits()),
             Kind::String => {
                 let index = self.text(value.as_string().unwrap());
-                self.units.u32(index);
+                self.units.var_u32(index);
             }
             Kind::BigInt => {
                 let bigint = self.heap.bigint(value.as_bigint().unwrap());
@@ -243,7 +265,7 @@ impl Encoder<'_> {
             return Err(ImageError::UnsupportedScript);
         }
         let len = self.heap.array_length(raw);
-        self.units.u32(len);
+        self.units.var_u32(len);
         for index in 0..len {
             let key = PropertyKey::index(index).ok_or(ImageError::UnsupportedScript)?;
             let cooked_value = self

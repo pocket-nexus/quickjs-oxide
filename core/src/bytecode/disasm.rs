@@ -109,7 +109,8 @@ pub fn disassemble(unit: &CodeUnit, key_name: &mut dyn FnMut(PropertyKey) -> Str
         unit.this_slots,
         unit.ic_count
     );
-    for (pc, &insn) in unit.code.iter().enumerate() {
+    for pc in 0..unit.instruction_count() {
+        let insn = unit.instruction(pc).expect("a unit instruction");
         let operands = operands(unit, insn, key_name);
         let line = format!("  {pc:04}  {:<20}{operands}", insn.op.name());
         let _ = writeln!(out, "{}", line.trim_end());
