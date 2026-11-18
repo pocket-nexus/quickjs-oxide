@@ -61,7 +61,9 @@ instruction names a record in its unit's wide side table. Both forms use
 instruction indexes for control flow. The VM reads the records in place.
 
 Source positions use a one-byte encoding for small changes on the same line.
-Other changes use unsigned PC and ZigZag line and column deltas. The
+Other changes store a short PC delta in the record header, with an extended
+delta for longer jumps. Line deltas are present only when the line changes.
+Line and column deltas use ZigZag encoding. The
 interpreter reads this table when it needs a source location. Property-key
 operands refer to the image's string table. The runtime maps them to its own
 atoms through a per-image table. BigInts carry a sign and limbs. Regular

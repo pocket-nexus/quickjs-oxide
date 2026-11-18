@@ -178,14 +178,19 @@ impl Positions {
                 0,
                 (zigzag >> 1) ^ 0u32.wrapping_sub(zigzag & 1),
             )
-        } else if head == 128 {
-            (
-                reader.var_u32()?,
-                reader.signed_delta()?,
-                reader.signed_delta()?,
-            )
         } else {
-            return Err(ImageError::Malformed);
+            let inline_pc = u32::from(head & 0x3f);
+            let pc = if inline_pc == 63 {
+                reader.var_u32()?
+            } else {
+                inline_pc
+            };
+            let line = if head & 0x40 != 0 {
+                reader.signed_delta()?
+            } else {
+                0
+            };
+            (pc, line, reader.signed_delta()?)
         };
         self.0.pc = self.0.pc.checked_add(pc).ok_or(ImageError::Malformed)?;
         self.0.line = self.0.line.wrapping_add(line);
@@ -201,9 +206,14 @@ impl Positions {
         if pc < 8 && line == 0 && zigzag < 16 {
             writer.u8((pc << 4 | zigzag) as u8);
         } else {
-            writer.u8(128);
-            writer.var_u32(pc);
-            writer.signed_delta(line);
+            let flags = if line == 0 { 0x80 } else { 0xc0 };
+            writer.u8(flags | pc.min(63) as u8);
+            if pc >= 63 {
+                writer.var_u32(pc);
+            }
+            if line != 0 {
+                writer.signed_delta(line);
+            }
             writer.signed_delta(column);
         }
         self.0 = next;
