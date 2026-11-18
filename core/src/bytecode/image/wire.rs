@@ -134,23 +134,42 @@ impl Writer {
 }
 
 pub(super) fn checksum(bytes: &[u8]) -> u32 {
-    const TABLE: [u32; 256] = {
-        let mut table = [0; 256];
+    const TABLES: [[u32; 256]; 4] = {
+        let mut tables = [[0; 256]; 4];
         let mut index = 0;
-        while index < table.len() {
+        while index < 256 {
             let mut crc = index as u32;
             let mut bit = 0;
             while bit < 8 {
                 crc = (crc >> 1) ^ (0xedb8_8320 & 0u32.wrapping_sub(crc & 1));
                 bit += 1;
             }
-            table[index] = crc;
+            tables[0][index] = crc;
             index += 1;
         }
-        table
+        let mut table = 1;
+        while table < tables.len() {
+            let mut index = 0;
+            while index < 256 {
+                let previous = tables[table - 1][index];
+                tables[table][index] = (previous >> 8) ^ tables[0][previous as u8 as usize];
+                index += 1;
+            }
+            table += 1;
+        }
+        tables
     };
-    !bytes.iter().fold(!0, |crc, &byte| {
-        (crc >> 8) ^ TABLE[((crc as u8) ^ byte) as usize]
+    let (words, tail) = bytes.as_chunks::<4>();
+    let mut crc = !0;
+    for &word in words {
+        let [a, b, c, d] = (u32::from_le_bytes(word) ^ crc).to_le_bytes();
+        crc = TABLES[3][a as usize]
+            ^ TABLES[2][b as usize]
+            ^ TABLES[1][c as usize]
+            ^ TABLES[0][d as usize];
+    }
+    !tail.iter().fold(crc, |crc, &byte| {
+        (crc >> 8) ^ TABLES[0][((crc as u8) ^ byte) as usize]
     })
 }
 
@@ -222,7 +241,16 @@ impl Positions {
 
 #[cfg(test)]
 mod tests {
-    use super::{ImageError, Reader, Writer};
+    use super::{ImageError, Reader, Writer, checksum};
+
+    #[test]
+    fn standard_crc32_and_short_tails() {
+        assert_eq!(checksum(b""), 0);
+        assert_eq!(checksum(b"123456"), 0x0972_d361);
+        assert_eq!(checksum(b"1234567"), 0x5003_699f);
+        assert_eq!(checksum(b"12345678"), 0x9ae0_daaf);
+        assert_eq!(checksum(b"123456789"), 0xcbf4_3926);
+    }
 
     #[test]
     fn variable_integers_preserve_full_width_and_negative_deltas() {

@@ -2,12 +2,12 @@ use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use super::{
     Constant, HEADER_SIZE, ImageBytes, ImageCode, ImageError, ImageUnitData, LoadError, MAGIC,
-    NONE, Reader, Text, VERSION, fingerprint, keyed, packed, text_ref, wire, wire_atom,
+    NONE, Reader, Text, VERSION, fingerprint, packed, text_ref, wire, wire_atom,
 };
 use crate::bytecode::{Capture, CodeUnit, CodeUnitId, DebugInfo, Handler, flags, validate};
 use crate::heap::atom::KEY_INDEX_LIMIT;
 use crate::vm::compile::Compiler;
-use crate::{BytecodeTemplate, HeapError, Intrinsic, KeyKind, ObjectId, Runtime, StringId, Value};
+use crate::{BytecodeTemplate, HeapError, Intrinsic, ObjectId, Runtime, StringId, Value};
 
 /// A verified image of one classic script. Decoding requires neither a
 /// runtime nor a source compiler. Installation interns literals and keys in
@@ -103,20 +103,13 @@ impl ScriptImage {
                 }
             }
             let code = data.packed.view(bytes, masks);
-            let insns = |pc| {
-                let insn = code.get(pc)?;
-                if keyed(insn.op) {
-                    match insn.key().kind() {
-                        KeyKind::Index(_) => {}
-                        KeyKind::String(id) if (id.0 as usize) < text.len() => {}
-                        _ => return None,
-                    }
-                }
-                Some(insn)
-            };
-            validate::validate_stream(&unit, code.len(), insns, &|id| {
-                units.get(id.index() as usize)
-            })
+            validate::validate_stream(
+                &unit,
+                code.len(),
+                |pc| code.get(pc),
+                Some(text.len() as u32),
+                &|id| units.get(id.index() as usize),
+            )
             .map_err(ImageError::InvalidCode)?;
             has_parent.push(false);
             units.push(unit);

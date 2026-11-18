@@ -87,6 +87,7 @@ pub fn validate<'a>(
         unit,
         unit.code.len(),
         |pc| unit.code.get(pc).copied(),
+        None,
         published,
     )
 }
@@ -95,13 +96,24 @@ pub(crate) fn validate_stream<'a>(
     unit: &CodeUnit,
     len: usize,
     code: impl Fn(usize) -> Option<Insn>,
+    image_strings: Option<u32>,
     published: &dyn Fn(super::CodeUnitId) -> Option<&'a CodeUnit>,
 ) -> Result<(), ValidateError> {
     use ValidateErrorKind as E;
     let len = len as u32;
     let registers = unit.register_count as u32;
-    if len == 0 {
+    let Some(last_pc) = len.checked_sub(1) else {
         return fail(None, E::EmptyCode);
+    };
+    if !code(last_pc as usize)
+        .ok_or(ValidateError {
+            at: Some(last_pc),
+            kind: E::InvalidInstruction,
+        })?
+        .op
+        .is_terminator()
+    {
+        return fail(Some(last_pc), E::FallsOffEnd);
     }
     if unit.temp_base() > registers {
         return fail(None, E::LayoutOverflow);
@@ -131,8 +143,15 @@ pub(crate) fn validate_stream<'a>(
         let Some(insn) = code(pc) else {
             return fail(at, E::InvalidInstruction);
         };
-        if pc as u32 + 1 == len && !insn.op.is_terminator() {
-            return fail(at, E::FallsOffEnd);
+        let format = insn.op.format();
+        if let Some(strings) = image_strings
+            && matches!(format, Format::Key | Format::AKey | Format::ABKey)
+        {
+            match insn.key().kind() {
+                crate::KeyKind::Index(_) => {}
+                crate::KeyKind::String(id) if id.0 < strings => {}
+                _ => return fail(at, E::InvalidInstruction),
+            }
         }
         let register = |r: u8| {
             if (r as u32) < registers {
@@ -148,7 +167,7 @@ pub(crate) fn validate_stream<'a>(
                 fail(at, E::Target(t))
             }
         };
-        match insn.op.format() {
+        match format {
             Format::None | Format::Key => {}
             Format::A | Format::AInt | Format::AKey | Format::ACount => {
                 register(insn.a)?;
