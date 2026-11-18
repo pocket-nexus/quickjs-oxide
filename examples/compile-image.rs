@@ -1,5 +1,6 @@
 //! Build-host exporter for a prebundled classic script.
 
+use oxide_core::bytecode::image::ScriptImage;
 use quickjs_oxide::engine::api::image::{DebugInfoMode, compile_script_image_with_debug};
 use std::{env, fs, io, path::Path};
 
@@ -24,6 +25,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or("<input>");
     let image =
         compile_script_image_with_debug(&source, filename, debug).map_err(io::Error::other)?;
-    fs::write(output, image)?;
+    let verified = ScriptImage::decode_shared(image.into_boxed_slice().into())?;
+    fs::write(output, verified.bytes())?;
     Ok(())
 }

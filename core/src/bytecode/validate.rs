@@ -5,11 +5,12 @@
 
 use core::fmt;
 
-use super::{Capture, CodeUnit, Format, NO_SPILL, Opcode, flags};
+use super::{Capture, CodeUnit, Format, Insn, NO_SPILL, Opcode, flags};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ValidateErrorKind {
     EmptyCode,
+    InvalidInstruction,
     /// The last instruction falls through past the end of the code.
     FallsOffEnd,
     /// `register_count` is below `1 + parameters + locals`.
@@ -74,28 +75,39 @@ pub fn validate<'a>(
     unit: &CodeUnit,
     published: &dyn Fn(super::CodeUnitId) -> Option<&'a CodeUnit>,
 ) -> Result<(), ValidateError> {
-    use ValidateErrorKind as E;
-    let len = unit.code.len() as u32;
-    let registers = unit.register_count as u32;
-    let Some(last) = unit.code.last() else {
-        return fail(None, E::EmptyCode);
-    };
-    if !last.op.is_terminator() {
-        return fail(Some(len - 1), E::FallsOffEnd);
-    }
-    if unit.temp_base() > registers {
-        return fail(None, E::LayoutOverflow);
-    }
-    if unit.has(flags::ARROW) && unit.has(flags::CONSTRUCTOR) {
-        return fail(None, E::Flags);
-    }
     let positions = &unit.debug.positions;
     if positions.windows(2).any(|pair| pair[0].pc >= pair[1].pc)
         || positions
             .last()
             .is_some_and(|last| last.pc as usize >= unit.code.len())
     {
-        return fail(None, E::LineTable);
+        return fail(None, ValidateErrorKind::LineTable);
+    }
+    validate_stream(
+        unit,
+        unit.code.len(),
+        |pc| unit.code.get(pc).copied(),
+        published,
+    )
+}
+
+pub(crate) fn validate_stream<'a>(
+    unit: &CodeUnit,
+    len: usize,
+    code: impl Fn(usize) -> Option<Insn>,
+    published: &dyn Fn(super::CodeUnitId) -> Option<&'a CodeUnit>,
+) -> Result<(), ValidateError> {
+    use ValidateErrorKind as E;
+    let len = len as u32;
+    let registers = unit.register_count as u32;
+    if len == 0 {
+        return fail(None, E::EmptyCode);
+    }
+    if unit.temp_base() > registers {
+        return fail(None, E::LayoutOverflow);
+    }
+    if unit.has(flags::ARROW) && unit.has(flags::CONSTRUCTOR) {
+        return fail(None, E::Flags);
     }
     for (index, &child) in unit.children.iter().enumerate() {
         let Some(child_unit) = published(child) else {
@@ -114,8 +126,14 @@ pub fn validate<'a>(
         }
     }
 
-    for (pc, insn) in unit.code.iter().enumerate() {
+    for pc in 0..len as usize {
         let at = Some(pc as u32);
+        let Some(insn) = code(pc) else {
+            return fail(at, E::InvalidInstruction);
+        };
+        if pc as u32 + 1 == len && !insn.op.is_terminator() {
+            return fail(at, E::FallsOffEnd);
+        }
         let register = |r: u8| {
             if (r as u32) < registers {
                 Ok(())
@@ -211,9 +229,7 @@ pub fn validate<'a>(
             }
         }
         if insn.op == Opcode::FinishObjectLit
-            && !unit
-                .code
-                .get(insn.imm as usize)
+            && !code(insn.imm as usize)
                 .is_some_and(|creator| creator.op == Opcode::NewObjectLit && creator.a == insn.a)
         {
             return fail(at, E::Target(insn.imm));

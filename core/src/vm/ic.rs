@@ -18,7 +18,7 @@
 
 use alloc::vec::Vec;
 
-use crate::bytecode::{CodeUnit, Opcode};
+use crate::bytecode::{CodeUnit, Insn, Opcode};
 use crate::heap::arena::Arena;
 use crate::heap::object::{NONE, ObjectHeader, ObjectKind, flags};
 use crate::heap::string::StringRecord;
@@ -272,7 +272,35 @@ impl IcStore {
     /// Reserves the entries of a unit about to be published and sets its
     /// `ic_base`: the first free range that fits, else the end of the store.
     pub(crate) fn reserve(&mut self, unit: &mut CodeUnit) {
-        let count = unit.ic_count;
+        let first = self.reserve_range(unit.ic_count);
+        for insn in &unit.code {
+            self.set_kind(first, *insn);
+        }
+        unit.ic_base = first;
+    }
+
+    #[cold]
+    pub(crate) fn activate_image(&mut self, unit: &CodeUnit) -> u32 {
+        let image = unit.image.as_ref().expect("an image unit");
+        let first = self.reserve_range(unit.ic_count);
+        for pc in 0..unit.instruction_count() {
+            self.set_kind(
+                first,
+                unit.instruction(pc).expect("a validated instruction"),
+            );
+        }
+        image.cache_base.set(Some(first));
+        first
+    }
+
+    #[inline]
+    fn set_kind(&mut self, first: u32, insn: Insn) {
+        if let (Some(kind), Some(site)) = (IcKind::of(insn.op), insn.site()) {
+            self.kinds[(first + site) as usize] = kind;
+        }
+    }
+
+    fn reserve_range(&mut self, count: u32) -> u32 {
         let end = self.entries.len() as u32;
         let first = match self.free.iter().position(|&(_, len)| len >= count) {
             _ if count == 0 => end,
@@ -305,14 +333,8 @@ impl IcStore {
         }
         // Sites the instructions do not name (the reserved no-cache field
         // site) keep the field kind and stay empty.
-        let first = first as usize;
-        self.kinds[first..len].fill(IcKind::Get);
-        for insn in unit.code.iter() {
-            if let (Some(kind), Some(site)) = (IcKind::of(insn.op), insn.site()) {
-                self.kinds[first + site as usize] = kind;
-            }
-        }
-        unit.ic_base = first as u32;
+        self.kinds[first as usize..len].fill(IcKind::Get);
+        first
     }
 
     /// Empties the entries of a freed unit and returns its range (and the

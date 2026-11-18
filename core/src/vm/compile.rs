@@ -250,7 +250,7 @@ impl<'a> Compiler<'a> {
 
     /// Reserve storage for a unit whose operands and children were checked
     /// by the publication validator already.
-    pub(crate) fn publish_validated(&mut self, mut unit: CodeUnit) -> CodeUnitId {
+    fn publish_validated(&mut self, mut unit: CodeUnit) -> CodeUnitId {
         self.heap.ics.reserve(&mut unit);
         match &mut self.code {
             // A static unit lives as long as the runtime, and so do its keys,
@@ -267,6 +267,20 @@ impl<'a> Compiler<'a> {
                 self.heap.gc.allocated += bytes;
                 id
             }
+        }
+    }
+
+    pub(crate) fn image_base(&self, count: usize) -> Result<CodeUnitId, HeapError> {
+        match &self.code {
+            Store::Owned(code) => code.image_base(count).ok_or(HeapError::OutOfMemory),
+            Store::Shared(_) => unreachable!("images are attached to the runtime"),
+        }
+    }
+
+    pub(crate) fn attach_image(&mut self, first: CodeUnitId, units: Box<[CodeUnit]>) {
+        match &mut self.code {
+            Store::Owned(code) => code.attach_image(first, units),
+            Store::Shared(_) => unreachable!("images are attached to the runtime"),
         }
     }
 

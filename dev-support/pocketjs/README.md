@@ -7,10 +7,13 @@ dispatch path for both image-only and source-capable Oxide hosts. It keeps
 the container version and the original app plan and asset pack. The
 `--oxide-only` packer accepts UI-only apps such as stock Hero.
 
-The current encoder produces OXBC v3. Build the exporter and guest from
+The current encoder produces OXBC v4. Build the exporter and guest from
 the same core checkout so their fingerprints match. The guest reuses the
 native asset registry and creates the private `__pak` buffer on first
-access for packages with assets already mounted. The initial accessor
+access for packages with assets already mounted. The core can execute
+directly from owned or static package storage. A host that retains an
+admitted `ScriptImage` can supply it via `OxideGuest::with_verified_image`.
+The default file path verifies the image at boot. The initial accessor
 becomes a writable data property after the first read or assignment to
 `globalThis.__pak`.
 

@@ -1,30 +1,37 @@
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
 
 use super::{
-    Constant, HEADER_SIZE, ImageError, ImageUnit, LoadError, MAGIC, NONE, Reader, Text, VERSION,
-    fingerprint, text_ref, wire, wire_atom,
+    Constant, HEADER_SIZE, ImageBytes, ImageCode, ImageError, ImageUnitData, LoadError, MAGIC,
+    NONE, Reader, Text, VERSION, fingerprint, keyed, packed, text_ref, wire, wire_atom,
 };
-use crate::bytecode::{
-    Capture, CodeUnit, CodeUnitId, DebugInfo, Format, Handler, Insn, Opcode, SourcePosition, flags,
-    validate,
-};
+use crate::bytecode::{Capture, CodeUnit, CodeUnitId, DebugInfo, Handler, flags, validate};
 use crate::heap::atom::KEY_INDEX_LIMIT;
 use crate::vm::compile::Compiler;
-use crate::{
-    BytecodeTemplate, HeapError, Intrinsic, KeyKind, ObjectId, PropertyKey, Runtime, StringId,
-    Value,
-};
+use crate::{BytecodeTemplate, HeapError, Intrinsic, KeyKind, ObjectId, Runtime, StringId, Value};
 
 /// A verified image of one classic script. Decoding requires neither a
 /// runtime nor a source compiler. Installation interns literals and keys in
 /// the destination realm and returns the script function, without running it.
-pub struct ScriptImage<'a> {
-    text: Vec<Text<'a>>,
-    units: Vec<ImageUnit>,
+#[derive(Clone)]
+pub struct ScriptImage {
+    bytes: ImageBytes,
+    masks: core::ops::Range<usize>,
+    text: Vec<Text>,
+    units: Vec<CodeUnit>,
+    unit_data: Vec<ImageUnitData>,
 }
 
-impl<'a> ScriptImage<'a> {
-    pub fn decode(bytes: &'a [u8]) -> Result<Self, ImageError> {
+impl ScriptImage {
+    /// Copies the bytes into immutable image storage. Use `decode_shared`
+    /// when the package already has a shareable owner.
+    pub fn decode(bytes: &[u8]) -> Result<Self, ImageError> {
+        Self::decode_shared(Box::<[u8]>::from(bytes).into())
+    }
+
+    /// Verify once. The result retains the exact storage that was checked
+    /// and can be passed from the package installer to the runtime.
+    pub fn decode_shared(storage: ImageBytes) -> Result<Self, ImageError> {
+        let bytes = storage.as_ref();
         let mut reader = Reader(bytes);
         if reader.take(4)? != MAGIC {
             return Err(ImageError::Format);
@@ -50,11 +57,11 @@ impl<'a> ScriptImage<'a> {
 
         let filename = reader.text()?;
         let filename = (!filename.is_empty()).then(|| Rc::<str>::from(filename));
-        let text = reader.list(5, |reader| match reader.u8()? {
-            0 => Ok(Text::Latin1(reader.blob()?)),
+        let text = reader.list(2, |reader| match reader.u8()? {
+            0 => Ok(Text::Latin1(packed::span(bytes, reader.blob()?))),
             1 => {
                 let count = reader.count(2)?;
-                Ok(Text::Utf16(reader.take(count * 2)?))
+                Ok(Text::Utf16(packed::span(bytes, reader.take(count * 2)?)))
             }
             _ => Err(ImageError::Malformed),
         })?;
@@ -62,26 +69,32 @@ impl<'a> ScriptImage<'a> {
             return Err(ImageError::TooLarge);
         }
 
+        let masks = reader.take(packed::MASKS)?;
+        if masks.iter().any(|&mask| mask > 15) {
+            return Err(ImageError::Malformed);
+        }
+        let mask_range = packed::span(bytes, masks);
+
         // A tree in postorder. Every old unit is consumed by exactly one
         // parent, so instantiation visits each unit once and cannot cycle.
-        let count = reader.count(64)?;
-        let mut units: Vec<ImageUnit> = Vec::with_capacity(count);
+        let count = reader.count(24)?;
+        let mut units = Vec::with_capacity(count);
+        let mut unit_data = Vec::with_capacity(count);
         let mut has_parent = Vec::with_capacity(count);
         for index in 0..count {
-            let unit = read_unit(&mut reader, text.len(), filename.clone())?;
+            let (unit, data) = read_unit(bytes, &mut reader, text.len(), filename.clone())?;
             let root = index + 1 == count;
-            if unit.code.has(flags::SCRIPT) != root
-                || unit.code.has(flags::MODULE | flags::EVAL)
+            if unit.has(flags::SCRIPT) != root
+                || unit.has(flags::MODULE | flags::EVAL)
                 || (root
                     && unit
-                        .code
                         .captures
                         .iter()
                         .any(|capture| *capture != Capture::None))
             {
                 return Err(ImageError::Malformed);
             }
-            for child in &unit.code.children {
+            for child in &unit.children {
                 let used = has_parent
                     .get_mut(child.index() as usize)
                     .ok_or(ImageError::Malformed)?;
@@ -89,17 +102,41 @@ impl<'a> ScriptImage<'a> {
                     return Err(ImageError::Malformed);
                 }
             }
-            validate::validate(&unit.code, &|id| {
-                units.get(id.index() as usize).map(|unit| &unit.code)
+            let code = data.packed.view(bytes, masks);
+            let insns = |pc| {
+                let insn = code.get(pc)?;
+                if keyed(insn.op) {
+                    match insn.key().kind() {
+                        KeyKind::Index(_) => {}
+                        KeyKind::String(id) if (id.0 as usize) < text.len() => {}
+                        _ => return None,
+                    }
+                }
+                Some(insn)
+            };
+            validate::validate_stream(&unit, code.len(), insns, &|id| {
+                units.get(id.index() as usize)
             })
             .map_err(ImageError::InvalidCode)?;
             has_parent.push(false);
             units.push(unit);
+            unit_data.push(data);
         }
         if !reader.0.is_empty() || count == 0 || has_parent[..count - 1].contains(&false) {
             return Err(ImageError::Malformed);
         }
-        Ok(Self { text, units })
+        Ok(Self {
+            bytes: storage,
+            masks: mask_range,
+            text,
+            units,
+            unit_data,
+        })
+    }
+
+    /// The exact immutable image checked during admission.
+    pub fn bytes(&self) -> &[u8] {
+        self.bytes.as_ref()
     }
 
     /// Takes the decoded image. The returned object is unrooted, like
@@ -114,15 +151,16 @@ impl<'a> ScriptImage<'a> {
 
     fn install(self, compiler: &mut Compiler<'_>) -> Result<ObjectId, HeapError> {
         let mut wide = Vec::new();
-        let atoms = self
+        let bytes = self.bytes.as_ref();
+        let atoms: Rc<[StringId]> = self
             .text
             .into_iter()
             .map(|text| match text {
-                Text::Latin1(bytes) => compiler.heap_mut().intern_latin1(bytes),
-                Text::Utf16(bytes) => {
+                Text::Latin1(range) => compiler.heap_mut().intern_latin1(&bytes[range]),
+                Text::Utf16(range) => {
                     wide.clear();
                     wide.extend(
-                        bytes
+                        bytes[range]
                             .as_chunks::<2>()
                             .0
                             .iter()
@@ -132,58 +170,78 @@ impl<'a> ScriptImage<'a> {
                     compiler.heap_mut().intern_units(&wide)
                 }
             })
-            .collect::<Result<Vec<_>, _>>()?;
+            .collect::<Result<Vec<_>, _>>()?
+            .into();
         drop(wide);
 
+        let first = compiler.image_base(self.units.len())?;
         let last = (self.units.len() - 1) as u32;
-        let mut linked: Vec<(CodeUnitId, _, _)> = Vec::with_capacity(self.units.len());
-        for ImageUnit {
-            mut code,
-            constants,
-        } in self.units
+        let backing = Rc::new(packed::ImageBacking {
+            bytes: self.bytes,
+            masks: self.masks,
+            atoms,
+        });
+        let mut units = self.units;
+        let mut literals = Vec::with_capacity(units.len());
+        for (
+            code,
+            ImageUnitData {
+                constants,
+                packed,
+                positions,
+            },
+        ) in units.iter_mut().zip(self.unit_data)
         {
-            let table = install_constants(compiler, &atoms, constants)?;
-            for insn in &mut code.code {
-                if matches!(insn.op.format(), Format::Key | Format::AKey | Format::ABKey)
-                    && let KeyKind::String(id) = insn.key().kind()
-                {
-                    insn.imm = PropertyKey::atom(atoms[id.0 as usize]).raw();
-                }
-            }
-            code.name_atom = code.name_atom.map(|id| atoms[id.0 as usize]);
+            let table = install_constants(compiler, &backing.atoms, constants)?;
+            code.image = Some(Box::new(ImageCode {
+                backing: backing.clone(),
+                packed,
+                positions,
+                cache_base: Default::default(),
+            }));
+            code.name_atom = code.name_atom.map(|id| backing.atoms[id.0 as usize]);
             let children: Vec<_> = code
                 .children
                 .iter()
                 .map(|child| last - child.index())
                 .collect();
             for child in &mut code.children {
-                *child = linked[child.index() as usize].0;
+                *child = CodeUnitId(first.index() + child.index());
             }
-            // Validation ran against the wire tree. Relocation preserves the
-            // operands and child relationships while replacing their IDs.
-            let id = compiler.publish_validated(code);
-            linked.push((id, table, children));
+            literals.push((table, children));
         }
         // The bytecode allocator takes the root first and explicit child
         // indexes. Reversing postorder supplies both without rebuilding the
         // tree by traversing the published code store.
-        let templates: Vec<_> = linked
+        let templates: Vec<_> = literals
             .iter()
+            .enumerate()
             .rev()
-            .map(|(unit, constants, children)| BytecodeTemplate {
-                unit: *unit,
+            .map(|(index, (constants, children))| BytecodeTemplate {
+                unit: CodeUnitId(first.index() + index as u32),
                 constants,
                 children,
             })
             .collect();
         let prototype = compiler.intrinsic(Intrinsic::FunctionPrototype);
-        compiler
-            .heap_mut()
-            .alloc_bytecode_function(Some(prototype), None, &templates)
+        let script =
+            compiler
+                .heap_mut()
+                .alloc_bytecode_function(Some(prototype), None, &templates)?;
+        compiler.attach_image(first, units.into_boxed_slice());
+        Ok(script)
     }
 }
 
 impl Runtime {
+    /// Load the image from a range in an immutable package allocation.
+    pub fn load_image_shared(&mut self, bytes: ImageBytes) -> Result<ObjectId, LoadError> {
+        ScriptImage::decode_shared(bytes)
+            .map_err(LoadError::Rejected)?
+            .instantiate(self)
+            .map_err(LoadError::Heap)
+    }
+
     /// Decode and instantiate one classic script image. Format rejection and
     /// allocation failure are distinct. The caller runs the script separately.
     pub fn load_image(&mut self, bytes: &[u8]) -> Result<ObjectId, LoadError> {
@@ -195,61 +253,48 @@ impl Runtime {
 }
 
 fn read_unit(
+    bytes: &[u8],
     reader: &mut Reader<'_>,
     strings: usize,
     filename: Option<Rc<str>>,
-) -> Result<ImageUnit, ImageError> {
-    let register_count = reader.u16()?;
-    let parameter_count = reader.u16()?;
-    let local_count = reader.u16()?;
-    let flags = reader.u16()?;
-    let this_slots = reader.u16()?;
-    let spill_register = reader.u16()?;
-    let spill_slots = reader.u16()?;
-    let length = reader.u16()?;
-    let ic_count = reader.u32()?;
-    let name_atom = match reader.u32()? {
+) -> Result<(CodeUnit, ImageUnitData), ImageError> {
+    let register_count = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let parameter_count = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let local_count = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let flags = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let this_slots = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let spill_register = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let spill_slots = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let length = u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?;
+    let ic_count = reader.var_u32()?;
+    let name_atom = match reader.var_u32()?.wrapping_sub(1) {
         NONE => None,
         index => Some(wire_atom(text_ref(index, strings)?)),
     };
     let name = Box::from(reader.text()?);
-    let line = reader.u32()?;
-    let column = reader.u32()?;
+    let line = reader.var_u32()?;
+    let column = reader.var_u32()?;
     let source = reader.blob()?;
     let source = (!source.is_empty()).then(|| Box::from(source));
 
-    let code = reader.list(5, |reader| {
-        let bytes = reader.take(5)?;
-        let op = *Opcode::ALL
-            .get(bytes[0] as usize)
-            .ok_or(ImageError::Malformed)?;
-        let imm = reader.var_u32_from(bytes[4])?;
-        if matches!(op.format(), Format::Key | Format::AKey | Format::ABKey) {
-            match PropertyKey::from_raw(imm).kind() {
-                KeyKind::Index(_) => {}
-                KeyKind::String(id) => {
-                    text_ref(id.0, strings)?;
-                }
-                KeyKind::Symbol(_) => return Err(ImageError::Malformed),
-            }
-        }
-        Ok(Insn::new(op, bytes[1], bytes[2], bytes[3], imm))
-    })?;
-    if ic_count as usize > code.len() || flags & !((flags::EVAL << 1) - 1) != 0 {
+    let packed = packed::PackedRanges::of(bytes, reader)?;
+    let insn_count = packed.len();
+    if ic_count as usize > insn_count || flags & !((flags::EVAL << 1) - 1) != 0 {
         return Err(ImageError::Malformed);
     }
-    let handlers = reader.list(14, |reader| {
+    let handlers = reader.list(4, |reader| {
         Ok(Handler {
-            start: reader.u32()?,
-            end: reader.u32()?,
-            target: reader.u32()?,
-            register: reader.u16()?,
+            start: reader.var_u32()?,
+            end: reader.var_u32()?,
+            target: reader.var_u32()?,
+            register: u16::try_from(reader.var_u32()?).map_err(|_| ImageError::Malformed)?,
         })
     })?;
-    let children = reader.list(4, |reader| Ok(CodeUnitId(reader.u32()?)))?;
-    let captures = reader.list(3, |reader| {
-        let tag = reader.u8()?;
-        let index = reader.u16()?;
+    let children = reader.list(1, |reader| Ok(CodeUnitId(reader.var_u32()?)))?;
+    let captures = reader.list(1, |reader| {
+        let encoded = reader.var_u32()?;
+        let tag = encoded & 3;
+        let index = u16::try_from(encoded >> 2).map_err(|_| ImageError::Malformed)?;
         match tag {
             0 if index == 0 => Ok(Capture::None),
             1 => Ok(Capture::Register(index)),
@@ -258,30 +303,30 @@ fn read_unit(
             _ => Err(ImageError::Malformed),
         }
     })?;
-    let (mut pc, mut next_line, mut next_column) = (0u32, line, column);
-    let positions = reader.list(3, |reader| {
-        pc = pc
-            .checked_add(reader.var_u32()?)
-            .ok_or(ImageError::Malformed)?;
-        next_line = next_line.wrapping_add(reader.signed_delta()?);
-        next_column = next_column.wrapping_add(reader.signed_delta()?);
-        Ok(SourcePosition {
-            pc,
-            line: next_line,
-            column: next_column,
-        })
-    })?;
-    let direct_eval_sites = reader.list(4, Reader::u32)?;
+    let mut state = wire::Positions::new((line, column));
+    let count = reader.count(1)?;
+    let before = reader.0;
+    let mut last = None;
+    for _ in 0..count {
+        let position = state.next(reader)?;
+        if position.pc as usize >= insn_count || last.is_some_and(|pc| pc >= position.pc) {
+            return Err(ImageError::Malformed);
+        }
+        last = Some(position.pc);
+    }
+    let positions = packed::span(bytes, &before[..before.len() - reader.0.len()]);
+    let direct_eval_sites = reader.list(1, Reader::var_u32)?;
     if !direct_eval_sites.is_sorted()
         || direct_eval_sites
             .last()
-            .is_some_and(|&pc| pc as usize >= code.len())
+            .is_some_and(|&pc| pc as usize >= insn_count)
     {
         return Err(ImageError::Malformed);
     }
     let constants = reader.list(1, |reader| read_constant(reader, strings))?;
     let unit = CodeUnit {
-        code: code.into(),
+        code: Box::new([]),
+        image: None,
         handlers: handlers.into(),
         register_count,
         parameter_count,
@@ -298,7 +343,7 @@ fn read_unit(
         debug: DebugInfo {
             name,
             filename,
-            positions: positions.into(),
+            positions: Box::new([]),
             definition: (line != 0 || column != 0).then_some((line, column)),
         },
         name_atom,
@@ -307,10 +352,14 @@ fn read_unit(
         direct_eval_sites: direct_eval_sites.into(),
         atoms: Box::new([]),
     };
-    Ok(ImageUnit {
-        code: unit,
-        constants,
-    })
+    Ok((
+        unit,
+        ImageUnitData {
+            constants,
+            packed,
+            positions,
+        },
+    ))
 }
 
 fn read_constant(reader: &mut Reader<'_>, strings: usize) -> Result<Constant, ImageError> {
@@ -320,9 +369,9 @@ fn read_constant(reader: &mut Reader<'_>, strings: usize) -> Result<Constant, Im
         2 => Value::FALSE,
         3 => Value::TRUE,
         4 => Value::EMPTY,
-        5 => Value::int32(reader.u32()? as i32),
+        5 => Value::int32(reader.signed_delta()? as i32),
         6 => Value::number(f64::from_bits(reader.u64()?)),
-        7 => return Ok(Constant::String(text_ref(reader.u32()?, strings)?)),
+        7 => return Ok(Constant::String(text_ref(reader.var_u32()?, strings)?)),
         8 => {
             let sign = reader.u8()?;
             let limbs = reader.list(8, Reader::u64)?;

@@ -59,7 +59,7 @@ impl<'a> Reader<'a> {
     }
 
     pub(super) fn count(&mut self, width: usize) -> Result<usize, ImageError> {
-        let count = self.u32()? as usize;
+        let count = self.var_u32()? as usize;
         if count > self.0.len() / width {
             return Err(ImageError::Malformed);
         }
@@ -122,7 +122,7 @@ impl Writer {
     }
 
     pub(super) fn count(&mut self, count: usize) -> Result<(), ImageError> {
-        self.u32(u32::try_from(count).map_err(|_| ImageError::TooLarge)?);
+        self.var_u32(u32::try_from(count).map_err(|_| ImageError::TooLarge)?);
         Ok(())
     }
 
@@ -152,6 +152,62 @@ pub(super) fn checksum(bytes: &[u8]) -> u32 {
     !bytes.iter().fold(!0, |crc, &byte| {
         (crc >> 8) ^ TABLE[((crc as u8) ^ byte) as usize]
     })
+}
+
+/// A running position in the packed source map.
+pub(super) struct Positions(crate::bytecode::SourcePosition);
+
+impl Positions {
+    pub(super) fn new((line, column): (u32, u32)) -> Self {
+        Self(crate::bytecode::SourcePosition {
+            pc: 0,
+            line,
+            column,
+        })
+    }
+
+    pub(super) fn next(
+        &mut self,
+        reader: &mut Reader<'_>,
+    ) -> Result<crate::bytecode::SourcePosition, ImageError> {
+        let head = reader.u8()?;
+        let (pc, line, column) = if head < 128 {
+            let zigzag = u32::from(head & 15);
+            (
+                u32::from(head >> 4),
+                0,
+                (zigzag >> 1) ^ 0u32.wrapping_sub(zigzag & 1),
+            )
+        } else if head == 128 {
+            (
+                reader.var_u32()?,
+                reader.signed_delta()?,
+                reader.signed_delta()?,
+            )
+        } else {
+            return Err(ImageError::Malformed);
+        };
+        self.0.pc = self.0.pc.checked_add(pc).ok_or(ImageError::Malformed)?;
+        self.0.line = self.0.line.wrapping_add(line);
+        self.0.column = self.0.column.wrapping_add(column);
+        Ok(self.0)
+    }
+
+    pub(super) fn write(&mut self, writer: &mut Writer, next: crate::bytecode::SourcePosition) {
+        let pc = next.pc - self.0.pc;
+        let line = next.line.wrapping_sub(self.0.line);
+        let column = next.column.wrapping_sub(self.0.column);
+        let zigzag = (column << 1) ^ ((column as i32 >> 31) as u32);
+        if pc < 8 && line == 0 && zigzag < 16 {
+            writer.u8((pc << 4 | zigzag) as u8);
+        } else {
+            writer.u8(128);
+            writer.var_u32(pc);
+            writer.signed_delta(line);
+            writer.signed_delta(column);
+        }
+        self.0 = next;
+    }
 }
 
 #[cfg(test)]

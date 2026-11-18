@@ -367,8 +367,10 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         Opcode::FinishObjectLit => {
             let value = reg(cx, insn.a);
             let object = value.as_object().expect("a literal object");
-            let creator = unit.code[insn.imm as usize];
-            let site = unit.ic_base as usize + creator.c as usize;
+            let creator = unit
+                .instruction(insn.imm as usize)
+                .expect("an admitted object literal");
+            let site = unit.cache_base(cx.heap) + creator.c as usize;
             let shape = cx.heap.shape_of(object).index();
             if creator.c == FIELD_NO_SITE || cx.heap.ics.entry(site).w0 != shape {
                 let filled = creator.c != FIELD_NO_SITE
@@ -814,7 +816,7 @@ fn call_other(
 #[inline(never)]
 fn construct_failure(cx: &mut Cx<'_>, function: Value, pc: usize) -> Throw {
     let frame = *cx.heap.vm.frames.last().expect("a frame");
-    let spread = cx.unit(frame.unit).code.get(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
+    let spread = cx.unit(frame.unit).instruction(pc).map(|insn| insn.op) == Some(Opcode::NewSpread);
     if spread && !ops::is_callable(cx.heap, function) {
         return error::type_error(cx, "not a function");
     }
@@ -1566,11 +1568,13 @@ fn learn_receiver_size(cx: &mut Cx<'_>, done: &Frame) {
     }
     let caller = cx.heap.vm.frames.last().expect("a caller");
     let unit = cx.unit(caller.unit);
-    let insn = unit.code[done.return_pc as usize - 1];
+    let insn = unit
+        .instruction(done.return_pc as usize - 1)
+        .expect("an admitted return site");
     if insn.op != Opcode::New {
         return;
     }
-    let site = unit.ic_base as usize + insn.imm as usize;
+    let site = unit.cache_base(cx.heap) + insn.imm as usize;
     let mut entry = cx.heap.ics.entries[site];
     if !entry.is_filled() || cx.heap.is_dictionary(receiver) {
         return;
@@ -1880,7 +1884,7 @@ fn window(registers: &mut [Value], base: usize) -> &mut Window {
 
 /// Runs the top frame from its start until the entry frame returns.
 fn run(cx: &mut Cx<'_>) -> Result<Value, Throw> {
-    run_at(cx, 0)
+    resume_at(cx, 0)
 }
 
 /// Unit `id` for the loop, when it or the unit the loop leaves is dynamic:
@@ -1927,7 +1931,7 @@ pub(super) fn run_throwing(cx: &mut Cx<'_>, pc: usize, thrown: Value) -> Result<
         .filter(|_| error::catchable(cx))
     {
         cx.heap.vm.registers[frame.base as usize + handler.register as usize] = thrown;
-        return run_at(cx, handler.target as usize);
+        return resume_at(cx, handler.target as usize);
     }
     cx.heap.vm.frames.pop();
     Err(Throw(thrown))
@@ -2060,7 +2064,7 @@ fn special_call<'a>(
             } else {
                 (
                     insn.c as usize,
-                    Some(unit.ic_base as usize + insn.imm as usize),
+                    Some(unit.cache_base(cx.heap) + insn.imm as usize),
                 )
             };
             invoke::<true, false>(
@@ -2149,7 +2153,20 @@ fn local_binding_error(cx: &mut Cx<'_>, insn: Insn) -> Throw {
 /// `regs` is the running frame's window. It borrows the register file, so
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
-pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
+pub(super) fn resume_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
+    if cx.static_code.has_images() {
+        run_image_at(cx, start)
+    } else {
+        run_at(cx, start)
+    }
+}
+
+// Specialize the same loop for source-only runtimes. This keeps image
+// dispatch out of the native instruction fetch and shares all opcode bodies.
+#[rustfmt::skip]
+macro_rules! interpreter {
+    ($name:ident, $image:literal) => {
+fn $name(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     let entry = top_frame(&cx.heap.vm.frames);
 
     // The running unit: borrowed from the code store, or from `held`, which
@@ -2162,14 +2179,32 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             unit = if id.is_dynamic() | held.is_some() {
                 switch_unit(cx.static_code, cx.heap, &mut held, id)
             } else {
-                cx.static_code.get(id)
+                if $image {
+                    cx.static_code.get(id)
+                } else {
+                    cx.static_code.get_native(id)
+                }
             };
         }};
     }
     set_unit!(entry.unit);
     let mut code: &[Insn] = &unit.code;
+    let mut image = if $image { cx.static_code.image_execution(entry.unit) } else { None };
+    macro_rules! load_code {
+        ($id:expr) => {{
+            code = &unit.code;
+            if $image {
+                image = cx.static_code.image_execution($id);
+            }
+        }};
+    }
     let mut base = entry.base as usize;
-    let mut ic_base = unit.ic_base as usize;
+    macro_rules! cache_base {
+        () => {
+            if $image { unit.cache_base(cx.heap) } else { unit.ic_base as usize }
+        };
+    }
+    let mut ic_base = cache_base!();
     let mut pc = start;
 
     macro_rules! window {
@@ -2194,9 +2229,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
         () => {{
             let caller = current_frame!();
             set_unit!(caller.unit);
-            code = &unit.code;
+            load_code!(caller.unit);
             base = caller.base as usize;
-            ic_base = unit.ic_base as usize;
+            ic_base = cache_base!();
             raise_top(cx, frame_end(&caller, unit));
         }};
     }
@@ -2271,10 +2306,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         }
                         UnitRef::Dynamic(next) => hold_dynamic_unit(&mut held, next),
                     };
-                    code = &unit.code;
+                    load_code!($next_frame.unit);
                     base = $next_frame.base as usize;
 
-                    ic_base = unit.ic_base as usize;
+                    ic_base = cache_base!();
                     pc = 0;
                     regs = window!();
                     continue $dispatch;
@@ -2290,7 +2325,13 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     'dispatch: loop {
         // Keep the dispatch descriptor borrowed; operand-heavy arms copy it
         // locally so their inputs can be decoded together.
-        let insn = &code[pc];
+        let decoded;
+        let insn = if $image && let Some(image) = &image {
+            decoded = image.get(pc).expect("an admitted image instruction");
+            &decoded
+        } else {
+            &code[pc]
+        };
         pc += 1;
         let resume = 'restore: {
             let outcome: Result<(), Throw> = 'op: {
@@ -2378,7 +2419,12 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(value) = i.checked_add(1)
                         {
                             reg!(insn.a) = Value::int32(value);
-                            if let Some(read) = code.get(pc).copied()
+                            let read = if $image && let Some(image) = &image {
+                                image.get(pc)
+                            } else {
+                                code.get(pc).copied()
+                            };
+                            if let Some(read) = read
                                 && read.op == Opcode::GetElem
                                 && let (Some(object), Some(index)) =
                                     (reg!(read.b).as_object(), reg!(read.c).as_int32())
@@ -3048,7 +3094,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     let bytecode = BytecodeId(record.bytecode);
                                     let id = cx.heap.bytecode_unit(bytecode);
                                     if !id.is_dynamic() {
-                                        let (next, plan) = cx.static_code.call_entry(id);
+                                        let (next, plan) = if $image {
+                                            cx.static_code.call_entry(id)
+                                        } else {
+                                            cx.static_code.call_entry_native(id)
+                                        };
                                         let next_base = base + at;
                                         if !matches!(
                                             plan,
@@ -3092,10 +3142,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                                     clear_dynamic_unit(&mut held);
                                                 }
                                                 unit = next;
-                                                code = &unit.code;
+                                                load_code!(next_frame.unit);
                                                 base = next_frame.base as usize;
 
-                                                ic_base = unit.ic_base as usize;
+                                                ic_base = cache_base!();
                                                 pc = 0;
                                                 regs = window!();
                                                 continue 'dispatch;
@@ -3199,6 +3249,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
         regs = window!();
     }
 }
+    };
+}
+interpreter!(run_at, false);
+interpreter!(run_image_at, true);
 
 /// Handler search is cold. No allocation occurs while frames are popped;
 /// the shared continuation restores the handler's roots before writing its value.
@@ -3288,7 +3342,7 @@ fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Va
         .alloc_object(ObjectKind::Ordinary, Some(prototype), count)
         .map_err(|error| error::heap_error(cx, error))?;
     // Allocation may collect and clear the weak shape. Read it afterwards.
-    let site = unit.ic_base as usize + insn.c as usize;
+    let site = unit.cache_base(cx.heap) + insn.c as usize;
     let entry = cx.heap.ics.entry(site);
     if insn.c != FIELD_NO_SITE && entry.is_filled() {
         cx.heap.objects.get_mut(object.0).shape = ShapeId(entry.w0);

@@ -233,6 +233,8 @@ impl DebugInfo {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CodeUnit {
     pub code: Box<[Insn]>,
+    /// Packed instructions and positions for an installed image unit.
+    pub(crate) image: Option<Box<image::ImageCode>>,
     pub handlers: Box<[Handler]>,
     pub register_count: u16,
     pub parameter_count: u16,
@@ -278,6 +280,41 @@ pub struct CodeUnit {
 }
 
 impl CodeUnit {
+    /// Number of instructions, including units backed by an image.
+    pub fn instruction_count(&self) -> usize {
+        self.image
+            .as_ref()
+            .map_or(self.code.len(), |image| image.len())
+    }
+
+    /// Instruction `pc` in the unit's execution namespace.
+    pub fn instruction(&self, pc: usize) -> Option<Insn> {
+        match &self.image {
+            Some(image) => image.get(pc),
+            None => self.code.get(pc).copied(),
+        }
+    }
+
+    pub(crate) fn active_cache_base(&self) -> Option<u32> {
+        match &self.image {
+            Some(image) => image.cache_base.get(),
+            None => Some(self.ic_base),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn cache_base(&self, heap: &mut crate::Heap) -> usize {
+        self.active_cache_base()
+            .unwrap_or_else(|| heap.ics.activate_image(self)) as usize
+    }
+
+    pub(crate) fn position(&self, pc: u32) -> Option<(u32, u32)> {
+        match &self.image {
+            Some(image) => image.position(pc, self.debug.definition),
+            None => self.debug.position(pc),
+        }
+    }
+
     /// The first operand temporary, `T(0)`: after the locals, or after the
     /// spill register when the locals do not all fit in the window.
     #[inline]
@@ -335,6 +372,15 @@ impl core::ops::Deref for UnitRef<'_> {
 #[derive(Default)]
 pub struct CodeStore {
     units: Vec<StoredUnit>,
+    images: Vec<StoredImage>,
+    image_count: u32,
+}
+
+const IMAGE: u32 = DYNAMIC / 2;
+
+struct StoredImage {
+    first: u32,
+    units: Box<[CodeUnit]>,
 }
 
 struct StoredUnit {
@@ -354,7 +400,7 @@ impl CodeStore {
     pub(crate) fn push(&mut self, unit: CodeUnit) -> CodeUnitId {
         let id = u32::try_from(self.units.len())
             .ok()
-            .filter(|&id| id < DYNAMIC)
+            .filter(|&id| id < IMAGE)
             .expect("code store overflow");
         let call = call_plan::CallPlan::of(&unit);
         self.units.push(StoredUnit { unit, call });
@@ -366,6 +412,9 @@ impl CodeStore {
         if id.is_dynamic() {
             return None;
         }
+        if id.0 >= IMAGE {
+            return self.lookup_image(id);
+        }
         self.units.get(id.0 as usize).map(|entry| &entry.unit)
     }
 
@@ -373,30 +422,87 @@ impl CodeStore {
     #[inline]
     pub fn get(&self, id: CodeUnitId) -> &CodeUnit {
         debug_assert!(!id.is_dynamic(), "a unit of the code store");
+        if id.0 >= IMAGE {
+            return self.lookup_image(id).expect("a stored image unit");
+        }
+        self.get_native(id)
+    }
+
+    #[inline]
+    pub(crate) fn get_native(&self, id: CodeUnitId) -> &CodeUnit {
         &self.units[id.0 as usize].unit
     }
 
     #[inline]
     pub(crate) fn call_entry(&self, id: CodeUnitId) -> (&CodeUnit, &call_plan::CallPlan) {
         debug_assert!(!id.is_dynamic(), "a static call plan");
+        if id.0 >= IMAGE {
+            return (self.get(id), &call_plan::CallPlan::None);
+        }
+        self.call_entry_native(id)
+    }
+
+    #[inline]
+    pub(crate) fn call_entry_native(&self, id: CodeUnitId) -> (&CodeUnit, &call_plan::CallPlan) {
         let entry = &self.units[id.0 as usize];
         (&entry.unit, &entry.call)
     }
 
-    pub fn len(&self) -> usize {
-        self.units.len()
+    pub(crate) fn has_images(&self) -> bool {
+        !self.images.is_empty()
     }
 
-    /// Every unit with its id, in publication order.
+    #[inline]
+    pub(crate) fn image_execution(&self, id: CodeUnitId) -> Option<image::Execution<'_>> {
+        if !(IMAGE..DYNAMIC).contains(&id.0) {
+            return None;
+        }
+        let unit = self.lookup_image(id)?;
+        Some(unit.image.as_ref()?.execution())
+    }
+
+    fn lookup_image(&self, id: CodeUnitId) -> Option<&CodeUnit> {
+        let index = self.images.partition_point(|image| image.first <= id.0);
+        let image = self.images.get(index.checked_sub(1)?)?;
+        image.units.get((id.0 - image.first) as usize)
+    }
+
+    pub(crate) fn image_base(&self, count: usize) -> Option<CodeUnitId> {
+        let first = IMAGE + self.image_count;
+        let end = first.checked_add(u32::try_from(count).ok()?)?;
+        (end <= DYNAMIC).then_some(CodeUnitId(first))
+    }
+
+    pub(crate) fn attach_image(&mut self, first: CodeUnitId, units: Box<[CodeUnit]>) {
+        debug_assert_eq!(self.image_base(units.len()), Some(first));
+        self.image_count += units.len() as u32;
+        self.images.push(StoredImage {
+            first: first.0,
+            units,
+        });
+    }
+
+    pub fn len(&self) -> usize {
+        self.units.len() + self.image_count as usize
+    }
+
+    /// Every source and image unit with its ID.
     pub fn units(&self) -> impl Iterator<Item = (CodeUnitId, &CodeUnit)> {
         self.units
             .iter()
             .enumerate()
             .map(|(index, entry)| (CodeUnitId(index as u32), &entry.unit))
+            .chain(self.images.iter().flat_map(|image| {
+                image
+                    .units
+                    .iter()
+                    .enumerate()
+                    .map(move |(index, unit)| (CodeUnitId(image.first + index as u32), unit))
+            }))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.units.is_empty()
+        self.units.is_empty() && self.images.is_empty()
     }
 
     /// `id` and its descendants in pre-order ([`Units::tree`]).

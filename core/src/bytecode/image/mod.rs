@@ -7,20 +7,23 @@
 
 mod decode;
 mod encode;
+mod packed;
 mod wire;
 
 use alloc::{boxed::Box, vec::Vec};
 use core::fmt;
 
-use super::{CodeUnit, ValidateError};
+use super::ValidateError;
 use crate::{HeapError, StringId, Value};
 use wire::{Reader, Writer};
 
 pub use decode::ScriptImage;
 pub use encode::encode_script;
+pub use packed::ImageBytes;
+pub(crate) use packed::{Execution, ImageCode};
 
 const MAGIC: &[u8; 4] = b"OXBC";
-const VERSION: u16 = 3;
+const VERSION: u16 = 4;
 const HEADER_SIZE: u16 = 24;
 const NONE: u32 = u32::MAX;
 
@@ -79,16 +82,20 @@ impl fmt::Display for LoadError {
 
 impl core::error::Error for LoadError {}
 
-struct ImageUnit {
-    code: CodeUnit,
+#[derive(Clone)]
+struct ImageUnitData {
     constants: Vec<Constant>,
+    packed: packed::PackedRanges,
+    positions: core::ops::Range<usize>,
 }
 
-enum Text<'a> {
-    Latin1(&'a [u8]),
-    Utf16(&'a [u8]),
+#[derive(Clone)]
+enum Text {
+    Latin1(core::ops::Range<usize>),
+    Utf16(core::ops::Range<usize>),
 }
 
+#[derive(Clone)]
 enum Constant {
     Scalar(Value),
     String(u32),
@@ -110,4 +117,10 @@ fn text_ref(index: u32, count: usize) -> Result<u32, ImageError> {
 
 fn wire_atom(index: u32) -> StringId {
     StringId(index)
+}
+
+#[inline]
+fn keyed(op: crate::Opcode) -> bool {
+    use crate::bytecode::Format;
+    matches!(op.format(), Format::Key | Format::AKey | Format::ABKey)
 }

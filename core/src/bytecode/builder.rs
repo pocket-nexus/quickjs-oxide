@@ -215,6 +215,7 @@ impl CodeBuilder {
         let ic_count = number_sites(&mut self.code);
         CodeUnit {
             code: self.code.into(),
+            image: None,
             handlers: self.handlers.into(),
             register_count: layout.register_count,
             parameter_count: layout.parameter_count,

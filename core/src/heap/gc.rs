@@ -343,13 +343,17 @@ impl Heap {
             self.gc.allocated += nominal;
             return Ok(());
         }
-        self.safepoint_slow(need, keep)
+        self.safepoint_slow(need, keep, nominal)
     }
 
     #[cold]
     #[inline(never)]
-    fn safepoint_slow(&mut self, need: &Need, keep: &[Value]) -> Result<(), HeapError> {
-        let nominal = need.nominal_bytes();
+    fn safepoint_slow(
+        &mut self,
+        need: &Need,
+        keep: &[Value],
+        nominal: usize,
+    ) -> Result<(), HeapError> {
         #[allow(unused_mut)]
         let mut collect = self.gc.allocated + nominal >= self.gc.room.threshold;
         #[cfg(feature = "gc-stress")]
@@ -358,7 +362,36 @@ impl Heap {
         }
         let capped = self.gc.limits.max_bytes != usize::MAX;
         let over = |heap: &Heap| {
-            heap.bytes() + heap.growth_bytes(need) + need.extra > heap.gc.limits.max_bytes
+            let bytes = heap.bytes();
+            let cap = heap.gc.limits.max_bytes;
+            // The last growth step is at most its old capacity plus five
+            // records (initial capacity or rounding). The value heap can
+            // double the combined request when rounding to a size class.
+            // This bound lets a heap with room skip all free-list queries.
+            let records = nominal - need.extra
+                + need.shapes * size_of::<crate::shape::Shape>()
+                + need.cells * size_of::<crate::shape::ValidityCell>();
+            const INITIAL_GROWTH: usize = 5
+                * (size_of::<super::object::ObjectHeader>()
+                    + size_of::<crate::shape::Shape>()
+                    + size_of::<super::string::StringRecord>()
+                    + size_of::<super::symbol::SymbolRecord>()
+                    + size_of::<super::BigIntRecord>()
+                    + size_of::<crate::shape::ValidityCell>()
+                    + size_of::<super::object::FunctionRecord>()
+                    + size_of::<super::object::FunctionBytecode>()
+                    + size_of::<super::object::Internal>()
+                    + size_of::<Value>());
+            let bound = bytes
+                .saturating_mul(2)
+                .saturating_add(records.saturating_mul(4))
+                .saturating_add(INITIAL_GROWTH)
+                .saturating_add(need.extra);
+            bound > cap
+                && bytes
+                    .saturating_add(heap.growth_bytes(need))
+                    .saturating_add(need.extra)
+                    > cap
         };
         let over_cap = capped && over(self);
         if collect || over_cap {
