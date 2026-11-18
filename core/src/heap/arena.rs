@@ -170,6 +170,9 @@ impl<T: Record> Arena<T> {
     /// Bytes the arena's record vector grows by if `count` records are
     /// allocated now (zero when its free slots and capacity cover them).
     pub fn growth_bytes(&self, count: usize) -> usize {
+        if count == 0 {
+            return 0;
+        }
         // Quarantined slots do not count: they are not reusable yet.
         let needed = self.records.len() + count.saturating_sub(self.free_count);
         let old = self.records.capacity();

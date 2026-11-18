@@ -1,6 +1,7 @@
 //! Rust embedding boundary: the API over `quickjs-oxide-core` lives in [`core`].
 pub mod core;
 pub mod error;
+pub mod image;
 
 pub use crate::engine::compiler::lexer::quickjs_detect_module_bytes;
 

@@ -243,8 +243,14 @@ impl<'a> Compiler<'a> {
     /// the heap (pinned until the compilation ends, its bytes charged to the
     /// collection trigger) while it runs. Its children must be published
     /// first.
-    pub fn publish(&mut self, mut unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
+    pub fn publish(&mut self, unit: CodeUnit) -> Result<CodeUnitId, ValidateError> {
         validate::validate(&unit, &|id| self.units().lookup(id))?;
+        Ok(self.publish_validated(unit))
+    }
+
+    /// Reserve storage for a unit whose operands and children were checked
+    /// by the publication validator already.
+    pub(crate) fn publish_validated(&mut self, mut unit: CodeUnit) -> CodeUnitId {
         self.heap.ics.reserve(&mut unit);
         match &mut self.code {
             // A static unit lives as long as the runtime, and so do its keys,
@@ -254,12 +260,12 @@ impl<'a> Compiler<'a> {
                 for atom in unit.key_atom_uses() {
                     self.heap.pin_atom(atom);
                 }
-                Ok(code.push(unit))
+                code.push(unit)
             }
             Store::Shared(_) => {
                 let (id, bytes) = self.heap.code.publish(unit);
                 self.heap.gc.allocated += bytes;
-                Ok(id)
+                id
             }
         }
     }

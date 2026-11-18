@@ -291,13 +291,15 @@ impl ValueHeap {
 
     /// Bytes the backing vector grows by if a range of `len` is allocated now.
     pub fn growth_bytes(&self, len: u32) -> usize {
+        if len == 0 {
+            return 0;
+        }
         // A power of two covers both a slot request (`alloc_slots`) and the
         // class of an element request, so a free range listed at its class
         // or above serves either.
-        let len = len.next_power_of_two() * u32::from(len != 0);
+        let len = len.next_power_of_two();
         let (start, end) = self.current;
-        if len == 0
-            || end - start >= len
+        if end - start >= len
             || self
                 .runs
                 .last()

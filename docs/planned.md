@@ -4,6 +4,9 @@ This page is the plan for the memory and embedding-target work on `quickjs-oxide
 
 The work is a list of items taken by need, in the priority order of section 8; none has a consumer yet, and each can be picked up from this page without re-planning. The items build on the current implementation: the heap, the collector, its trigger and the cap described in [Heap](heap.md); the loop, frames and caches in [Execution](performance/execution.md); the rooting rule and the core's design record in [`core/README.md`](../core/README.md); the crates and the embedding API in [Architecture](architecture.md). Measurements follow [Measurement method](performance/measurement.md).
 
+Classic-script code images now have a [host exporter and a core loader](code-images.md).
+Section 4 also describes the planned module-graph, snapshot and measurement work.
+
 ## 0. Scope
 
 **In scope.** The heap cap as a policy rather than a check (the trigger under a cap, growth that stops at the cap, giving memory back, the out-of-memory error); runtime options for small targets (heap, register file, native stack); code images (lowered units serialized without heap state, loaded into any runtime of the same build) and heap snapshots (the whole runtime at a quiescent point, loaded in place of initialization); 32-bit correctness and memory on a tier-2 32-bit target; `quickjs-oxide-core` without the standard library, for the console ports; the measurements of section 9. The generational collector of section 6 is an optional, measurement-gated item.

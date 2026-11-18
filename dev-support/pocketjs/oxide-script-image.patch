@@ -1,0 +1,1951 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index b2d36e5d..81643707 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -2106,6 +2106,7 @@ dependencies = [
+  "pocket-drivers",
+  "pocket-runtime",
+  "quickjs-oxide",
++ "quickjs-oxide-core",
+ ]
+ 
+ [[package]]
+@@ -2176,6 +2177,7 @@ dependencies = [
+ name = "pocket-linux-kms"
+ version = "0.16.0"
+ dependencies = [
++ "cc",
+  "libc",
+  "pocket-drivers",
+  "pocket-guest-oxide",
+@@ -2975,8 +2977,6 @@ dependencies = [
+ [[package]]
+ name = "quickjs-oxide"
+ version = "0.5.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "46ca1ec7eee524bbdf40ad057e02b8b52082da4b1d8e657ba33cf5d73eb2ded2"
+ dependencies = [
+  "num-bigint",
+  "num-traits",
+@@ -2987,8 +2987,6 @@ dependencies = [
+ [[package]]
+ name = "quickjs-oxide-core"
+ version = "0.5.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "a79d17ea827273dfefa0fc4d6eae819c72bc6f55fd0b1c5f808d1641599c43de"
+ dependencies = [
+  "hashbrown 0.17.1",
+  "libm",
+@@ -2998,8 +2996,6 @@ dependencies = [
+ [[package]]
+ name = "quickjs-oxide-regexp"
+ version = "0.5.0"
+-source = "registry+https://github.com/rust-lang/crates.io-index"
+-checksum = "02e9e69a508e8525f37a6960701e247c49af67135857ecec61d14d9dc10f6e1a"
+ 
+ [[package]]
+ name = "quote"
+diff --git a/Cargo.toml b/Cargo.toml
+index 6ce0fcad..77d22af3 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -180,7 +180,7 @@ pocket-gles = { path = "devices/gles/pocket-gles", version = "0.16.0", default-f
+ pocket-gles1 = { path = "devices/gles/pocket-gles1", version = "0.16.0", default-features = false }
+ pocket-gles2 = { path = "devices/gles/pocket-gles2", version = "0.16.0", default-features = false }
+ pocket-glyph-pages = { path = "engine/render/glyph-pages", version = "0.16.0", default-features = false }
+-pocket-guest-oxide = { path = "engine/guest-oxide" }
++pocket-guest-oxide = { path = "engine/guest-oxide", default-features = false }
+ pocket-guest-rquickjs = { path = "engine/guest-rquickjs", version = "0.16.0", default-features = false }
+ pocket-idf-runtime = { path = "programs/esp-idf/archive", version = "0.16.0", default-features = false }
+ pocket-linux-alsa = { path = "platforms/linux/alsa", version = "0.16.0", default-features = false }
+diff --git a/contracts/spec/pocket-package.ts b/contracts/spec/pocket-package.ts
+index ee732dfd..edab1d46 100644
+--- a/contracts/spec/pocket-package.ts
++++ b/contracts/spec/pocket-package.ts
+@@ -77,7 +77,7 @@ export const POCKET_SECTION = {
+   workerJs: 8,
+   /** The worker bundle as a serialized QuickJS object, in the envelope of 6. */
+   workerBytecode: 9,
+-  /** Experimental Oxide UI program in an OXBC v1 envelope. May coexist
++  /** Experimental Oxide UI program in an OXBC envelope. May coexist
+    * with section 3 (source) and section 6 (QuickJS bytecode). */
+   oxideBytecode: 10,
+ } as const;
+@@ -98,8 +98,16 @@ export function verifyOxideBytecodeEnvelope(bytes: Uint8Array): void {
+   const instructionSize = 8;
+   if (bytes.length < headerSize) throw new Error("pocket package: truncated Oxide bytecode header");
+   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
++  const version = view.getUint16(4, true);
++  if (view.getUint32(0, true) === 0x4342584f && (version === 2 || version === 3)) {
++    if (view.getUint16(6, true) !== 24 || bytes.length <= 24 ||
++        view.getUint32(8, true) !== bytes.length - 24) {
++      throw new Error("pocket package: invalid Oxide code image length");
++    }
++    return;
++  }
+   if (view.getUint32(0, true) !== 0x4342584f || // "OXBC"
+-      view.getUint16(4, true) !== 1 || view.getUint16(6, true) !== headerSize) {
++      version !== 1 || view.getUint16(6, true) !== headerSize) {
+     throw new Error("pocket package: invalid Oxide bytecode header");
+   }
+   const instructionCount = view.getUint32(12, true);
+diff --git a/engine/guest-oxide/Cargo.toml b/engine/guest-oxide/Cargo.toml
+index fcc05cd9..22aa908b 100644
+--- a/engine/guest-oxide/Cargo.toml
++++ b/engine/guest-oxide/Cargo.toml
+@@ -6,9 +6,15 @@ rust-version = "1.99"
+ repository = "https://github.com/pocket-nexus/pocketjs"
+ license = "MIT"
+ publish = false
+-description = "Experimental PocketJS source guest for quickjs-oxide"
++description = "PocketJS code-image guest for quickjs-oxide"
++
++[features]
++default = ["std", "source"]
++std = []
++source = ["std", "dep:quickjs-oxide"]
+ 
+ [dependencies]
+ pocket-runtime = { path = "../runtime" }
+ pocket-drivers = { path = "../drivers" }
+-quickjs-oxide = "=0.5.0"
++oxide-core = { package = "quickjs-oxide-core", version = "=0.5.0" }
++quickjs-oxide = { version = "=0.5.0", optional = true }
+diff --git a/engine/guest-oxide/src/frame.rs b/engine/guest-oxide/src/frame.rs
+index 7c0755b6..c6bf6c55 100644
+--- a/engine/guest-oxide/src/frame.rs
++++ b/engine/guest-oxide/src/frame.rs
+@@ -1,3 +1,6 @@
++use crate::{key, number, object, oom, put, root, JsResult};
++use alloc::vec::Vec;
++use oxide_core::{NativeCx, ObjectId, Value};
+ use pocket_drivers::{
+     abi::{
+         POCKET_TEXT_COMMIT, POCKET_TEXT_COMPOSITION, POCKET_TEXT_COMPOSITION_END,
+@@ -6,89 +9,84 @@ use pocket_drivers::{
+     MotionState, TextEvent,
+ };
+ use pocket_runtime::GuestFrame;
+-use quickjs_oxide::engine::api::core::{
+-    CallableRef, Context, FromJs, JsResult, JsString, ObjectRef, PropertyKey, Value,
+-};
+-
+-use crate::{number, set, string};
+-
+-// These keys are runtime-independent; cache their Rust representation instead
+-// of allocating it again for each frame event or motion sample.
+-macro_rules! with_key {
+-    ($name:literal, $key:ident, $expression:expr) => {{
+-        std::thread_local! {
+-            static KEY: PropertyKey = PropertyKey::from_js_string(JsString::from_static($name));
+-        }
+-        KEY.with(|$key| $expression)
+-    }};
+-}
+ 
+ macro_rules! field {
+-    ($js:expr, $object:expr, $name:literal, $value:expr) => {
+-        with_key!($name, key, set($js, $object, key, $value))
+-    };
++    ($js:expr, $object:expr, $name:literal, $value:expr) => {{
++        let value = $value;
++        put($js, $object, $name, value)
++    }};
+ }
+ 
+-pub(crate) fn call(context: &Context, frame: &GuestFrame<'_>) -> JsResult<()> {
+-    let mut js = context.clone();
+-    let global = js.global_object()?;
+-    let frame_value = with_key!("frame", key, js.get_property(&global, key))?;
+-    if matches!(frame_value, Value::Undefined) {
++pub(crate) fn call(js: &mut NativeCx<'_>, frame: &GuestFrame<'_>) -> JsResult<()> {
++    let global = js.global_object();
++    let name = key(js, "frame")?;
++    let frame_value = js.get(global, name, Value::object(global))?;
++    if matches!(frame_value, Value::UNDEFINED) {
+         return Ok(());
+     }
+-    let function = CallableRef::from_js(&mut js, frame_value)?;
+-    let touches = array(&mut js, frame.touches.iter().copied().map(number))?;
+-    let hits = array(&mut js, frame.hits.iter().copied().map(Value::Int))?;
+-    let surfaces = array(&mut js, frame.touch_surfaces.iter().copied().map(number))?;
+-    let deltas = js.new_array()?;
+-    for (i, delta) in frame.axis_deltas.iter().enumerate() {
+-        let entry = js.new_object()?;
+-        field!(&mut js, &entry, "axis", number(delta.id))?;
+-        field!(&mut js, &entry, "delta", Value::Int(delta.delta))?;
+-        set(&mut js, &deltas, &PropertyKey::index(i as u32), entry.into())?;
++    js.heap_mut().roots().push(frame_value);
++    let touches = array(js, frame.touches.iter().copied().map(number))?;
++    let hits = array(js, frame.hits.iter().copied().map(Value::int32))?;
++    let surfaces = array(js, frame.touch_surfaces.iter().copied().map(number))?;
++    let mut deltas = Vec::new();
++    for delta in frame.axis_deltas {
++        let entry = object(js)?;
++        field!(js, entry, "axis", number(delta.id))?;
++        field!(js, entry, "delta", Value::int32(delta.delta))?;
++        deltas.push(Value::object(entry));
+     }
+-    let motion = motion_value(&mut js, frame.motion)?;
+-    let text = text_value(&mut js, frame.text)?;
+-    context.call(
+-        &function,
+-        Value::Undefined,
++    let deltas = array(js, deltas.into_iter())?;
++    let motion = motion_value(js, frame.motion)?;
++    let text = text_value(js, frame.text)?;
++    js.call(
++        frame_value,
++        Value::UNDEFINED,
+         &[
+             number(frame.buttons),
+             number(frame.analog),
+-            touches.into(),
+-            hits.into(),
+-            surfaces.into(),
++            Value::object(touches),
++            Value::object(hits),
++            Value::object(surfaces),
+             number(frame.right_analog),
+-            deltas.into(),
++            Value::object(deltas),
+             motion,
+-            text.into(),
++            Value::object(text),
+         ],
+     )?;
+     Ok(())
+ }
+ 
+-fn array(js: &mut Context, values: impl Iterator<Item = Value>) -> JsResult<ObjectRef> {
+-    let array = js.new_array()?;
+-    for (i, value) in values.enumerate() {
+-        set(js, &array, &PropertyKey::index(i as u32), value)?;
+-    }
+-    Ok(array)
++fn array(js: &mut NativeCx<'_>, values: impl Iterator<Item = Value>) -> JsResult<ObjectId> {
++    let values: Vec<_> = values.collect();
++    let array = js.new_array_from(&values)?;
++    Ok(root(js, array))
+ }
+ 
+-fn text_value(js: &mut Context, events: &[TextEvent]) -> JsResult<ObjectRef> {
+-    let text = js.new_array()?;
+-    let mut index = 0;
++fn text_value(js: &mut NativeCx<'_>, events: &[TextEvent]) -> JsResult<ObjectId> {
++    let mut text = Vec::new();
+     for event in events {
+         let (kind, payload, start, end, repeat) = match event {
+-            TextEvent::Key { key, pressed, repeat } => (
+-                if *pressed { POCKET_TEXT_KEY_DOWN } else { POCKET_TEXT_KEY_UP },
++            TextEvent::Key {
++                key,
++                pressed,
++                repeat,
++            } => (
++                if *pressed {
++                    POCKET_TEXT_KEY_DOWN
++                } else {
++                    POCKET_TEXT_KEY_UP
++                },
+                 key.as_str(),
+                 0,
+                 0,
+                 *repeat,
+             ),
+             TextEvent::Commit(payload) => (POCKET_TEXT_COMMIT, payload.as_str(), 0, 0, false),
+-            TextEvent::Composition { text, selection_start, selection_end } => (
++            TextEvent::Composition {
++                text,
++                selection_start,
++                selection_end,
++            } => (
+                 POCKET_TEXT_COMPOSITION,
+                 text.as_str(),
+                 *selection_start,
+@@ -98,40 +96,52 @@ fn text_value(js: &mut Context, events: &[TextEvent]) -> JsResult<ObjectRef> {
+             TextEvent::CompositionEnd => (POCKET_TEXT_COMPOSITION_END, "", 0, 0, false),
+             _ => continue,
+         };
+-        let entry = js.new_object()?;
+-        field!(js, &entry, "kind", number(kind))?;
+-        field!(js, &entry, "text", string(payload)?)?;
+-        field!(js, &entry, "selectionStart", number(start))?;
+-        field!(js, &entry, "selectionEnd", number(end))?;
+-        field!(js, &entry, "repeat", Value::Bool(repeat))?;
+-        set(js, &text, &PropertyKey::index(index), entry.into())?;
+-        index += 1;
++        let entry = object(js)?;
++        field!(js, entry, "kind", number(kind))?;
++        field!(
++            js,
++            entry,
++            "text",
++            js.new_string(payload).map_err(|_| oom(js))?
++        )?;
++        field!(js, entry, "selectionStart", number(start))?;
++        field!(js, entry, "selectionEnd", number(end))?;
++        field!(js, entry, "repeat", Value::bool(repeat))?;
++        text.push(Value::object(entry));
+     }
+-    Ok(text)
++    array(js, text.into_iter())
+ }
+ 
+-fn motion_value(js: &mut Context, motion: Option<&MotionState>) -> JsResult<Value> {
++fn motion_value(js: &mut NativeCx<'_>, motion: Option<&MotionState>) -> JsResult<Value> {
+     let Some(motion) = motion else {
+-        return Ok(Value::Null);
++        return Ok(Value::NULL);
+     };
+-    let object = js.new_object()?;
+-    field!(js, &object, "timestamp", Value::number(motion.timestamp as f64))?;
++    let motion_object = object(js)?;
++    field!(
++        js,
++        motion_object,
++        "timestamp",
++        Value::number(motion.timestamp as f64)
++    )?;
+     macro_rules! estimate {
+         ($source:ident, $name:literal, $convert:ident $(, $extra:ident => $key:literal)*) => {
+             if let Some(sample) = &motion.$source {
+                 let value = $convert(js, &sample.value)?;
+-                let estimate = js.new_object()?;
+-                field!(js, &estimate, "value", value)?;
+-                field!(js, &estimate, "quality", number(sample.quality))?;
+-                $(field!(js, &estimate, $key, number(sample.$extra))?;)*
+-                field!(js, &object, $name, estimate.into())?;
++                let estimate = object(js)?;
++                field!(js, estimate, "value", value)?;
++                field!(js, estimate, "quality", number(sample.quality))?;
++                $(field!(js, estimate, $key, number(sample.$extra))?;)*
++                field!(js, motion_object, $name, Value::object(estimate))?;
+             }
+         };
+     }
+-    fn vector(js: &mut Context, values: &[f32]) -> JsResult<Value> {
+-        Ok(array(js, values.iter().copied().map(number))?.into())
++    fn vector(js: &mut NativeCx<'_>, values: &[f32]) -> JsResult<Value> {
++        Ok(Value::object(array(
++            js,
++            values.iter().copied().map(number),
++        )?))
+     }
+-    fn scalar(_: &mut Context, [value]: &[f32; 1]) -> JsResult<Value> {
++    fn scalar(_: &mut NativeCx<'_>, [value]: &[f32; 1]) -> JsResult<Value> {
+         Ok(number(*value))
+     }
+     estimate!(gravity_direction, "gravityDirection", vector);
+@@ -143,12 +153,17 @@ fn motion_value(js: &mut Context, motion: Option<&MotionState>) -> JsResult<Valu
+     estimate!(tilt, "tilt", vector);
+     estimate!(angles, "angles", vector, reference_frame => "referenceFrame", epoch => "epoch");
+     if let Some(sample) = &motion.heading {
+-        let estimate = js.new_object()?;
+-        field!(js, &estimate, "value", number(sample.value[0]))?;
+-        field!(js, &estimate, "accuracy", number(sample.value[1]))?;
+-        field!(js, &estimate, "quality", number(sample.quality))?;
+-        field!(js, &estimate, "referenceFrame", number(sample.reference_frame))?;
+-        field!(js, &object, "heading", estimate.into())?;
++        let estimate = object(js)?;
++        field!(js, estimate, "value", number(sample.value[0]))?;
++        field!(js, estimate, "accuracy", number(sample.value[1]))?;
++        field!(js, estimate, "quality", number(sample.quality))?;
++        field!(
++            js,
++            estimate,
++            "referenceFrame",
++            number(sample.reference_frame)
++        )?;
++        field!(js, motion_object, "heading", Value::object(estimate))?;
+     }
+-    Ok(object.into())
++    Ok(Value::object(motion_object))
+ }
+diff --git a/engine/guest-oxide/src/lib.rs b/engine/guest-oxide/src/lib.rs
+index 9b289d01..013d8fc3 100644
+--- a/engine/guest-oxide/src/lib.rs
++++ b/engine/guest-oxide/src/lib.rs
+@@ -1,14 +1,24 @@
+-//! Experimental source-only QuickJS Oxide guest for the canonical UI contract.
++//! PocketJS UI host bindings on the Oxide core. The source frontend is optional.
++#![cfg_attr(not(feature = "std"), no_std)]
+ #![forbid(unsafe_code)]
+ 
++extern crate alloc;
++
+ mod frame;
+ mod ops;
+ 
+-use pocket_runtime::{Guest, GuestEnvironment, GuestFrame, OpContext, RuntimeError};
+-use quickjs_oxide::engine::api::core::{
+-    Context, FunctionOptions, HeapLimits, Js, JsResult, JsString, NativeErrorKind, ObjectRef,
+-    PropertyKey, Runtime, RuntimeError as OxideError, RuntimeOptions, Scope, Value,
++use alloc::{
++    format,
++    rc::Rc,
++    string::{String, ToString},
+ };
++use oxide_core::{
++    bytecode::image::LoadError, ErrorKind, HeapLimits, Intrinsic, NativeCx, ObjectId,
++    PropertyDescriptor, PropertyKey, Runtime, RuntimeOptions, Throw, Value,
++};
++use pocket_runtime::{Guest, GuestEnvironment, GuestFrame, OpContext, RuntimeError};
++
++type JsResult<T> = Result<T, Throw>;
+ 
+ #[derive(Default)]
+ pub struct OxideGuest {
+@@ -21,20 +31,41 @@ impl OxideGuest {
+         self.last_error.as_deref()
+     }
+ 
+-    fn turn(&mut self, run: impl FnOnce(&Context) -> JsResult<()>) -> Result<(), RuntimeError> {
+-        let Some(runtime) = &self.runtime else {
+-            self.last_error = Some("Oxide guest is not initialized".into());
+-            return Err(RuntimeError::Guest);
+-        };
+-        let context = runtime.context();
+-        runtime
+-            .with_execution_turn(|| run(&context))
+-            // Oxide dispatches jobs at the top level, outside an execution turn.
+-            .and_then(|()| runtime.run_jobs())
+-            .map_err(|error| {
+-                self.last_error = Some(engine_error(&context, error));
+-                RuntimeError::Guest
+-            })
++    fn runtime(&mut self) -> Result<&mut Runtime, RuntimeError> {
++        self.runtime.as_mut().ok_or(RuntimeError::InvalidState)
++    }
++
++    fn execute(&mut self, script: ObjectId) -> Result<(), RuntimeError> {
++        let runtime = self.runtime()?;
++        let result = runtime.run_script(script).and_then(|_| runtime.run_jobs());
++        self.finish(result.map(drop))
++    }
++
++    fn finish(&mut self, result: JsResult<()>) -> Result<(), RuntimeError> {
++        if let Err(error) = result {
++            let runtime = self.runtime()?;
++            let mark = runtime.heap_mut().roots().mark();
++            runtime.heap_mut().roots().push(error.0);
++            let message = match runtime.thrown_summary(error.0) {
++                Some(error) => error
++                    .stack
++                    .or_else(|| {
++                        error
++                            .message
++                            .map(|message| format!("{}: {message}", error.name.unwrap_or_default()))
++                    })
++                    .unwrap_or_else(|| "Oxide exception".into()),
++                None => runtime
++                    .display(error.0)
++                    .unwrap_or_else(|_| "Oxide exception".into()),
++            };
++            runtime.heap_mut().roots().truncate(mark);
++            self.last_error = Some(message);
++            Err(RuntimeError::Guest)
++        } else {
++            self.last_error = None;
++            Ok(())
++        }
+     }
+ }
+ 
+@@ -42,67 +73,90 @@ impl Guest for OxideGuest {
+     fn initialize(
+         &mut self,
+         ops: OpContext,
+-        environment: &GuestEnvironment<'_>,
++        env: &GuestEnvironment<'_>,
+     ) -> Result<(), RuntimeError> {
+         use pocket_runtime::generated_ops::BINDING_GENERATION;
+-
+-        if environment.host_abi != BINDING_GENERATION {
++        if env.host_abi != BINDING_GENERATION {
+             self.last_error = Some(format!(
+                 "Unsupported UI binding generation; expected {BINDING_GENERATION}"
+             ));
+             return Err(RuntimeError::Guest);
+         }
+-        if !environment.worker_javascript.is_empty() {
++        if !env.worker_javascript.is_empty() {
+             self.last_error = Some("Oxide guest does not support worker bundles".into());
+             return Err(RuntimeError::UnsupportedOperation);
+         }
+-        self.shutdown();
+-        self.last_error = None;
+-        let limit = environment.heap_limit;
+-        let runtime = if limit == 0 {
+-            Runtime::new()
+-        } else {
+-            // 0.5.0 has no fallible public constructor: a cap below the
+-            // initial realm's requirements panics inside `with_options`.
+-            std::panic::catch_unwind(|| {
+-                Runtime::with_options(RuntimeOptions {
+-                    heap: HeapLimits { max_bytes: limit },
+-                    ..RuntimeOptions::default()
+-                })
+-            })
+-            .map_err(|_| {
+-                self.last_error = Some(format!(
+-                    "Could not create the Oxide realm with a {limit}-byte heap cap"
+-                ));
+-                RuntimeError::Guest
+-            })?
+-        };
+-        let context = runtime.context();
+-        if let Err(error) = mount(&context, ops, environment) {
+-            self.last_error = Some(engine_error(&context, error));
+-            return Err(RuntimeError::Guest);
++        let mut options = RuntimeOptions::default();
++        if env.heap_limit != 0 {
++            options.heap = HeapLimits {
++                max_bytes: env.heap_limit,
++            };
+         }
++        #[cfg(feature = "source")]
++        let runtime = {
++            use alloc::boxed::Box;
++            use quickjs_oxide::engine::api::core::{Host, SystemHost};
++            Runtime::with_host(options, Box::new(SystemHost.into_core()))
++        };
++        #[cfg(not(feature = "source"))]
++        let runtime = Runtime::new(options);
++        let mut runtime = runtime.map_err(|error| {
++            self.last_error = Some(error.to_string());
++            RuntimeError::Guest
++        })?;
++        #[cfg(feature = "source")]
++        quickjs_oxide::engine::api::image::install_dynamic_compiler(&mut runtime);
++        let result = with_roots(&mut runtime, |cx| mount(cx, ops, env));
+         self.runtime = Some(runtime);
+-        Ok(())
++        self.finish(result)
++    }
++
++    fn evaluate(&mut self, _code: &[u8]) -> Result<(), RuntimeError> {
++        #[cfg(feature = "source")]
++        {
++            let code = _code.strip_suffix(&[0]).unwrap_or(_code);
++            match quickjs_oxide::engine::api::image::compile_script_for_runtime(
++                self.runtime()?,
++                code,
++                "<input>",
++            ) {
++                Ok(script) => self.execute(script),
++                Err(error) => {
++                    self.last_error = Some(error);
++                    Err(RuntimeError::Guest)
++                }
++            }
++        }
++        #[cfg(not(feature = "source"))]
++        {
++            Err(RuntimeError::UnsupportedOperation)
++        }
+     }
+ 
+-    fn evaluate(&mut self, code: &[u8]) -> Result<(), RuntimeError> {
+-        let source = code.strip_suffix(&[0]).unwrap_or(code);
+-        self.turn(|context| context.eval_bytes(source).map(drop))
++    fn evaluate_oxide_bytecode(&mut self, envelope: &[u8]) -> Result<(), RuntimeError> {
++        match self.runtime()?.load_image(envelope) {
++            Ok(script) => self.execute(script),
++            Err(LoadError::Rejected(error)) => {
++                self.last_error = Some(error.to_string());
++                Err(RuntimeError::UnsupportedOperation)
++            }
++            Err(LoadError::Heap(error)) => {
++                self.last_error = Some(error.to_string());
++                Err(RuntimeError::Guest)
++            }
++        }
+     }
+ 
+     fn frame(&mut self, frame: &GuestFrame<'_>) -> Result<(), RuntimeError> {
+-        self.turn(|context| frame::call(context, frame))
++        let runtime = self.runtime()?;
++        let result =
++            with_roots(runtime, |cx| frame::call(cx, frame)).and_then(|()| runtime.run_jobs());
++        self.finish(result)
+     }
+ 
+     fn collect(&mut self) -> Result<(), RuntimeError> {
+-        if let Some(runtime) = &self.runtime {
+-            if let Err(error) = runtime.run_jobs() {
+-                self.last_error = Some(engine_error(&runtime.context(), error));
+-                return Err(RuntimeError::Guest);
+-            }
+-        }
+-        Ok(())
++        let result = self.runtime()?.run_jobs();
++        self.finish(result)
+     }
+ 
+     fn shutdown(&mut self) {
+@@ -110,107 +164,223 @@ impl Guest for OxideGuest {
+     }
+ }
+ 
+-fn engine_error(context: &Context, error: OxideError) -> String {
+-    if let OxideError::Exception(value) = &error {
+-        if let Ok(description) = context.print_value(value) {
+-            return description;
+-        }
+-    }
+-    error.to_string()
++fn with_roots<T>(runtime: &mut Runtime, run: impl FnOnce(&mut NativeCx<'_>) -> T) -> T {
++    let mark = runtime.heap_mut().roots().mark();
++    let result = run(&mut runtime.native_cx());
++    runtime.heap_mut().roots().truncate(mark);
++    result
++}
++
++fn root(cx: &mut NativeCx<'_>, object: ObjectId) -> ObjectId {
++    cx.heap_mut().roots().push(Value::object(object));
++    object
++}
++
++fn oom(cx: &NativeCx<'_>) -> Throw {
++    Throw(Value::object(cx.intrinsic(Intrinsic::OutOfMemoryError)))
++}
++
++fn throw(cx: &mut NativeCx<'_>, kind: ErrorKind, message: &str) -> Throw {
++    cx.new_error(kind, message)
++        .map(Throw)
++        .unwrap_or_else(|_| oom(cx))
++}
++
++fn object(cx: &mut NativeCx<'_>) -> JsResult<ObjectId> {
++    let object = cx.new_object().map_err(|_| oom(cx))?;
++    Ok(root(cx, object))
+ }
+ 
+-fn key(name: &str) -> JsResult<PropertyKey> {
+-    Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
++fn key(cx: &mut NativeCx<'_>, name: &str) -> JsResult<PropertyKey> {
++    cx.heap_mut().property_key(name).map_err(|_| oom(cx))
+ }
+ 
+-fn put(js: &mut impl Js, object: &ObjectRef, name: &str, value: Value) -> JsResult<()> {
+-    set(js, object, &key(name)?, value)
++fn put(cx: &mut NativeCx<'_>, object: ObjectId, name: &str, value: Value) -> JsResult<()> {
++    let mark = cx.heap_mut().roots().mark();
++    cx.heap_mut().roots().push(value);
++    let result = key(cx, name).and_then(|key| set(cx, object, key, value));
++    cx.heap_mut().roots().truncate(mark);
++    result
+ }
+ 
+-fn set(js: &mut impl Js, object: &ObjectRef, key: &PropertyKey, value: Value) -> JsResult<()> {
+-    if js.set_property(object, key, value)? {
++fn set(cx: &mut NativeCx<'_>, object: ObjectId, key: PropertyKey, value: Value) -> JsResult<()> {
++    if cx.set(object, key, value, Value::object(object))? {
+         Ok(())
+     } else {
+-        Err(js.throw_error(NativeErrorKind::Type, "cannot set property"))
++        Err(throw(cx, ErrorKind::Type, "cannot set property"))
+     }
+ }
+ 
+ fn number(value: impl Into<f64>) -> Value {
+-    Value::number(value.into())
++    let value = value.into();
++    let int = value as i32;
++    if f64::from(int) == value && value.to_bits() != (-0.0f64).to_bits() {
++        Value::int32(int)
++    } else {
++        Value::number(value)
++    }
++}
++
++fn array_buffer(cx: &mut NativeCx<'_>, bytes: &[u8]) -> JsResult<ObjectId> {
++    let buffer = cx.new_array_buffer(bytes.len())?;
++    cx.array_buffer_write(buffer, 0, bytes)?;
++    Ok(buffer)
+ }
+ 
+-fn string(value: &str) -> JsResult<Value> {
+-    Ok(JsString::try_from_utf8(value)?.into())
++/// The native asset registry handles normal rendering without a JS copy.
++fn mount_pak(
++    cx: &mut NativeCx<'_>,
++    global: ObjectId,
++    storage: Rc<dyn AsRef<[u8]>>,
++) -> JsResult<()> {
++    let key = cx
++        .heap_mut()
++        .property_key_pinned("__pak")
++        .map_err(|_| oom(cx))?;
++    // The private binding becomes an ordinary data property at first use.
++    // Use one callable for both halves so a sealed global can still cache
++    // the copy and accept assignments through the installed setter.
++    let access = cx
++        .new_host_function(
++            "__pak",
++            0,
++            false,
++            &[Value::EMPTY],
++            Rc::new(move |cx, call| {
++                let setting = call.argc() != 0;
++                let receiver = if setting {
++                    call.this(cx).as_object().unwrap_or(global)
++                } else {
++                    global
++                };
++                let value = if setting {
++                    call.arg(cx, 0)
++                } else {
++                    let cached = call.data(cx, 0);
++                    if !cached.is_empty() {
++                        return Ok(cached);
++                    }
++                    Value::object(array_buffer(cx, storage.as_ref().as_ref())?)
++                };
++                if receiver == global {
++                    call.set_data(cx, 0, value);
++                }
++                let descriptor = PropertyDescriptor {
++                    value: Some(value),
++                    writable: Some(true),
++                    enumerable: Some(true),
++                    configurable: Some(true),
++                    ..PropertyDescriptor::default()
++                };
++                let installed = cx.define_own_property(receiver, key, &descriptor)?;
++                if !installed && receiver != global {
++                    return Err(throw(cx, ErrorKind::Type, "cannot set __pak"));
++                }
++                Ok(if setting { Value::UNDEFINED } else { value })
++            }),
++        )
++        .map_err(|_| oom(cx))?;
++    let access = Value::object(root(cx, access));
++    let descriptor = PropertyDescriptor {
++        get: Some(access),
++        set: Some(access),
++        enumerable: Some(true),
++        configurable: Some(true),
++        ..PropertyDescriptor::default()
++    };
++    if cx.define_own_property(global, key, &descriptor)? {
++        Ok(())
++    } else {
++        Err(throw(cx, ErrorKind::Type, "cannot mount __pak"))
++    }
+ }
+ 
+-fn viewport(js: &mut Context, [w, h]: [u32; 2]) -> JsResult<ObjectRef> {
+-    let object = js.new_object()?;
+-    put(js, &object, "w", number(w))?;
+-    put(js, &object, "h", number(h))?;
++fn viewport(cx: &mut NativeCx<'_>, [w, h]: [u32; 2]) -> JsResult<ObjectId> {
++    let object = object(cx)?;
++    put(cx, object, "w", number(w))?;
++    put(cx, object, "h", number(h))?;
+     Ok(object)
+ }
+ 
+-fn mount(context: &Context, ops: OpContext, env: &GuestEnvironment<'_>) -> JsResult<()> {
+-    // Use a normal realm, not the qjs CLI's file, process or script helpers.
+-    let mut js = context.clone();
+-    let global = js.global_object()?;
+-    let console = js.new_object()?;
++fn mount(cx: &mut NativeCx<'_>, ops: OpContext, env: &GuestEnvironment<'_>) -> JsResult<()> {
++    let global = cx.global_object();
++    let console = object(cx)?;
+     for name in ["log", "info", "warn", "error", "debug"] {
+-        let function = js.new_function(FunctionOptions::new(name), |scope: &mut Scope<'_>| {
+-            let mut line = String::new();
+-            for i in 0..scope.argc() {
+-                let value = scope.arg(i);
+-                if !line.is_empty() {
+-                    line.push(' ');
+-                }
+-                line.push_str(&ops::canonical_string(scope, value)?);
+-            }
+-            eprintln!("{line}");
+-            Ok(Value::Undefined)
+-        })?;
+-        put(&mut js, &console, name, function.into())?;
++        let function = cx
++            .new_host_function(
++                name,
++                0,
++                false,
++                &[],
++                Rc::new(|_cx, _call| {
++                    #[cfg(feature = "std")]
++                    {
++                        let mut line = String::new();
++                        for i in 0.._call.argc() {
++                            if i != 0 {
++                                line.push(' ');
++                            }
++                            line.push_str(&ops::canonical_string(_cx, _call.arg(_cx, i))?);
++                        }
++                        eprintln!("{line}");
++                    }
++                    Ok(Value::UNDEFINED)
++                }),
++            )
++            .map_err(|_| oom(cx))?;
++        put(cx, console, name, Value::object(function))?;
+     }
+-    put(&mut js, &global, "console", console.into())?;
++    put(cx, global, "console", Value::object(console))?;
+ 
+-    let ui = js.new_object()?;
+-    ops::mount(&mut js, &ui, ops)?;
+-    put(&mut js, &ui, "__host", string(env.host)?)?;
+-    put(&mut js, &ui, "__hostAbi", number(env.host_abi))?;
+-    put(&mut js, &ui, "__tickHz", number(env.tick_hz))?;
+-    let primary = viewport(&mut js, env.viewport)?;
+-    put(&mut js, &ui, "__viewport", primary.into())?;
++    let ui = object(cx)?;
++    let mount_pak_lazily = env
++        .assets
++        .is_some()
++        .then(|| ops.asset_pack_storage())
++        .flatten();
++    ops::mount(cx, ui, ops)?;
++    let host = cx.new_string(env.host).map_err(|_| oom(cx))?;
++    put(cx, ui, "__host", host)?;
++    put(cx, ui, "__hostAbi", number(env.host_abi))?;
++    put(cx, ui, "__tickHz", number(env.tick_hz))?;
++    let primary = viewport(cx, env.viewport)?;
++    put(cx, ui, "__viewport", Value::object(primary))?;
+     if let Some(assets) = env.assets {
+-        let textures = js.new_object_with_prototype(None)?;
++        let textures = cx.new_object_with_prototype(None).map_err(|_| oom(cx))?;
++        root(cx, textures);
+         for item in &assets.textures {
+-            put(&mut js, &textures, &item.name, item.handle.into())?;
++            put(cx, textures, &item.name, Value::int32(item.handle))?;
+         }
+-        let sprites = js.new_object_with_prototype(None)?;
++        let sprites = cx.new_object_with_prototype(None).map_err(|_| oom(cx))?;
++        root(cx, sprites);
+         for item in &assets.sprites {
+-            let sprite = js.new_object()?;
+-            put(&mut js, &sprite, "handle", item.handle.into())?;
+-            put(&mut js, &sprite, "frames", number(item.frames))?;
+-            put(&mut js, &sprite, "cols", number(item.columns))?;
+-            put(&mut js, &sprite, "step", number(item.step))?;
+-            put(&mut js, &sprites, &item.name, sprite.into())?;
++            let sprite = object(cx)?;
++            put(cx, sprite, "handle", Value::int32(item.handle))?;
++            put(cx, sprite, "frames", number(item.frames))?;
++            put(cx, sprite, "cols", number(item.columns))?;
++            put(cx, sprite, "step", number(item.step))?;
++            put(cx, sprites, &item.name, Value::object(sprite))?;
+         }
+-        let surfaces = js.new_object()?;
+-        put(&mut js, &ui, "__textures", textures.into())?;
+-        put(&mut js, &ui, "__sprites", sprites.into())?;
+-        put(&mut js, &ui, "__surfaces", surfaces.into())?;
++        let surfaces = object(cx)?;
++        put(cx, ui, "__textures", Value::object(textures))?;
++        put(cx, ui, "__sprites", Value::object(sprites))?;
++        put(cx, ui, "__surfaces", Value::object(surfaces))?;
+     }
+     if let Some(dimensions) = env.auxiliary_viewport {
+-        let auxiliary = viewport(&mut js, dimensions)?;
+-        put(&mut js, &auxiliary, "root", env.auxiliary_root.into())?;
+-        put(&mut js, &ui, "__auxiliarySurface", auxiliary.into())?;
++        let auxiliary = viewport(cx, dimensions)?;
++        put(cx, auxiliary, "root", Value::int32(env.auxiliary_root))?;
++        put(cx, ui, "__auxiliarySurface", Value::object(auxiliary))?;
+     }
+     if !env.pak.is_empty() {
+-        // Oxide has no immutable ArrayBuffer API. This mutable buffer is an
+-        // independent copy; guest writes cannot change the native package.
+-        let pak = js.new_array_buffer(env.pak)?;
+-        put(&mut js, &global, "__pak", pak.into())?;
++        if let Some(storage) = mount_pak_lazily {
++            mount_pak(cx, global, storage)?;
++        } else {
++            let pak = array_buffer(cx, env.pak)?;
++            put(cx, global, "__pak", Value::object(pak))?;
++        }
+     }
+     if env.sim_hz != 0 {
+-        put(&mut js, &global, "__simHz", number(env.sim_hz))?;
++        put(cx, global, "__simHz", number(env.sim_hz))?;
+     }
+-    put(&mut js, &global, "ui", ui.into())
++    put(cx, global, "ui", Value::object(ui))
+ }
+diff --git a/engine/guest-oxide/src/ops.rs b/engine/guest-oxide/src/ops.rs
+index 0baf6f52..2eced1bf 100644
+--- a/engine/guest-oxide/src/ops.rs
++++ b/engine/guest-oxide/src/ops.rs
+@@ -1,11 +1,8 @@
++use crate::{array_buffer, number, oom, put, throw, JsResult};
++use alloc::{rc::Rc, string::String, vec::Vec};
++use oxide_core::{vm::native::NativeCall, ErrorKind, NativeCx, ObjectId, Value};
+ use pocket_runtime::generated_ops::{ArgKind, OpDescriptor, ResultKind, OP_DESCRIPTORS};
+ use pocket_runtime::{OpArg, OpContext, OpResult, RuntimeError};
+-use quickjs_oxide::engine::api::core::{
+-    Context, FromJs, FunctionOptions, JsResult, JsString, NativeErrorKind, ObjectRef,
+-    PropertyKey, Scope, Value,
+-};
+-
+-use crate::{number, put, set, string};
+ 
+ const MAX_ARGS: usize = 6;
+ const _: () = {
+@@ -26,30 +23,33 @@ const _: () = {
+     }
+ };
+ 
+-pub(crate) fn mount(js: &mut Context, ui: &ObjectRef, ops: OpContext) -> JsResult<()> {
++pub(crate) fn mount(cx: &mut NativeCx<'_>, ui: ObjectId, ops: OpContext) -> JsResult<()> {
+     for descriptor in OP_DESCRIPTORS {
+         if !ops.supports_op(descriptor.id) {
+             continue;
+         }
+         let ops = ops.clone();
+-        let options = FunctionOptions::new(descriptor.name).length(descriptor.args.len() as u32);
+-        let function = js.new_function(options, move |scope: &mut Scope<'_>| {
+-            invoke(scope, &ops, descriptor)
+-        })?;
+-        put(js, ui, descriptor.name, function.into())?;
++        let body = Rc::new(move |cx: &mut NativeCx<'_>, call| invoke(cx, call, &ops, descriptor));
++        let function = cx
++            .new_host_function(
++                descriptor.name,
++                descriptor.args.len() as u32,
++                false,
++                &[],
++                body,
++            )
++            .map_err(|_| oom(cx))?;
++        put(cx, ui, descriptor.name, Value::object(function))?;
+     }
+     Ok(())
+ }
+ 
+-pub(crate) fn canonical_string(scope: &mut Scope<'_>, value: Value) -> JsResult<String> {
+-    let text = JsString::from_js(scope, value)?;
+-    if !text.is_wide() {
+-        return Ok(text.to_utf8_lossy());
+-    }
+-    // QuickJS-NG leaves lone surrogates encoded as three invalid UTF-8
+-    // bytes in its C string. Rust's from_utf8_lossy replaces each byte.
+-    let mut result = String::with_capacity(text.utf16_units().len());
+-    for decoded in char::decode_utf16(text.utf16_units()) {
++pub(crate) fn canonical_string(cx: &mut NativeCx<'_>, value: Value) -> JsResult<String> {
++    let text = cx.to_string(value)?;
++    let text = cx.string_repr(text).expect("ToString returns a string");
++    let mut result = String::with_capacity(text.len());
++    // QuickJS-NG leaves lone surrogates as three invalid UTF-8 bytes.
++    for decoded in char::decode_utf16(text.units()) {
+         match decoded {
+             Ok(c) => result.push(c),
+             Err(_) => result.push_str("\u{fffd}\u{fffd}\u{fffd}"),
+@@ -58,10 +58,15 @@ pub(crate) fn canonical_string(scope: &mut Scope<'_>, value: Value) -> JsResult<
+     Ok(result)
+ }
+ 
+-fn invoke(scope: &mut Scope<'_>, ops: &OpContext, descriptor: &OpDescriptor) -> JsResult<Value> {
+-    let argc = scope.argc();
++fn invoke(
++    cx: &mut NativeCx<'_>,
++    call: NativeCall,
++    ops: &OpContext,
++    descriptor: &OpDescriptor,
++) -> JsResult<Value> {
++    let argc = call.argc();
+     let mut args = [OpArg::Integer(0); MAX_ARGS];
+-    let mut strings: [String; MAX_ARGS] = std::array::from_fn(|_| String::new());
++    let mut strings: [String; MAX_ARGS] = core::array::from_fn(|_| String::new());
+     let mut bytes = None;
+     // Match the canonical conversion order: numbers first, then strings, then
+     // buffers. valueOf/toString may run JS and mutate or detach a buffer.
+@@ -70,19 +75,19 @@ fn invoke(scope: &mut Scope<'_>, ops: &OpContext, descriptor: &OpDescriptor) ->
+             continue;
+         }
+         if index >= argc && !arg.optional {
+-            return Err(scope.throw_error(NativeErrorKind::Type, "missing UI argument"));
++            return Err(throw(cx, ErrorKind::Type, "missing UI argument"));
+         }
+-        let value = scope.arg(index);
++        let value = call.arg(cx, index);
+         args[index] = match arg.kind {
+-            ArgKind::I32 | ArgKind::Boolean => OpArg::Integer(i32::from_js(scope, value)?.into()),
+-            ArgKind::U32 => OpArg::Integer(u32::from_js(scope, value)?.into()),
+-            ArgKind::Real => OpArg::Real(if arg.optional && matches!(value, Value::Undefined) {
++            ArgKind::I32 | ArgKind::Boolean => OpArg::Integer((cx.to_uint32(value)? as i32).into()),
++            ArgKind::U32 => OpArg::Integer(cx.to_uint32(value)?.into()),
++            ArgKind::Real => OpArg::Real(if arg.optional && matches!(value, Value::UNDEFINED) {
+                 0.0
+             } else {
+-                f64::from_js(scope, value)?
++                cx.to_number(value)?
+             }),
+             ArgKind::Nonnegative => {
+-                let value = f64::from_js(scope, value)?.clamp(0.0, f64::from(u32::MAX));
++                let value = cx.to_number(value)?.clamp(0.0, f64::from(u32::MAX));
+                 OpArg::Integer(i64::from(value as u32))
+             }
+             ArgKind::String | ArgKind::Bytes => unreachable!(),
+@@ -92,10 +97,10 @@ fn invoke(scope: &mut Scope<'_>, ops: &OpContext, descriptor: &OpDescriptor) ->
+         match arg.kind {
+             ArgKind::String => {
+                 if index >= argc && !arg.optional {
+-                    return Err(scope.throw_error(NativeErrorKind::Type, "missing UI argument"));
++                    return Err(throw(cx, ErrorKind::Type, "missing UI argument"));
+                 }
+-                let value = scope.arg(index);
+-                strings[index] = canonical_string(scope, value)?;
++                let value = call.arg(cx, index);
++                strings[index] = canonical_string(cx, value)?;
+             }
+             ArgKind::Bytes => bytes = Some(index),
+             _ => {}
+@@ -108,35 +113,35 @@ fn invoke(scope: &mut Scope<'_>, ops: &OpContext, descriptor: &OpDescriptor) ->
+     }
+     let result = if let Some(index) = bytes {
+         if index >= argc {
+-            return Err(scope.throw_error(NativeErrorKind::Type, "missing UI bytes argument"));
++            return Err(throw(cx, ErrorKind::Type, "missing UI bytes argument"));
+         }
+-        let value = scope.arg(index);
+-        let object = ObjectRef::from_js(scope, value)?;
+-        let (buffer, window) = match scope.typed_array_view(&object)? {
+-            Some(view) => {
+-                let Some(length) = view.length else {
+-                    return Err(scope.throw_error(NativeErrorKind::Type, "invalid byte view"));
+-                };
+-                let end = view.byte_offset + length * view.kind.size();
+-                (view.buffer, Some(view.byte_offset..end))
++        let value = call.arg(cx, index);
++        let object = value
++            .as_object()
++            .ok_or_else(|| throw(cx, ErrorKind::Type, "invalid byte view"))?;
++        let (buffer, window) = match cx.typed_array_view(object) {
++            Some((kind, buffer, offset, Some(length))) => {
++                let end = offset + length * kind.size();
++                (buffer, Some(offset..end))
+             }
++            Some(_) => return Err(throw(cx, ErrorKind::Type, "invalid byte view")),
+             None => (object, None),
+         };
+-        scope
+-            .with_array_buffer_bytes(&buffer, |storage| {
+-                let borrowed = match window {
+-                    Some(window) => storage.get(window)?,
+-                    None => storage,
+-                };
+-                Some(dispatch_with_bytes(ops, descriptor, args, index, borrowed))
+-            })?
+-            .ok_or_else(|| scope.throw_error(NativeErrorKind::Type, "invalid byte view"))?
++        let storage = cx
++            .array_buffer_bytes(buffer)
++            .and_then(|bytes| match window {
++                Some(window) => bytes.get(window),
++                None => Some(bytes),
++            });
++        let Some(storage) = storage else {
++            return Err(throw(cx, ErrorKind::Type, "invalid byte view"));
++        };
++        dispatch_with_bytes(ops, descriptor, args, index, storage)
+     } else {
+         ops.dispatch(descriptor.id, &args[..descriptor.args.len()])
+     };
+-    let result =
+-        result.map_err(|_| scope.throw_error(NativeErrorKind::Internal, "UI operation failed"))?;
+-    marshal(scope, descriptor.result, result)
++    let result = result.map_err(|_| throw(cx, ErrorKind::Internal, "UI operation failed"))?;
++    marshal(cx, descriptor.result, result)
+ }
+ 
+ // Passing the array by value shortens its argument lifetimes to the byte
+@@ -152,39 +157,34 @@ fn dispatch_with_bytes<'a>(
+     ops.dispatch(descriptor.id, &args[..descriptor.args.len()])
+ }
+ 
+-fn marshal(scope: &mut Scope<'_>, kind: ResultKind, result: OpResult) -> JsResult<Value> {
++fn marshal(cx: &mut NativeCx<'_>, kind: ResultKind, result: OpResult) -> JsResult<Value> {
+     match (kind, result) {
+         (ResultKind::None, _)
+         | (ResultKind::OptionalString | ResultKind::OptionalBytes, OpResult::None) => {
+-            Ok(Value::Undefined)
++            Ok(Value::UNDEFINED)
+         }
+-        (ResultKind::Boolean, OpResult::Integer(value)) => Ok(Value::Bool(value != 0)),
++        (ResultKind::Boolean, OpResult::Integer(value)) => Ok(Value::bool(value != 0)),
+         (ResultKind::Integer, OpResult::Integer(value)) => Ok(Value::number(value as f64)),
+         (ResultKind::Real, OpResult::Real(value)) => Ok(Value::number(value)),
+         (ResultKind::String | ResultKind::OptionalString, OpResult::Bytes(bytes)) => {
+-            let text = std::str::from_utf8(&bytes)
+-                .map_err(|_| scope.throw_error(NativeErrorKind::Internal, "invalid string result"))?;
+-            string(text)
++            let text = core::str::from_utf8(&bytes)
++                .map_err(|_| throw(cx, ErrorKind::Internal, "invalid string result"))?;
++            cx.new_string(text).map_err(|_| oom(cx))
+         }
+         (ResultKind::Bytes | ResultKind::OptionalBytes, OpResult::Bytes(bytes)) => {
+-            Ok(scope.new_array_buffer(&bytes)?.into())
++            Ok(Value::object(array_buffer(cx, &bytes)?))
+         }
+         (ResultKind::U32Array, OpResult::Bytes(bytes)) => {
+             let (values, remainder) = bytes.as_chunks::<4>();
+             if !remainder.is_empty() {
+-                return Err(scope.throw_error(NativeErrorKind::Internal, "invalid array result"));
+-            }
+-            let array = scope.new_array()?;
+-            for (i, value) in values.iter().enumerate() {
+-                set(
+-                    scope,
+-                    &array,
+-                    &PropertyKey::index(i as u32),
+-                    number(u32::from_le_bytes(*value)),
+-                )?;
++                return Err(throw(cx, ErrorKind::Internal, "invalid array result"));
+             }
+-            Ok(array.into())
++            let values: Vec<_> = values
++                .iter()
++                .map(|value| number(u32::from_le_bytes(*value)))
++                .collect();
++            Ok(Value::object(cx.new_array_from(&values)?))
+         }
+-        _ => Err(scope.throw_error(NativeErrorKind::Internal, "invalid UI result")),
++        _ => Err(throw(cx, ErrorKind::Internal, "invalid UI result")),
+     }
+ }
+diff --git a/engine/package/src/package.rs b/engine/package/src/package.rs
+index 7797d262..8b3cf1f0 100644
+--- a/engine/package/src/package.rs
++++ b/engine/package/src/package.rs
+@@ -387,7 +387,9 @@ fn admitted<'a>(
+     // Admission read this section; it is present and non-empty.
+     let plan = variant.section(section::PLAN)?.unwrap_or(&[]);
+     let bytecode = envelope_section(variant.section(section::BYTECODE)?)?;
+-    let oxide_bytecode = oxide_envelope_section(variant.section(section::OXIDE_BYTECODE)?)?;
++    // The guest owns Oxide's format check. Keeping this section opaque lets a
++    // compatible host fall back before guest code runs, including on version mismatch.
++    let oxide_bytecode = variant.section(section::OXIDE_BYTECODE)?;
+     let js = match variant.section(section::JS)?.filter(|value| !value.is_empty()) {
+         Some(js) if js.last() != Some(&0) => return Err(GuestError::JavaScriptNotTerminated),
+         Some(js) => js,
+@@ -428,25 +430,6 @@ fn envelope_section(bytes: Option<&[u8]>) -> Result<Option<&[u8]>, GuestError> {
+ }
+ 
+ /// Check the outer framing, leaving instruction validation to the engine.
+-fn oxide_envelope_section(bytes: Option<&[u8]>) -> Result<Option<&[u8]>, GuestError> {
+-    const HEADER_SIZE: usize = 16;
+-    const INSTRUCTION_SIZE: usize = 8;
+-    let Some(bytes) = bytes else {
+-        return Ok(None);
+-    };
+-    if bytes.len() < HEADER_SIZE || !bytes.starts_with(b"OXBC\x01\x00\x10\x00") {
+-        return Err(GuestError::BadBytecode);
+-    }
+-    let count = u32_at(bytes, 12)?;
+-    let payload_size = usize::try_from(count)
+-        .ok()
+-        .and_then(|count| count.checked_mul(INSTRUCTION_SIZE));
+-    if count == 0 || payload_size != Some(bytes.len() - HEADER_SIZE) {
+-        return Err(GuestError::BadBytecode);
+-    }
+-    Ok(Some(bytes))
+-}
+-
+ /// The worker bundle a plan with `domains.worker` requires, or an empty slice
+ /// for a plan without one, or for one whose bundle is bytecode alone
+ /// (`has_bytecode`). The bundle ends with NUL like the UI JavaScript.
+@@ -609,7 +592,7 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn oxide_admission_checks_framing_even_with_source_and_quickjs() {
++    fn oxide_admission_leaves_format_checks_to_the_guest() {
+         use crate::admission::testing::{host, PLAN};
+         use crate::embedded::{encode_sections, identity};
+         let identity = identity("app", "test.app", "App").unwrap();
+@@ -637,23 +620,23 @@ mod tests {
+         assert_eq!(guest.js, js);
+         assert_eq!(guest.bytecode, Some(&quickjs[..]));
+ 
+-        let reject = |envelope: &[u8]| {
++        let defer_to_guest = |envelope: &[u8]| {
+             let bytes = encode(envelope, true);
+             assert_eq!(
+-                select_guest(&bytes, &host, false).err(),
+-                Some(GuestError::BadBytecode)
++                select_guest(&bytes, &host, false).unwrap().oxide_bytecode,
++                Some(envelope)
+             );
+         };
+-        reject(&envelope[..15]);
+-        reject(&envelope[..23]);
++        defer_to_guest(&envelope[..15]);
++        defer_to_guest(&envelope[..23]);
+         for (offset, byte) in [(0, b'Q'), (4, 2), (6, 17), (12, 0), (12, 2)] {
+             let mut damaged = envelope;
+             damaged[offset] = byte;
+-            reject(&damaged);
++            defer_to_guest(&damaged);
+         }
+         let mut damaged = envelope;
+         damaged[12..16].copy_from_slice(&u32::MAX.to_le_bytes());
+-        reject(&damaged);
++        defer_to_guest(&damaged);
+     }
+ 
+     #[test]
+diff --git a/engine/runtime/src/lib.rs b/engine/runtime/src/lib.rs
+index d1d67d97..4ca2cdbd 100644
+--- a/engine/runtime/src/lib.rs
++++ b/engine/runtime/src/lib.rs
+@@ -22,7 +22,7 @@ pub use pocket_package::Timing;
+ pub use coordinator::{DisplayId, RendererId};
+ 
+ use alloc::{boxed::Box, rc::Rc, vec::Vec};
+-use core::cell::{Cell, Ref, RefCell, RefMut};
++use core::cell::{Cell, OnceCell, Ref, RefCell, RefMut};
+ use pocket_drivers::{
+     DisplayOutput, DisplayRole, InputFrameBuilder, InputSource, PackageSource, Renderer,
+ };
+@@ -117,11 +117,14 @@ impl core::ops::DerefMut for CoreState {
+     }
+ }
+ 
++type OpObserver = dyn Fn(u16, &[OpArg<'_>], &Result<OpResult, RuntimeError>);
++
+ #[derive(Clone)]
+ pub struct OpContext {
+     state: Rc<RefCell<CoreState>>,
+     active: Rc<Cell<bool>>,
+     package: Rc<RefCell<Option<PackageAssets>>>,
++    observer: Rc<OnceCell<Rc<OpObserver>>>,
+ }
+ enum PackageAssets {
+     Admitted(Rc<LoadedPackage>),
+@@ -156,6 +159,7 @@ impl OpContext {
+             state: Rc::new(RefCell::new(CoreState::new(ui))),
+             active: Rc::new(Cell::new(true)),
+             package: Rc::new(RefCell::new(None)),
++            observer: Rc::default(),
+         }
+     }
+     pub fn core(&self) -> Result<Ref<'_, CoreState>, RuntimeError> {
+@@ -170,6 +174,14 @@ impl OpContext {
+         }
+         self.state.try_borrow_mut().map_err(|_| RuntimeError::Busy)
+     }
++    /// Retain the mounted pack for a guest binding that reads it on demand.
++    pub fn asset_pack_storage(&self) -> Option<Rc<dyn AsRef<[u8]>>> {
++        match self.package.borrow().as_ref()? {
++            PackageAssets::Admitted(package) => Some(Rc::new(AdmittedPak(package.clone()))),
++            PackageAssets::Embedded(pak) => Some(Rc::new(EmbeddedPak(pak.clone()))),
++        }
++    }
++
+     /// Install an embedded asset pack for an embedding that owns admission and
+     /// guest lifecycle. Full Runtime instances load assets from PackageSource.
+     /// Validation completes before any core asset changes; tile loads retain
+@@ -260,7 +272,20 @@ impl OpContext {
+                 .iter()
+                 .any(|provider| provider.supports_op(op))
+     }
++    /// Attach a diagnostic observer shared by all operation contexts.
++    /// The observer must not dispatch operations.
++    pub fn observe_operations(&self, observer: Rc<OpObserver>) -> Result<(), RuntimeError> {
++        self.observer.set(observer).map_err(|_| RuntimeError::InvalidState)
++    }
+     pub fn dispatch(&self, op: u16, args: &[OpArg<'_>]) -> Result<OpResult, RuntimeError> {
++        let result = self.dispatch_inner(op, args);
++        if let Some(observer) = self.observer.get() {
++            observer(op, args, &result);
++        }
++        result
++    }
++
++    fn dispatch_inner(&self, op: u16, args: &[OpArg<'_>]) -> Result<OpResult, RuntimeError> {
+         if !self.active.get() {
+             return Err(RuntimeError::UnsupportedOperation);
+         }
+diff --git a/platforms/apple/Cargo.toml b/platforms/apple/Cargo.toml
+index 33f43a5e..6f039996 100644
+--- a/platforms/apple/Cargo.toml
++++ b/platforms/apple/Cargo.toml
+@@ -25,7 +25,7 @@ pocket-runtime = { workspace = true, default-features = true }
+ pocket-drivers = { workspace = true, default-features = true }
+ pocket-raster = { workspace = true, default-features = true }
+ pocket-package = { workspace = true, default-features = true }
+-pocket-guest-oxide = { workspace = true, optional = true }
++pocket-guest-oxide = { workspace = true, optional = true, features = ["source"] }
+ pocket-guest-rquickjs = { workspace = true, default-features = true }
+ log = { workspace = true }
+ 
+diff --git a/programs/linux-kms/Cargo.toml b/programs/linux-kms/Cargo.toml
+index c0515444..bdb0666c 100644
+--- a/programs/linux-kms/Cargo.toml
++++ b/programs/linux-kms/Cargo.toml
+@@ -10,9 +10,12 @@ license.workspace = true
+ publish = false
+ 
+ [features]
+-default = []
++default = ["rquickjs-guest"]
++rquickjs-guest = ["dep:pocket-guest-rquickjs"]
+ alsa = ["dep:pocket-linux-alsa"]
+-oxide-guest = ["dep:pocket-guest-oxide"]
++oxide-guest = ["oxide-image", "pocket-guest-oxide/source"]
++oxide-image = ["dep:pocket-guest-oxide", "pocket-guest-oxide/std"]
++qjbc-compare = ["dep:cc"]
+ 
+ [dependencies]
+ pocket-runtime = { workspace = true, default-features = true }
+@@ -21,7 +24,7 @@ pocket-raster = { workspace = true, default-features = true }
+ pocket-package = { workspace = true, default-features = true }
+ pocket-spec = { workspace = true, default-features = true }
+ pocket-guest-oxide = { workspace = true, optional = true }
+-pocket-guest-rquickjs = { workspace = true, default-features = true }
++pocket-guest-rquickjs = { workspace = true, default-features = true, optional = true }
+ pocket-linux-hooks = { workspace = true, default-features = true }
+ pocket-linux-drm = { workspace = true, default-features = true }
+ pocket-linux-fbdev = { workspace = true, default-features = true }
+@@ -30,8 +33,13 @@ pocket-linux-alsa = { workspace = true, default-features = true, optional = true
+ libc = "0.2.191"
+ 
+ [build-dependencies]
++cc = { version = "1", optional = true }
+ pocket-profile-build.workspace = true
+ 
+ [[example]]
+ name = "guest_compare"
+-required-features = ["oxide-guest"]
++required-features = ["oxide-image"]
++
++[[bin]]
++name = "pocket-linux-kms"
++required-features = ["rquickjs-guest"]
+diff --git a/programs/linux-kms/build.rs b/programs/linux-kms/build.rs
+index 3936d98e..27b2b1f9 100644
+--- a/programs/linux-kms/build.rs
++++ b/programs/linux-kms/build.rs
+@@ -1,4 +1,44 @@
+ //! Places the profile `pocket build` exported for this program in OUT_DIR.
+ fn main() {
+     pocket_profile_build::emit(pocket_profile_build::Export::Required);
++    #[cfg(feature = "qjbc-compare")]
++    build_quickjs();
++}
++
++#[cfg(feature = "qjbc-compare")]
++fn build_quickjs() {
++    use std::{env, path::PathBuf};
++    let source = PathBuf::from(
++        env::var_os("POCKETJS_QUICKJS_SOURCE")
++            .expect("set POCKETJS_QUICKJS_SOURCE to the QuickJS-NG source directory"),
++    );
++    let abi = PathBuf::from(
++        env::var_os("POCKETJS_QUICKJS_ABI")
++            .expect("set POCKETJS_QUICKJS_ABI to the binary, 32-byte compiler ABI digest"),
++    );
++    println!("cargo:rerun-if-env-changed=POCKETJS_QUICKJS_SOURCE");
++    println!("cargo:rerun-if-env-changed=POCKETJS_QUICKJS_ABI");
++    println!("cargo:rerun-if-changed={}", abi.display());
++    let digest = std::fs::read(&abi).expect("read QuickJS-NG ABI digest");
++    assert_eq!(digest.len(), 32);
++    let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
++    std::fs::write(out.join("quickjs-abi"), digest).unwrap();
++
++    let mut cc = cc::Build::new();
++    cc.std("gnu11")
++        .warnings(false)
++        .define("_GNU_SOURCE", None)
++        .define("QUICKJS_NG_BUILD", None)
++        .flag("-fno-strict-aliasing")
++        .include(&source)
++        .include("../../engine/guest-quickjs/include")
++        .include("../../contracts/generated")
++        .file("../../engine/guest-quickjs/src/guest.c");
++    for name in ["quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c"] {
++        let file = source.join(name);
++        println!("cargo:rerun-if-changed={}", file.display());
++        cc.file(file);
++    }
++    cc.compile("pocket_qjbc_compare");
++    println!("cargo:rustc-link-lib=m");
+ }
+diff --git a/programs/linux-kms/examples/guest_compare.rs b/programs/linux-kms/examples/guest_compare.rs
+index ee28ad17..3760c99c 100644
+--- a/programs/linux-kms/examples/guest_compare.rs
++++ b/programs/linux-kms/examples/guest_compare.rs
+@@ -1,22 +1,24 @@
+-//! Run one source guest per process against the same unmodified .pocket file.
++//! Boot or replay one guest per process using a PocketJS package.
+ //! Use a Linux KMS host export as `POCKETJS_PROFILE_RS` and build with
+ //! `cargo build --release -p pocket-linux-kms --features oxide-guest --example guest_compare`.
+-use pocket_drivers::abi::{POCKET_BUTTON_LEFT, POCKET_BUTTON_RIGHT};
++use pocket_drivers::abi::{POCKET_BUTTON_CIRCLE, POCKET_BUTTON_LEFT, POCKET_BUTTON_RIGHT};
+ use pocket_drivers::{
+     DisplayDescriptor, DisplayError, DisplayOutput, DisplayRole, InputClasses, InputFrameBuilder,
+     InputSource, PixelFormat, Rect, Surface, Target, TargetOwnership, VsyncSource,
+ };
+ use pocket_guest_oxide::OxideGuest;
++#[cfg(feature = "rquickjs-guest")]
+ use pocket_guest_rquickjs::RquickjsGuest;
+ use pocket_linux_hooks::FileSource;
+ use pocket_package::source::LoadedPackage;
+ use pocket_raster::RasterRenderer;
++use pocket_runtime::abi::Handle;
+ use pocket_runtime::{
+-    Guest, GuestEnvironment, GuestFrame, OpContext, Profile, RendererId, Runtime, RuntimeConfig,
++    Guest, GuestEnvironment, GuestFrame, OpContext, Profile, RendererId, RuntimeConfig,
+     RuntimeError,
+ };
+ use std::{
+-    cell::{Cell, OnceCell},
++    cell::{Cell, OnceCell, RefCell},
+     env,
+     fmt::Display,
+     fs::{self, File},
+@@ -32,12 +34,17 @@ mod profile {
+     include!(concat!(env!("OUT_DIR"), "/pocket_profile.rs"));
+ }
+ 
++#[cfg(feature = "qjbc-compare")]
++#[path = "guest_compare/qjbc.rs"]
++mod qjbc;
++
+ const FORMAT: PixelFormat = PixelFormat::Rgba8888;
+ const HEAP_LIMIT: usize = 32 * 1024 * 1024;
+ 
+ struct ReplayInput {
+     tick: u64,
+     classes: InputClasses,
++    press_hero: bool,
+ }
+ 
+ impl InputSource for ReplayInput {
+@@ -49,6 +56,7 @@ impl InputSource for ReplayInput {
+         frame.buttons |= match self.tick % 360 {
+             30 | 150 => POCKET_BUTTON_RIGHT,
+             270 => POCKET_BUTTON_LEFT,
++            60 | 120 | 300 if self.press_hero => POCKET_BUTTON_CIRCLE,
+             _ => 0,
+         };
+         self.tick += 1;
+@@ -159,6 +167,11 @@ impl<G: Guest> Guest for TimedGuest<G> {
+         self.record_error(result)
+     }
+ 
++    fn evaluate_oxide_bytecode(&mut self, envelope: &[u8]) -> Result<(), RuntimeError> {
++        let result = self.guest.evaluate_oxide_bytecode(envelope);
++        self.record_error(result)
++    }
++
+     fn frame(&mut self, frame: &GuestFrame<'_>) -> Result<(), RuntimeError> {
+         let start = Instant::now();
+         let result = self.guest.frame(frame);
+@@ -181,13 +194,15 @@ impl<G: Guest> Guest for TimedGuest<G> {
+ fn usage() -> io::Error {
+     io::Error::new(
+         io::ErrorKind::InvalidInput,
+-        "usage: guest_compare [--package-layout] quickjs|oxide APP.pocket FRAMES [output.ppm]",
++        "usage: guest_compare [--package-layout] [--boot-only] [--hero-press] quickjs|qjbc|oxide APP.pocket FRAMES [output.ppm]",
+     )
+ }
+ 
+ fn peak_rss_kib() -> Option<u64> {
+     let status = fs::read_to_string("/proc/self/status").ok()?;
+-    let hwm = status.lines().find_map(|line| line.strip_prefix("VmHWM:"))?;
++    let hwm = status
++        .lines()
++        .find_map(|line| line.strip_prefix("VmHWM:"))?;
+     hwm.split_ascii_whitespace().next()?.parse().ok()
+ }
+ 
+@@ -224,7 +239,10 @@ fn package_layout(
+     } else {
+         profile.auxiliary
+     };
+-    Ok((physical(primary.width, primary.height, primary.raster_density), auxiliary))
++    Ok((
++        physical(primary.width, primary.height, primary.raster_density),
++        auxiliary,
++    ))
+ }
+ 
+ fn memory_display(
+@@ -239,11 +257,18 @@ fn memory_display(
+         .checked_mul(height as usize)
+         .ok_or_else(|| io::Error::other("framebuffer length overflow"))?;
+     if len > 64 * 1024 * 1024 {
+-        return Err(io::Error::other("one diagnostic framebuffer exceeds 64 MiB"));
++        return Err(io::Error::other(
++            "one diagnostic framebuffer exceeds 64 MiB",
++        ));
+     }
+     Ok(MemoryDisplay {
+         descriptor: DisplayDescriptor::new(
+-            role, width, height, FORMAT, stride, TargetOwnership::CpuVisible,
++            role,
++            width,
++            height,
++            FORMAT,
++            stride,
++            TargetOwnership::CpuVisible,
+         ),
+         pixels: vec![0; len],
+         output: Rc::clone(output),
+@@ -253,7 +278,10 @@ fn memory_display(
+ fn run() -> io::Result<()> {
+     let mut args = env::args_os().skip(1).peekable();
+     let package_layout_requested = args.next_if(|arg| arg == "--package-layout").is_some();
+-    let (Some(engine), Some(package), Some(frames)) = (args.next(), args.next(), args.next()) else {
++    let boot_only = args.next_if(|arg| arg == "--boot-only").is_some();
++    let press_hero = args.next_if(|arg| arg == "--hero-press").is_some();
++    let (Some(engine), Some(package), Some(frames)) = (args.next(), args.next(), args.next())
++    else {
+         return Err(usage());
+     };
+     let output_path = args.next();
+@@ -264,27 +292,14 @@ fn run() -> io::Result<()> {
+         .to_str()
+         .and_then(|value| value.parse::<u64>().ok())
+         .ok_or_else(usage)?;
++    if boot_only && (frames != 0 || output_path.is_some()) {
++        return Err(usage());
++    }
++    let trace = env::var_os("POCKET_OP_TRACE")
++        .map(File::create)
++        .transpose()?;
++    let trace = trace.map(|file| Rc::new(RefCell::new(BufWriter::new(file))));
+     let measurements = Rc::new(Measurements::default());
+-    let (engine, guest): (&str, Box<dyn Guest>) = match engine.to_str() {
+-        Some("quickjs") => (
+-            "quickjs",
+-            Box::new(TimedGuest {
+-                guest: RquickjsGuest::default(),
+-                last_error: RquickjsGuest::last_error,
+-                measurements: Rc::clone(&measurements),
+-            }),
+-        ),
+-        Some("oxide") => (
+-            "oxide",
+-            Box::new(TimedGuest {
+-                guest: OxideGuest::default(),
+-                last_error: OxideGuest::last_error,
+-                measurements: Rc::clone(&measurements),
+-            }),
+-        ),
+-        _ => return Err(usage()),
+-    };
+-
+     let profile = profile::profile().ok_or_else(|| io::Error::other("missing exported profile"))?;
+     let mut source = FileSource::open(package)?;
+     let (primary, auxiliary) = if package_layout_requested {
+@@ -301,9 +316,13 @@ fn run() -> io::Result<()> {
+         .transpose()?;
+     // Include both outputs and the same room for staging as the KMS trial.
+     let budget = (display.pixels.len() + auxiliary.as_ref().map_or(0, |d| d.pixels.len())) * 2;
+-    let inputs = ReplayInput { tick: 0, classes: profile.required_inputs | InputClasses::BUTTONS };
++    let inputs = ReplayInput {
++        tick: 0,
++        classes: profile.required_inputs | InputClasses::BUTTONS,
++        press_hero,
++    };
+     let setup_error = |error| measurements.runtime_error("setup", error);
+-    let mut runtime = Runtime::new(RuntimeConfig {
++    let handle = Handle::new(RuntimeConfig {
+         profile_hash: profile::PROFILE_HASH,
+         host_abi: profile::HOST_ABI,
+         heap_limit: HEAP_LIMIT,
+@@ -311,44 +330,113 @@ fn run() -> io::Result<()> {
+         profile,
+     })
+     .map_err(setup_error)?;
+-    let raster = RasterRenderer::new(1)
+-        .map_err(|error| io::Error::other(format!("raster setup: {error:?}")))?;
+-    runtime
+-        .set_software_renderer(raster, RasterRenderer::new)
+-        .map_err(setup_error)?;
+-    if package_layout_requested {
+-        runtime.allow_embedded_viewport_changes().map_err(setup_error)?;
+-    }
+-    runtime.add_display(display, RendererId::SOFTWARE).map_err(setup_error)?;
+-    if let Some(auxiliary) = auxiliary {
+-        runtime.add_display(auxiliary, RendererId::SOFTWARE).map_err(setup_error)?;
++    let (engine, guest): (&str, Box<dyn Guest>) = match engine.to_str() {
++        #[cfg(feature = "rquickjs-guest")]
++        Some("quickjs") => (
++            "quickjs",
++            Box::new(TimedGuest {
++                guest: RquickjsGuest::default(),
++                last_error: RquickjsGuest::last_error,
++                measurements: Rc::clone(&measurements),
++            }),
++        ),
++        #[cfg(feature = "qjbc-compare")]
++        Some("qjbc") => (
++            "qjbc",
++            Box::new(TimedGuest {
++                guest: qjbc::Guest::new(handle.as_ptr())?,
++                last_error: qjbc::Guest::last_error,
++                measurements: Rc::clone(&measurements),
++            }),
++        ),
++        Some("oxide") => (
++            "oxide",
++            Box::new(TimedGuest {
++                guest: OxideGuest::default(),
++                last_error: OxideGuest::last_error,
++                measurements: Rc::clone(&measurements),
++            }),
++        ),
++        _ => return Err(usage()),
++    };
++
++    if let Some(trace) = &trace {
++        let trace = trace.clone();
++        handle
++            .op_context()
++            .observe_operations(Rc::new(move |op, args, result| {
++                writeln!(trace.borrow_mut(), "{op} {args:?} {result:?}")
++                    .expect("write operation trace");
++            }))
++            .map_err(setup_error)?;
+     }
+-    runtime.add_input_source(Box::new(inputs)).map_err(setup_error)?;
+-    runtime.set_package_source(Box::new(source)).map_err(setup_error)?;
+-    runtime.set_guest(guest).map_err(setup_error)?;
+-
+-    // Boot includes package admission, source evaluation and initial presentation.
+-    let start = Instant::now();
+-    runtime
+-        .boot()
+-        .map_err(|error| measurements.runtime_error("boot", error))?;
+-    let boot = start.elapsed();
+-    let timing = runtime
+-        .timing()
+-        .expect("successful boot sets package timing");
+-    // Replay the same button edges without waiting for a hardware clock.
+-    let start = Instant::now();
+-    for index in 0..frames {
+-        runtime.tick().map_err(|error| {
+-            measurements.runtime_error(format_args!("tick {}", index + 1), error)
+-        })?;
++    let (boot, tick, timing, peak_rss) = handle
++        .with_runtime(|runtime| {
++            Ok((|| {
++                let raster = RasterRenderer::new(1)
++                    .map_err(|error| io::Error::other(format!("raster setup: {error:?}")))?;
++                runtime
++                    .set_software_renderer(raster, RasterRenderer::new)
++                    .map_err(setup_error)?;
++                if package_layout_requested {
++                    runtime
++                        .allow_embedded_viewport_changes()
++                        .map_err(setup_error)?;
++                }
++                runtime
++                    .add_display(display, RendererId::SOFTWARE)
++                    .map_err(setup_error)?;
++                if let Some(auxiliary) = auxiliary {
++                    runtime
++                        .add_display(auxiliary, RendererId::SOFTWARE)
++                        .map_err(setup_error)?;
++                }
++                runtime
++                    .add_input_source(Box::new(inputs))
++                    .map_err(setup_error)?;
++                runtime
++                    .set_package_source(Box::new(source))
++                    .map_err(setup_error)?;
++                runtime.set_guest(guest).map_err(setup_error)?;
++
++                // Boot includes package admission, source evaluation and initial presentation.
++                let start = Instant::now();
++                if let Some(trace) = &trace {
++                    writeln!(trace.borrow_mut(), "boot")?;
++                }
++                let boot_result = if boot_only {
++                    runtime.boot_deferred()
++                } else {
++                    runtime.boot()
++                };
++                boot_result.map_err(|error| measurements.runtime_error("boot", error))?;
++                let boot = start.elapsed();
++                let timing = runtime
++                    .timing()
++                    .expect("successful boot sets package timing");
++                // Replay the same button edges without waiting for a hardware clock.
++                let start = Instant::now();
++                for index in 0..frames {
++                    if let Some(trace) = &trace {
++                        writeln!(trace.borrow_mut(), "frame {}", index + 1)?;
++                    }
++                    runtime.tick().map_err(|error| {
++                        measurements.runtime_error(format_args!("tick {}", index + 1), error)
++                    })?;
++                }
++                let tick = start.elapsed();
++                let peak_rss = peak_rss_kib();
++                runtime
++                    .shutdown()
++                    .map_err(|error| measurements.runtime_error("shutdown", error))?;
++                Ok::<_, io::Error>((boot, tick, timing, peak_rss))
++            })())
++        })
++        .map_err(setup_error)??;
++    drop(handle);
++    if let Some(trace) = trace {
++        trace.borrow_mut().flush()?;
+     }
+-    let tick = start.elapsed();
+-    let peak_rss = peak_rss_kib();
+-    runtime
+-        .shutdown()
+-        .map_err(|error| measurements.runtime_error("shutdown", error))?;
+-    drop(runtime);
+ 
+     let rgba = output
+         .get()
+diff --git a/programs/linux-kms/examples/guest_compare/qjbc.rs b/programs/linux-kms/examples/guest_compare/qjbc.rs
+new file mode 100644
+index 00000000..9a01b6bf
+--- /dev/null
++++ b/programs/linux-kms/examples/guest_compare/qjbc.rs
+@@ -0,0 +1,110 @@
++use std::{
++    ffi::{c_char, c_int, c_void, CStr},
++    io,
++    ptr::NonNull,
++};
++
++use pocket_drivers::abi::{PocketGuestV1, PocketRuntime};
++use pocket_runtime::{
++    abi::CGuest, Guest as RuntimeGuest, GuestEnvironment, GuestFrame, OpContext, RuntimeError,
++};
++
++unsafe extern "C" {
++    fn pocket_guest_quickjs_create(profile: c_int) -> *mut c_void;
++    fn pocket_guest_quickjs_vtable() -> *const PocketGuestV1;
++    fn pocket_guest_quickjs_error(guest: *mut c_void) -> *const c_char;
++    fn pocket_guest_quickjs_set_engine_abi(guest: *mut c_void, abi: *const u8);
++    fn pocket_guest_quickjs_destroy(guest: *mut c_void);
++}
++
++/// Owns the exact C guest that implements PocketJS's QJBC loading. The
++/// caller installs it in the supplied runtime for the lifetime of the handle.
++pub(super) struct Guest {
++    guest: CGuest,
++    owner: NonNull<c_void>,
++}
++
++impl Guest {
++    pub(super) fn new(runtime: *mut PocketRuntime) -> io::Result<Self> {
++        const ABI: &[u8; 32] = include_bytes!(concat!(env!("OUT_DIR"), "/quickjs-abi"));
++        // The profile is POCKET_QJS_CANONICAL (0). All other pointers come
++        // from the C guest or are owned by the caller's live runtime handle.
++        unsafe {
++            let owner = NonNull::new(pocket_guest_quickjs_create(0))
++                .ok_or_else(|| io::Error::other("could not allocate C QuickJS guest"))?;
++            pocket_guest_quickjs_set_engine_abi(owner.as_ptr(), ABI.as_ptr());
++            match CGuest::new(pocket_guest_quickjs_vtable(), owner.as_ptr(), runtime) {
++                Ok(guest) => Ok(Self { guest, owner }),
++                Err(_) => {
++                    pocket_guest_quickjs_destroy(owner.as_ptr());
++                    Err(io::Error::other("could not register C QuickJS guest"))
++                }
++            }
++        }
++    }
++
++    pub(super) fn last_error(&self) -> Option<&str> {
++        // C owns the error text until the next mutable guest call.
++        let error = unsafe { pocket_guest_quickjs_error(self.owner.as_ptr()) };
++        if error.is_null() {
++            return None;
++        }
++        unsafe { CStr::from_ptr(error) }.to_str().ok()
++    }
++}
++
++impl Drop for Guest {
++    fn drop(&mut self) {
++        // The owner was allocated by pocket_guest_quickjs_create.
++        unsafe { pocket_guest_quickjs_destroy(self.owner.as_ptr()) };
++    }
++}
++
++impl RuntimeGuest for Guest {
++    fn initialize(
++        &mut self,
++        ops: OpContext,
++        env: &GuestEnvironment<'_>,
++    ) -> Result<(), RuntimeError> {
++        self.guest.initialize(ops, env)
++    }
++
++    fn evaluate(&mut self, _: &[u8]) -> Result<(), RuntimeError> {
++        Err(RuntimeError::UnsupportedOperation)
++    }
++
++    fn evaluate_bytecode(&mut self, envelope: &[u8]) -> Result<(), RuntimeError> {
++        self.guest.evaluate_bytecode(envelope)
++    }
++
++    fn frame(&mut self, frame: &GuestFrame<'_>) -> Result<(), RuntimeError> {
++        self.guest.frame(frame)
++    }
++
++    fn collect(&mut self) -> Result<(), RuntimeError> {
++        self.guest.collect()
++    }
++
++    fn shutdown(&mut self) {
++        self.guest.shutdown();
++    }
++}
++
++// The SDK archive exposes these same two functions at the C ABI boundary.
++#[unsafe(no_mangle)]
++unsafe extern "C" fn pocket_runtime_supports_op(runtime: *const PocketRuntime, op: u16) -> u32 {
++    // Forward the C guest's borrowed runtime handle to the SDK implementation.
++    unsafe { pocket_runtime::abi::pocket_runtime_supports_op(runtime, op) }
++}
++
++#[unsafe(no_mangle)]
++unsafe extern "C" fn pocket_runtime_op(
++    runtime: *mut PocketRuntime,
++    op: u16,
++    args: *const c_void,
++    length: usize,
++    out: *mut pocket_drivers::abi::PocketResult,
++) -> i32 {
++    // Forward the borrowed arguments unchanged; the SDK validates their prefixes.
++    unsafe { pocket_runtime::abi::pocket_runtime_op(runtime, op, args, length, out) }
++}
+diff --git a/programs/pocketbook/Cargo.toml b/programs/pocketbook/Cargo.toml
+index ff2b4cf2..b3074030 100644
+--- a/programs/pocketbook/Cargo.toml
++++ b/programs/pocketbook/Cargo.toml
+@@ -29,7 +29,7 @@ pocket-spec = { workspace = true, default-features = true }
+ pocket-drivers = { workspace = true, default-features = true }
+ pocket-runtime = { workspace = true, default-features = true }
+ pocketjs-core = { workspace = true, default-features = true }
+-pocket-guest-oxide = { workspace = true, optional = true }
++pocket-guest-oxide = { workspace = true, optional = true, features = ["source"] }
+ pocket-mod = { workspace = true, default-features = true }
+ pocket-ui-surface = { workspace = true, default-features = true }
+ pocket-raster = { workspace = true, default-features = true }
+diff --git a/programs/rg-ds-plus/Cargo.toml b/programs/rg-ds-plus/Cargo.toml
+index fad2029e..aebfdda5 100644
+--- a/programs/rg-ds-plus/Cargo.toml
++++ b/programs/rg-ds-plus/Cargo.toml
+@@ -20,7 +20,7 @@ pocket-drivers = { workspace = true, default-features = true }
+ pocket-raster = { workspace = true, default-features = true }
+ pocket-package = { workspace = true, default-features = true }
+ pocket-spec = { workspace = true, default-features = true }
+-pocket-guest-oxide = { workspace = true, optional = true }
++pocket-guest-oxide = { workspace = true, optional = true, features = ["source"] }
+ pocket-guest-rquickjs = { workspace = true, default-features = true }
+ pocket-linux-hooks = { workspace = true, default-features = true }
+ pocket-linux-drm = { workspace = true, default-features = true }
+diff --git a/tools/packaging/compare-qjbc.ts b/tools/packaging/compare-qjbc.ts
+new file mode 100644
+index 00000000..df5409c1
+--- /dev/null
++++ b/tools/packaging/compare-qjbc.ts
+@@ -0,0 +1,44 @@
++// Diagnostic QJBC built with the PocketJS production compiler and envelope.
++// The native diagnostic ABI names the actual QuickJS-NG source/build; it is
++// deliberately distinct from the ESP-IDF ABI registered for deployment.
++import { createHash } from "node:crypto";
++import { dirname } from "node:path";
++import { decodePocketPackage, encodePocketPackage, POCKET_SECTION } from "../../contracts/spec/pocket-package.ts";
++import { engineAbiDigest, ESP_IDF_QUICKJS_NG_0_14_0 } from "../../contracts/spec/quickjs-bytecode.ts";
++import { compileQuickJsBytecode } from "../quickjs-bytecode.ts";
++
++const [input, target, source, version, bytecodeVersion, output, digest] = Bun.argv.slice(2);
++if (!input || !target || !source || !version || !bytecodeVersion || !output || !digest) {
++  console.error("usage: bun tools/packaging/compare-qjbc.ts INPUT.pocket TARGET QUICKJS_SOURCE VERSION BC_VERSION OUTPUT.pocket ABI.bin");
++  process.exit(2);
++}
++const pkg = decodePocketPackage(await Bun.file(input).bytes());
++const variant = pkg.variants.find((entry) => entry.target === target);
++if (!variant) throw new Error(`package has no ${target} variant`);
++const js = variant.sections.find((section) => section.kind === POCKET_SECTION.js)?.bytes;
++if (!js?.length || js.at(-1) !== 0) throw new Error("package has no NUL-terminated UI bundle");
++if (process.platform !== "linux" || process.arch !== "x64") throw new Error("expected a Linux x64 diagnostic host");
++
++const hash = createHash("sha256");
++for (const file of ["quickjs.h", "quickjs.c", "dtoa.c", "libregexp.c", "libunicode.c"]) {
++  hash.update(await Bun.file(`${source}/${file}`).bytes());
++}
++const reference = ESP_IDF_QUICKJS_NG_0_14_0.descriptor;
++const descriptor = {
++  ...reference,
++  binding: { ...reference.binding, name: "linux-diagnostic", version, checksum: hash.digest("hex"), revision: "local" },
++  engine: { ...reference.engine, version, revision: "local", bytecodeVersion: Number(bytecodeVersion) },
++  build: { ...reference.build, pointerWidth: 64 as const, valueRepresentation: "tagged-struct" as const },
++};
++const abi = { name: "linux-qjbc-compare", descriptor, canonicalDescriptor: "", sha256: engineAbiDigest(descriptor) };
++const compiled = compileQuickJsBytecode(abi, js.subarray(0, -1), {
++  engineSource: { abi, directory: source },
++  buildDirectory: dirname(digest),
++});
++if (compiled.bytecode[0] !== Number(bytecodeVersion)) throw new Error("QuickJS bytecode version mismatch");
++variant.sections = variant.sections.filter(({kind}) => kind !== POCKET_SECTION.js &&
++  kind !== POCKET_SECTION.bytecode && kind !== POCKET_SECTION.oxideBytecode);
++variant.sections.push({ kind: POCKET_SECTION.bytecode, bytes: compiled.section });
++await Bun.write(output, encodePocketPackage(pkg));
++await Bun.write(digest, Buffer.from(abi.sha256.slice(7), "hex"));
++console.log(`${output}: ${compiled.section.length} byte QJBC section, ABI ${abi.sha256}`);
+diff --git a/tools/packaging/compile-oxide.ts b/tools/packaging/compile-oxide.ts
+new file mode 100644
+index 00000000..9e5b16fb
+--- /dev/null
++++ b/tools/packaging/compile-oxide.ts
+@@ -0,0 +1,41 @@
++// Compile the exact UI section of an existing .pocket, preserving its plan and assets.
++import { mkdtempSync, rmSync } from "node:fs";
++import { dirname, join } from "node:path";
++import { decodePocketPackage, encodePocketPackage, POCKET_SECTION, verifyOxideBytecodeEnvelope } from "../../contracts/spec/pocket-package.ts";
++
++const [compiler, input, target, output, mode, ...extra] = Bun.argv.slice(2);
++if (!compiler || !input || !target || !output || (mode && mode !== "--oxide-only") || extra.length) {
++  console.error("usage: bun tools/packaging/compile-oxide.ts COMPILER INPUT.pocket TARGET OUTPUT.pocket [--oxide-only]");
++  process.exit(2);
++}
++
++const pkg = decodePocketPackage(await Bun.file(input).bytes());
++const variant = pkg.variants.find((entry) => entry.target === target);
++if (!variant) throw new Error(`package has no ${target} variant`);
++const js = variant.sections.find((section) => section.kind === POCKET_SECTION.js)?.bytes;
++if (!js?.length || js.at(-1) !== 0) throw new Error("package has no NUL-terminated UI bundle");
++if (mode === "--oxide-only" && variant.sections.some(({kind}) =>
++  kind === POCKET_SECTION.workerJs || kind === POCKET_SECTION.workerBytecode)) {
++  throw new Error("the Oxide-only guest cannot start a packaged worker");
++}
++const scratch = mkdtempSync(join(dirname(output), ".oxide-build-"));
++try {
++  const source = join(scratch, "app.js");
++  const image = join(scratch, "app.oxbc");
++  await Bun.write(source, js.subarray(0, -1));
++  const result = Bun.spawnSync([compiler, "--strip-source", source, image], { stderr: "inherit" });
++  if (result.exitCode !== 0) throw new Error(`Oxide compiler exited ${result.exitCode}`);
++  const bytes = await Bun.file(image).bytes();
++  verifyOxideBytecodeEnvelope(bytes);
++  const drop = new Set<number>([POCKET_SECTION.oxideBytecode]);
++  if (mode === "--oxide-only") {
++    drop.add(POCKET_SECTION.js);
++    drop.add(POCKET_SECTION.bytecode);
++  }
++  variant.sections = variant.sections.filter(({kind}) => !drop.has(kind));
++  variant.sections.push({ kind: POCKET_SECTION.oxideBytecode, bytes });
++  await Bun.write(output, encodePocketPackage(pkg));
++  console.log(`${output}: ${bytes.length} byte Oxide image for ${target}`);
++} finally {
++  rmSync(scratch, { recursive: true, force: true });
++}
