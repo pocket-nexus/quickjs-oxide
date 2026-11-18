@@ -20,7 +20,22 @@ use wire::{Reader, Writer};
 pub use decode::ScriptImage;
 pub use encode::encode_script;
 pub use packed::ImageBytes;
-pub(crate) use packed::{Execution, ImageCode};
+pub(crate) use packed::ImageCode;
+
+pub(crate) enum ImageExecution<'a> {
+    Packed(packed::Execution<'a>),
+    Decoded(&'a [crate::Insn]),
+}
+
+impl ImageExecution<'_> {
+    #[inline]
+    pub(crate) fn get(&self, pc: usize) -> Option<crate::Insn> {
+        match self {
+            Self::Packed(image) => image.get(pc),
+            Self::Decoded(code) => code.get(pc).copied(),
+        }
+    }
+}
 
 const MAGIC: &[u8; 4] = b"OXBC";
 const VERSION: u16 = 4;

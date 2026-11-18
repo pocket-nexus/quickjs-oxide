@@ -198,6 +198,8 @@ impl ScriptImage {
                 packed,
                 positions,
                 cache_base: Default::default(),
+                entered: Default::default(),
+                decoded: Default::default(),
             }));
             code.name_atom = code.name_atom.map(|id| backing.atoms[id.0 as usize]);
             let children: Vec<_> = code

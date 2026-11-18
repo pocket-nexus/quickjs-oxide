@@ -3,7 +3,10 @@
 //! side table. Both use the same instruction indices as source-compiled code.
 
 use alloc::{boxed::Box, rc::Rc, vec::Vec};
-use core::{cell::Cell, ops::Range};
+use core::{
+    cell::{Cell, OnceCell},
+    ops::Range,
+};
 
 use crate::{Insn, KeyKind, Opcode, PropertyKey, StringId};
 
@@ -217,6 +220,8 @@ pub(crate) struct ImageCode {
     pub(super) packed: PackedRanges,
     pub(super) positions: Range<usize>,
     pub(crate) cache_base: Cell<Option<u32>>,
+    pub(super) entered: Cell<bool>,
+    pub(super) decoded: OnceCell<Box<[Insn]>>,
 }
 
 impl ImageCode {
@@ -234,12 +239,39 @@ impl ImageCode {
         }
     }
 
+    pub(crate) fn enter(&self, remaining: &Cell<usize>) -> super::ImageExecution<'_> {
+        if let Some(code) = self.decoded.get() {
+            return super::ImageExecution::Decoded(code);
+        }
+        let packed = self.execution();
+        if !self.entered.replace(true) {
+            return super::ImageExecution::Packed(packed);
+        }
+        let bytes = self.len() * size_of::<Insn>();
+        if let Some(left) = remaining.get().checked_sub(bytes) {
+            let mut code = Vec::new();
+            if code.try_reserve_exact(self.len()).is_ok() {
+                code.extend(
+                    (0..self.len()).map(|pc| packed.get(pc).expect("admitted instruction")),
+                );
+                let code = self.decoded.get_or_init(|| code.into_boxed_slice());
+                remaining.set(left);
+                return super::ImageExecution::Decoded(code);
+            }
+        }
+        super::ImageExecution::Packed(packed)
+    }
+
     pub(crate) fn len(&self) -> usize {
         self.packed.words.len() / 4
     }
 
     pub(crate) fn instruction_bytes(&self) -> usize {
         self.packed.bytes()
+            + self
+                .decoded
+                .get()
+                .map_or(0, |code| size_of_val(code.as_ref()))
     }
 
     pub(crate) fn position_bytes(&self) -> usize {

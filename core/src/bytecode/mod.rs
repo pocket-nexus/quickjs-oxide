@@ -369,11 +369,22 @@ impl core::ops::Deref for UnitRef<'_> {
 /// beside the heap, not in it, so the main loop can hold `&[Insn]` across
 /// heap calls; units compiled at run time live in the heap
 /// ([`DynamicUnits`](crate::heap::code::DynamicUnits)).
-#[derive(Default)]
 pub struct CodeStore {
     units: Vec<StoredUnit>,
     images: Vec<StoredImage>,
     image_count: u32,
+    image_cache_remaining: core::cell::Cell<usize>,
+}
+
+impl Default for CodeStore {
+    fn default() -> Self {
+        Self {
+            units: Vec::new(),
+            images: Vec::new(),
+            image_count: 0,
+            image_cache_remaining: core::cell::Cell::new(32 * 1024),
+        }
+    }
 }
 
 const IMAGE: u32 = DYNAMIC / 2;
@@ -453,12 +464,12 @@ impl CodeStore {
     }
 
     #[inline]
-    pub(crate) fn image_execution(&self, id: CodeUnitId) -> Option<image::Execution<'_>> {
+    pub(crate) fn image_execution(&self, id: CodeUnitId) -> Option<image::ImageExecution<'_>> {
         if !(IMAGE..DYNAMIC).contains(&id.0) {
             return None;
         }
         let unit = self.lookup_image(id)?;
-        Some(unit.image.as_ref()?.execution())
+        Some(unit.image.as_ref()?.enter(&self.image_cache_remaining))
     }
 
     fn lookup_image(&self, id: CodeUnitId) -> Option<&CodeUnit> {
