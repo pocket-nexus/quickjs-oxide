@@ -58,7 +58,11 @@ bytes. The first byte identifies the opcode and the next three hold either
 the operand bytes, or packed operands and an immediate. Each unit specifies
 the width of its packed operand fields. If the immediate does not fit, the
 instruction names a record in its unit's wide side table. Both forms use
-instruction indexes for control flow. The VM reads the records in place.
+instruction indexes for control flow. First visits read records in place.
+Repeated frame entries can retain decoded instructions in a runtime-wide
+32 KiB cache. Units outside that budget continue to read the image. Decoded
+instructions resolve property keys once and retain the same instruction
+indexes as the on-disk records.
 
 Source positions use a one-byte encoding for small changes on the same line.
 Other changes store a short PC delta in the record header, with an extended

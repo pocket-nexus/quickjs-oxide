@@ -158,3 +158,25 @@ fn shared_admission_reuses_exact_bytes_in_separate_realms() {
         assert_eq!(runtime.run_script(script).unwrap().as_int32(), Some(42));
     }
 }
+
+#[test]
+fn repeated_image_frames_keep_the_same_instructions_and_keys() {
+    let source = br#"
+        (() => {
+            function read(object) { return object.answer; }
+            const object = { answer: 21 };
+            return read(object) + read(object);
+        })();
+    "#;
+    let image = compile_script_image(source, "bundle.js").unwrap();
+    let mut runtime = Runtime::new(RuntimeOptions::default()).unwrap();
+    let script = runtime.load_image(&image).unwrap();
+    let prior = runtime.memory_report().code.instruction_bytes;
+    let hold = runtime.hold(Value::object(script));
+    assert_eq!(runtime.run_script(script).unwrap().as_int32(), Some(42));
+    let cached = runtime.memory_report().code.instruction_bytes - prior;
+    assert!((1..=32 * 1024).contains(&cached));
+    runtime.heap_mut().collect();
+    assert_eq!(runtime.run_script(script).unwrap().as_int32(), Some(42));
+    runtime.release(hold);
+}
