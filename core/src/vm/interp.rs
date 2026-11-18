@@ -2129,10 +2129,12 @@ fn top_frame(frames: &[Frame]) -> Frame {
 #[cold]
 #[inline(never)]
 fn local_binding_error(cx: &mut Cx<'_>, insn: Insn) -> Throw {
-    if insn.op == Opcode::CheckInit {
-        key_error(cx, ErrorKind::Reference, insn, "", " is not initialized")
-    } else {
-        key_error(cx, ErrorKind::Type, insn, "'", "' is read-only")
+    match insn.op {
+        Opcode::CheckInit | Opcode::CheckCellInit => {
+            key_error(cx, ErrorKind::Reference, insn, "", " is not initialized")
+        }
+        Opcode::ThrowConstAssign => key_error(cx, ErrorKind::Type, insn, "'", "' is read-only"),
+        _ => unreachable!("not a local binding error"),
     }
 }
 
