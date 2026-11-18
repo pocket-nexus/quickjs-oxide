@@ -8,8 +8,9 @@
 //! abandoned iterator costs nothing once collected) is moved to the same
 //! entry's new position.
 
-use std::cell::Cell;
-use std::rc::{Rc, Weak};
+use alloc::rc::{Rc, Weak};
+use alloc::vec::Vec;
+use core::cell::Cell;
 
 use super::object::InternalData;
 use super::{Heap, HeapError};

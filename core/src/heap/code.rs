@@ -14,7 +14,8 @@
 //! cache entries to the [`IcStore`](crate::vm::ic::IcStore) and its bytes to
 //! the heap's account.
 
-use std::rc::Rc;
+use alloc::rc::Rc;
+use alloc::vec::Vec;
 
 use crate::bytecode::{CodeUnit, CodeUnitId, DYNAMIC};
 
@@ -156,7 +157,7 @@ impl DynamicUnits {
     pub(crate) fn sweep(&mut self, mut dead: impl FnMut(&CodeUnit)) -> usize {
         #[cfg(feature = "gc-stress")]
         let held = {
-            let released = std::mem::take(&mut self.quarantine);
+            let released = core::mem::take(&mut self.quarantine);
             self.free.extend_from_slice(&released);
             self.free.len()
         };

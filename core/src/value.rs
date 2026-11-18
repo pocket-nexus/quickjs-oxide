@@ -14,7 +14,7 @@
 //! | `0xFFFE` | BigInt | `u32` BigInt index |
 //! | `0xFFFF` | reserved | |
 
-use std::fmt;
+use core::fmt;
 
 const TAG_SHIFT: u32 = 48;
 const TAG_INT32: u64 = 0xFFF9;

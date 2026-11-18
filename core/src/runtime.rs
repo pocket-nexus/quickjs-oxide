@@ -1,6 +1,8 @@
 //! The `Runtime`: the heap, the code store and the realm. Every operation is
 //! `fn(&mut Runtime, …)`; there is no shared interior mutability.
 
+use alloc::{boxed::Box, format, string::String, vec, vec::Vec};
+
 use crate::PropertyKey;
 use crate::bytecode::{self, CodeStore, CodeUnit, CodeUnitId, ValidateError};
 use crate::heap::atom::KeyKind;
@@ -277,17 +279,17 @@ pub struct Realm {
     global: ObjectId,
     /// Cells so the builtins can record the intrinsics they create while the
     /// realm is shared (installation runs with a `Cx`); each is a fixed root.
-    intrinsics: [std::cell::Cell<ObjectId>; Intrinsic::COUNT],
+    intrinsics: [core::cell::Cell<ObjectId>; Intrinsic::COUNT],
     pub(crate) names: Names,
     pub(crate) symbols: WellKnown,
     /// The private key under which a home object keeps its class's brand.
     pub(crate) brand: SymbolId,
     /// `%RegExp.prototype%`'s flag accessors as installed, for the `flags`
     /// getter's fast path.
-    pub(crate) regexp_flags: std::cell::Cell<Option<crate::builtins::RegExpFlagCache>>,
+    pub(crate) regexp_flags: core::cell::Cell<Option<crate::builtins::RegExpFlagCache>>,
     /// The shape of a fresh `%RegExp%` instance (only `lastIndex`) and the
     /// slot of `lastIndex`.
-    pub(crate) regexp_instance_shape: std::cell::Cell<Option<(crate::value::ShapeId, u32)>>,
+    pub(crate) regexp_instance_shape: core::cell::Cell<Option<(crate::value::ShapeId, u32)>>,
 }
 
 impl Realm {
@@ -370,8 +372,27 @@ pub struct ThrownSummary {
 
 impl Runtime {
     pub fn new(options: impl Into<RuntimeOptions>) -> Result<Runtime, HeapError> {
-        let options = options.into();
+        Self::initialize(options.into(), None)
+    }
+
+    /// Installs platform services before realm initialization, including any
+    /// collections triggered by the initial allocation budget.
+    pub fn with_host(
+        options: impl Into<RuntimeOptions>,
+        hooks: Box<dyn crate::host::Host>,
+    ) -> Result<Runtime, HeapError> {
+        Self::initialize(options.into(), Some(hooks))
+    }
+
+    fn initialize(
+        options: RuntimeOptions,
+        mut hooks: Option<Box<dyn crate::host::Host>>,
+    ) -> Result<Runtime, HeapError> {
+        let clock = hooks
+            .as_mut()
+            .map_or(crate::host::Monotonic::NONE, |hooks| hooks.monotonic());
         let mut heap = Heap::new(options.heap);
+        heap.gc.clock = clock;
         let reserved = heap.bytes();
         heap.gc
             .configure(options.min_heap, options.growth, reserved);
@@ -452,18 +473,23 @@ impl Runtime {
         }
         let realm = Realm {
             global,
-            intrinsics: intrinsics.map(std::cell::Cell::new),
+            intrinsics: intrinsics.map(core::cell::Cell::new),
             names,
             symbols,
             brand,
-            regexp_flags: std::cell::Cell::new(None),
-            regexp_instance_shape: std::cell::Cell::new(None),
+            regexp_flags: core::cell::Cell::new(None),
+            regexp_instance_shape: core::cell::Cell::new(None),
         };
+        let mut services = Services::default();
+        if let Some(mut hooks) = hooks {
+            services.seed_random(hooks.random_seed());
+            services.hooks = hooks;
+        }
         let mut runtime = Runtime {
             heap,
             code: CodeStore::default(),
             realm,
-            host: Services::default(),
+            host: services,
         };
         let out_of_memory = crate::builtins::install(&mut runtime.cx())?;
         runtime.set_intrinsic(Intrinsic::OutOfMemoryError, out_of_memory);
@@ -513,10 +539,18 @@ impl Runtime {
         self.host.can_block = can_block;
     }
 
+    /// Installs a process-lifetime shared-memory ordering and wait service.
+    /// Every runtime sharing buffers must use the same coordinator.
+    pub fn set_waiter(&mut self, waiter: &'static dyn crate::vm::waiter::Waiter) {
+        self.host.waiter = Some(waiter);
+        self.host.can_block = true;
+    }
+
     /// Installs the embedder's hooks and seeds `Math.random` from
     /// [`Host::random_seed`](crate::host::Host::random_seed).
     pub fn set_host(&mut self, mut hooks: Box<dyn crate::host::Host>) {
         let seed = hooks.random_seed();
+        self.heap.gc.clock = hooks.monotonic();
         self.host.seed_random(seed);
         self.host.hooks = hooks;
     }
@@ -548,7 +582,7 @@ impl Runtime {
     /// The output captured since the last call.
     pub fn take_output(&mut self) -> String {
         match &mut self.host.output {
-            Output::Capture(text) => std::mem::take(text),
+            Output::Capture(text) => core::mem::take(text),
             Output::Stdout => String::new(),
         }
     }
@@ -710,7 +744,7 @@ impl Runtime {
     /// the `worst` sites with the most misses (unit name, instruction index,
     /// key).
     pub fn ic_report(&self, worst: usize) -> Option<String> {
-        use std::fmt::Write;
+        use core::fmt::Write;
 
         use crate::vm::ic::IcKind;
         let ics = self.heap.ics();
@@ -771,7 +805,7 @@ impl Runtime {
                 }
             }
         }
-        sites.sort_by_key(|&(misses, id, pc, _)| (std::cmp::Reverse(misses), id, pc));
+        sites.sort_by_key(|&(misses, id, pc, _)| (core::cmp::Reverse(misses), id, pc));
         for &(misses, id, pc, insn) in sites.iter().take(worst) {
             let unit = self.units().get(id);
             let name = if unit.debug.name.is_empty() {
@@ -914,8 +948,8 @@ impl Runtime {
         for (_, unit) in self.units().all() {
             code.units += 1;
             code.instructions += unit.code.len();
-            code.instruction_bytes += std::mem::size_of_val(&*unit.code);
-            code.position_bytes += std::mem::size_of_val(&*unit.debug.positions);
+            code.instruction_bytes += core::mem::size_of_val(&*unit.code);
+            code.position_bytes += core::mem::size_of_val(&*unit.debug.positions);
             code.source_bytes += unit.source.as_ref().map_or(0, |source| source.len());
         }
         report

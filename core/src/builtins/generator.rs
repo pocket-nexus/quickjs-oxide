@@ -3,6 +3,8 @@
 //! `%AsyncFunction%`; the async generator counterparts, whose natives are in
 //! `vm::async_generator`.
 
+use alloc::vec::Vec;
+
 use super::{Native, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;
 use crate::heap::object::InternalTag;

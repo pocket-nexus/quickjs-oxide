@@ -5,12 +5,14 @@
 //! arena. Collection happens only at an allocation safepoint
 //! ([`Heap::safepoint`]) or on an explicit [`Heap::collect`].
 
-use std::mem;
-use std::time::Duration;
+use alloc::{vec, vec::Vec};
+use core::mem;
+use core::time::Duration;
 
 use super::hash::FxHashMap;
 use super::object::{InternalTag, NONE, ObjectKind};
 use super::{Heap, HeapError, Need};
+use crate::host::Monotonic;
 use crate::shape::STATIC_CELL;
 use crate::value::{Kind, ShapeId, Value};
 use crate::vm::ic::Record;
@@ -227,6 +229,8 @@ pub struct GcState {
     /// asks (`GcPolicy::Manual` of the API).
     pub(crate) manual: bool,
     pub stats: GcStats,
+    /// The host's monotonic capability; absent on a port without a clock.
+    pub(crate) clock: Monotonic,
     /// When set, every pause is appended to `pauses`.
     pub record_pauses: bool,
     pub pauses: Vec<Duration>,
@@ -260,6 +264,7 @@ impl GcState {
             limits,
             manual: false,
             stats: GcStats::default(),
+            clock: Monotonic::NONE,
             record_pauses: false,
             pauses: Vec::new(),
             mark_stack: Vec::new(),
@@ -389,7 +394,7 @@ impl Heap {
 
     /// A full collection.
     pub fn collect(&mut self) {
-        let start = crate::clock::Stopwatch::start();
+        let start = crate::clock::Stopwatch::start(self.gc.clock);
         let before = self.used_bytes();
         self.mark_from_roots();
         self.process_weak();

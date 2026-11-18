@@ -2,6 +2,8 @@
 //! 32-bit payload. This module defines the record and its tracing; the
 //! arithmetic is `vm::bigint`'s.
 
+use alloc::boxed::Box;
+
 use super::arena::Record;
 
 #[derive(Clone, Debug, PartialEq, Eq)]

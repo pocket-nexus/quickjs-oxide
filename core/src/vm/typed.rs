@@ -1,6 +1,8 @@
 //! Typed-array elements: the integer-indexed exotic object's element reads and
 //! writes, the element conversions, and the loop's inline paths.
 
+use alloc::vec::Vec;
+
 use super::{Cx, Throw, error, number, ops};
 use crate::heap::Heap;
 use crate::heap::arena::Arena;
@@ -85,7 +87,10 @@ pub(crate) fn numeric_index(heap: &Heap, key: PropertyKey) -> Option<f64> {
 /// `IsValidIntegerIndex(O, index)`: the element position.
 #[inline]
 pub(crate) fn valid_index(heap: &Heap, object: ObjectId, index: f64) -> Option<usize> {
-    if index.fract() != 0.0 || (index == 0.0 && index.is_sign_negative()) || index < 0.0 {
+    if crate::float::fract(index) != 0.0
+        || (index == 0.0 && index.is_sign_negative())
+        || index < 0.0
+    {
         return None;
     }
     let length = length(heap, object)?;
@@ -150,7 +155,7 @@ fn uint8_clamp(value: f64) -> u8 {
     if value >= 255.0 {
         return 255;
     }
-    let floor = value.floor();
+    let floor = crate::float::floor(value);
     let half = floor + 0.5;
     if value < half {
         floor as u8

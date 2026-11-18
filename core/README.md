@@ -10,9 +10,41 @@ how they fit together. This page is the core's design record: its module
 layout, the rooting rule every heap user follows, and the design decisions
 behind the bytecode, the loop, the caches and the heap.
 
-The crate has `#![forbid(unsafe_code)]` and one dependency, the
-regular-expression crate `quickjs-oxide-regexp` (`regexp/`), which has none. The root
-crate depends on it; it does not depend on the root crate.
+The crate has `#![forbid(unsafe_code)]` and depends on the regular-expression
+crate `quickjs-oxide-regexp` (`regexp/`), `hashbrown` and `libm`. Internal maps
+retain the engine's existing `FxHasher` and seed; only their allocation-only
+table backend changes. The root compiler uses the same public aliases.
+Floating-point math uses the pinned `libm` backend rather than the platform's
+libm, with safe Wasm intrinsics for square root and rounding. Wasm `asin`,
+`acos` and `asinh` retain libm 0.2.16's formulas with internal square roots
+routed through those intrinsics; half-power dispatch retains the same shortcut.
+Native targets keep the dependency's implementation. Transcendental results can
+differ in their last bits. Exact formatting, conversion and compensated
+summation remain engine-owned. The core does not depend on the root crate.
+
+The core and regular-expression crates have one unconditional `no_std` + `alloc`
+implementation, not separate std and no_std feature variants. Tests can use
+the standard-library harness. The core's `Host` defaults do not reach the
+process: a raw runtime has no streams, clock or files and starts its random
+state from one. Ports provide `Host`, a shared `vm::waiter::Waiter` for blocking
+atomics, and `builtins::agent::AgentHost` for agent execution.
+`Runtime::with_host` installs its collection clock before realm initialization,
+including collections during startup.
+
+The std embedding API retains process-backed defaults, including for partial
+custom hosts. Its waiter is process-wide; agent hubs remain lazy. A bare-metal
+consumer supplies its allocator, panic handler and host capabilities.
+Production core and RegExp state does not require TLS: one bounded RegExp
+scratch cache and the async-module evaluation counter belong to each runtime.
+The scratch cache retains its four reusable buffers, 32 KiB bound and
+reentrant leases.
+
+The dependency closure can be checked without a standard library:
+
+```sh
+rustup target add thumbv7em-none-eabi
+cargo check --locked -p quickjs-oxide-core --lib --target thumbv7em-none-eabi
+```
 
 ## Layout
 
@@ -33,7 +65,7 @@ crate depends on it; it does not depend on the root crate.
 | `builtins` | the realm's constructors, prototypes and globals as natives over the re-entrant `call`, one file per builtin object, plus `$262` (`test262`, `agent`) |
 | `host` | the `Host` trait: output, clock, time zone, random seed, promise-rejection events and files |
 | `embed` | the embedder's entries the root crate's API calls, on `NativeCx`, which a `Runtime` lends between entries and the loop lends to a host function: objects, properties, conversions, value construction, host functions and host objects |
-| `clock` | the monotonic clock the collector times its pauses with |
+| `clock` | a stopwatch over the host's installed `Monotonic` capability, without platform access |
 | `runtime` | `Runtime`: the heap, the static code store beside it, the single realm and the host services |
 
 ## The rooting rule

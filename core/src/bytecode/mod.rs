@@ -15,7 +15,8 @@ pub mod disasm;
 pub mod opcode;
 pub mod validate;
 
-use std::fmt;
+use alloc::{boxed::Box, vec, vec::Vec};
+use core::fmt;
 
 pub use self::builder::CodeBuilder;
 pub use self::disasm::disassemble;
@@ -195,7 +196,7 @@ pub const NO_SPILL: u16 = u16::MAX;
 pub struct DebugInfo {
     pub name: Box<str>,
     /// The script or module the function belongs to, for `import()`.
-    pub filename: Option<std::rc::Rc<str>>,
+    pub filename: Option<alloc::rc::Rc<str>>,
     /// Where the instructions came from, sorted by `pc`: each entry holds
     /// for its instruction and the ones after it up to the next. Empty when
     /// the producer recorded none.
@@ -311,10 +312,10 @@ impl CodeUnitId {
 /// alive while the loop runs it across a collection.
 pub enum UnitRef<'a> {
     Static(&'a CodeUnit),
-    Dynamic(std::rc::Rc<CodeUnit>),
+    Dynamic(alloc::rc::Rc<CodeUnit>),
 }
 
-impl std::ops::Deref for UnitRef<'_> {
+impl core::ops::Deref for UnitRef<'_> {
     type Target = CodeUnit;
 
     #[inline(always)]
@@ -483,15 +484,15 @@ impl CodeUnit {
     /// text and cache entries. A dynamic unit charges them to the heap.
     pub fn bytes(&self) -> usize {
         size_of::<CodeUnit>()
-            + std::mem::size_of_val(&*self.code)
-            + std::mem::size_of_val(&*self.handlers)
-            + std::mem::size_of_val(&*self.children)
-            + std::mem::size_of_val(&*self.captures)
-            + std::mem::size_of_val(&*self.debug.positions)
+            + core::mem::size_of_val(&*self.code)
+            + core::mem::size_of_val(&*self.handlers)
+            + core::mem::size_of_val(&*self.children)
+            + core::mem::size_of_val(&*self.captures)
+            + core::mem::size_of_val(&*self.debug.positions)
             + self.debug.name.len()
             + self.source.as_ref().map_or(0, |source| source.len())
-            + std::mem::size_of_val(&*self.direct_eval_sites)
-            + std::mem::size_of_val(&*self.atoms)
+            + core::mem::size_of_val(&*self.direct_eval_sites)
+            + core::mem::size_of_val(&*self.atoms)
             + self.ic_count as usize * crate::vm::ic::ENTRY_BYTES
     }
 }

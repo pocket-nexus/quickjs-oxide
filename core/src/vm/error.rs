@@ -2,7 +2,8 @@
 //! `ERROR`, with the kind's prototype and an own `message`; `name` lives on the
 //! prototype. Each carries QuickJS's `stack` backtrace.
 
-use std::fmt::Write;
+use alloc::{borrow::ToOwned, format, string::String, vec::Vec};
+use core::fmt::Write;
 
 use super::{Cx, Throw, frame_flags};
 use crate::heap::HeapError;
@@ -564,7 +565,10 @@ pub(crate) fn stack_overflow(cx: &mut Cx<'_>) -> Throw {
 #[inline(never)]
 pub(crate) fn poll_interrupts(cx: &mut Cx<'_>) -> Result<(), Throw> {
     let interrupt = cx.heap.vm.interrupted
-        || cx.host.interrupt.load(std::sync::atomic::Ordering::Relaxed)
+        || cx
+            .host
+            .interrupt
+            .load(core::sync::atomic::Ordering::Relaxed)
         || cx.host.hooks.interrupt();
     if !interrupt {
         cx.heap.vm.poll = super::INTERRUPT_INTERVAL;

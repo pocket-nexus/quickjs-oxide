@@ -6,6 +6,8 @@
 //! inheriting the Rust toolchain or host ICU Unicode version while preserving
 //! the pinned engine's exact table boundaries.
 
+use alloc::vec::Vec;
+
 mod ident_tables {
     include!("generated/unicode/unicode_ident_tables.rs");
 }

@@ -5,7 +5,8 @@
 //! call on the root stack, which is cut back when it returns. The natives
 //! themselves are the realm's builtins (`crate::builtins`).
 
-use std::rc::Rc;
+use alloc::rc::Rc;
+use alloc::vec::Vec;
 
 use super::{Cx, Throw};
 use crate::builtins::Native;
@@ -92,8 +93,8 @@ pub type HostFn = dyn Fn(&mut NativeCx<'_>, NativeCall) -> Result<Value, Throw>;
 #[derive(Clone)]
 pub struct HostBody(pub Rc<HostFn>);
 
-impl std::fmt::Debug for HostBody {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Debug for HostBody {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str("HostBody")
     }
 }

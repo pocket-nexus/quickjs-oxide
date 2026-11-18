@@ -148,7 +148,7 @@ where
 /// ECMAScript TimeClip as implemented by pinned QuickJS.
 pub(crate) fn time_clip(time: f64) -> f64 {
     if (-TIME_CLIP_BOUND..=TIME_CLIP_BOUND).contains(&time) {
-        let clipped = time.trunc();
+        let clipped = crate::float::trunc(time);
         // Upstream uses `trunc(t) + 0.0`; spell the signed-zero consequence out
         // so it cannot be optimized into retaining negative zero.
         if clipped == 0.0 { 0.0 } else { clipped }
@@ -164,7 +164,7 @@ pub(crate) fn time_clip(time: f64) -> f64 {
 /// or folded into a fused multiply-add by later optimization changes.
 #[inline(never)]
 fn fp_step(value: f64) -> f64 {
-    std::hint::black_box(value)
+    core::hint::black_box(value)
 }
 
 /// Pinned QuickJS's `set_date_fields`: MakeDay, MakeTime, MakeDate, optional
@@ -184,7 +184,7 @@ where
     let year = fields[0];
     let month = fields[1];
     let date = fields[2];
-    let normalized_year = fp_step(year + (month / 12.0).floor());
+    let normalized_year = fp_step(year + crate::float::floor(month / 12.0));
     let mut normalized_month = month % 12.0;
     if normalized_month < 0.0 {
         normalized_month += 12.0;
@@ -255,7 +255,7 @@ where
         if !field.is_finite() {
             return f64::NAN;
         }
-        *field = field.trunc();
+        *field = crate::float::trunc(*field);
         if index == 0 && (0.0..100.0).contains(field) {
             *field += 1900.0;
         }

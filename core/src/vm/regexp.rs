@@ -6,6 +6,8 @@
 //! a `RegExp` object's payload names its program, a collection marks the
 //! programs of the live objects (and their two atoms), and sweeps the rest.
 
+use alloc::{borrow::ToOwned, string::String, vec::Vec};
+
 use oxide_regexp::CompiledRegExp;
 
 use super::error::{self, ErrorKind};
@@ -164,7 +166,7 @@ impl RegExpStore {
     pub(crate) fn sweep(&mut self) {
         #[cfg(feature = "gc-stress")]
         let held = {
-            let released = std::mem::take(&mut self.quarantine);
+            let released = core::mem::take(&mut self.quarantine);
             self.free.extend_from_slice(&released);
             self.free.len()
         };
@@ -287,12 +289,14 @@ pub(crate) fn regexp_object_with(
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     fn assert_owned_payload_bytes(pattern: &str, payload_bytes: usize) {
         let program =
             oxide_regexp::compile(&pattern.encode_utf16().collect::<Vec<_>>(), &[]).unwrap();
         assert!(program.group_names().is_none());
         let inline_bytes = size_of::<Option<(super::RegExpRecord, oxide_regexp::CompiledRegExp)>>()
-            + std::mem::size_of_val(program.instructions());
+            + core::mem::size_of_val(program.instructions());
         assert_eq!(
             super::program_bytes(&program),
             inline_bytes + payload_bytes,
@@ -326,7 +330,7 @@ mod tests {
         assert!(
             super::program_bytes(&program)
                 >= size_of::<Option<(super::RegExpRecord, oxide_regexp::CompiledRegExp)>>()
-                    + std::mem::size_of_val(program.instructions())
+                    + core::mem::size_of_val(program.instructions())
                     + pattern.len() * size_of::<u16>()
         );
     }

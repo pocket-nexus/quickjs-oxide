@@ -1,8 +1,19 @@
 //! Browser implementation of engine host capabilities.
 use js_sys::{Date, Math};
 use wasm_bindgen::JsValue;
+use wasm_bindgen::prelude::wasm_bindgen;
 
 const TWO_TO_THE_32: f64 = 4_294_967_296.0;
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = performance, js_name = now)]
+    fn performance_now() -> f64;
+}
+
+fn monotonic_ns() -> u64 {
+    (performance_now() * 1_000_000.0) as u64
+}
 
 /// The core's host over the browser's clock and time zone. The page that
 /// embeds the engine shows results itself.
@@ -30,5 +41,13 @@ impl quickjs_oxide::engine::api::core::Host for WebHost {
 
     fn read_file(&mut self, _: &str) -> Option<String> {
         None
+    }
+
+    fn monotonic(&mut self) -> quickjs_oxide::engine::api::core::Monotonic {
+        quickjs_oxide::engine::api::core::Monotonic::new(monotonic_ns)
+    }
+
+    fn performance_now_ms(&mut self) -> f64 {
+        performance_now()
     }
 }

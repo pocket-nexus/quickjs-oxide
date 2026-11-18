@@ -15,7 +15,7 @@
 //! top-level `await`). Modules load synchronously through the host's
 //! [`ModuleHost`] when they are first requested.
 
-use std::cell::Cell;
+use alloc::{borrow::ToOwned, boxed::Box, format, string::String, vec, vec::Vec};
 
 use super::compile::{CompileError, Compiler};
 use super::native::CallSite;
@@ -255,10 +255,6 @@ const NAMESPACE: usize = 2;
 const ERROR: usize = 3;
 const CAPABILITY: usize = 4;
 const SLOTS: usize = 7;
-
-thread_local! {
-    static ASYNC_ORDER: Cell<u64> = const { Cell::new(0) };
-}
 
 fn data<'a>(cx: &'a Cx<'_>, module: ObjectId) -> &'a ModuleData {
     match &cx.heap.internal(module).data {
@@ -664,7 +660,7 @@ pub(crate) fn namespace(cx: &mut Cx<'_>, module: ObjectId) -> Result<ObjectId, T
                 None,
                 1,
                 &slots,
-                InternalData::Exports(std::mem::take(&mut keys).into_boxed_slice()),
+                InternalData::Exports(core::mem::take(&mut keys).into_boxed_slice()),
                 0,
             )
             .map_err(|e| error::heap_error(cx, e))
@@ -945,10 +941,8 @@ fn inner_evaluate(
     }
     let record = data(cx, module);
     if record.pending_async_dependencies > 0 || record.tables.has_top_level_await {
-        let order = ASYNC_ORDER.with(|order| {
-            order.set(order.get() + 1);
-            order.get()
-        });
+        cx.host.module_async_order += 1;
+        let order = cx.host.module_async_order;
         data_mut(cx, module).async_evaluation = Some(order);
         if data(cx, module).pending_async_dependencies == 0 {
             execute_async(cx, module)?;

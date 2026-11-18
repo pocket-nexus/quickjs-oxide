@@ -8,7 +8,7 @@ The three engine crates and the workspace members that consume them:
 
 | Crate | Path | Depends on | Content |
 | --- | --- | --- | --- |
-| `quickjs-oxide-core` | `core/` | `quickjs-oxide-regexp` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
+| `quickjs-oxide-core` | `core/` | `quickjs-oxide-regexp`, `hashbrown`, `libm` | values, heap and collector, shapes, register bytecode, the loop, the builtins, the `Host` trait, `Runtime` |
 | `quickjs-oxide-regexp` | `regexp/` | nothing | pattern compilation and matching over UTF-16 code units; the checksum-pinned Unicode 17 tables |
 | `quickjs-oxide` | `src/` | `quickjs-oxide-core`, `quickjs-oxide-regexp`, `num-bigint`, `num-traits` | the front end, the register lowering, the embedding API |
 | `quickjs-oxide-cli` | `apps/cli` | the root crate, `quickjs-oxide-host` | the `qjs` binary |
@@ -19,7 +19,12 @@ The three engine crates and the workspace members that consume them:
 
 The core's and the regular-expression crate's libraries are named `oxide_core` and `oxide_regexp` in Rust code. Every crate but the two web packages and the Test262 runner is published to crates.io ([releases](release.md)).
 
-Dependencies point one way: `quickjs-oxide-core` depends only on `quickjs-oxide-regexp`, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
+Dependencies point one way: `quickjs-oxide-core` depends only on `quickjs-oxide-regexp`, the allocation-only `hashbrown` table backend and the pinned `libm` math backend, has `#![forbid(unsafe_code)]` and reaches the platform through its `Host` trait. Its public `FxHashMap`/`FxHashSet` aliases retain the existing hasher and seed, including for the front end. Platform-libm last bits are not part of the transcendental-result contract; exact conversion and formatting algorithms remain engine-owned. `num-bigint` and `num-traits` serve the front end's BigInt literals and the API's `JsBigInt`.
+
+The core and RegExp crates are unconditionally `#![no_std]` with `alloc`;
+neither has a std/no_std implementation switch. The root crate and the native
+and web adapters retain the standard-library boundary. Building the core
+for `thumbv7em-none-eabi` checks its production dependency closure without std.
 
 ## Source owners
 
@@ -48,7 +53,7 @@ src/
 
 ## Host boundary
 
-The core asks its embedder for one trait, `oxide_core::host::Host`, which the API re-exports as `api::core::Host`:
+The core asks its embedder for the portable trait `oxide_core::host::Host`. Its defaults need no operating system. The std API's `api::core::Host` is a process-backed facade: existing partial custom hosts keep their process defaults, and a generic adapter forwards their services to the core without another allocation or trait-object layer. The following defaults are the std facade's:
 
 | Method | Used by | Default |
 | --- | --- | --- |
@@ -59,8 +64,21 @@ The core asks its embedder for one trait, `oxide_core::host::Host`, which the AP
 | `promise_rejection(event, promise)` | `HostPromiseRejectionTracker` (`Rejected`, `Handled`) | ignored |
 | `read_file(path)` | `load` and `read` under `qjs --std` | the process's file system |
 | `interrupt()` | the loop's interrupt poll, about every thousand back-edges and calls | never interrupts |
+| `monotonic()` | collection pause measurements, including realm initialization | an independent nanosecond clock; absent on unsupported targets |
+| `performance_now_ms()` | `performance.now`, `$262.agent.monotonicNow` | the original process-shared performance origin, independent of collection timing |
+| `sleep_ms(milliseconds)` | `$262.agent.sleep` | the thread's sleep service |
 
-The core's own `SystemHost` uses every default. `adapters/native`'s `SystemHost` takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date` and `Math.random` and discards output; the page that embeds it shows results itself.
+The API's `SystemHost` uses every std default. `adapters/native`'s `SystemHost` retains its pre-epoch clock and seed handling and takes the time zone from the host's TZif/POSIX rules (`TZ` or `/etc/localtime`, reloaded as QuickJS's `localtime` does); `adapters/web`'s `WebHost` reads the browser's `Date`, `performance` and `Math.random` and discards output. A std host's `into_core()` adapts it for a raw core runtime without allocating.
+
+The core's own defaults discard output, use the epoch and UTC, seed from one, and find no files. Blocking and agents cross separate capability boundaries: `vm::waiter::Waiter` keeps shared-memory ordering and wait/notify atomicity, while `builtins::agent::AgentHost` owns agent execution and communication. The std API installs its process-lifetime waiter by reference, without allocation or reference counting, and lazily creates each Test262 worker's agent hub. A bare port sharing buffers between agents must install the same waiter coordinator on all of them. The timeout crosses as `core::time::Duration`, retaining its existing conversion and range.
+
+Production core and RegExp state has no TLS dependency. Each runtime owns one
+RegExp `ScratchCache`, shared across its compiled programs and reusable between
+entries, and one async-module evaluation counter, shared across its module
+graphs. A scratch lease holds no cache borrow while executing or invoking an
+interrupt hook. The std API's current-runtime and module-resolver thread
+contexts remain at the std boundary; Unicode allocation-failure TLS is confined
+to tests and `test-hooks`.
 
 Compilation and module loading are function pointers on the core's services, because the host object lives inside the runtime they borrow. The API installs the front end as the core's compile function (`set_compiler`) and its module shims as the core's `ModuleHost`; an embedder supplies module-loading policy through the API's `ModuleLoader` trait (`normalize`, `load`), whose callbacks receive a `ModuleScope`. A host function, the embedder's Rust closure as a JavaScript function, is a core native closure whose body the API wraps: the core lends it a `NativeCx` while it runs, and the API turns that into the closure's `Scope`. Applications choose input, output, module policy and when the job queue drains. [`src/engine/api/README.md`](../src/engine/api/README.md) describes the API's types.
 

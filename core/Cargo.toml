@@ -18,6 +18,10 @@ name = "oxide_core"
 workspace = true
 
 [dependencies]
+# The allocation-only backend for the existing internal hash tables.
+hashbrown = { workspace = true }
+# Fixed no_std math backend, without platform-libm fallback.
+libm = { workspace = true }
 # The regular-expression engine.
 oxide-regexp = { workspace = true }
 

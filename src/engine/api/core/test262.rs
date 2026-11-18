@@ -113,10 +113,12 @@ impl Worker {
     /// clock and time zone of `host`.
     pub fn new(can_block: bool, host: Box<dyn oxide_core::host::Host>) -> Result<Worker, String> {
         let failed = |error: oxide_core::HeapError| error.to_string();
-        let mut runtime = Runtime::new(RuntimeOptions::default()).map_err(failed)?;
-        runtime.set_host(host);
+        let mut runtime = Runtime::with_host(RuntimeOptions::default(), host).map_err(failed)?;
+        runtime.set_waiter(super::waiter::ProcessWaiter::shared());
         runtime.set_can_block(can_block);
         runtime.set_compiler(compile_for_core);
+        runtime
+            .set_agent_host_factory(|| std::sync::Arc::new(super::agent::ProcessAgents::default()));
         runtime.install_print().map_err(failed)?;
         runtime.install_test262_host().map_err(failed)?;
         runtime.set_script_runner(run_agent_script);

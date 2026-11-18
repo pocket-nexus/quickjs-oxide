@@ -5,6 +5,8 @@ use super::{
     Atom, CharacterRange, Expression, ModifierState, RegExpFlags, Term, ascii_class_bitmap,
 };
 use crate::unicode::case::regexp_canonicalize;
+use alloc::vec;
+use alloc::vec::Vec;
 
 const MAX_LITERAL: usize = 256;
 

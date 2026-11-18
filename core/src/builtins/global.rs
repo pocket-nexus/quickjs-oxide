@@ -1,6 +1,9 @@
 //! The global functions: qjs's `print`, `parseInt`, `parseFloat`, `isNaN`
 //! and `isFinite`.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 use super::to_string_id;
 use crate::value::Value;
 use crate::vm::native::CallSite;
@@ -8,8 +11,8 @@ use crate::vm::number::number;
 use crate::vm::{Cx, Output, Throw, ops, radix};
 
 /// qjs's `performance.now()`: milliseconds on a monotonic clock.
-pub(super) fn performance_now(_: &mut Cx<'_>, _: CallSite) -> Result<Value, Throw> {
-    Ok(Value::number(super::agent::monotonic_ms()))
+pub(super) fn performance_now(cx: &mut Cx<'_>, _: CallSite) -> Result<Value, Throw> {
+    Ok(Value::number(cx.host.hooks.performance_now_ms()))
 }
 
 /// qjs's `print`: the arguments' strings joined by a space, then a newline.

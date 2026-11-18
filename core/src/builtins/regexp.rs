@@ -6,6 +6,11 @@
 //! or two-byte storage. `Symbol.species` is dropped: `matchAll` and `split`
 //! construct `%RegExp%`.
 
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+
 use oxide_regexp::{ExecError, RegExpFlags, RegExpMatch};
 
 use super::string::{substitution, substring_value};
@@ -589,10 +594,16 @@ fn run(
 ) -> Result<Option<RegExpMatch>, Throw> {
     let compiled = cx.heap.regexps.program(program);
     let result = match &cx.heap.string(string).repr() {
-        StringRepr::OneByte(bytes) => {
-            oxide_regexp::execute_latin1_with_interrupt(compiled, bytes, start, || false)
+        StringRepr::OneByte(bytes) => oxide_regexp::execute_latin1_with_interrupt(
+            &cx.host.regexp_scratch,
+            compiled,
+            bytes,
+            start,
+            || false,
+        ),
+        StringRepr::TwoByte(units) => {
+            oxide_regexp::execute(&cx.host.regexp_scratch, compiled, units, start)
         }
-        StringRepr::TwoByte(units) => oxide_regexp::execute(compiled, units, start),
     };
     result.map_err(|failure| match failure {
         ExecError::OutOfMemory => error::oom(cx.realm),
@@ -1326,7 +1337,7 @@ fn substitute_with_groups(
     // pass records the `$<name>` tokens in order, each is then read (and
     // converted) once per token as QuickJS does, and a second pass
     // consumes the values in that order.
-    let names = std::cell::RefCell::new(Vec::<Vec<u16>>::new());
+    let names = core::cell::RefCell::new(Vec::<Vec<u16>>::new());
     let record = |name: &[u16]| -> Option<Option<Vec<u16>>> {
         names.borrow_mut().push(name.to_vec());
         Some(None)
@@ -1346,7 +1357,7 @@ fn substitute_with_groups(
             Some(units(cx, value))
         });
     }
-    let next = std::cell::Cell::new(0usize);
+    let next = core::cell::Cell::new(0usize);
     let lookup = |_: &[u16]| -> Option<Option<Vec<u16>>> {
         let index = next.get();
         next.set(index + 1);

@@ -1,8 +1,8 @@
-//! A small multiplicative hasher for the heap's internal tables, whose keys are
-//! 32-bit indices and are not attacker-chosen hash-flooding inputs.
+//! The engine's deterministic multiplicative hasher and internal hash tables.
+//! Changing the table backend does not change the hasher or its seed.
 
-use std::collections::HashMap;
-use std::hash::{BuildHasherDefault, Hasher};
+use core::hash::{BuildHasherDefault, Hasher};
+use hashbrown::{HashMap, HashSet};
 
 const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
 
@@ -55,4 +55,4 @@ impl Hasher for FxHasher {
 }
 
 pub type FxHashMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
-pub type FxHashSet<K> = std::collections::HashSet<K, BuildHasherDefault<FxHasher>>;
+pub type FxHashSet<K> = HashSet<K, BuildHasherDefault<FxHasher>>;

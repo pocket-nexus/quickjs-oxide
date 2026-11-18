@@ -4,6 +4,8 @@
 //! `toFixed`, `toExponential`, `toPrecision`, `toLocaleString` and `valueOf`
 //! with QuickJS's digits.
 
+use alloc::vec::Vec;
+
 use super::{Native, define, install_constructor, link_constructor, methods, string_text};
 use crate::heap::HeapError;
 use crate::heap::object::ObjectKind;
@@ -193,12 +195,14 @@ pub(super) fn is_nan(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
 
 pub(super) fn is_integer(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(Value::bool(site.arg(cx, 0).as_f64().is_some_and(|value| {
-        value.is_finite() && value.trunc() == value
+        value.is_finite() && crate::float::trunc(value) == value
     })))
 }
 
 pub(super) fn is_safe_integer(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     Ok(Value::bool(site.arg(cx, 0).as_f64().is_some_and(|value| {
-        value.is_finite() && value.trunc() == value && value.abs() <= 9_007_199_254_740_991.0
+        value.is_finite()
+            && crate::float::trunc(value) == value
+            && value.abs() <= 9_007_199_254_740_991.0
     })))
 }

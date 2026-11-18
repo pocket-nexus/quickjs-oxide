@@ -1,7 +1,8 @@
 //! `Math`: every function and constant. The transcendental functions call the
-//! platform libm through Rust's `f64` methods (glibc's on the reference
-//! machine, as QuickJS's). `round` is QuickJS's half-up on the bits, `random`
+//! crate's `libm` backend. `round` is QuickJS's half-up on the bits, `random`
 //! its xorshift64*, `sumPrecise` an exact (Shewchuk) summation.
+
+use alloc::vec::Vec;
 
 use super::{Native, define, methods, plain_object, to_string_tag};
 use crate::heap::HeapError;
@@ -61,14 +62,14 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
     )?;
     let constant = PropertyFlags::data(false, false, false);
     for (name, value) in [
-        ("E", std::f64::consts::E),
-        ("LN10", std::f64::consts::LN_10),
-        ("LN2", std::f64::consts::LN_2),
-        ("LOG2E", std::f64::consts::LOG2_E),
-        ("LOG10E", std::f64::consts::LOG10_E),
-        ("PI", std::f64::consts::PI),
-        ("SQRT1_2", std::f64::consts::FRAC_1_SQRT_2),
-        ("SQRT2", std::f64::consts::SQRT_2),
+        ("E", core::f64::consts::E),
+        ("LN10", core::f64::consts::LN_10),
+        ("LN2", core::f64::consts::LN_2),
+        ("LOG2E", core::f64::consts::LOG2_E),
+        ("LOG10E", core::f64::consts::LOG10_E),
+        ("PI", core::f64::consts::PI),
+        ("SQRT1_2", core::f64::consts::FRAC_1_SQRT_2),
+        ("SQRT2", core::f64::consts::SQRT_2),
     ] {
         define(cx, math, name, Value::number(value), constant)?;
     }
@@ -109,33 +110,33 @@ macro_rules! unary {
 
 unary! {
     abs => f64::abs;
-    acos => f64::acos;
+    acos => crate::float::acos;
     acosh => fdlibm_acosh;
-    asin => f64::asin;
-    asinh => f64::asinh;
-    atan => f64::atan;
+    asin => crate::float::asin;
+    asinh => crate::float::asinh;
+    atan => crate::float::atan;
     atanh => fdlibm_atanh;
-    cbrt => f64::cbrt;
-    ceil => f64::ceil;
-    cos => f64::cos;
-    cosh => f64::cosh;
-    exp => f64::exp;
-    expm1 => f64::exp_m1;
-    floor => f64::floor;
+    cbrt => crate::float::cbrt;
+    ceil => crate::float::ceil;
+    cos => crate::float::cos;
+    cosh => crate::float::cosh;
+    exp => crate::float::exp;
+    expm1 => crate::float::expm1;
+    floor => crate::float::floor;
     fround => |value| f64::from(value as f32);
     f16round => |value| crate::vm::number::from_float16_bits(crate::vm::number::to_float16_bits(value));
-    log => f64::ln;
-    log1p => f64::ln_1p;
-    log10 => f64::log10;
-    log2 => f64::log2;
+    log => crate::float::log;
+    log1p => crate::float::log1p;
+    log10 => crate::float::log10;
+    log2 => crate::float::log2;
     round => round_half_up;
     sign => sign_of;
-    sin => f64::sin;
-    sinh => f64::sinh;
-    sqrt => f64::sqrt;
-    tan => f64::tan;
-    tanh => f64::tanh;
-    trunc => f64::trunc;
+    sin => crate::float::sin;
+    sinh => crate::float::sinh;
+    sqrt => crate::float::sqrt;
+    tan => crate::float::tan;
+    tanh => crate::float::tanh;
+    trunc => crate::float::trunc;
 }
 
 /// fdlibm's `atanh`: `f64::atanh`'s single expression loses thousands of ULPs
@@ -154,9 +155,9 @@ fn fdlibm_atanh(value: f64) -> f64 {
     }
     let result = if magnitude < 0.5 {
         let twice = magnitude + magnitude;
-        0.5 * (twice + twice * magnitude / (1.0 - magnitude)).ln_1p()
+        0.5 * crate::float::log1p(twice + twice * magnitude / (1.0 - magnitude))
     } else {
-        0.5 * ((magnitude + magnitude) / (1.0 - magnitude)).ln_1p()
+        0.5 * crate::float::log1p((magnitude + magnitude) / (1.0 - magnitude))
     };
     result.copysign(value)
 }
@@ -175,12 +176,14 @@ fn fdlibm_acosh(value: f64) -> f64 {
     }
     if value < 2.0 {
         let delta = value - 1.0;
-        return (delta + (delta * delta + 2.0 * delta).sqrt()).ln_1p();
+        return crate::float::log1p(delta + crate::float::sqrt(delta * delta + 2.0 * delta));
     }
     if value < 268_435_456.0 {
-        return (2.0 * value - 1.0 / (value + (value * value - 1.0).sqrt())).ln();
+        return crate::float::log(
+            2.0 * value - 1.0 / (value + crate::float::sqrt(value * value - 1.0)),
+        );
     }
-    value.ln() + std::f64::consts::LN_2
+    crate::float::log(value) + core::f64::consts::LN_2
 }
 
 fn sign_of(value: f64) -> f64 {
@@ -217,7 +220,7 @@ fn round_half_up(value: f64) -> f64 {
 pub(super) fn atan2(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let y = arg_number(cx, &site, 0)?;
     let x = arg_number(cx, &site, 1)?;
-    Ok(number(y.atan2(x)))
+    Ok(number(crate::float::atan2(y, x)))
 }
 
 pub(super) fn clz32(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
@@ -262,7 +265,7 @@ pub(super) fn hypot(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         compensation = (total - sum) - term;
         sum = total;
     }
-    Ok(number(sum.sqrt() * largest))
+    Ok(number(crate::float::sqrt(sum) * largest))
 }
 
 /// `Math.min` and `Math.max`: every argument converted, `NaN` wins, and

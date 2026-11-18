@@ -3,6 +3,8 @@
 //! `%ArrayIteratorPrototype%.next`. An array iterator's internal slots are the
 //! iterated object (`undefined` once done), the next index and the kind.
 
+use alloc::vec::Vec;
+
 use super::{Native, methods, plain_object, symbol_method, to_string_tag};
 use crate::heap::HeapError;
 use crate::heap::object::{InternalTag, ObjectKind};

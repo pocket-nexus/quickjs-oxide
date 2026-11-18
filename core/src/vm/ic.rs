@@ -16,6 +16,8 @@
 //! [`CodeUnit`]: crate::bytecode::CodeUnit
 //! [`Heap`]: crate::heap::Heap
 
+use alloc::vec::Vec;
+
 use crate::bytecode::{CodeUnit, Opcode};
 use crate::heap::arena::Arena;
 use crate::heap::object::{NONE, ObjectHeader, ObjectKind, flags};

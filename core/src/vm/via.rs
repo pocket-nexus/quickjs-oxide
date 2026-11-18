@@ -5,6 +5,8 @@
 //!
 //! Kept out of `interp` so the loop's code does not move.
 
+use alloc::vec::Vec;
+
 use super::{Cx, NativeSite};
 use crate::value::Value;
 

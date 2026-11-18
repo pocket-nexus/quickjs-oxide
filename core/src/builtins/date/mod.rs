@@ -3,6 +3,8 @@
 //! The calendar, formatting and parsing kernels follow QuickJS 2026-06-04; the
 //! clock and the time zone come from the host.
 
+use alloc::string::String;
+
 mod calendar;
 mod format;
 mod parse;
@@ -136,7 +138,7 @@ pub(super) fn install(cx: &mut Cx<'_>) -> Result<(), HeapError> {
 // ---- the host clock and time zone ----
 
 fn now(cx: &mut Cx<'_>) -> f64 {
-    cx.host.hooks.now_ms().trunc()
+    crate::float::trunc(cx.host.hooks.now_ms())
 }
 
 fn tz<'a>(cx: &'a mut Cx<'_>) -> impl FnMut(i64) -> i32 + 'a {
@@ -354,7 +356,10 @@ pub(super) fn get_timezone_offset(cx: &mut Cx<'_>, site: CallSite) -> Result<Val
     if value.is_nan() {
         return Ok(Value::number(f64::NAN));
     }
-    let offset = cx.host.hooks.local_tz_offset_minutes(value.trunc());
+    let offset = cx
+        .host
+        .hooks
+        .local_tz_offset_minutes(crate::float::trunc(value));
     Ok(Value::int32(offset))
 }
 
@@ -378,7 +383,7 @@ fn set_fields(
         let argument = site.arg(cx, index);
         let number = ops::to_number(cx, argument)?;
         all_finite &= number.is_finite();
-        fields[first + index] = number.trunc();
+        fields[first + index] = crate::float::trunc(number);
     }
     if !decomposed {
         return Ok(Value::number(f64::NAN));
@@ -433,7 +438,7 @@ pub(super) fn set_year(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> 
     let argument = site.arg(cx, 0);
     let mut year = ops::to_number(cx, argument)?;
     if year.is_finite() {
-        year = year.trunc();
+        year = crate::float::trunc(year);
         if (0.0..100.0).contains(&year) {
             year += 1900.0;
         }

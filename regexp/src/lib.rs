@@ -6,7 +6,13 @@
 //! plain `u32` code points. Heap objects and ECMAScript intrinsics are wired
 //! by the engines that depend on it (the root crate and `quickjs-oxide-core`).
 
+#![no_std]
 #![forbid(unsafe_code)]
+
+extern crate alloc;
+
+#[cfg(any(test, feature = "test-hooks"))]
+extern crate std;
 
 mod compiler;
 mod executor;
@@ -18,7 +24,7 @@ pub use compiler::{
     CompileError, CompileErrorKind, CompileErrorSource, CompiledRegExp, ValidatedProgram,
 };
 pub use executor::{
-    ExecError, ProgramError, RegExpMatch, execute, execute_latin1_with_interrupt,
+    ExecError, ProgramError, RegExpMatch, ScratchCache, execute, execute_latin1_with_interrupt,
     execute_with_interrupt,
 };
 pub use flags::RegExpFlags;

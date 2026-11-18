@@ -370,7 +370,12 @@ pub(crate) fn observe_rust_match(case: &MatchCase) -> String {
             );
         }
     };
-    match execute(&program, &case.input, case.start) {
+    match execute(
+        &oxide_regexp::ScratchCache::new(),
+        &program,
+        &case.input,
+        case.start,
+    ) {
         Ok(result) => observe_rust_result(result.as_ref(), &case.input),
         Err(error) => format!("ExecError|{error}"),
     }

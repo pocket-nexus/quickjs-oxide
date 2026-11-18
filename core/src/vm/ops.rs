@@ -3,7 +3,11 @@
 //! still in their registers (so rooted) and roots any intermediate it holds
 //! across a second allocation or a call back into JavaScript.
 
-use std::cmp::Ordering;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::cmp::Ordering;
 
 use super::bigint::{Big, BigError, qjs};
 use super::error;
@@ -257,7 +261,7 @@ pub(crate) fn concat_n(cx: &mut Cx<'_>, operands: &[Value]) -> Result<Value, Thr
 /// to run. `None` otherwise.
 pub(crate) fn join_short_strings(
     heap: &mut Heap,
-    registers: std::ops::Range<usize>,
+    registers: core::ops::Range<usize>,
 ) -> Option<Result<Value, crate::HeapError>> {
     let mut len = 0;
     for register in registers.clone() {
@@ -782,7 +786,7 @@ fn compare_big_number(a: &Big, b: f64) -> Option<Ordering> {
             Ordering::Greater
         });
     }
-    let floor = b.floor();
+    let floor = crate::float::floor(b);
     let order = a.cmp(&Big::from_f64(floor).expect("finite integral"));
     Some(if order == Ordering::Equal && floor != b {
         Ordering::Less

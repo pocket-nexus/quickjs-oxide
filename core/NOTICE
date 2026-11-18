@@ -15,6 +15,10 @@ permission notice is retained in LICENSES/Unicode-3.0.txt.
 See compat/upstream.toml for the pinned release archive and checksum. Rust
 dependency licenses remain those published by their respective packages.
 
+The Wasm asin, acos and asinh adapters in core/src/float retain the algorithms
+from rust-lang/libm 0.2.16, with square roots routed through the core's hardware
+backend. Original per-file notices and LICENSES/Libm.txt retain their licenses.
+
 The generated Rust Unicode identifier, case-conversion, and normalization
 tables retain the Unicode 17.0.0 data from QuickJS 2026-06-04
 libunicode-table.h. The source table checksum and regeneration commands are

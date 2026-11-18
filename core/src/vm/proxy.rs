@@ -4,6 +4,8 @@
 //! revoked: as in QuickJS, a revoked proxy keeps both, so an internal method
 //! that was running when its trap revoked the proxy still has them.
 
+use alloc::{format, vec::Vec};
+
 use super::error;
 use super::object::{self, Descriptor};
 use super::ops;

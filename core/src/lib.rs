@@ -3,12 +3,19 @@
 //! bytecode and the loop that runs it; the builtins, the host boundary and the
 //! embedder's entries. See `core/README.md`.
 
+#![no_std]
 #![forbid(unsafe_code)]
+
+extern crate alloc;
+
+#[cfg(test)]
+extern crate std;
 
 pub mod builtins;
 pub mod bytecode;
 mod clock;
 pub mod embed;
+mod float;
 pub mod heap;
 pub mod host;
 pub mod runtime;

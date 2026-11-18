@@ -5,6 +5,8 @@
 //! packed relative byte offsets. General quantifiers encode greediness through
 //! `Split` branch order; eligible class quantifiers use a fused scan descriptor.
 
+use alloc::boxed::Box;
+
 /// Inclusive Unicode scalar or UTF-16 code-unit interval.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct CharacterRange {

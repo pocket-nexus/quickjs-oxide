@@ -5,6 +5,11 @@
 //! method first. `localeCompare` is QuickJS's code-unit comparison; the locale
 //! case mappings are the plain ones.
 
+use alloc::boxed::Box;
+use alloc::format;
+use alloc::vec;
+use alloc::vec::Vec;
+
 use super::{
     Native, install_constructor, link_constructor, methods, string_repr, string_units, this_string,
     to_string_id,
@@ -207,7 +212,7 @@ pub(super) fn from_code_point(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, 
     for index in 0..site.argc {
         let code = site.arg(cx, index);
         let code = ops::to_number(cx, code)?;
-        if code.fract() != 0.0 || !(0.0..=1_114_111.0).contains(&code) {
+        if crate::float::fract(code) != 0.0 || !(0.0..=1_114_111.0).contains(&code) {
             return Err(error::range_error(cx, "invalid code point"));
         }
         push_code_point(&mut text, code as u32);
@@ -355,7 +360,7 @@ pub(super) fn last_index_of(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Th
     let position = if position.is_nan() {
         f64::INFINITY
     } else {
-        position.trunc()
+        crate::float::trunc(position)
     };
     let start = position.clamp(0.0, haystack.len() as f64) as usize;
     if needle.len() > haystack.len() {
@@ -676,9 +681,9 @@ pub(super) fn locale_compare(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, T
     };
     let (a, b) = (normalize(units(cx, string)), normalize(units(cx, that)));
     Ok(Value::int32(match a.cmp(&b) {
-        std::cmp::Ordering::Less => -1,
-        std::cmp::Ordering::Equal => 0,
-        std::cmp::Ordering::Greater => 1,
+        core::cmp::Ordering::Less => -1,
+        core::cmp::Ordering::Equal => 0,
+        core::cmp::Ordering::Greater => 1,
     }))
 }
 

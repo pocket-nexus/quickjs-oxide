@@ -8,7 +8,8 @@
 //! The record vector grows by [`step_bytes`] and gives back a trailing free
 //! run of more than a quarter of its capacity after a sweep.
 
-use std::mem;
+use alloc::vec::Vec;
+use core::mem;
 
 use super::gc::Room;
 
@@ -189,7 +190,7 @@ impl<T: Record> Arena<T> {
             assert!(
                 self.is_live(index),
                 "stale {} index {index}",
-                std::any::type_name::<T>()
+                core::any::type_name::<T>()
             );
         }
     }
@@ -368,7 +369,7 @@ impl<T: Record> Arena<T> {
     pub fn live_indices(&self) -> impl Iterator<Item = u32> + '_ {
         self.live.iter().enumerate().flat_map(|(word, &bits)| {
             let mut bits = bits;
-            std::iter::from_fn(move || {
+            core::iter::from_fn(move || {
                 if bits == 0 {
                     return None;
                 }

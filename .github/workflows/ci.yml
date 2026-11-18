@@ -65,6 +65,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-${{ env.RUST_VERSION }}-
 
+      - name: Check the no_std core dependency closure
+        run: |
+          rustup target add --toolchain "${RUST_VERSION}" thumbv7em-none-eabi
+          cargo check --locked -p quickjs-oxide-core --lib --target thumbv7em-none-eabi
+          cargo check --locked -p quickjs-oxide-core --lib --all-features --target thumbv7em-none-eabi
+
       - name: Check formatting and architecture gates
         run: |
           cargo fmt --all -- --check
@@ -122,7 +128,7 @@ jobs:
         run: |
           # Each package carries copies of the license and notices.
           for crate in core regexp adapters/native apps/cli; do
-            for file in LICENSE NOTICE LICENSES/QuickJS-MIT.txt LICENSES/Unicode-3.0.txt; do
+            for file in LICENSE NOTICE LICENSES/QuickJS-MIT.txt LICENSES/Unicode-3.0.txt LICENSES/Libm.txt; do
               cmp "${file}" "${crate}/${file}"
             done
           done

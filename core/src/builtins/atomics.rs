@@ -1,8 +1,8 @@
-//! `Atomics`. Every operation on shared memory runs inside the process-wide
-//! coordinator of `vm::waiter`, which orders them sequentially consistently
-//! across agents; `wait` and `notify` queue on the same coordinator.
+//! `Atomics`. Every operation on shared memory runs inside the host waiter's
+//! coordinator, which orders them sequentially consistently across agents;
+//! `wait` and `notify` queue on the same coordinator.
 
-use std::time::Duration;
+use core::time::Duration;
 
 use super::bigint::to_index;
 use super::{Native, methods, to_string_tag};
@@ -179,7 +179,7 @@ fn modify(
         old
     };
     if shared {
-        waiter::with_seq_cst(run)
+        waiter::with_seq_cst(cx.host.waiter, run)
     } else {
         run()
     }
@@ -275,7 +275,7 @@ pub(super) fn is_lock_free(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     let size = site.arg(cx, 0);
     let size = internal::to_integer_or_infinity(cx, size)?;
     Ok(Value::bool(
-        matches!(size as i64, 1 | 2 | 4 | 8) && size.fract() == 0.0,
+        matches!(size as i64, 1 | 2 | 4 | 8) && crate::float::fract(size) == 0.0,
     ))
 }
 
@@ -284,7 +284,7 @@ fn location(cx: &Cx<'_>, object: ObjectId, byte_index: usize) -> Option<WaitLoca
     let (_, store) = typed::view(cx.heap, object);
     match &typed::buffer(cx.heap, store).store {
         Store::Shared(shared) => Some(WaitLocation::new(
-            std::sync::Arc::as_ptr(shared) as *const () as usize as u64,
+            alloc::sync::Arc::as_ptr(shared) as *const () as usize as u64,
             byte_index,
         )),
         Store::Owned(_) => None,
@@ -314,19 +314,22 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
         // than panicking, while keeping NaN/+Infinity as untimed waits.
         Some(Duration::try_from_secs_f64(timeout.max(0.0) / 1000.0).unwrap_or(Duration::MAX))
     };
-    if !cx.host.can_block {
+    if !cx.host.can_block || cx.host.waiter.is_none() {
         return Err(error::type_error(cx, "cannot block in this thread"));
     }
     let (view, store) = typed::view(cx.heap, object);
     let size = view.kind.size();
     let mask = mask(kind);
     let buffer = typed::buffer(cx.heap, store);
-    let outcome = waiter::wait(place, timeout, || {
-        let mut bytes = [0u8; 8];
-        buffer.read(byte_index, &mut bytes[..size]);
-        Ok::<_, ()>(u64::from_le_bytes(bytes) & mask == expected & mask)
-    })
-    .unwrap_or(WaitOutcome::NotEqual);
+    let outcome = cx
+        .host
+        .waiter
+        .expect("a blocking waiter")
+        .wait(place, timeout, &mut || {
+            let mut bytes = [0u8; 8];
+            buffer.read(byte_index, &mut bytes[..size]);
+            u64::from_le_bytes(bytes) & mask == expected & mask
+        });
     let text = match outcome {
         WaitOutcome::NotEqual => "not-equal",
         WaitOutcome::Ok => "ok",
@@ -355,7 +358,11 @@ pub(super) fn notify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let Some(place) = location(cx, object, byte_index) else {
         return Ok(Value::int32(0));
     };
-    Ok(Value::number(waiter::notify(place, count) as f64))
+    let notified = cx
+        .host
+        .waiter
+        .map_or(0, |waiter| waiter.notify(place, count));
+    Ok(Value::number(notified as f64))
 }
 
 /// `Atomics.pause(N)`.
@@ -363,10 +370,10 @@ pub(super) fn pause(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let iterations = site.arg(cx, 0);
     if !iterations.is_undefined() {
         match iterations.as_f64() {
-            Some(number) if number.is_finite() && number.fract() == 0.0 => {}
+            Some(number) if number.is_finite() && crate::float::fract(number) == 0.0 => {}
             _ => return Err(error::type_error(cx, "not an integral number")),
         }
     }
-    std::hint::spin_loop();
+    core::hint::spin_loop();
     Ok(Value::UNDEFINED)
 }

@@ -4,9 +4,12 @@
 //! Locale-named methods intentionally retain QuickJS's fixed US-style output;
 //! QuickJS does not consult ICU, a locale argument, or an options object here.
 
+use alloc::borrow::ToOwned;
+use alloc::string::String;
+
 use super::DateStringMethod;
 use super::calendar::DateFields;
-use std::fmt;
+use core::fmt;
 
 const MONTH_NAMES: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
@@ -72,7 +75,7 @@ impl fmt::Display for InvalidIsoDate {
     }
 }
 
-impl std::error::Error for InvalidIsoDate {}
+impl core::error::Error for InvalidIsoDate {}
 
 /// Formats already-decomposed fields for a pinned QuickJS Date method.
 ///
@@ -237,6 +240,9 @@ fn push_at_least_digits(output: &mut String, value: u64, width: usize) {
 
 #[cfg(test)]
 mod tests {
+    use alloc::format;
+    use alloc::string::ToString;
+
     use super::super::calendar::{get_date_fields, set_date_fields};
     use super::*;
 

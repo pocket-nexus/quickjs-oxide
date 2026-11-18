@@ -1,5 +1,7 @@
 //! Number conversions: `Number::toString(10)`, `StringToNumber`, `ToInt32`.
 
+use alloc::string::{String, ToString};
+
 use crate::value::Value;
 
 /// A number result: an `Int32` when the double is one (not `-0`), so integer
@@ -28,8 +30,8 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
     if !value.is_finite() {
         return 0;
     }
-    let truncated = value.trunc();
-    let modulo = truncated.rem_euclid(4_294_967_296.0);
+    let truncated = crate::float::trunc(value);
+    let modulo = crate::float::rem_euclid(truncated, 4_294_967_296.0);
     modulo as u32
 }
 
@@ -37,7 +39,7 @@ pub(crate) fn to_uint32(value: f64) -> u32 {
 /// anything else takes the fewest digits that round-trip, rounding an
 /// exact tie to even as QuickJS does (Rust's formatter does not).
 pub(crate) fn to_string(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
+    if crate::float::fract(value) == 0.0 && value.abs() < 9_007_199_254_740_992.0 {
         // `-0` prints as `0`.
         return (value as i64).to_string();
     }
@@ -136,7 +138,7 @@ pub(crate) fn pow(base: f64, exponent: f64) -> f64 {
     if exponent.is_nan() || (base.abs() == 1.0 && exponent.is_infinite()) {
         return f64::NAN;
     }
-    base.powf(exponent)
+    crate::float::pow(base, exponent)
 }
 
 /// Decodes an IEEE-754 binary16 (QuickJS `cutils.h::fromfp16`): the half
@@ -181,6 +183,8 @@ pub(crate) fn to_float16_bits(value: f64) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    use alloc::vec::Vec;
+
     use super::*;
 
     #[test]

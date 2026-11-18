@@ -10,7 +10,13 @@
 //! are `2^a * radix^b`, so every division is a shift or a run of one-limb
 //! divisions.
 
-use std::cmp::Ordering;
+use alloc::{
+    borrow::ToOwned,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
+use core::cmp::Ordering;
 
 use super::bigint::{Big, BigError};
 use super::number::is_space;
@@ -52,7 +58,7 @@ pub fn to_string_radix(value: f64, radix: u32) -> String {
     let magnitude = value.abs();
     let body = if radix.is_power_of_two() {
         power_of_two_digits(magnitude, radix)
-    } else if magnitude < 9_007_199_254_740_992.0 && magnitude.trunc() == magnitude {
+    } else if magnitude < 9_007_199_254_740_992.0 && crate::float::trunc(magnitude) == magnitude {
         // Every integer below 2^53 is a double, so no shorter digit string
         // can round-trip: the shortest digits are the exact ones.
         u64_digits(magnitude as u64, radix)
@@ -236,7 +242,7 @@ fn power_of_two_digits(value: f64, radix: u32) -> String {
     let digits = u64_digits(scaled, radix);
     if low >= 0 {
         let mut out = digits;
-        out.extend(std::iter::repeat_n('0', low as usize));
+        out.extend(core::iter::repeat_n('0', low as usize));
         return out;
     }
     let fraction = (-low) as usize;
@@ -247,7 +253,7 @@ fn power_of_two_digits(value: f64, radix: u32) -> String {
     } else {
         let mut out = String::with_capacity(fraction + 2);
         out.push_str("0.");
-        out.extend(std::iter::repeat_n('0', fraction - digits.len()));
+        out.extend(core::iter::repeat_n('0', fraction - digits.len()));
         out.push_str(&digits);
         out
     }
@@ -366,13 +372,13 @@ fn place_free((digits, exponent): (String, i32), radix: u32) -> String {
     if exponent <= 0 {
         let mut out = String::with_capacity(2 + (-exponent) as usize + digits.len());
         out.push_str("0.");
-        out.extend(std::iter::repeat_n('0', (-exponent) as usize));
+        out.extend(core::iter::repeat_n('0', (-exponent) as usize));
         out.push_str(&digits);
         out
     } else if exponent as usize >= digits.len() {
         let mut out = digits;
         let zeros = exponent as usize - out.len();
-        out.extend(std::iter::repeat_n('0', zeros));
+        out.extend(core::iter::repeat_n('0', zeros));
         out
     } else {
         let mut out = digits;
@@ -438,7 +444,8 @@ fn radix_exponent(significand: u64, binary_exponent: i32, radix: u32, approximat
             scaled.cmp(&shl(&Big::from_u64(1), shift)) == Ordering::Less
         }
     };
-    let mut exponent = approximate.log(f64::from(radix)).floor() as i32 + 1;
+    let mut exponent =
+        crate::float::floor(crate::float::log_base(approximate, f64::from(radix))) as i32 + 1;
     while !below(exponent) {
         exponent += 1;
     }
@@ -594,7 +601,7 @@ fn padded_digits(sequence: &DigitSequence, radix: u32) -> String {
         return digits;
     }
     let mut padded = String::with_capacity(requested);
-    padded.extend(std::iter::repeat_n('0', requested - digits.len()));
+    padded.extend(core::iter::repeat_n('0', requested - digits.len()));
     padded.push_str(&digits);
     padded
 }
@@ -616,7 +623,7 @@ fn big_digits(value: &Big, radix: u32) -> String {
     let mut out = u64_digits(rest.limbs.first().copied().unwrap_or(0), radix);
     for &chunk in chunks.iter().rev() {
         let digits = u64_digits(chunk, radix);
-        out.extend(std::iter::repeat_n(
+        out.extend(core::iter::repeat_n(
             '0',
             chunk_digits as usize - digits.len(),
         ));
@@ -829,13 +836,13 @@ fn positional(sequence: &DigitSequence) -> String {
     let exponent = sequence.exponent;
     if exponent <= 0 {
         let mut out = String::from("0.");
-        out.extend(std::iter::repeat_n('0', (-exponent) as usize));
+        out.extend(core::iter::repeat_n('0', (-exponent) as usize));
         out.push_str(&digits);
         out
     } else if exponent as usize >= digits.len() {
         let mut out = digits;
         let zeros = exponent as usize - out.len();
-        out.extend(std::iter::repeat_n('0', zeros));
+        out.extend(core::iter::repeat_n('0', zeros));
         out
     } else {
         let mut out = digits;
@@ -867,7 +874,7 @@ pub fn to_fixed(value: f64, fraction_digits: i32) -> String {
         let fraction = fraction_digits as usize;
         if digits.len() <= fraction {
             let mut padded = String::from("0.");
-            padded.extend(std::iter::repeat_n('0', fraction - digits.len()));
+            padded.extend(core::iter::repeat_n('0', fraction - digits.len()));
             padded.push_str(&digits);
             digits = padded;
         } else {
