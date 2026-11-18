@@ -7,7 +7,7 @@ pub fn image_dispatch() {
     println!("cargo:rerun-if-changed={path}");
     let source = fs::read_to_string(path).unwrap();
     let mut image = String::new();
-    let mut patches = [0; 9];
+    let mut patches = [0; 10];
     for line in source.lines() {
         let text = line.trim_start();
         let indent = &line[..line.len() - text.len()];
@@ -54,6 +54,9 @@ pub fn image_dispatch() {
             "let (next, plan) = cx.static_code.call_entry_native(id);" => {
                 (7, "let (next, plan) = cx.static_code.call_entry(id);")
             }
+            "rare_op::<false>(cx, &frame, unit, *insn)" => {
+                (9, "rare_op::<true>(cx, &frame, unit, *insn)")
+            }
             _ => {
                 image.push_str(line);
                 image.push('\n');
@@ -79,7 +82,7 @@ pub fn image_dispatch() {
     }
     assert_eq!(
         patches,
-        [1, 1, 1, 1, 3, 1, 1, 1, 3],
+        [1, 1, 1, 1, 3, 1, 1, 1, 3, 1],
         "native dispatch shape changed"
     );
     let output = env::var_os("OUT_DIR").unwrap();

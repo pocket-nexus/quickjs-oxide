@@ -310,7 +310,12 @@ pub(super) fn frame_end(frame: &Frame, unit: &CodeUnit) -> u32 {
 /// loop, which they would otherwise grow past its size gate; each writes its
 /// own result register.
 #[inline(never)]
-fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Result<(), Throw> {
+fn rare_op<const IMAGE: bool>(
+    cx: &mut Cx<'_>,
+    frame: &Frame,
+    unit: &CodeUnit,
+    insn: Insn,
+) -> Result<(), Throw> {
     let base = frame.base as usize;
     let reg = |cx: &Cx<'_>, register: u8| cx.heap.vm.registers[base + register as usize];
     let (register, value) = match insn.op {
@@ -351,7 +356,7 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         }
         Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
         Opcode::NewArrayK => (insn.a, new_array_constants(cx, frame.bytecode, insn)?),
-        Opcode::NewObjectLit => (insn.a, new_object_literal(cx, unit, insn)?),
+        Opcode::NewObjectLit => (insn.a, new_object_literal::<IMAGE>(cx, unit, insn)?),
         Opcode::InitField => {
             let object = reg(cx, insn.a);
             let value = reg(cx, insn.b);
@@ -367,10 +372,18 @@ fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Resul
         Opcode::FinishObjectLit => {
             let value = reg(cx, insn.a);
             let object = value.as_object().expect("a literal object");
-            let creator = unit
-                .instruction(insn.imm as usize)
-                .expect("an admitted object literal");
-            let site = unit.cache_base(cx.heap) + creator.c as usize;
+            let creator = if IMAGE {
+                unit.instruction(insn.imm as usize)
+                    .expect("an admitted object literal")
+            } else {
+                unit.code[insn.imm as usize]
+            };
+            let base = if IMAGE {
+                unit.cache_base(cx.heap)
+            } else {
+                unit.ic_base as usize
+            };
+            let site = base + creator.c as usize;
             let shape = cx.heap.shape_of(object).index();
             if creator.c == FIELD_NO_SITE || cx.heap.ics.entry(site).w0 != shape {
                 let filled = creator.c != FIELD_NO_SITE
@@ -2244,7 +2257,11 @@ fn new_array_constants(cx: &mut Cx<'_>, bytecode: BytecodeId, insn: Insn) -> Res
     Ok(Value::object(array))
 }
 
-fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Value, Throw> {
+fn new_object_literal<const IMAGE: bool>(
+    cx: &mut Cx<'_>,
+    unit: &CodeUnit,
+    insn: Insn,
+) -> Result<Value, Throw> {
     let count = insn.imm;
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let object = cx
@@ -2252,7 +2269,12 @@ fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Va
         .alloc_object(ObjectKind::Ordinary, Some(prototype), count)
         .map_err(|error| error::heap_error(cx, error))?;
     // Allocation may collect and clear the weak shape. Read it afterwards.
-    let site = unit.cache_base(cx.heap) + insn.c as usize;
+    let base = if IMAGE {
+        unit.cache_base(cx.heap)
+    } else {
+        unit.ic_base as usize
+    };
+    let site = base + insn.c as usize;
     let entry = cx.heap.ics.entry(site);
     if insn.c != FIELD_NO_SITE && entry.is_filled() {
         cx.heap.objects.get_mut(object.0).shape = ShapeId(entry.w0);

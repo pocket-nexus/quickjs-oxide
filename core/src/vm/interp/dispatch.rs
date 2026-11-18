@@ -796,7 +796,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     | Opcode::ImportCall
                     | Opcode::ConcatN => {
                         let frame = current_frame!();
-                        rare_op(cx, &frame, unit, *insn)
+                        rare_op::<false>(cx, &frame, unit, *insn)
                     }
                     Opcode::IterStart
                     | Opcode::IterNext
