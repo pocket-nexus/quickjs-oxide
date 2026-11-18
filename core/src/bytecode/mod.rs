@@ -12,6 +12,7 @@
 pub mod builder;
 pub(crate) mod call_plan;
 pub mod disasm;
+pub mod image;
 pub mod opcode;
 pub mod validate;
 

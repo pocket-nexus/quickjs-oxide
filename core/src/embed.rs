@@ -836,6 +836,11 @@ impl NativeCx<'_> {
         ops::to_number(&mut self.cx(), value)
     }
 
+    /// ECMAScript's `ToUint32`, including numeric coercion.
+    pub fn to_uint32(&mut self, value: Value) -> Result<u32, Throw> {
+        self.to_number(value).map(crate::vm::number::to_uint32)
+    }
+
     /// `ToBoolean(value)`.
     pub fn to_boolean(&self, value: Value) -> bool {
         ops::to_boolean(self.heap, value)

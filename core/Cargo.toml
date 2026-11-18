@@ -9,7 +9,7 @@ publish.workspace = true
 description = "The new quickjs-oxide core: 8-byte values, typed arenas and a mark-sweep heap"
 homepage.workspace = true
 
-include = ["/src", "/README.md", "/LICENSE", "/NOTICE", "/LICENSES"]
+include = ["/src", "/build.rs", "/README.md", "/LICENSE", "/NOTICE", "/LICENSES"]
 
 [lib]
 name = "oxide_core"
