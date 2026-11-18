@@ -171,6 +171,8 @@ pub struct Room {
     left: isize,
     /// Nominal bytes that may be allocated before the next collection.
     threshold: usize,
+    /// Upper bound for arena and value backing storage since the last sweep.
+    arena_bytes: usize,
 }
 
 impl Room {
@@ -179,6 +181,7 @@ impl Room {
         Room {
             left: isize::MAX,
             threshold: usize::MAX,
+            arena_bytes: 0,
         }
     }
 
@@ -188,18 +191,25 @@ impl Room {
         Room {
             left: left.min(isize::MAX as usize) as isize,
             threshold,
+            arena_bytes: 0,
         }
     }
 
     /// Charges a growth step of `bytes`.
     #[inline]
     pub fn take(&mut self, bytes: usize) {
+        self.account_arena(bytes);
         self.left = self
             .left
             .saturating_sub(bytes.min(isize::MAX as usize) as isize);
         if self.left < 0 {
             self.threshold = 0;
         }
+    }
+
+    #[inline]
+    pub(crate) fn account_arena(&mut self, bytes: usize) {
+        self.arena_bytes = self.arena_bytes.saturating_add(bytes);
     }
 
     #[inline]
@@ -289,6 +299,8 @@ impl GcState {
         self.growth_factor = growth_factor;
         self.budget = min_heap;
         self.room = Room::new(min_heap.saturating_sub(reserved), min_heap);
+        // At reconfiguration the total is an upper bound on the arenas.
+        self.room.arena_bytes = reserved;
     }
 
     /// Nominal bytes that may be allocated before the next collection.
@@ -362,8 +374,12 @@ impl Heap {
         }
         let capped = self.gc.limits.max_bytes != usize::MAX;
         let over = |heap: &Heap| {
-            let bytes = heap.bytes();
             let cap = heap.gc.limits.max_bytes;
+            let reserved = heap
+                .gc
+                .room
+                .arena_bytes
+                .saturating_add(heap.auxiliary_bytes());
             // The last growth step is at most its old capacity plus five
             // records (initial capacity or rounding). The value heap can
             // double the combined request when rounding to a size class.
@@ -382,13 +398,14 @@ impl Heap {
                     + size_of::<super::object::FunctionBytecode>()
                     + size_of::<super::object::Internal>()
                     + size_of::<Value>());
-            let bound = bytes
+            let bound = reserved
                 .saturating_mul(2)
                 .saturating_add(records.saturating_mul(4))
                 .saturating_add(INITIAL_GROWTH)
                 .saturating_add(need.extra);
             bound > cap
-                && bytes
+                && heap
+                    .bytes()
                     .saturating_add(heap.growth_bytes(need))
                     .saturating_add(need.extra)
                     > cap
@@ -466,7 +483,8 @@ impl Heap {
     /// when reserved memory reaches it. A growth step past the budget
     /// collects early.
     fn set_budget(&mut self, live: usize) {
-        let reserved = self.bytes();
+        let arenas = self.arena_bytes();
+        let reserved = arenas + self.auxiliary_bytes();
         let gc = &mut self.gc;
         gc.allocated = 0;
         let step = budget_step(reserved);
@@ -488,6 +506,7 @@ impl Heap {
         } else {
             Room::new(gc.budget - reserved, threshold)
         };
+        gc.room.arena_bytes = arenas;
     }
 
     fn clear_marks(&mut self) {

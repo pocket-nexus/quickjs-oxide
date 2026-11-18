@@ -142,6 +142,7 @@ pub fn next_class_len(len: u32) -> u32 {
 pub struct ValueHeap {
     values: Vec<Value>,
     free: [Vec<u32>; CLASSES],
+    free_list_bytes: usize,
     /// Bit `k` is set while list `k` may hold a range: set by every push,
     /// cleared when a split finds the list empty.
     listed: u64,
@@ -166,6 +167,7 @@ impl ValueHeap {
         ValueHeap {
             values: Vec::new(),
             free: core::array::from_fn(|_| Vec::new()),
+            free_list_bytes: 0,
             listed: 0,
             runs: Vec::new(),
             current: (0, 0),
@@ -261,7 +263,10 @@ impl ValueHeap {
 
     #[inline]
     fn push(&mut self, start: u32, class: u32) {
-        self.free[class as usize].push(start);
+        let list = &mut self.free[class as usize];
+        let capacity = list.capacity();
+        list.push(start);
+        self.free_list_bytes += (list.capacity() - capacity) * size_of::<u32>();
         self.listed |= 1 << class;
     }
 
@@ -519,14 +524,17 @@ impl ValueHeap {
     }
 
     pub fn bytes(&self) -> usize {
-        self.values.capacity() * 8
-            + self
-                .free
-                .iter()
-                .map(|list| list.capacity() * 4)
-                .sum::<usize>()
-            + self.runs.capacity() * 12
-            + self.bits.capacity() * 8
+        self.backing_bytes() + self.metadata_bytes()
+    }
+
+    pub(super) fn backing_bytes(&self) -> usize {
+        self.values.capacity() * size_of::<Value>()
+    }
+
+    pub(super) fn metadata_bytes(&self) -> usize {
+        self.free_list_bytes
+            + self.runs.capacity() * size_of::<(u32, u32, u32)>()
+            + self.bits.capacity() * size_of::<u64>()
     }
 
     /// Every free range of the class lists.
