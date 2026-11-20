@@ -58,11 +58,31 @@ bytes. The first byte identifies the opcode and the next three hold either
 the operand bytes, or packed operands and an immediate. Each unit specifies
 the width of its packed operand fields. If the immediate does not fit, the
 instruction names a record in its unit's wide side table. Both forms use
-instruction indexes for control flow. First visits read records in place.
-Repeated frame entries can retain decoded instructions in a runtime-wide
-32 KiB cache. Units outside that budget continue to read the image. Decoded
-instructions resolve property keys once and retain the same instruction
-indexes as the on-disk records.
+instruction indexes for control flow. The host selects an execution policy when constructing the runtime. The same
+verified image can be instantiated under any policy.
+
+```rust
+use oxide_core::{ImageDecodePolicy, Runtime, RuntimeOptions};
+
+let policy = ImageDecodePolicy::Adaptive { max_bytes: 16 * 1024 };
+let mut runtime = Runtime::new_with_image_policy(RuntimeOptions::default(), policy)?;
+let script = runtime.load_image(&image_bytes)?;
+runtime.run_script(script)?;
+```
+
+* `Packed` reads instructions from the image for the lifetime of the runtime.
+* `Adaptive { max_bytes }` shares a byte budget across all images in the
+  runtime. The default is 32 KiB. A second frame entry or a hot loop backedge
+  poll can decode a function. Its instructions stay resident for the runtime's
+  lifetime. A function larger than the remaining budget continues to execute
+  packed, including when an earlier phase has used up that budget. The limit
+  covers decoded instruction arrays.
+* `Eager` allocates and decodes every function during installation. Insufficient
+  memory for these arrays fails installation before the functions are published.
+
+Hosts with custom services can use `Runtime::with_host_and_image_policy`.
+Decoded functions share the source interpreter's dispatch and resolve property
+operands in their own realm.
 
 Source positions use a one-byte encoding for small changes on the same line.
 Other changes store a short PC delta in the record header, with an extended
@@ -73,12 +93,13 @@ operands refer to the image's string table. The runtime maps them to its own
 atoms through a per-image table. BigInts carry a sign and limbs. Regular
 expression literals carry their pattern and flags. Tagged templates carry
 cooked and raw strings and are created with the destination realm's array
-prototype. Inline cache entries are allocated when the unit first executes.
+prototype. Units eligible for short-call plans reserve their inline caches on publication.
+Other units allocate their caches on first execution.
 
 Admission checks the header, fingerprint, CRC, section bounds, function tree
 and core publication invariants. The validator reads instructions directly
-and takes no temporary instruction or position array. Instantiation attaches
-the admitted units as one batch and builds realm-specific constant tables
+and takes no temporary instruction or position array. Instantiation publishes
+the admitted units with consecutive static IDs and builds realm-specific constant tables
 and bytecode records. Use a trusted image producer and authenticate
 distribution separately. The payload carries code and literals and the
 destination builds its own realm state. Static module linking and PocketJS

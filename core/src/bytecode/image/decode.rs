@@ -135,14 +135,19 @@ impl ScriptImage {
     /// Takes the decoded image. The returned object is unrooted, like
     /// [Runtime::instantiate]. Run it or hold it before the next allocation.
     pub fn instantiate(self, runtime: &mut Runtime) -> Result<ObjectId, HeapError> {
+        let policy = runtime.image_decode_policy();
         let mut compiler = runtime.compiler();
         let mark = compiler.heap_mut().roots().mark();
-        let result = self.install(&mut compiler);
+        let result = self.install(&mut compiler, policy);
         compiler.heap_mut().roots().truncate(mark);
         result
     }
 
-    fn install(self, compiler: &mut Compiler<'_>) -> Result<ObjectId, HeapError> {
+    fn install(
+        self,
+        compiler: &mut Compiler<'_>,
+        policy: super::ImageDecodePolicy,
+    ) -> Result<ObjectId, HeapError> {
         let mut wide = Vec::new();
         let bytes = self.bytes.as_ref();
         let atoms: Rc<[StringId]> = self
@@ -167,7 +172,7 @@ impl ScriptImage {
             .into();
         drop(wide);
 
-        let first = compiler.image_base(self.units.len())?;
+        let first = compiler.reserve_image(self.units.len())?;
         let last = (self.units.len() - 1) as u32;
         let backing = Rc::new(packed::ImageBacking {
             bytes: self.bytes,
@@ -186,14 +191,23 @@ impl ScriptImage {
         ) in units.iter_mut().zip(self.unit_data)
         {
             let table = install_constants(compiler, &backing.atoms, constants)?;
-            code.image = Some(Box::new(ImageCode {
+            let image = ImageCode {
                 backing: backing.clone(),
                 packed,
                 positions,
                 cache_base: Default::default(),
-                entered: Default::default(),
                 decoded: Default::default(),
-            }));
+                heat: Default::default(),
+            };
+            match policy {
+                super::ImageDecodePolicy::Eager => {
+                    image.decode()?;
+                    image.heat.set(packed::Heat::Seen);
+                }
+                super::ImageDecodePolicy::Packed => image.heat.set(packed::Heat::KeepPacked),
+                super::ImageDecodePolicy::Adaptive { .. } => {}
+            }
+            code.image = Some(Box::new(image));
             code.name_atom = code.name_atom.map(|id| backing.atoms[id.0 as usize]);
             let children: Vec<_> = code
                 .children
@@ -223,7 +237,7 @@ impl ScriptImage {
             compiler
                 .heap_mut()
                 .alloc_bytecode_function(Some(prototype), None, &templates)?;
-        compiler.attach_image(first, units.into_boxed_slice());
+        compiler.attach_image(first, units);
         Ok(script)
     }
 }

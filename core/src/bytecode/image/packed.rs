@@ -8,7 +8,7 @@ use core::{
     ops::Range,
 };
 
-use crate::{Insn, KeyKind, Opcode, PropertyKey, StringId};
+use crate::{HeapError, Insn, KeyKind, Opcode, PropertyKey, StringId};
 
 use super::{ImageError, Reader, Writer};
 
@@ -214,20 +214,78 @@ pub(super) struct ImageBacking {
     pub(super) atoms: Rc<[StringId]>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Heat {
+    #[default]
+    Cold,
+    Seen,
+    // The runtime's remaining budget only decreases.
+    KeepPacked,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct ImageCode {
     pub(super) backing: Rc<ImageBacking>,
     pub(super) packed: PackedRanges,
     pub(super) positions: Range<usize>,
     pub(crate) cache_base: Cell<Option<u32>>,
-    pub(super) entered: Cell<bool>,
     pub(super) decoded: OnceCell<Box<[Insn]>>,
+    pub(super) heat: Cell<Heat>,
 }
 
 impl ImageCode {
     #[inline]
     pub(crate) fn get(&self, pc: usize) -> Option<Insn> {
-        self.execution().get(pc)
+        match self.decoded.get() {
+            Some(code) => code.get(pc).copied(),
+            None => self.execution().get(pc),
+        }
+    }
+
+    pub(crate) fn decoded(&self) -> Option<&[Insn]> {
+        self.decoded.get().map(AsRef::as_ref)
+    }
+
+    pub(crate) fn enter(&self, remaining: &Cell<usize>) -> bool {
+        match self.heat.get() {
+            Heat::Cold => {
+                self.heat.set(Heat::Seen);
+                false
+            }
+            Heat::Seen => self.promote(remaining),
+            Heat::KeepPacked => false,
+        }
+    }
+
+    pub(crate) fn promote(&self, remaining: &Cell<usize>) -> bool {
+        if self.decoded.get().is_some() {
+            return true;
+        }
+        let len = self.len();
+        if self.heat.get() == Heat::KeepPacked || len > remaining.get() / size_of::<Insn>() {
+            self.heat.set(Heat::KeepPacked);
+            return false;
+        }
+        let left = remaining.get() - len * size_of::<Insn>();
+        if self.decode().is_err() {
+            self.heat.set(Heat::KeepPacked);
+            return false;
+        }
+        remaining.set(left);
+        true
+    }
+
+    pub(super) fn decode(&self) -> Result<(), HeapError> {
+        let len = self.len();
+        let mut code = Vec::new();
+        code.try_reserve_exact(len)
+            .map_err(|_| HeapError::OutOfMemory)?;
+        let view = self.execution();
+        code.extend((0..len).map(|pc| view.get(pc).expect("a validated instruction")));
+        self.decoded
+            .set(code.into_boxed_slice())
+            .expect("image instructions decoded once");
+        Ok(())
     }
 
     #[inline]
@@ -239,39 +297,12 @@ impl ImageCode {
         }
     }
 
-    pub(crate) fn enter(&self, remaining: &Cell<usize>) -> super::ImageExecution<'_> {
-        if let Some(code) = self.decoded.get() {
-            return super::ImageExecution::Decoded(code);
-        }
-        let packed = self.execution();
-        if !self.entered.replace(true) {
-            return super::ImageExecution::Packed(packed);
-        }
-        let bytes = self.len() * size_of::<Insn>();
-        if let Some(left) = remaining.get().checked_sub(bytes) {
-            let mut code = Vec::new();
-            if code.try_reserve_exact(self.len()).is_ok() {
-                code.extend(
-                    (0..self.len()).map(|pc| packed.get(pc).expect("admitted instruction")),
-                );
-                let code = self.decoded.get_or_init(|| code.into_boxed_slice());
-                remaining.set(left);
-                return super::ImageExecution::Decoded(code);
-            }
-        }
-        super::ImageExecution::Packed(packed)
-    }
-
     pub(crate) fn len(&self) -> usize {
         self.packed.words.len() / 4
     }
 
     pub(crate) fn instruction_bytes(&self) -> usize {
-        self.packed.bytes()
-            + self
-                .decoded
-                .get()
-                .map_or(0, |code| size_of_val(code.as_ref()))
+        self.packed.bytes() + self.decoded().map_or(0, core::mem::size_of_val)
     }
 
     pub(crate) fn position_bytes(&self) -> usize {

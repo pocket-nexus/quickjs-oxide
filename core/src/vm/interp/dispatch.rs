@@ -1,4 +1,4 @@
-pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
+{
     let entry = top_frame(&cx.heap.vm.frames);
 
     // The running unit: borrowed from the code store, or from `held`, which
@@ -11,16 +11,32 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             unit = if id.is_dynamic() | held.is_some() {
                 switch_unit(cx.static_code, cx.heap, &mut held, id)
             } else {
-                cx.static_code.get_native(id)
+                cx.static_code.get(id)
             };
         }};
     }
+    macro_rules! stream {
+        ($pc:expr) => {{
+            let Some(stream) = Stream::enter(unit, cx.static_code) else {
+                return Ok(DispatchExit::Switch($pc));
+            };
+            stream
+        }};
+    }
     set_unit!(entry.unit);
-    let mut code: &[Insn] = &unit.code;
+    let mut code = stream!(start);
     let mut base = entry.base as usize;
-    let mut ic_base = unit.ic_base as usize;
+    let mut ic_base = unit.cache_base(cx.heap);
     let mut pc = start;
 
+    // Keep the current PC at dispatch. Only a fallthrough needs its successor;
+    // a taken jump or a frame switch supplies the next index itself.
+    macro_rules! advance {
+        ($label:lifetime) => {{
+            pc += 1;
+            continue $label;
+        }};
+    }
     macro_rules! window {
         () => {
             window(&mut cx.heap.vm.registers, base)
@@ -39,23 +55,13 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             top_frame(&cx.heap.vm.frames)
         };
     }
-    macro_rules! load_frame {
-        () => {{
-            let caller = current_frame!();
-            set_unit!(caller.unit);
-            code = &unit.code;
-            base = caller.base as usize;
-            ic_base = unit.ic_base as usize;
-            raise_top(cx, frame_end(&caller, unit));
-        }};
-    }
     // Writes a value computed from the heap, then continues.
     macro_rules! set {
         ($label:lifetime, $register:expr, $value:expr) => {{
             let value: Value = $value;
             regs = window!();
             regs[$register as usize] = value;
-            continue $label;
+            advance!($label);
         }};
     }
     // Writes a slow path's result and continues, or evaluates to its throw.
@@ -80,7 +86,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
             };
             if let Some(value) = arith_fast(Arith::$op, x, y) {
                 reg!($insn.a) = value;
-                continue $label;
+                advance!($label);
             }
             write!($label, $insn.a, arith_slow(cx, $insn.op, x, y))
         }};
@@ -89,9 +95,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     // Every taken conditional back-edge polls too. Conversions finish before
     // polling, and an interrupt is attributed to the original branch PC.
     macro_rules! branch {
-        ($failure:lifetime, $target:expr) => {{
+        ($dispatch:lifetime, $failure:lifetime, $target:expr) => {{
             let target: usize = $target;
-            if target < pc {
+            if target <= pc {
                 let poll = &mut cx.heap.vm.poll;
                 *poll -= 1;
                 if *poll == 0 {
@@ -99,10 +105,15 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         break $failure Err(throw);
                     }
                     pc = target;
-                    break $failure Ok(());
+                    if Stream::promote(unit, cx.static_code) {
+                        return Ok(DispatchExit::Switch(pc));
+                    }
+                    regs = window!();
+                    continue $dispatch;
                 }
             }
             pc = target;
+            continue $dispatch;
         }};
     }
 
@@ -120,17 +131,17 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         }
                         UnitRef::Dynamic(next) => hold_dynamic_unit(&mut held, next),
                     };
-                    code = &unit.code;
+                    code = stream!(0);
                     base = $next_frame.base as usize;
 
-                    ic_base = unit.ic_base as usize;
+                    ic_base = unit.cache_base(cx.heap);
                     pc = 0;
                     regs = window!();
                     continue $dispatch;
                 }
                 Called::Value(value) => set!($dispatch, $insn.a, value),
                 Called::Threw(throw) => Err(throw),
-                Called::Exit(value) => return Ok(value),
+                Called::Exit(value) => return Ok(DispatchExit::Returned(value)),
                 Called::Resume(resume) => break $restore resume,
             }
         }};
@@ -139,21 +150,21 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
     'dispatch: loop {
         // Keep the dispatch descriptor borrowed; operand-heavy arms copy it
         // locally so their inputs can be decoded together.
-        let insn = &code[pc];
-        pc += 1;
+        let fetched = code.fetch(pc);
+        let insn: &Insn = core::borrow::Borrow::borrow(&fetched);
         let resume = 'restore: {
             let outcome: Result<(), Throw> = 'op: {
                 match insn.op {
-                    Opcode::Nop => continue 'dispatch,
+                    Opcode::Nop => advance!('dispatch),
 
                     // ---- moves and constants ----
                     Opcode::Mov => {
                         reg!(insn.a) = reg!(insn.b);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::Swap => {
                         regs.swap(insn.a as usize, insn.b as usize);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadWide => {
                         let value = cx.heap.vm.registers[base + insn.imm as usize];
@@ -163,46 +174,46 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         let value = reg!(insn.a);
                         cx.heap.vm.registers[base + insn.imm as usize] = value;
                         regs = window!();
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadInt => {
                         reg!(insn.a) = Value::int32(insn.int());
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadConst => {
                         let bytecode = current_frame!().bytecode;
                         let constants = cx.heap.payloads.bytecode.get(bytecode.index());
                         debug_assert!(insn.imm < constants.constant_count);
                         reg!(insn.a) = cx.heap.values.get(constants.constants, insn.imm);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadUndefined => {
                         reg!(insn.a) = Value::UNDEFINED;
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadNull => {
                         reg!(insn.a) = Value::NULL;
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadTrue => {
                         reg!(insn.a) = Value::TRUE;
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadFalse => {
                         reg!(insn.a) = Value::FALSE;
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadEmpty => {
                         reg!(insn.a) = Value::EMPTY;
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::LoadFunction => {
                         reg!(insn.a) = Value::object(current_frame!().function);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::CheckInit => {
                         if !reg!(insn.a).is_empty() {
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         Err(local_binding_error(cx, *insn))
                     }
@@ -216,7 +227,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(value) = i.checked_add(1)
                         {
                             reg!(insn.a) = Value::int32(value);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
                     }
@@ -227,7 +238,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(value) = i.checked_add(1)
                         {
                             reg!(insn.a) = Value::int32(value);
-                            if let Some(read) = code.get(pc).copied()
+                            if let Some(read) = code.peek(pc + 1)
                                 && read.op == Opcode::GetElem
                                 && let (Some(object), Some(index)) =
                                     (reg!(read.b).as_object(), reg!(read.c).as_int32())
@@ -243,11 +254,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     if !element.is_empty() {
                                         pc += 1;
                                         reg!(read.a) = element;
-                                        continue 'dispatch;
+                                        advance!('dispatch);
                                     }
                                 }
                             }
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         write!('dispatch, insn.a, ops::unary(cx, Unary::Inc, x))
                     }
@@ -258,7 +269,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(value) = i.checked_sub(1)
                         {
                             reg!(insn.a) = Value::int32(value);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         write!('dispatch, insn.a, ops::unary(cx, Unary::Dec, x))
                     }
@@ -266,7 +277,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         let x = reg!(insn.b);
                         if let Some(value) = unary_fast(insn.op, x) {
                             reg!(insn.a) = value;
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         let op = match insn.op {
                             Opcode::Neg => Unary::Neg,
@@ -280,7 +291,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         let x = reg!(insn.b);
                         if let Some(value) = x.as_bool() {
                             reg!(insn.a) = Value::bool(!value);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         set!('dispatch, insn.a, Value::bool(!ops::to_boolean(cx.heap, x)))
                     }
@@ -294,7 +305,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         let x = reg!(insn.b);
                         if x.is_int32() || x.as_string().is_some() || x.as_symbol().is_some() {
                             reg!(insn.a) = x;
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         let result = if insn.op == Opcode::ToPropertyKey {
                             ops::to_property_key(cx, x)
@@ -307,15 +318,15 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     Opcode::IsUndefinedOrNull => {
                         let x = reg!(insn.b);
                         reg!(insn.a) = Value::bool(x.is_undefined() || x.is_null());
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::IsUndefined | Opcode::TypeOfIsUndefined => {
                         reg!(insn.a) = Value::bool(reg!(insn.b).is_undefined());
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::IsNull => {
                         reg!(insn.a) = Value::bool(reg!(insn.b).is_null());
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::TypeOfIsFunction => {
                         let x = reg!(insn.b);
@@ -334,11 +345,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(sum) = i.checked_add(j)
                         {
                             reg!(insn.a) = Value::int32(sum);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         if let (Some(f), Some(g)) = (x.as_f64(), y.as_f64()) {
                             reg!(insn.a) = Value::number(f + g);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         write!('dispatch, insn.a, ops::add(cx, x, y))
                     }
@@ -353,11 +364,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             && let Some(difference) = i.checked_sub(j)
                         {
                             reg!(insn.a) = Value::int32(difference);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         if let (Some(f), Some(g)) = (x.as_f64(), y.as_f64()) {
                             reg!(insn.a) = Value::number(f - g);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         write!('dispatch, insn.a, ops::arith(cx, Arith::Sub, x, y))
                     }
@@ -398,7 +409,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         let (x, y) = (reg!(insn.b), reg!(insn.c));
                         if let Some(order) = order(x, y) {
                             reg!(insn.a) = Value::bool(JUMP_MASKS[insn.op as usize] & order != 0);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         let (test, when) = test_of(insn.op);
                         write!('dispatch,
@@ -428,7 +439,11 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 break 'op Err(throw);
                             }
                             pc = insn.imm as usize;
-                            break 'op Ok(());
+                            if Stream::promote(unit, cx.static_code) {
+                                return Ok(DispatchExit::Switch(pc));
+                            }
+                            regs = window!();
+                            continue 'dispatch;
                         }
                         pc = insn.imm as usize;
                         continue 'dispatch;
@@ -444,19 +459,19 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             }
                         };
                         if truthy == (insn.op == Opcode::JTrue) {
-                            branch!('op, insn.imm as usize);
+                            branch!('dispatch, 'op, insn.imm as usize);
                         }
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::JUndefinedOrNull => {
                         let x = reg!(insn.a);
                         if x.is_undefined() || x.is_null() {
-                            branch!('op, insn.imm as usize);
+                            branch!('dispatch, 'op, insn.imm as usize);
                         }
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::Gosub => {
-                        reg!(insn.a) = Value::int32(pc as i32);
+                        reg!(insn.a) = Value::int32((pc + 1) as i32);
                         pc = insn.imm as usize;
                         continue 'dispatch;
                     }
@@ -510,9 +525,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             }
                         };
                         if taken {
-                            branch!('op, insn.imm as usize);
+                            branch!('dispatch, 'op, insn.imm as usize);
                         }
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
 
                     // ---- properties ----
@@ -534,7 +549,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         ) {
                             reg!(insn.a) = value;
                             cx.heap.ics.count_hit(IcKind::Get);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         let fill = insn.c != FIELD_NO_SITE;
                         write!('dispatch, insn.a, property::get_cached(cx, object, insn.key(), site, fill))
@@ -554,7 +569,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             value,
                         ) {
                             cx.heap.ics.count_hit(IcKind::Set);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         let fill = insn.c != FIELD_NO_SITE;
                         property::set_cached(
@@ -593,7 +608,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 let element = cx.heap.values.get(elements, index as u32);
                                 if !element.is_empty() {
                                     reg!(insn.a) = element;
-                                    continue 'dispatch;
+                                    advance!('dispatch);
                                 }
                             }
                             // A typed array's element.
@@ -606,7 +621,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 )
                             {
                                 reg!(insn.a) = element;
-                                continue 'dispatch;
+                                advance!('dispatch);
                             }
                         }
                         let result = property::get_computed(cx, object, key);
@@ -631,7 +646,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     index as u32,
                                     value,
                                 ) {
-                                    continue 'dispatch;
+                                    advance!('dispatch);
                                 }
                             } else {
                                 let length = match header.kind {
@@ -646,7 +661,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                         || !cx.heap.values.get(elements, index as u32).is_empty())
                                 {
                                     cx.heap.values.set(elements, index as u32, value);
-                                    continue 'dispatch;
+                                    advance!('dispatch);
                                 }
                             }
                         }
@@ -677,7 +692,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             let start = cx.heap.objects.get(entry.w3).slots_start;
                             reg!(insn.a) = cx.heap.values.get_at(start + entry.w1);
                             cx.heap.ics.count_hit(IcKind::Global);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         write!('dispatch, insn.a, get_global(cx, *insn, site))
                     }
@@ -691,7 +706,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             let start = cx.heap.objects.get(entry.w3).slots_start;
                             cx.heap.values.set_at(start + entry.w1, value);
                             cx.heap.ics.count_hit(IcKind::Global);
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         set_global(cx, *insn, value, unit.has(flags::STRICT), site)
                     }
@@ -724,19 +739,19 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         let cell = cell(reg!(insn.b));
                         let slots = cx.heap.objects.get(cell.index()).slots();
                         reg!(insn.a) = cx.heap.values.get(slots, 0);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::StoreCell => {
                         let (cell, value) = (cell(reg!(insn.a)), reg!(insn.b));
                         let slots = cx.heap.objects.get(cell.index()).slots();
                         cx.heap.values.set(slots, 0, value);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::CheckCellInit => {
                         let cell = cell(reg!(insn.a));
                         let slots = cx.heap.objects.get(cell.index()).slots();
                         if !cx.heap.values.get(slots, 0).is_empty() {
-                            continue 'dispatch;
+                            advance!('dispatch);
                         }
                         Err(local_binding_error(cx, *insn))
                     }
@@ -750,7 +765,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         );
                         let slots = cx.heap.objects.get(cell.index()).slots();
                         reg!(insn.a) = cx.heap.values.get(slots, 0);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
                     Opcode::StoreCaptured => {
                         let value = reg!(insn.a);
@@ -763,7 +778,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         );
                         let slots = cx.heap.objects.get(cell.index()).slots();
                         cx.heap.values.set(slots, 0, value);
-                        continue 'dispatch;
+                        advance!('dispatch);
                     }
 
                     // ---- rare forms, out of line ----
@@ -796,7 +811,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     | Opcode::ImportCall
                     | Opcode::ConcatN => {
                         let frame = current_frame!();
-                        rare_op::<false>(cx, &frame, unit, *insn)
+                        rare_op(cx, &frame, unit, *insn)
                     }
                     Opcode::IterStart
                     | Opcode::IterNext
@@ -848,7 +863,9 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                         match property::for_in_next(cx, iterator) {
                             Ok(Some(key)) => {
                                 pc = insn.imm as usize;
-                                set!('dispatch, insn.a, key)
+                                regs = window!();
+                                reg!(insn.a) = key;
+                                continue 'dispatch;
                             }
                             Ok(None) => Ok(()),
                             Err(throw) => Err(throw),
@@ -897,7 +914,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                     let bytecode = BytecodeId(record.bytecode);
                                     let id = cx.heap.bytecode_unit(bytecode);
                                     if !id.is_dynamic() {
-                                        let (next, plan) = cx.static_code.call_entry_native(id);
+                                        let (next, plan) = cx.static_code.call_entry(id);
                                         let next_base = base + at;
                                         if !matches!(
                                             plan,
@@ -930,7 +947,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                                     function: object,
                                                     bytecode,
                                                     base: (base + at) as u32,
-                                                    return_pc: pc as u32,
+                                                    return_pc: (pc + 1) as u32,
                                                     return_dst: (base + insn.a as usize) as u32,
                                                     argc: u32::from(insn.c),
                                                     flags: 0,
@@ -941,10 +958,10 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                                     clear_dynamic_unit(&mut held);
                                                 }
                                                 unit = next;
-                                                code = &unit.code;
+                                                code = stream!(0);
                                                 base = next_frame.base as usize;
 
-                                                ic_base = unit.ic_base as usize;
+                                                ic_base = unit.cache_base(cx.heap);
                                                 pc = 0;
                                                 regs = window!();
                                                 continue 'dispatch;
@@ -977,13 +994,13 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                                 at,
                                 this,
                                 insn.c as usize,
-                                pc,
+                                pc + 1,
                                 insn.a,
                                 None,
                             )
                         } else {
                             next_frame = current_frame!();
-                            special_call(cx, &mut next_frame, unit, *insn, pc)
+                            special_call(cx, &mut next_frame, unit, *insn, pc + 1)
                         };
                         called!('dispatch, 'restore, insn, next_frame => result)
                     }
@@ -1008,7 +1025,7 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                             };
                         }
                         match finish_popped_return(cx, frame, value) {
-                            Returned::Exit(value) => return Ok(value),
+                            Returned::Exit(value) => return Ok(DispatchExit::Returned(value)),
                             Returned::Resume(resume) => break 'restore resume,
                         }
                     }
@@ -1021,8 +1038,8 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                     | Opcode::YieldStar
                     | Opcode::Await => {
                         let frame = current_frame!();
-                        match suspend_op(cx, &frame, unit, *insn, pc) {
-                            Ok(Returned::Exit(value)) => return Ok(value),
+                        match suspend_op(cx, &frame, unit, *insn, pc + 1) {
+                            Ok(Returned::Exit(value)) => return Ok(DispatchExit::Returned(value)),
                             Ok(Returned::Resume(resume)) => break 'restore resume,
                             Err(throw) => Err(throw),
                         }
@@ -1030,21 +1047,26 @@ pub(super) fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
                 }
             };
 
-            // A slow path finished: continue 'dispatch, or unwind its throw.
+            // A slow path finished. Advance on success, or unwind its throw.
             let Err(Throw(thrown)) = outcome else {
                 regs = window!();
-                continue 'dispatch;
+                advance!('dispatch);
             };
             // Place the fault before unwinding removes any backtrace frames.
-            error::place_frame(cx, thrown, unit, (pc - 1) as u32);
+            error::place_frame(cx, thrown, unit, pc as u32);
             if cx.heap.vm.interrupted {
                 return Err(unwind_uncatchable(cx, thrown));
             }
-            break 'restore unwind_catchable(cx, thrown, pc - 1)?;
+            break 'restore unwind_catchable(cx, thrown, pc)?;
         };
-        load_frame!();
+        let caller = current_frame!();
+        set_unit!(caller.unit);
+        base = caller.base as usize;
+        raise_top(cx, frame_end(&caller, unit));
         cx.heap.vm.registers[resume.dst as usize] = resume.value;
         pc = resume.pc as usize;
+        code = stream!(pc);
+        ic_base = unit.cache_base(cx.heap);
         regs = window!();
     }
 }

@@ -13,7 +13,14 @@ native asset registry and creates the private `__pak` buffer on first
 access for packages with assets already mounted. The core can execute
 directly from owned or static package storage. A host that retains an
 admitted `ScriptImage` can supply it via `OxideGuest::with_verified_image`.
-The default file path verifies the image at boot. The initial accessor
+Select the image policy on the guest before attaching it to the host.
+For example, `OxideGuest::default().with_decode_policy(ImageDecodePolicy::Packed)`
+keeps the instructions packed. The builder also works with a verified image.
+Import both types from `pocket_guest_oxide`. The Linux example accepts
+`--image-decode packed`, `--image-decode eager`, or `--image-decode 16384`
+after the replay flags and before `oxide`. Omitting it uses the runtime's
+32 KiB decode budget. Decoded functions keep their space for the guest runtime's
+lifetime. The default file path verifies the image at boot. The initial accessor
 becomes a writable data property after the first read or assignment to
 `globalThis.__pak`.
 
