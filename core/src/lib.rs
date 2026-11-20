@@ -24,6 +24,7 @@ pub mod value;
 pub mod vm;
 
 pub use builtins::agent::ScriptRunner;
+pub use bytecode::image::ImageDecodePolicy;
 pub use bytecode::{CodeStore, CodeUnit, CodeUnitId, Insn, Opcode, UnitRef, Units};
 pub use embed::{KeyName, NativeCx, PropertyDescriptor};
 pub use heap::atom::{KeyKind, PropertyKey};

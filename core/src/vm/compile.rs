@@ -270,16 +270,26 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    pub(crate) fn image_base(&self, count: usize) -> Result<CodeUnitId, HeapError> {
-        match &self.code {
-            Store::Owned(code) => code.image_base(count).ok_or(HeapError::OutOfMemory),
+    pub(crate) fn reserve_image(&mut self, count: usize) -> Result<CodeUnitId, HeapError> {
+        match &mut self.code {
+            Store::Owned(code) => code.reserve_image(count).ok_or(HeapError::OutOfMemory),
             Store::Shared(_) => unreachable!("images are attached to the runtime"),
         }
     }
 
-    pub(crate) fn attach_image(&mut self, first: CodeUnitId, units: Box<[CodeUnit]>) {
+    pub(crate) fn attach_image(&mut self, first: CodeUnitId, units: Vec<CodeUnit>) {
         match &mut self.code {
-            Store::Owned(code) => code.attach_image(first, units),
+            Store::Owned(code) => {
+                debug_assert_eq!(first.index() as usize, code.len());
+                for mut unit in units {
+                    let call = crate::bytecode::call_plan::CallPlan::for_image(&unit);
+                    if !matches!(call, crate::bytecode::call_plan::CallPlan::None) {
+                        // A planned call can read its ICs before ever entering a frame.
+                        unit.ic_base = self.heap.ics.activate_image(&unit);
+                    }
+                    code.push_planned(unit, call);
+                }
+            }
             Store::Shared(_) => unreachable!("images are attached to the runtime"),
         }
     }

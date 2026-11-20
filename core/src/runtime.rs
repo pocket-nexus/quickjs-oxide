@@ -314,6 +314,7 @@ pub struct Runtime {
     /// The units published before the program runs. Beside the heap, not in
     /// it: the main loop borrows the running unit's code across heap calls.
     pub(crate) code: CodeStore,
+    image_decode_policy: crate::ImageDecodePolicy,
     pub(crate) realm: Realm,
     pub(crate) host: Services,
 }
@@ -372,7 +373,15 @@ pub struct ThrownSummary {
 
 impl Runtime {
     pub fn new(options: impl Into<RuntimeOptions>) -> Result<Runtime, HeapError> {
-        Self::initialize(options.into(), None)
+        Self::initialize(options.into(), None, Default::default())
+    }
+
+    /// Creates a runtime with the selected execution policy for all its images.
+    pub fn new_with_image_policy(
+        options: impl Into<RuntimeOptions>,
+        policy: crate::ImageDecodePolicy,
+    ) -> Result<Self, HeapError> {
+        Self::initialize(options.into(), None, policy)
     }
 
     /// Installs platform services before realm initialization, including any
@@ -381,12 +390,27 @@ impl Runtime {
         options: impl Into<RuntimeOptions>,
         hooks: Box<dyn crate::host::Host>,
     ) -> Result<Runtime, HeapError> {
-        Self::initialize(options.into(), Some(hooks))
+        Self::initialize(options.into(), Some(hooks), Default::default())
+    }
+
+    /// Combines platform services and an explicit image execution policy.
+    pub fn with_host_and_image_policy(
+        options: impl Into<RuntimeOptions>,
+        hooks: Box<dyn crate::host::Host>,
+        policy: crate::ImageDecodePolicy,
+    ) -> Result<Self, HeapError> {
+        Self::initialize(options.into(), Some(hooks), policy)
+    }
+
+    /// The policy used by all image loading APIs on this runtime.
+    pub fn image_decode_policy(&self) -> crate::ImageDecodePolicy {
+        self.image_decode_policy
     }
 
     fn initialize(
         options: RuntimeOptions,
         mut hooks: Option<Box<dyn crate::host::Host>>,
+        policy: crate::ImageDecodePolicy,
     ) -> Result<Runtime, HeapError> {
         let clock = hooks
             .as_mut()
@@ -487,7 +511,8 @@ impl Runtime {
         }
         let mut runtime = Runtime {
             heap,
-            code: CodeStore::default(),
+            code: CodeStore::with_image_policy(policy),
+            image_decode_policy: policy,
             realm,
             host: services,
         };

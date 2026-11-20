@@ -363,10 +363,10 @@ index 7c0755b6..c6bf6c55 100644
 +    Ok(Value::object(motion_object))
  }
 diff --git a/engine/guest-oxide/src/lib.rs b/engine/guest-oxide/src/lib.rs
-index 9b289d01..ef18f7b4 100644
+index 9b289d01..a31873b5 100644
 --- a/engine/guest-oxide/src/lib.rs
 +++ b/engine/guest-oxide/src/lib.rs
-@@ -1,40 +1,84 @@
+@@ -1,40 +1,92 @@
 -//! Experimental source-only QuickJS Oxide guest for the canonical UI contract.
 +//! PocketJS UI host bindings on the Oxide core. The source frontend is optional.
 +#![cfg_attr(not(feature = "std"), no_std)]
@@ -386,6 +386,7 @@ index 9b289d01..ef18f7b4 100644
 +    rc::Rc,
 +    string::{String, ToString},
  };
++pub use oxide_core::ImageDecodePolicy;
 +use oxide_core::{
 +    bytecode::image::{ImageBytes, LoadError, ScriptImage},
 +    ErrorKind, HeapLimits, Intrinsic, NativeCx, ObjectId, PropertyDescriptor, PropertyKey, Runtime,
@@ -399,6 +400,7 @@ index 9b289d01..ef18f7b4 100644
  #[derive(Default)]
  pub struct OxideGuest {
      runtime: Option<Runtime>,
++    decode_policy: ImageDecodePolicy,
 +    image_storage: Option<ImageBytes>,
 +    verified_image: Option<ScriptImage>,
      last_error: Option<String>,
@@ -412,6 +414,12 @@ index 9b289d01..ef18f7b4 100644
 +            verified_image: Some(image),
 +            ..Self::default()
 +        }
++    }
++
++    /// Selects how this guest's runtime will execute installed images.
++    pub fn with_decode_policy(mut self, policy: ImageDecodePolicy) -> Self {
++        self.decode_policy = policy;
++        self
 +    }
 +
      pub fn last_error(&self) -> Option<&str> {
@@ -470,7 +478,7 @@ index 9b289d01..ef18f7b4 100644
      }
  }
 
-@@ -42,67 +86,110 @@ impl Guest for OxideGuest {
+@@ -42,67 +94,110 @@ impl Guest for OxideGuest {
      fn initialize(
          &mut self,
          ops: OpContext,
@@ -529,7 +537,7 @@ index 9b289d01..ef18f7b4 100644
 +            Runtime::with_host(options, Box::new(SystemHost.into_core()))
 +        };
 +        #[cfg(not(feature = "source"))]
-+        let runtime = Runtime::new(options);
++        let runtime = Runtime::new_with_image_policy(options, self.decode_policy);
 +        let mut runtime = runtime.map_err(|error| {
 +            self.last_error = Some(error.to_string());
 +            RuntimeError::Guest
@@ -622,7 +630,7 @@ index 9b289d01..ef18f7b4 100644
      }
 
      fn shutdown(&mut self) {
-@@ -110,107 +197,223 @@ impl Guest for OxideGuest {
+@@ -110,107 +205,223 @@ impl Guest for OxideGuest {
      }
  }
 
@@ -653,31 +661,31 @@ index 9b289d01..ef18f7b4 100644
 +    cx.new_error(kind, message)
 +        .map(Throw)
 +        .unwrap_or_else(|_| oom(cx))
-+}
-+
+ }
+
+-fn key(name: &str) -> JsResult<PropertyKey> {
+-    Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
 +fn object(cx: &mut NativeCx<'_>) -> JsResult<ObjectId> {
 +    let object = cx.new_object().map_err(|_| oom(cx))?;
 +    Ok(root(cx, object))
  }
 
--fn key(name: &str) -> JsResult<PropertyKey> {
--    Ok(PropertyKey::from_js_string(JsString::try_from_utf8(name)?))
+-fn put(js: &mut impl Js, object: &ObjectRef, name: &str, value: Value) -> JsResult<()> {
+-    set(js, object, &key(name)?, value)
 +fn key(cx: &mut NativeCx<'_>, name: &str) -> JsResult<PropertyKey> {
 +    cx.heap_mut().property_key(name).map_err(|_| oom(cx))
  }
 
--fn put(js: &mut impl Js, object: &ObjectRef, name: &str, value: Value) -> JsResult<()> {
--    set(js, object, &key(name)?, value)
+-fn set(js: &mut impl Js, object: &ObjectRef, key: &PropertyKey, value: Value) -> JsResult<()> {
+-    if js.set_property(object, key, value)? {
 +fn put(cx: &mut NativeCx<'_>, object: ObjectId, name: &str, value: Value) -> JsResult<()> {
 +    let mark = cx.heap_mut().roots().mark();
 +    cx.heap_mut().roots().push(value);
 +    let result = key(cx, name).and_then(|key| set(cx, object, key, value));
 +    cx.heap_mut().roots().truncate(mark);
 +    result
- }
-
--fn set(js: &mut impl Js, object: &ObjectRef, key: &PropertyKey, value: Value) -> JsResult<()> {
--    if js.set_property(object, key, value)? {
++}
++
 +fn set(cx: &mut NativeCx<'_>, object: ObjectId, key: PropertyKey, value: Value) -> JsResult<()> {
 +    if cx.set(object, key, value, Value::object(object))? {
          Ok(())
@@ -1552,7 +1560,7 @@ index 3936d98e..27b2b1f9 100644
 +    println!("cargo:rustc-link-lib=m");
  }
 diff --git a/programs/linux-kms/examples/guest_compare.rs b/programs/linux-kms/examples/guest_compare.rs
-index ee28ad17..3760c99c 100644
+index ee28ad17..21cd37cf 100644
 --- a/programs/linux-kms/examples/guest_compare.rs
 +++ b/programs/linux-kms/examples/guest_compare.rs
 @@ -1,22 +1,24 @@
@@ -1566,7 +1574,8 @@ index ee28ad17..3760c99c 100644
      DisplayDescriptor, DisplayError, DisplayOutput, DisplayRole, InputClasses, InputFrameBuilder,
      InputSource, PixelFormat, Rect, Surface, Target, TargetOwnership, VsyncSource,
  };
- use pocket_guest_oxide::OxideGuest;
+-use pocket_guest_oxide::OxideGuest;
++use pocket_guest_oxide::{ImageDecodePolicy, OxideGuest};
 +#[cfg(feature = "rquickjs-guest")]
  use pocket_guest_rquickjs::RquickjsGuest;
  use pocket_linux_hooks::FileSource;
@@ -1627,7 +1636,7 @@ index ee28ad17..3760c99c 100644
      io::Error::new(
          io::ErrorKind::InvalidInput,
 -        "usage: guest_compare [--package-layout] quickjs|oxide APP.pocket FRAMES [output.ppm]",
-+        "usage: guest_compare [--package-layout] [--boot-only] [--hero-press] quickjs|qjbc|oxide APP.pocket FRAMES [output.ppm]",
++        "usage: guest_compare [--package-layout] [--boot-only] [--hero-press] [--image-decode packed|eager|BYTES] quickjs|qjbc|oxide APP.pocket FRAMES [output.ppm]",
      )
  }
 
@@ -1673,19 +1682,36 @@ index ee28ad17..3760c99c 100644
          ),
          pixels: vec![0; len],
          output: Rc::clone(output),
-@@ -253,7 +278,10 @@ fn memory_display(
+@@ -253,9 +278,27 @@ fn memory_display(
  fn run() -> io::Result<()> {
      let mut args = env::args_os().skip(1).peekable();
      let package_layout_requested = args.next_if(|arg| arg == "--package-layout").is_some();
 -    let (Some(engine), Some(package), Some(frames)) = (args.next(), args.next(), args.next()) else {
 +    let boot_only = args.next_if(|arg| arg == "--boot-only").is_some();
 +    let press_hero = args.next_if(|arg| arg == "--hero-press").is_some();
++    let decode_policy = if args.next_if(|arg| arg == "--image-decode").is_some() {
++        let arg = args.next().ok_or_else(usage)?;
++        Some(match arg.to_str().ok_or_else(usage)? {
++            "packed" => ImageDecodePolicy::Packed,
++            "eager" => ImageDecodePolicy::Eager,
++            bytes => ImageDecodePolicy::Adaptive {
++                max_bytes: bytes.parse().map_err(|_| usage())?,
++            },
++        })
++    } else {
++        None
++    };
 +    let (Some(engine), Some(package), Some(frames)) = (args.next(), args.next(), args.next())
 +    else {
          return Err(usage());
      };
++    if decode_policy.is_some() && engine != "oxide" {
++        return Err(usage());
++    }
      let output_path = args.next();
-@@ -264,27 +292,14 @@ fn run() -> io::Result<()> {
+     if args.next().is_some() {
+         return Err(usage());
+@@ -264,27 +307,14 @@ fn run() -> io::Result<()> {
          .to_str()
          .and_then(|value| value.parse::<u64>().ok())
          .ok_or_else(usage)?;
@@ -1720,7 +1746,7 @@ index ee28ad17..3760c99c 100644
      let profile = profile::profile().ok_or_else(|| io::Error::other("missing exported profile"))?;
      let mut source = FileSource::open(package)?;
      let (primary, auxiliary) = if package_layout_requested {
-@@ -301,9 +316,13 @@ fn run() -> io::Result<()> {
+@@ -301,9 +331,13 @@ fn run() -> io::Result<()> {
          .transpose()?;
      // Include both outputs and the same room for staging as the KMS trial.
      let budget = (display.pixels.len() + auxiliary.as_ref().map_or(0, |d| d.pixels.len())) * 2;
@@ -1736,7 +1762,7 @@ index ee28ad17..3760c99c 100644
          profile_hash: profile::PROFILE_HASH,
          host_abi: profile::HOST_ABI,
          heap_limit: HEAP_LIMIT,
-@@ -311,44 +330,113 @@ fn run() -> io::Result<()> {
+@@ -311,44 +345,113 @@ fn run() -> io::Result<()> {
          profile,
      })
      .map_err(setup_error)?;
@@ -1773,7 +1799,7 @@ index ee28ad17..3760c99c 100644
 +        Some("oxide") => (
 +            "oxide",
 +            Box::new(TimedGuest {
-+                guest: OxideGuest::default(),
++                guest: OxideGuest::default().with_decode_policy(decode_policy.unwrap_or_default()),
 +                last_error: OxideGuest::last_error,
 +                measurements: Rc::clone(&measurements),
 +            }),

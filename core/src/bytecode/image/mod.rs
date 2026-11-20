@@ -20,19 +20,24 @@ use wire::{Reader, Writer};
 pub use decode::ScriptImage;
 pub use encode::encode_script;
 pub use packed::ImageBytes;
-pub(crate) use packed::ImageCode;
+pub(crate) use packed::{Execution, ImageCode};
 
-pub(crate) enum ImageExecution<'a> {
-    Packed(packed::Execution<'a>),
-    Decoded(&'a [crate::Insn]),
+/// How a runtime executes validated OXBC images.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ImageDecodePolicy {
+    /// Execute the packed instructions directly.
+    Packed,
+    /// Retain hot functions' decoded instructions for the runtime's lifetime.
+    /// A function that exceeds the remaining shared budget stays packed.
+    Adaptive { max_bytes: usize },
+    /// Decode every function during installation, before publishing the image.
+    Eager,
 }
 
-impl ImageExecution<'_> {
-    #[inline]
-    pub(crate) fn get(&self, pc: usize) -> Option<crate::Insn> {
-        match self {
-            Self::Packed(image) => image.get(pc),
-            Self::Decoded(code) => code.get(pc).copied(),
+impl Default for ImageDecodePolicy {
+    fn default() -> Self {
+        Self::Adaptive {
+            max_bytes: 32 * 1024,
         }
     }
 }
