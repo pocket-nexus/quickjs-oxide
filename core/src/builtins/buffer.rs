@@ -157,6 +157,39 @@ pub(crate) fn alloc_buffer(
     } else {
         (InternalTag::ArrayBuffer, Buffer::owned(len, max))
     };
+    alloc_buffer_object(cx, prototype, tag, buffer)
+}
+
+/// A buffer object over a region that already exists: the embedder's bytes, of
+/// the region's length and not resizable. Rooted.
+pub(crate) fn alloc_buffer_over(
+    cx: &mut Cx<'_>,
+    prototype: ObjectId,
+    region: Region,
+    shared: bool,
+) -> Result<ObjectId, Throw> {
+    let len = region.len();
+    if len > MAX_BUFFER_LENGTH {
+        return Err(error::range_error(cx, "invalid array buffer length"));
+    }
+    let tag = if shared {
+        InternalTag::SharedArrayBuffer
+    } else {
+        InternalTag::ArrayBuffer
+    };
+    cx.heap
+        .charge(len, &[Value::object(prototype)])
+        .map_err(|error| error::heap_error(cx, error))?;
+    alloc_buffer_object(cx, prototype, tag, Buffer::over(region, shared))
+}
+
+/// The object record of a buffer, rooted.
+fn alloc_buffer_object(
+    cx: &mut Cx<'_>,
+    prototype: ObjectId,
+    tag: InternalTag,
+    buffer: Buffer,
+) -> Result<ObjectId, Throw> {
     let object = cx
         .heap
         .alloc_internal(
