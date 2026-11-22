@@ -913,6 +913,47 @@ impl View<'_> {
         Ok(buffer)
     }
 
+    /// An `ArrayBuffer` over `capacity` bytes the caller owns starting at
+    /// `base`, for a WebAssembly linear memory the embedder keeps still.
+    /// See [`NativeCx::new_array_buffer_over`](crate::engine::api::core::NativeCx::new_array_buffer_over).
+    #[allow(unsafe_code)]
+    pub(crate) unsafe fn new_array_buffer_over(
+        &mut self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: Box<dyn Any + Send + Sync>,
+    ) -> JsResult<ObjectRef> {
+        // SAFETY: the caller's contract is this function's contract.
+        let result = unsafe {
+            self.core
+                .new_array_buffer_over(base, len, capacity, key, owner)
+        };
+        let id = self.complete_with(result)?;
+        Ok(self.lift_object(id))
+    }
+
+    /// A `SharedArrayBuffer` over the same bytes, as
+    /// [`View::new_array_buffer_over`].
+    #[allow(unsafe_code)]
+    pub(crate) unsafe fn new_shared_array_buffer_over(
+        &mut self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: Box<dyn Any + Send + Sync>,
+    ) -> JsResult<ObjectRef> {
+        // SAFETY: the caller's contract is this function's contract.
+        let result = unsafe {
+            self.core
+                .new_shared_array_buffer_over(base, len, capacity, key, owner)
+        };
+        let id = self.complete_with(result)?;
+        Ok(self.lift_object(id))
+    }
+
     pub(crate) fn array_buffer_len(&mut self, buffer: &ObjectRef) -> JsResult<Option<usize>> {
         let id = self.object(buffer)?;
         Ok(self.core.array_buffer_len(id))
@@ -1249,12 +1290,104 @@ impl Context {
             Err(error) => error,
         }
     }
+
+    /// [`Scope::new_array_buffer_over`].
+    ///
+    /// # Safety
+    ///
+    /// As [`NativeCx::new_array_buffer_over`](crate::engine::api::core::NativeCx::new_array_buffer_over).
+    #[allow(unsafe_code)]
+    pub unsafe fn new_array_buffer_over(
+        &self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: Box<dyn Any + Send + Sync>,
+    ) -> JsResult<ObjectRef> {
+        let mut entry = self.runtime.enter()?;
+        // SAFETY: the caller's contract is this function's contract.
+        unsafe {
+            entry
+                .view()
+                .new_array_buffer_over(base, len, capacity, key, owner)
+        }
+    }
+
+    /// [`Scope::new_shared_array_buffer_over`].
+    ///
+    /// # Safety
+    ///
+    /// As [`NativeCx::new_shared_array_buffer_over`](crate::engine::api::core::NativeCx::new_shared_array_buffer_over).
+    #[allow(unsafe_code)]
+    pub unsafe fn new_shared_array_buffer_over(
+        &self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: Box<dyn Any + Send + Sync>,
+    ) -> JsResult<ObjectRef> {
+        let mut entry = self.runtime.enter()?;
+        // SAFETY: the caller's contract is this function's contract.
+        unsafe {
+            entry
+                .view()
+                .new_shared_array_buffer_over(base, len, capacity, key, owner)
+        }
+    }
 }
 
 impl Scope<'_> {
     /// [`Js::throw_error`].
     pub fn throw_error(&mut self, kind: NativeErrorKind, message: &str) -> RuntimeError {
         self.view().throw_error(kind, message)
+    }
+
+    /// An `ArrayBuffer` over `capacity` bytes the caller owns starting at
+    /// `base`, for a WebAssembly linear memory the embedder keeps still.
+    ///
+    /// # Safety
+    ///
+    /// As [`NativeCx::new_array_buffer_over`](crate::engine::api::core::NativeCx::new_array_buffer_over):
+    /// `base` must point to `capacity` bytes the engine may read and write for
+    /// as long as `owner` lives and that `owner` alone releases.
+    #[allow(unsafe_code)]
+    pub unsafe fn new_array_buffer_over(
+        &mut self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: Box<dyn Any + Send + Sync>,
+    ) -> JsResult<ObjectRef> {
+        // SAFETY: the caller's contract is this function's contract.
+        unsafe {
+            self.view()
+                .new_array_buffer_over(base, len, capacity, key, owner)
+        }
+    }
+
+    /// A `SharedArrayBuffer` over the same bytes, for a shared WebAssembly
+    /// linear memory; agents on other threads may hold it.
+    ///
+    /// # Safety
+    ///
+    /// As [`Scope::new_array_buffer_over`].
+    #[allow(unsafe_code)]
+    pub unsafe fn new_shared_array_buffer_over(
+        &mut self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: Box<dyn Any + Send + Sync>,
+    ) -> JsResult<ObjectRef> {
+        // SAFETY: the caller's contract is this function's contract.
+        unsafe {
+            self.view()
+                .new_shared_array_buffer_over(base, len, capacity, key, owner)
+        }
     }
 }
 
