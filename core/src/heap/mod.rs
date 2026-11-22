@@ -14,6 +14,7 @@ pub mod code;
 pub mod gc;
 pub(crate) mod hash;
 pub mod object;
+pub mod region;
 pub mod report;
 pub mod string;
 pub mod symbol;
