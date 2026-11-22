@@ -104,6 +104,27 @@ const _: () = assert!(size_of::<CallPlan>() == 8);
 
 impl CallPlan {
     pub(super) fn of(unit: &CodeUnit) -> Self {
+        Self::match_code(unit, &unit.code)
+    }
+
+    pub(crate) fn for_image(unit: &CodeUnit) -> Self {
+        let image = unit.image.as_ref().expect("an image unit");
+        if let Some(code) = image.decoded() {
+            return Self::match_code(unit, code);
+        }
+        // BitTestOrCompare is the longest pattern recognized below.
+        let mut scratch = [super::Insn::new(Opcode::Nop, 0, 0, 0, 0); 11];
+        let Some(code) = scratch.get_mut(..unit.instruction_count()) else {
+            return Self::None;
+        };
+        let view = image.execution();
+        for (pc, instruction) in code.iter_mut().enumerate() {
+            *instruction = view.get(pc).expect("a validated image instruction");
+        }
+        Self::match_code(unit, code)
+    }
+
+    fn match_code(unit: &CodeUnit, code: &[super::Insn]) -> Self {
         use Opcode::*;
         if unit.has(flags::GENERATOR | flags::ASYNC | flags::CLASS_CONSTRUCTOR) {
             return Self::None;
@@ -134,7 +155,7 @@ impl CallPlan {
                 && ret.op == Return
                 && ret.a == call.a
         };
-        match &*unit.code {
+        match code {
             [
                 target,
                 target_this,

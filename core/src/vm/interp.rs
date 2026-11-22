@@ -310,12 +310,7 @@ pub(super) fn frame_end(frame: &Frame, unit: &CodeUnit) -> u32 {
 /// loop, which they would otherwise grow past its size gate; each writes its
 /// own result register.
 #[inline(never)]
-fn rare_op<const IMAGE: bool>(
-    cx: &mut Cx<'_>,
-    frame: &Frame,
-    unit: &CodeUnit,
-    insn: Insn,
-) -> Result<(), Throw> {
+fn rare_op(cx: &mut Cx<'_>, frame: &Frame, unit: &CodeUnit, insn: Insn) -> Result<(), Throw> {
     let base = frame.base as usize;
     let reg = |cx: &Cx<'_>, register: u8| cx.heap.vm.registers[base + register as usize];
     let (register, value) = match insn.op {
@@ -356,7 +351,7 @@ fn rare_op<const IMAGE: bool>(
         }
         Opcode::NewRegExp => (insn.a, regexp::new_regexp(cx, frame.bytecode, insn.imm)?),
         Opcode::NewArrayK => (insn.a, new_array_constants(cx, frame.bytecode, insn)?),
-        Opcode::NewObjectLit => (insn.a, new_object_literal::<IMAGE>(cx, unit, insn)?),
+        Opcode::NewObjectLit => (insn.a, new_object_literal(cx, unit, insn)?),
         Opcode::InitField => {
             let object = reg(cx, insn.a);
             let value = reg(cx, insn.b);
@@ -372,16 +367,13 @@ fn rare_op<const IMAGE: bool>(
         Opcode::FinishObjectLit => {
             let value = reg(cx, insn.a);
             let object = value.as_object().expect("a literal object");
-            let creator = if IMAGE {
-                unit.instruction(insn.imm as usize)
-                    .expect("an admitted object literal")
-            } else {
-                unit.code[insn.imm as usize]
-            };
-            let base = if IMAGE {
-                unit.cache_base(cx.heap)
-            } else {
-                unit.ic_base as usize
+            let pc = insn.imm as usize;
+            let (creator, base) = match &unit.image {
+                Some(image) => (
+                    image.get(pc).expect("an admitted object literal"),
+                    unit.cache_base(cx.heap),
+                ),
+                None => (unit.code[pc], unit.ic_base as usize),
             };
             let site = base + creator.c as usize;
             let shape = cx.heap.shape_of(object).index();
@@ -2167,15 +2159,94 @@ fn local_binding_error(cx: &mut Cx<'_>, insn: Insn) -> Throw {
 /// every arm that calls into the heap copies its operands out first and
 /// takes the window again afterwards (`set!`, `write!`, and the common tail).
 pub(super) fn resume_at(cx: &mut Cx<'_>, start: usize) -> Result<Value, Throw> {
-    if cx.static_code.has_images() {
-        run_image_at(cx, start)
-    } else {
-        run_at(cx, start)
+    let mut pc = start;
+    loop {
+        pc = match run_at(cx, pc)? {
+            DispatchExit::Returned(value) => return Ok(value),
+            DispatchExit::Switch(pc) => pc,
+        };
+        pc = match run_packed_at(cx, pc)? {
+            DispatchExit::Returned(value) => return Ok(value),
+            DispatchExit::Switch(pc) => pc,
+        };
     }
 }
 
-include!("interp/dispatch.rs");
-include!(concat!(env!("OUT_DIR"), "/image-dispatch.rs"));
+enum DispatchExit {
+    Returned(Value),
+    Switch(usize),
+}
+
+// A frame keeps its execution representation through dispatch. A return,
+// call, or packed loop promotion may resume the other representation at the
+// exact continuation PC, without growing the host stack.
+trait InstructionStream<'a>: Sized {
+    fn enter(unit: &'a CodeUnit, store: &CodeStore) -> Option<Self>;
+    fn promote(unit: &CodeUnit, store: &CodeStore) -> bool;
+    fn fetch(&self, pc: usize) -> impl core::borrow::Borrow<Insn> + Copy;
+    fn peek(&self, pc: usize) -> Option<Insn>;
+}
+
+impl<'a> InstructionStream<'a> for &'a [Insn] {
+    #[inline]
+    fn enter(unit: &'a CodeUnit, _: &CodeStore) -> Option<Self> {
+        match &unit.image {
+            Some(image) => image.decoded(),
+            None => Some(&unit.code),
+        }
+    }
+
+    #[inline(always)]
+    fn fetch(&self, pc: usize) -> impl core::borrow::Borrow<Insn> + Copy {
+        &self[pc]
+    }
+
+    #[inline]
+    fn peek(&self, pc: usize) -> Option<Insn> {
+        self.get(pc).copied()
+    }
+
+    #[inline]
+    fn promote(_: &CodeUnit, _: &CodeStore) -> bool {
+        false
+    }
+}
+
+impl<'a> InstructionStream<'a> for crate::bytecode::image::Execution<'a> {
+    #[inline]
+    fn enter(unit: &'a CodeUnit, store: &CodeStore) -> Option<Self> {
+        let image = unit.image.as_ref()?;
+        (!image.enter(&store.decode_remaining)).then(|| image.execution())
+    }
+
+    #[inline(always)]
+    fn fetch(&self, pc: usize) -> impl core::borrow::Borrow<Insn> + Copy {
+        self.get(pc).expect("a validated instruction")
+    }
+
+    #[inline]
+    fn peek(&self, pc: usize) -> Option<Insn> {
+        self.get(pc)
+    }
+
+    #[inline]
+    fn promote(unit: &CodeUnit, store: &CodeStore) -> bool {
+        unit.image
+            .as_ref()
+            .expect("a packed frame")
+            .promote(&store.decode_remaining)
+    }
+}
+
+fn run_at(cx: &mut Cx<'_>, start: usize) -> Result<DispatchExit, Throw> {
+    type Stream<'a> = &'a [Insn];
+    include!("interp/dispatch.rs")
+}
+
+fn run_packed_at(cx: &mut Cx<'_>, start: usize) -> Result<DispatchExit, Throw> {
+    type Stream<'a> = crate::bytecode::image::Execution<'a>;
+    include!("interp/dispatch.rs")
+}
 
 /// Handler search is cold. No allocation occurs while frames are popped;
 /// the shared continuation restores the handler's roots before writing its value.
@@ -2257,11 +2328,7 @@ fn new_array_constants(cx: &mut Cx<'_>, bytecode: BytecodeId, insn: Insn) -> Res
     Ok(Value::object(array))
 }
 
-fn new_object_literal<const IMAGE: bool>(
-    cx: &mut Cx<'_>,
-    unit: &CodeUnit,
-    insn: Insn,
-) -> Result<Value, Throw> {
+fn new_object_literal(cx: &mut Cx<'_>, unit: &CodeUnit, insn: Insn) -> Result<Value, Throw> {
     let count = insn.imm;
     let prototype = cx.realm.intrinsic(Intrinsic::ObjectPrototype);
     let object = cx
@@ -2269,11 +2336,7 @@ fn new_object_literal<const IMAGE: bool>(
         .alloc_object(ObjectKind::Ordinary, Some(prototype), count)
         .map_err(|error| error::heap_error(cx, error))?;
     // Allocation may collect and clear the weak shape. Read it afterwards.
-    let base = if IMAGE {
-        unit.cache_base(cx.heap)
-    } else {
-        unit.ic_base as usize
-    };
+    let base = unit.cache_base(cx.heap);
     let site = base + insn.c as usize;
     let entry = cx.heap.ics.entry(site);
     if insn.c != FIELD_NO_SITE && entry.is_filled() {

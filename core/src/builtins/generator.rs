@@ -212,7 +212,10 @@ fn yielded_star(cx: &Cx<'_>, generator: ObjectId) -> bool {
         return false;
     };
     let unit = cx.unit(crate::bytecode::CodeUnitId(saved.unit));
-    unit.code[saved.pc as usize - 1].op == crate::bytecode::Opcode::YieldStar
+    unit.instruction(saved.pc as usize - 1)
+        .expect("a suspended yield")
+        .op
+        == crate::bytecode::Opcode::YieldStar
 }
 
 /// `%GeneratorPrototype%.next(value)`.

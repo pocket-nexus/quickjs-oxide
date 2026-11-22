@@ -55,16 +55,20 @@ if len(runner) != 1:
 runner_dependencies = [d for d in runner_package["dependencies"] if d["name"] == "quickjs-oxide"]
 if len(runner_dependencies) != 1 or runner_dependencies[0]["features"] != ["test262-host"]:
     fail("runner must explicitly enable the Test262 host")
-# The one reviewed build script: `qjs`'s, which only passes its link order
-# file to the linker. Its package is outside the Test262 runner's graph.
-allowed_build_scripts = {"quickjs-oxide-cli": "apps/cli/build.rs"}
+# The CLI linker setup is outside the runner's graph. The core's image ABI
+# build script and its inputs are covered by the fingerprint's core tree.
+workspace_root = Path(metadata["workspace_root"])
+allowed_build_scripts = {
+    "quickjs-oxide-cli": workspace_root / "apps/cli/build.rs",
+    "quickjs-oxide-core": workspace_root / "core/build.rs",
+}
 for package in packages.values():
     for target in package["targets"]:
         if "custom-build" not in target.get("kind", []):
             continue
         allowed = allowed_build_scripts.get(package["name"])
-        if allowed is None or not target["src_path"].endswith("/" + allowed):
-            fail("workspace must not introduce an unhashed custom build target")
+        if Path(target["src_path"]) != allowed:
+            fail(f"unreviewed custom build target for {package['name']}: {target['src_path']}")
     for dependency in package["dependencies"]:
         if dependency.get("path") is not None and dependency["name"] not in expected_packages:
             fail("unreviewed path dependency is outside engine fingerprint coverage")
@@ -77,6 +81,7 @@ for name, expected in {
         "main_thread_stack_probe",
         "parser_stack_depth",
         "rust_only",
+        "script_image",
         "spread_operand",
         "unsupported_diagnostics",
     },
