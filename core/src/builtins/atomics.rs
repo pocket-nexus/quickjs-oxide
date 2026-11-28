@@ -6,9 +6,9 @@ use core::time::Duration;
 
 use super::bigint::to_index;
 use super::{Native, methods, to_string_tag};
-use crate::heap::HeapError;
 use crate::heap::buffer::{ElementKind, Store};
 use crate::heap::object::ObjectKind;
+use crate::heap::{Heap, HeapError};
 use crate::runtime::Intrinsic;
 use crate::value::{ObjectId, Value};
 use crate::vm::native::CallSite;
@@ -88,7 +88,7 @@ fn validate(
     if !valid {
         return Err(error::type_error(cx, "integer TypedArray expected"));
     }
-    if wait && location(cx, object, 0).is_none() {
+    if wait && location(cx.heap, object, 0).is_none() {
         return Err(error::type_error(cx, "not a SharedArrayBuffer TypedArray"));
     }
     Ok((object, kind, length))
@@ -279,14 +279,12 @@ pub(super) fn is_lock_free(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Thr
     ))
 }
 
-/// The coordinator's key for a shared buffer's byte.
-fn location(cx: &Cx<'_>, object: ObjectId, byte_index: usize) -> Option<WaitLocation> {
-    let (_, store) = typed::view(cx.heap, object);
-    match &typed::buffer(cx.heap, store).store {
-        Store::Shared(shared) => Some(WaitLocation::new(
-            alloc::sync::Arc::as_ptr(shared) as *const () as usize as u64,
-            byte_index,
-        )),
+/// The coordinator's key for a shared buffer's byte: the region's own, so two
+/// wrappers over one base wait and notify on the same place.
+fn location(heap: &Heap, object: ObjectId, byte_index: usize) -> Option<WaitLocation> {
+    let (_, store) = typed::view(heap, object);
+    match &typed::buffer(heap, store).store {
+        Store::Shared(shared) => Some(WaitLocation::new(shared.key(), byte_index)),
         Store::Owned(_) => None,
     }
 }
@@ -297,7 +295,7 @@ pub(super) fn wait(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     let (object, kind, length) = validate(cx, array, true, true)?;
     let index = site.arg(cx, 1);
     let byte_index = index_in(cx, object, length, index)?;
-    let place = location(cx, object, byte_index).expect("a shared buffer");
+    let place = location(cx.heap, object, byte_index).expect("a shared buffer");
     let value = site.arg(cx, 2);
     let expected = if kind.is_bigint() {
         operand(cx, kind, value)?.0
@@ -355,7 +353,7 @@ pub(super) fn notify(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
             count.max(0.0) as usize
         }
     };
-    let Some(place) = location(cx, object, byte_index) else {
+    let Some(place) = location(cx.heap, object, byte_index) else {
         return Ok(Value::int32(0));
     };
     let notified = cx
@@ -376,4 +374,102 @@ pub(super) fn pause(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     }
     core::hint::spin_loop();
     Ok(Value::UNDEFINED)
+}
+
+#[cfg(test)]
+#[allow(unsafe_code)]
+mod tests {
+    use alloc::boxed::Box;
+    use alloc::sync::Arc;
+    use core::sync::atomic::AtomicU8;
+
+    use super::location;
+    use crate::heap::gc::HeapLimits;
+    use crate::runtime::Intrinsic;
+    use crate::{Handle, NativeCx, Runtime, Value};
+
+    /// One reference to the caller's bytes, which the engine drops with the
+    /// buffer that holds it.
+    struct Memory(#[allow(dead_code)] Arc<[AtomicU8]>);
+
+    /// A region of `len` zero bytes the test owns, and its base.
+    fn memory(len: usize) -> (Arc<[AtomicU8]>, *mut u8) {
+        let bytes: Arc<[AtomicU8]> = (0..len).map(|_| AtomicU8::new(0)).collect();
+        let base = bytes.as_ptr() as *mut u8;
+        (bytes, base)
+    }
+
+    /// A `Uint8Array` over `buffer`, rendered through `%Uint8Array%`.
+    fn view(cx: &mut NativeCx<'_>, buffer: Handle) -> Value {
+        let constructor = Value::object(cx.intrinsic(Intrinsic::Uint8Array));
+        cx.construct(constructor, &[cx.held(buffer)], constructor)
+            .unwrap()
+    }
+
+    #[test]
+    fn two_shared_buffers_over_one_base_share_the_atomics_key() {
+        let mut runtime = Runtime::new(HeapLimits::default()).unwrap();
+        let (bytes, base) = memory(64);
+        let mut cx = runtime.native_cx();
+
+        let first = unsafe {
+            cx.new_shared_array_buffer_over(base, 16, 64, 0, Box::new(Memory(Arc::clone(&bytes))))
+        }
+        .unwrap();
+        let first = cx.hold(Value::object(first));
+        let second = unsafe {
+            cx.new_shared_array_buffer_over(base, 32, 64, 0, Box::new(Memory(Arc::clone(&bytes))))
+        }
+        .unwrap();
+        let second = cx.hold(Value::object(second));
+        let one = view(&mut cx, first);
+        let one = cx.hold(one);
+        let two = view(&mut cx, second);
+        let two = cx.hold(two);
+
+        // Two wrappers over one base are one wait location: nothing else makes
+        // the pair differ, so the whole location has to match.
+        let here = location(cx.heap(), cx.held(one).as_object().unwrap(), 4);
+        let there = location(cx.heap(), cx.held(two).as_object().unwrap(), 4);
+        assert_eq!(here, there, "one base, one wait location");
+
+        // The bytes of another region are another location.
+        let (other, other_base) = memory(16);
+        let third = unsafe {
+            cx.new_shared_array_buffer_over(
+                other_base,
+                16,
+                16,
+                0,
+                Box::new(Memory(Arc::clone(&other))),
+            )
+        }
+        .unwrap();
+        let third = cx.hold(Value::object(third));
+        let elsewhere = view(&mut cx, third);
+        let elsewhere = cx.hold(elsewhere);
+        assert_ne!(
+            here,
+            location(cx.heap(), cx.held(elsewhere).as_object().unwrap(), 4),
+            "another base is another location"
+        );
+
+        // A caller-supplied key wins over the one derived from the base.
+        let named = unsafe {
+            cx.new_shared_array_buffer_over(base, 16, 64, 7, Box::new(Memory(Arc::clone(&bytes))))
+        }
+        .unwrap();
+        let named = cx.hold(Value::object(named));
+        let named = view(&mut cx, named);
+        let named = cx.hold(named);
+        assert_ne!(
+            here,
+            location(cx.heap(), cx.held(named).as_object().unwrap(), 4),
+            "a named key is its own location"
+        );
+
+        for handle in [named, elsewhere, third, two, one, second, first] {
+            cx.release(handle);
+        }
+    }
 }

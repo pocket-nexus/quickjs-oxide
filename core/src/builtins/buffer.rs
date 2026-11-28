@@ -4,7 +4,6 @@
 //! `Symbol.species` is not consulted: `slice` makes an intrinsic buffer.
 
 use alloc::boxed::Box;
-use alloc::vec::Vec;
 
 use super::bigint::to_index;
 use super::{
@@ -13,6 +12,7 @@ use super::{
 use crate::heap::HeapError;
 use crate::heap::buffer::{Buffer, ElementKind, MAX_BUFFER_LENGTH, Store, View};
 use crate::heap::object::{InternalData, InternalTag, ObjectKind};
+use crate::heap::region::Region;
 use crate::runtime::{Intrinsic, WellKnown};
 use crate::value::{ObjectId, Value};
 use crate::vm::native::CallSite;
@@ -157,6 +157,39 @@ pub(crate) fn alloc_buffer(
     } else {
         (InternalTag::ArrayBuffer, Buffer::owned(len, max))
     };
+    alloc_buffer_object(cx, prototype, tag, buffer)
+}
+
+/// A buffer object over a region that already exists: the embedder's bytes, of
+/// the region's length and not resizable. Rooted.
+pub(crate) fn alloc_buffer_over(
+    cx: &mut Cx<'_>,
+    prototype: ObjectId,
+    region: Region,
+    shared: bool,
+) -> Result<ObjectId, Throw> {
+    let len = region.len();
+    if len > MAX_BUFFER_LENGTH {
+        return Err(error::range_error(cx, "invalid array buffer length"));
+    }
+    let tag = if shared {
+        InternalTag::SharedArrayBuffer
+    } else {
+        InternalTag::ArrayBuffer
+    };
+    cx.heap
+        .charge(len, &[Value::object(prototype)])
+        .map_err(|error| error::heap_error(cx, error))?;
+    alloc_buffer_object(cx, prototype, tag, Buffer::over(region, shared))
+}
+
+/// The object record of a buffer, rooted.
+fn alloc_buffer_object(
+    cx: &mut Cx<'_>,
+    prototype: ObjectId,
+    tag: InternalTag,
+    buffer: Buffer,
+) -> Result<ObjectId, Throw> {
     let object = cx
         .heap
         .alloc_internal(
@@ -194,7 +227,7 @@ pub(crate) fn detach(cx: &mut Cx<'_>, value: Value) -> Result<(), Throw> {
     match value.as_object() {
         Some(object) if cx.heap.internal_tag(object) == InternalTag::ArrayBuffer => {
             let buffer = typed::buffer_mut(cx.heap, object);
-            buffer.store = Store::Owned(Vec::new());
+            buffer.store = Store::Owned(Region::owned(0));
             buffer.detached = true;
             Ok(())
         }
@@ -332,9 +365,10 @@ pub(super) fn resize(cx: &mut Cx<'_>, site: CallSite) -> Result<Value, Throw> {
     cx.heap
         .charge(grow, &[Value::object(object)])
         .map_err(|error| error::heap_error(cx, error))?;
-    if let Some(bytes) = typed::buffer_mut(cx.heap, object).owned_slice_mut() {
-        bytes.resize(len as usize, 0);
-    }
+    // An `ArrayBuffer` owns its region (a region the engine only adopted is
+    // never resizable), so this resize cannot fail.
+    let resized = typed::buffer_mut(cx.heap, object).resize_len(len as usize);
+    debug_assert!(resized, "an ArrayBuffer owns its bytes");
     Ok(Value::UNDEFINED)
 }
 
@@ -396,13 +430,26 @@ fn transfer_buffer(cx: &mut Cx<'_>, site: CallSite, preserve: bool) -> Result<Va
     let prototype = cx.realm.intrinsic(Intrinsic::ArrayBufferPrototype);
     let result = alloc_buffer(cx, prototype, 0, max, false)?;
     let source = typed::buffer_mut(cx.heap, object);
-    let mut bytes = match core::mem::replace(&mut source.store, Store::Owned(Vec::new())) {
-        Store::Owned(bytes) => bytes,
-        Store::Shared(_) => unreachable!("an ArrayBuffer"),
-    };
+    let before = source.len();
+    let mut store = core::mem::replace(&mut source.store, Store::Owned(Region::owned(0)));
     source.detached = true;
-    bytes.resize(len as usize, 0);
-    typed::buffer_mut(cx.heap, result).store = Store::Owned(bytes);
+    // The bytes keep their allocation when the region can hold the new length.
+    // A region the engine only adopted cannot grow, so those bytes move into
+    // one it owns.
+    let moved = store
+        .owned_region_mut()
+        .is_some_and(|region| region.resize(len as usize));
+    let store = if moved {
+        store
+    } else {
+        let available = before.min(len as usize);
+        let mut bytes = alloc::vec![0; available];
+        store.region().read(0, &mut bytes);
+        let region = Region::owned(len as usize);
+        region.write(0, &bytes);
+        Store::Owned(region)
+    };
+    typed::buffer_mut(cx.heap, result).store = store;
     Ok(Value::object(result))
 }
 

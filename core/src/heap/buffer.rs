@@ -1,64 +1,92 @@
 //! Array buffer storage and typed-array views.
 //!
-//! An `ArrayBuffer` owns its bytes; a `SharedArrayBuffer`'s bytes are an
-//! `Arc` of atomic bytes, allocated at the maximum length for a growable
-//! one, so agents on other threads share them in safe Rust and `Atomics`
-//! operates on them directly. A typed array or `DataView` is a [`View`]
+//! An `ArrayBuffer`'s bytes live in a [`Region`], either one the engine
+//! allocated or one it adopted from its embedder; a `SharedArrayBuffer`'s live
+//! in a [`SharedBytes`], an `Arc` of a region other agents may hold too, which
+//! `Atomics` operates on directly. A typed array or `DataView` is a [`View`]
 //! over a buffer object held in its internal slot 0.
 
 use alloc::sync::Arc;
-use alloc::{boxed::Box, vec, vec::Vec};
-use core::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use alloc::vec::Vec;
+use core::sync::atomic::AtomicU8;
+
+use super::region::Region;
 
 /// The bytes of a shared buffer, which other agents may hold too.
 #[derive(Debug)]
 pub struct SharedBytes {
-    bytes: Box<[AtomicU8]>,
-    len: AtomicUsize,
+    region: Region,
 }
 
 impl SharedBytes {
     pub fn new(len: usize, capacity: usize) -> Arc<SharedBytes> {
-        Arc::new(SharedBytes {
-            bytes: (0..capacity.max(len)).map(|_| AtomicU8::new(0)).collect(),
-            len: AtomicUsize::new(len),
-        })
+        SharedBytes::over(Region::owned_shared(len, capacity))
+    }
+
+    /// A shared buffer over a region that already exists: the caller's, or one
+    /// the constructor just allocated.
+    pub fn over(region: Region) -> Arc<SharedBytes> {
+        Arc::new(SharedBytes { region })
+    }
+
+    pub fn region(&self) -> &Region {
+        &self.region
     }
 
     pub fn len(&self) -> usize {
-        self.len.load(Ordering::SeqCst)
+        self.region.len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.region.is_empty()
     }
 
     pub fn capacity(&self) -> usize {
-        self.bytes.len()
+        self.region.capacity()
+    }
+
+    /// The identity `Atomics` waiters key on, equal for two wrappers over one
+    /// base.
+    pub fn key(&self) -> u64 {
+        self.region.key()
     }
 
     /// Grows to `len` (at most the capacity); false if another agent made
     /// it longer meanwhile or `len` is shorter.
     pub fn grow(&self, len: usize) -> bool {
-        let current = self.len();
-        len >= current
-            && len <= self.capacity()
-            && self
-                .len
-                .compare_exchange(current, len, Ordering::SeqCst, Ordering::SeqCst)
-                .is_ok()
+        self.region.grow(len)
     }
 
     pub fn byte(&self, index: usize) -> &AtomicU8 {
-        &self.bytes[index]
+        self.region.byte(index)
     }
 }
 
 /// Where a buffer's bytes are.
 #[derive(Debug)]
 pub enum Store {
-    Owned(Vec<u8>),
+    /// Bytes this buffer owns outright, which may be an embedder's region.
+    Owned(Region),
     Shared(Arc<SharedBytes>),
+}
+
+impl Store {
+    /// The bytes, whichever arm holds them.
+    pub fn region(&self) -> &Region {
+        match self {
+            Store::Owned(region) => region,
+            Store::Shared(shared) => shared.region(),
+        }
+    }
+
+    /// The region itself, for a store that is not shared: an `Arc` cannot be
+    /// borrowed mutably, and a shared region only ever grows in place.
+    pub fn owned_region_mut(&mut self) -> Option<&mut Region> {
+        match self {
+            Store::Owned(region) => Some(region),
+            Store::Shared(_) => None,
+        }
+    }
 }
 
 /// An `ArrayBuffer` or `SharedArrayBuffer` record.
@@ -73,7 +101,7 @@ pub struct Buffer {
 impl Buffer {
     pub fn owned(len: usize, max: Option<usize>) -> Buffer {
         Buffer {
-            store: Store::Owned(vec![0; len]),
+            store: Store::Owned(Region::owned(len)),
             detached: false,
             max,
         }
@@ -87,93 +115,84 @@ impl Buffer {
         }
     }
 
+    /// A buffer over a region that already exists, of the region's length and
+    /// not resizable: an embedder grows one by making another over the same
+    /// base.
+    pub fn over(region: Region, shared: bool) -> Buffer {
+        let store = if shared {
+            Store::Shared(SharedBytes::over(region))
+        } else {
+            Store::Owned(region)
+        };
+        Buffer {
+            store,
+            detached: false,
+            max: None,
+        }
+    }
+
     pub fn is_shared(&self) -> bool {
         matches!(self.store, Store::Shared(_))
     }
 
     pub fn len(&self) -> usize {
-        match &self.store {
-            Store::Owned(bytes) => bytes.len(),
-            Store::Shared(shared) => shared.len(),
-        }
+        self.store.region().len()
     }
 
     pub fn is_empty(&self) -> bool {
-        self.len() == 0
+        self.store.region().is_empty()
     }
 
     pub fn owned_bytes(&self) -> usize {
-        match &self.store {
-            Store::Owned(bytes) => bytes.capacity(),
-            Store::Shared(shared) => shared.capacity(),
+        self.store.region().capacity()
+    }
+
+    /// Makes the length `len`, keeping the bytes; false when the region holds
+    /// no more than it already does (a caller's region, or a shared one).
+    pub fn resize_len(&mut self, len: usize) -> bool {
+        match &mut self.store {
+            Store::Owned(region) => region.resize(len),
+            Store::Shared(shared) => shared.grow(len),
         }
     }
 
     /// Copies `out.len()` bytes from `offset`.
     #[inline]
     pub fn read(&self, offset: usize, out: &mut [u8]) {
-        if out.is_empty() {
-            return;
-        }
-        match &self.store {
-            Store::Owned(bytes) => out.copy_from_slice(&bytes[offset..offset + out.len()]),
-            Store::Shared(shared) => {
-                for (index, byte) in out.iter_mut().enumerate() {
-                    *byte = shared.byte(offset + index).load(Ordering::Relaxed);
-                }
-            }
-        }
+        self.store.region().read(offset, out);
     }
 
     /// Writes `data` at `offset`.
     #[inline]
     pub fn write(&mut self, offset: usize, data: &[u8]) {
-        if data.is_empty() {
-            return;
-        }
-        match &mut self.store {
-            Store::Owned(bytes) => bytes[offset..offset + data.len()].copy_from_slice(data),
-            Store::Shared(shared) => {
-                for (index, byte) in data.iter().enumerate() {
-                    shared.byte(offset + index).store(*byte, Ordering::Relaxed);
-                }
-            }
-        }
+        self.store.region().write(offset, data);
     }
 
     /// Copies `len` bytes within the buffer (`memmove`).
     pub fn copy_within(&mut self, from: usize, to: usize, len: usize) {
-        if len == 0 {
-            return;
-        }
-        match &mut self.store {
-            Store::Owned(bytes) => bytes.copy_within(from..from + len, to),
-            Store::Shared(_) => {
-                let mut temporary = vec![0; len];
-                self.read(from, &mut temporary);
-                self.write(to, &temporary);
-            }
-        }
+        self.store.region().copy_within(from, to, len);
     }
 
-    /// The owned bytes, for bulk work (`None` for a shared buffer).
+    /// The bytes as one slice, for bulk work: `None` for a shared buffer and
+    /// for a region the engine only adopted, whose bytes another thread may
+    /// write.
     pub fn owned_slice(&self) -> Option<&[u8]> {
         match &self.store {
-            Store::Owned(bytes) => Some(bytes),
+            Store::Owned(region) => region.as_bytes(),
             Store::Shared(_) => None,
         }
     }
 
-    pub fn owned_slice_mut(&mut self) -> Option<&mut Vec<u8>> {
+    pub fn owned_slice_mut(&mut self) -> Option<&mut [u8]> {
         match &mut self.store {
-            Store::Owned(bytes) => Some(bytes),
+            Store::Owned(region) => region.as_bytes_mut(),
             Store::Shared(_) => None,
         }
     }
 
     /// The bytes as a copy, for any store.
     pub fn to_vec(&self, offset: usize, len: usize) -> Vec<u8> {
-        let mut out = vec![0; len];
+        let mut out = alloc::vec![0; len];
         self.read(offset, &mut out);
         out
     }

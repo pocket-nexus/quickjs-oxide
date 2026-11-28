@@ -89,7 +89,11 @@ js-sys = { version = "=0.3.103", default-features = false }
 wasm-bindgen = "=0.2.126"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# The core's `heap::region` is the one module that adopts an embedder's bytes,
+# and it allows `unsafe_code` for the pointer arithmetic there. A `forbid`
+# could not be overruled by that module, so the workspace denies instead: no
+# crate writes unsafe without an `allow` somebody has to review.
+unsafe_code = "deny"
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }
 # Its arm-guard rewrite moves the inner test into the guard, so a false

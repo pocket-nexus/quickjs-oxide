@@ -630,6 +630,80 @@ impl NativeCx<'_> {
         buffer
     }
 
+    /// An `ArrayBuffer` over bytes the embedder owns: a WebAssembly linear
+    /// memory, an `mmap` region, anything whose base the caller keeps still.
+    /// The buffer is of `len` bytes and not resizable; growing it is another
+    /// buffer over the same `base` at a new length, and the old one is
+    /// detached through [`NativeCx::detach_array_buffer`].
+    ///
+    /// `capacity` is what the caller guarantees past `base`; `key` names the
+    /// region for `Atomics` (two buffers meant to be one region pass the same
+    /// `key`, or `0` to have it derived from `base`). `owner` keeps the bytes
+    /// alive: the engine drops it when the last buffer over them is gone.
+    ///
+    /// The result is unrooted: hold it before the next allocation.
+    ///
+    /// # Safety
+    ///
+    /// `base` must point to `capacity` bytes the engine may read and write for
+    /// as long as `owner` lives and that `owner` alone releases. While the
+    /// buffer exists the engine reads and writes them as one relaxed atomic per
+    /// byte and never hands out a `&[u8]` over them, so a thread that writes
+    /// them while the engine runs must write them atomically.
+    #[allow(unsafe_code)]
+    pub unsafe fn new_array_buffer_over(
+        &mut self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: alloc::boxed::Box<dyn Any + Send + Sync>,
+    ) -> Result<ObjectId, Throw> {
+        let mut cx = self.cx();
+        let mark = cx.heap.roots().mark();
+        let prototype = cx.realm.intrinsic(crate::Intrinsic::ArrayBufferPrototype);
+        // SAFETY: the caller's contract above is exactly `Region::foreign`'s.
+        let region =
+            unsafe { crate::heap::region::Region::foreign(base, len, capacity, key, false, owner) };
+        let buffer = crate::builtins::alloc_buffer_over(&mut cx, prototype, region, false);
+        cx.heap.roots().truncate(mark);
+        buffer
+    }
+
+    /// A `SharedArrayBuffer` over bytes the embedder owns, as
+    /// [`NativeCx::new_array_buffer_over`] makes an `ArrayBuffer`; every access
+    /// to its bytes is atomic, so agents on other threads may hold it.
+    ///
+    /// The result is unrooted: hold it before the next allocation.
+    ///
+    /// # Safety
+    ///
+    /// As [`NativeCx::new_array_buffer_over`]: `base` must point to
+    /// `capacity` bytes the engine may read and write while `owner` lives, and
+    /// nothing else may release them. Agents on other threads reaching them
+    /// through the buffer is what the shared case is for.
+    #[allow(unsafe_code)]
+    pub unsafe fn new_shared_array_buffer_over(
+        &mut self,
+        base: *mut u8,
+        len: usize,
+        capacity: usize,
+        key: u64,
+        owner: alloc::boxed::Box<dyn Any + Send + Sync>,
+    ) -> Result<ObjectId, Throw> {
+        let mut cx = self.cx();
+        let mark = cx.heap.roots().mark();
+        let prototype = cx
+            .realm
+            .intrinsic(crate::Intrinsic::SharedArrayBufferPrototype);
+        // SAFETY: the caller's contract above is exactly `Region::foreign`'s.
+        let region =
+            unsafe { crate::heap::region::Region::foreign(base, len, capacity, key, true, owner) };
+        let buffer = crate::builtins::alloc_buffer_over(&mut cx, prototype, region, true);
+        cx.heap.roots().truncate(mark);
+        buffer
+    }
+
     /// The buffer record of an `ArrayBuffer` or `SharedArrayBuffer`.
     fn buffer(&self, object: ObjectId) -> Option<&crate::heap::buffer::Buffer> {
         match self.heap.internal_tag(object) {

@@ -303,6 +303,26 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
     if let Some(&module) = cx.host.modules.get(name) {
         return Ok(module);
     }
+    match load_fresh(cx, name, attributes) {
+        Ok(module) => Ok(module),
+        Err(throw) => {
+            // The record this call made is half built: its requested modules were never
+            // filled in, because one of them failed to load. Left in the name map, the
+            // next import of the name would reuse it and read exports its tables promise
+            // but its record lacks. A failed load is retried instead.
+            cx.host.modules.remove(name);
+            Err(throw)
+        }
+    }
+}
+
+/// A module the name map does not hold yet: compiled from what the host returns for
+/// the name, then, depth first, the modules it requests.
+fn load_fresh(
+    cx: &mut Cx<'_>,
+    name: &str,
+    attributes: &[(String, String)],
+) -> Result<ObjectId, Throw> {
     let Some(host) = cx.host.module_host else {
         return Err(error::throw(
             cx,
