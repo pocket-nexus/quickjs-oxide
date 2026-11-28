@@ -576,6 +576,122 @@ fn modules_load_through_the_loader_and_its_scope() {
 }
 
 #[test]
+fn failed_module_loads_do_not_leave_half_built_records_reachable() {
+    struct Loader;
+    impl ModuleLoader for Loader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            name: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let source = match name {
+                "star.mjs" => "export * from 'missing:mod';",
+                "indirect.mjs" => "export { x } from 'missing:mod';",
+                "reexport.mjs" => "import { x } from 'missing:mod'; export { x };",
+                "namespace.mjs" => "export * as ns from 'missing:mod';",
+                "import_binding.mjs" => "import { x } from 'missing:mod'; export const y = x;",
+                "side_effect.mjs" => "import 'missing:mod';",
+                "cycle_a.mjs" => "import './cycle_c.mjs'; export * from 'missing:mod';",
+                "cycle_c.mjs" => "export * from './cycle_a.mjs';",
+                "with_good_sibling.mjs" => "import './good.mjs'; export * from 'missing:mod';",
+                "retry.mjs" => "export * from 'late.mjs';",
+                _ => {
+                    return Err(scope
+                        .new_native_error(
+                            NativeErrorKind::Reference,
+                            &format!("could not load '{name}'"),
+                        )
+                        .unwrap());
+                }
+            };
+            Ok(ModuleSource::source(source))
+        }
+    }
+
+    let (runtime, mut context) = runtime();
+    runtime.set_module_loader(Loader).unwrap();
+    context
+        .define_module("good.mjs", vec![("answer".into(), Value::Int(42))])
+        .unwrap();
+
+    // Every failing import form must reject on both the first and second attempt
+    // instead of panicking or silently resolving an empty namespace.
+    for specifier in [
+        "./star.mjs",
+        "./indirect.mjs",
+        "./reexport.mjs",
+        "./namespace.mjs",
+        "./import_binding.mjs",
+        "./side_effect.mjs",
+    ] {
+        let script = format!(
+            "globalThis.log = [];\n\
+             try {{ await import('{specifier}'); log.push('ok1'); }} catch (e) {{ log.push('err1:' + e.message); }}\n\
+             try {{ await import('{specifier}'); log.push('ok2'); }} catch (e) {{ log.push('err2:' + e.message); }}"
+        );
+        run_module(&mut context, &script).unwrap();
+        assert_eq!(
+            context.eval("log.join('|')").unwrap(),
+            string("err1:could not load 'missing:mod'|err2:could not load 'missing:mod'"),
+            "specifier {specifier}"
+        );
+    }
+
+    // A cyclic sibling that referenced the failing module must also be evicted
+    // so importing it later does not traverse a half-built record.
+    run_module(
+        &mut context,
+        "globalThis.cycleLog = [];\n\
+         try { await import('./cycle_a.mjs'); cycleLog.push('ok-a'); } catch (e) { cycleLog.push('a:' + e.message); }\n\
+         try { await import('./cycle_c.mjs'); cycleLog.push('ok-c'); } catch (e) { cycleLog.push('c:' + e.message); }",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("cycleLog.join('|')").unwrap(),
+        string("a:could not load 'missing:mod'|c:could not load 'missing:mod'")
+    );
+
+    // An independent valid sibling loaded before the failure remains intact.
+    run_module(
+        &mut context,
+        "globalThis.siblingLog = [];\n\
+         try { await import('./with_good_sibling.mjs'); } catch (e) { siblingLog.push(e.message); }\n\
+         const good = await import('./good.mjs');\n\
+         siblingLog.push(String(good.answer));",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("siblingLog.join('|')").unwrap(),
+        string("could not load 'missing:mod'|42")
+    );
+
+    // A previously failed module succeeds once its missing dependency becomes available.
+    run_module(
+        &mut context,
+        "globalThis.retryFirst = '';\n\
+         try { await import('./retry.mjs'); } catch (e) { retryFirst = e.message; }",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("retryFirst").unwrap(),
+        string("could not load 'late.mjs'")
+    );
+    context
+        .define_module("late.mjs", vec![("value".into(), Value::Int(7))])
+        .unwrap();
+    run_module(
+        &mut context,
+        "const mod = await import('./retry.mjs'); globalThis.retrySecond = mod.value;",
+    )
+    .unwrap();
+    assert_eq!(context.eval("retrySecond").unwrap(), Value::Int(7));
+
+    // GC must stay clean after evicting half-built module records.
+    runtime.run_gc().unwrap();
+}
+
+#[test]
 fn async_module_order_is_shared_across_interleaved_graphs() {
     struct Loader;
     impl ModuleLoader for Loader {
