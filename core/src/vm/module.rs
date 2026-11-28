@@ -1418,6 +1418,11 @@ impl crate::Runtime {
         self.native_cx().forget_module(name);
     }
 
+    /// Whether a loaded module record named `name` is cached in the name map.
+    pub fn has_module(&self, name: &str) -> bool {
+        self.host.modules.contains_key(name)
+    }
+
     /// Loads, links and evaluates the module named `name` (already
     /// normalized); returns the promise of its evaluation, unrooted.
     pub fn run_module(&mut self, name: &str) -> Result<Value, Throw> {

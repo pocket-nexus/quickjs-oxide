@@ -811,6 +811,94 @@ fn evicted_failed_module_records_are_collected_by_gc() {
 }
 
 #[test]
+fn preloaded_import_meta_values_are_released_once_module_loads() {
+    use std::cell::Cell;
+
+    struct DropFlag(Rc<Cell<bool>>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    let (runtime, context) = runtime();
+
+    // Direct load: deleting `import.meta.hold` allows GC to collect the host
+    // object once the module is cached in the core and the handle is dropped.
+    let direct_dropped = Rc::new(Cell::new(false));
+    let direct_hold = context
+        .new_host_object(DropFlag(Rc::clone(&direct_dropped)), None)
+        .unwrap();
+    let direct = context
+        .compile_module_bytes_with_import_meta(
+            b"delete import.meta.hold;",
+            "direct_release_meta.mjs",
+            vec![("hold".into(), Value::Object(direct_hold))],
+        )
+        .unwrap();
+    let Value::Object(promise) = context.execute_module(&direct).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+        PromiseState::Fulfilled
+    );
+    drop(promise);
+    drop(direct);
+    runtime.run_gc().unwrap();
+    assert!(
+        direct_dropped.get(),
+        "preloaded import.meta value stayed rooted after the module loaded"
+    );
+
+    // Failed load followed by retry: the preloaded entry stays alive across the
+    // failed attempt, then releases its `import.meta` values once retry succeeds.
+    let retry_dropped = Rc::new(Cell::new(false));
+    let retry_hold = context
+        .new_host_object(DropFlag(Rc::clone(&retry_dropped)), None)
+        .unwrap();
+    let retry = context
+        .compile_module_bytes_with_import_meta(
+            b"import { ok } from 'late_release.mjs'; delete import.meta.hold; globalThis.releaseRetry = ok;",
+            "retry_release_meta.mjs",
+            vec![("hold".into(), Value::Object(retry_hold))],
+        )
+        .unwrap();
+    let first_attempt = context.execute_module(&retry).map(|_| ());
+    let first_error = thrown::<()>(&context, first_attempt);
+    assert!(
+        first_error.contains("could not load module filename 'late_release.mjs'"),
+        "{first_error}"
+    );
+    runtime.run_gc().unwrap();
+    assert!(
+        !retry_dropped.get(),
+        "preloaded entry should stay alive until retry succeeds"
+    );
+
+    context
+        .define_module("late_release.mjs", vec![("ok".into(), Value::Int(123))])
+        .unwrap();
+    let Value::Object(promise) = context.execute_module(&retry).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+        PromiseState::Fulfilled
+    );
+    assert_eq!(context.eval("releaseRetry").unwrap(), Value::Int(123));
+    drop(promise);
+    drop(retry);
+    runtime.run_gc().unwrap();
+    assert!(
+        retry_dropped.get(),
+        "preloaded import.meta value stayed rooted after retry succeeded"
+    );
+}
+
+#[test]
 fn async_module_order_is_shared_across_interleaved_graphs() {
     struct Loader;
     impl ModuleLoader for Loader {
