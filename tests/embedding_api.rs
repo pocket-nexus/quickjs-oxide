@@ -687,8 +687,127 @@ fn failed_module_loads_do_not_leave_half_built_records_reachable() {
     .unwrap();
     assert_eq!(context.eval("retrySecond").unwrap(), Value::Int(7));
 
-    // GC must stay clean after evicting half-built module records.
+    // Retrying a precompiled entry with the same ModuleBytecodeRef preserves
+    // the entry after a dependency load failure.
+    let entry = context
+        .compile_module_with_filename(
+            "import { answer } from 'late_entry.mjs'; globalThis.precompiledRetry = answer;",
+            "precompiled_entry.mjs",
+        )
+        .unwrap();
+    let first_attempt = context.execute_module(&entry).map(|_| ());
+    let first_error = thrown::<()>(&mut context, first_attempt);
+    assert!(
+        first_error.contains("could not load 'late_entry.mjs'"),
+        "{first_error}"
+    );
+    context
+        .define_module("late_entry.mjs", vec![("answer".into(), Value::Int(99))])
+        .unwrap();
+    let Value::Object(promise) = context.execute_module(&entry).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+        PromiseState::Fulfilled
+    );
+    assert_eq!(context.eval("precompiledRetry").unwrap(), Value::Int(99));
+}
+
+#[test]
+fn evicted_failed_module_records_are_collected_by_gc() {
+    use std::cell::Cell;
+
+    struct DropFlag(Rc<Cell<bool>>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    struct SentinelLoader {
+        root_dropped: Rc<Cell<bool>>,
+        cycle_dropped: Rc<Cell<bool>>,
+        sibling_dropped: Rc<Cell<bool>>,
+    }
+
+    impl ModuleLoader for SentinelLoader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            name: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let (text, flag) = match name {
+                "gc_root.mjs" => (
+                    "void import.meta; import './gc_sibling.mjs'; import './gc_cycle.mjs'; export * from 'missing:gc';",
+                    &self.root_dropped,
+                ),
+                "gc_cycle.mjs" => (
+                    "void import.meta; export * from './gc_root.mjs';",
+                    &self.cycle_dropped,
+                ),
+                "gc_sibling.mjs" => (
+                    "void import.meta; export const kept = 1;",
+                    &self.sibling_dropped,
+                ),
+                _ => {
+                    return Err(scope
+                        .new_native_error(
+                            NativeErrorKind::Reference,
+                            &format!("could not load '{name}'"),
+                        )
+                        .unwrap());
+                }
+            };
+            let sentinel = scope
+                .new_host_object(DropFlag(Rc::clone(flag)), None)
+                .map_err(|_| Value::Undefined)?;
+            Ok(ModuleSource::Source {
+                text: text.as_bytes().to_vec(),
+                import_meta: vec![("sentinel".into(), Value::Object(sentinel))],
+            })
+        }
+    }
+
+    let root_dropped = Rc::new(Cell::new(false));
+    let cycle_dropped = Rc::new(Cell::new(false));
+    let sibling_dropped = Rc::new(Cell::new(false));
+
+    let (runtime, mut context) = runtime();
+    runtime
+        .set_module_loader(SentinelLoader {
+            root_dropped: Rc::clone(&root_dropped),
+            cycle_dropped: Rc::clone(&cycle_dropped),
+            sibling_dropped: Rc::clone(&sibling_dropped),
+        })
+        .unwrap();
+
+    run_module(
+        &mut context,
+        "globalThis.gcLoadErr = '';\n\
+         try { await import('./gc_root.mjs'); } catch (e) { gcLoadErr = e.message; }",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("gcLoadErr").unwrap(),
+        string("could not load 'missing:gc'")
+    );
+
     runtime.run_gc().unwrap();
+    assert!(
+        root_dropped.get(),
+        "failed root module record stayed rooted after eviction"
+    );
+    assert!(
+        cycle_dropped.get(),
+        "evicted cyclic sibling module record stayed rooted after eviction"
+    );
+    assert!(
+        !sibling_dropped.get(),
+        "independent valid sibling module record should remain rooted"
+    );
 }
 
 #[test]

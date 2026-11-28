@@ -58,6 +58,7 @@ pub struct Runtime {
 
 /// A module compiled by `Context::compile_module*` or defined by
 /// `Context::define_module`, waiting for the core to load it by name.
+#[derive(Clone)]
 pub(crate) enum Preloaded {
     Compiled {
         function: ObjectRef,

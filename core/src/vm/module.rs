@@ -16,7 +16,7 @@
 //! [`ModuleHost`] when they are first requested.
 
 use alloc::{
-    borrow::ToOwned, boxed::Box, collections::BTreeSet, format, string::String, vec, vec::Vec,
+    borrow::ToOwned, boxed::Box, collections::BTreeMap, format, string::String, vec, vec::Vec,
 };
 
 use super::compile::{CompileError, Compiler};
@@ -386,46 +386,52 @@ fn evict_failed_load(cx: &mut Cx<'_>, heap_mark: usize, created: &[(String, Obje
     if created.is_empty() {
         return;
     }
-    let mut tainted = BTreeSet::new();
-    for &(_, module) in created {
-        if data(cx, module).status == Status::Loading {
-            tainted.insert(module.index());
-        }
+    let mut positions = BTreeMap::new();
+    for (pos, &(_, module)) in created.iter().enumerate() {
+        positions.insert(module.index(), pos);
     }
-    loop {
-        let mut changed = false;
-        for &(_, module) in created {
-            if tainted.contains(&module.index()) {
-                continue;
-            }
-            if data(cx, module)
-                .requested
-                .iter()
-                .any(|required| tainted.contains(&required.index()))
-            {
-                tainted.insert(module.index());
-                changed = true;
+    let mut dependents = vec![Vec::new(); created.len()];
+    let mut tainted = vec![false; created.len()];
+    let mut worklist = Vec::new();
+    for (pos, &(_, module)) in created.iter().enumerate() {
+        let record = data(cx, module);
+        if record.status == Status::Loading {
+            tainted[pos] = true;
+            worklist.push(pos);
+        } else {
+            for required in &record.requested {
+                if let Some(&req_pos) = positions.get(&required.index()) {
+                    dependents[req_pos].push(pos);
+                }
             }
         }
-        if !changed {
-            break;
+    }
+    while let Some(pos) = worklist.pop() {
+        for &dependent in &dependents[pos] {
+            if !tainted[dependent] {
+                tainted[dependent] = true;
+                worklist.push(dependent);
+            }
         }
     }
-    if tainted.is_empty() {
-        return;
-    }
-    for (name, module) in created {
-        if tainted.contains(&module.index()) {
+    let mut any_tainted = false;
+    for ((name, _), &is_tainted) in created.iter().zip(&tainted) {
+        if is_tainted {
             cx.host.modules.remove(name.as_str());
+            any_tainted = true;
         }
+    }
+    if !any_tainted {
+        return;
     }
     let mut keep = heap_mark;
     for read in heap_mark..cx.heap.modules.len() {
         let entry = cx.heap.modules[read];
-        if !entry
+        let is_tainted = entry
             .as_object()
-            .is_some_and(|module| tainted.contains(&module.index()))
-        {
+            .and_then(|module| positions.get(&module.index()).copied())
+            .is_some_and(|pos| tainted[pos]);
+        if !is_tainted {
             cx.heap.modules[keep] = entry;
             keep += 1;
         }
