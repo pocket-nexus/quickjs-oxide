@@ -333,7 +333,11 @@ pub(crate) fn load_shim(
             "unsupported: modules",
         ));
     };
-    let preloaded = shared.modules.borrow_mut().remove(name);
+    // Keep preloaded entries until the core caches the loaded module, so a
+    // failed load (which evicts the incomplete core record) can retry with the
+    // same `ModuleBytecodeRef` or name without recompiling. `Entry::drop`
+    // releases every entry whose module stayed in the core's module map.
+    let preloaded = shared.modules.borrow().get(name).cloned();
     if let Some(preloaded) = preloaded {
         let mut scope = ModuleScope {
             compiler: compiler.reborrow(),

@@ -576,6 +576,329 @@ fn modules_load_through_the_loader_and_its_scope() {
 }
 
 #[test]
+fn failed_module_loads_do_not_leave_half_built_records_reachable() {
+    struct Loader;
+    impl ModuleLoader for Loader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            name: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let source = match name {
+                "star.mjs" => "export * from 'missing:mod';",
+                "indirect.mjs" => "export { x } from 'missing:mod';",
+                "reexport.mjs" => "import { x } from 'missing:mod'; export { x };",
+                "namespace.mjs" => "export * as ns from 'missing:mod';",
+                "import_binding.mjs" => "import { x } from 'missing:mod'; export const y = x;",
+                "side_effect.mjs" => "import 'missing:mod';",
+                "cycle_a.mjs" => "import './cycle_c.mjs'; export * from 'missing:mod';",
+                "cycle_c.mjs" => "export * from './cycle_a.mjs';",
+                "with_good_sibling.mjs" => "import './good.mjs'; export * from 'missing:mod';",
+                "retry.mjs" => "export * from 'late.mjs';",
+                _ => {
+                    return Err(scope
+                        .new_native_error(
+                            NativeErrorKind::Reference,
+                            &format!("could not load '{name}'"),
+                        )
+                        .unwrap());
+                }
+            };
+            Ok(ModuleSource::source(source))
+        }
+    }
+
+    let (runtime, mut context) = runtime();
+    runtime.set_module_loader(Loader).unwrap();
+    context
+        .define_module("good.mjs", vec![("answer".into(), Value::Int(42))])
+        .unwrap();
+
+    // Every failing import form must reject on both the first and second attempt
+    // instead of panicking or silently resolving an empty namespace.
+    for specifier in [
+        "./star.mjs",
+        "./indirect.mjs",
+        "./reexport.mjs",
+        "./namespace.mjs",
+        "./import_binding.mjs",
+        "./side_effect.mjs",
+    ] {
+        let script = format!(
+            "globalThis.log = [];\n\
+             try {{ await import('{specifier}'); log.push('ok1'); }} catch (e) {{ log.push('err1:' + e.message); }}\n\
+             try {{ await import('{specifier}'); log.push('ok2'); }} catch (e) {{ log.push('err2:' + e.message); }}"
+        );
+        run_module(&mut context, &script).unwrap();
+        assert_eq!(
+            context.eval("log.join('|')").unwrap(),
+            string("err1:could not load 'missing:mod'|err2:could not load 'missing:mod'"),
+            "specifier {specifier}"
+        );
+    }
+
+    // A cyclic sibling that referenced the failing module must also be evicted
+    // so importing it later does not traverse a half-built record.
+    run_module(
+        &mut context,
+        "globalThis.cycleLog = [];\n\
+         try { await import('./cycle_a.mjs'); cycleLog.push('ok-a'); } catch (e) { cycleLog.push('a:' + e.message); }\n\
+         try { await import('./cycle_c.mjs'); cycleLog.push('ok-c'); } catch (e) { cycleLog.push('c:' + e.message); }",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("cycleLog.join('|')").unwrap(),
+        string("a:could not load 'missing:mod'|c:could not load 'missing:mod'")
+    );
+
+    // An independent valid sibling loaded before the failure remains intact.
+    run_module(
+        &mut context,
+        "globalThis.siblingLog = [];\n\
+         try { await import('./with_good_sibling.mjs'); } catch (e) { siblingLog.push(e.message); }\n\
+         const good = await import('./good.mjs');\n\
+         siblingLog.push(String(good.answer));",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("siblingLog.join('|')").unwrap(),
+        string("could not load 'missing:mod'|42")
+    );
+
+    // A previously failed module succeeds once its missing dependency becomes available.
+    run_module(
+        &mut context,
+        "globalThis.retryFirst = '';\n\
+         try { await import('./retry.mjs'); } catch (e) { retryFirst = e.message; }",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("retryFirst").unwrap(),
+        string("could not load 'late.mjs'")
+    );
+    context
+        .define_module("late.mjs", vec![("value".into(), Value::Int(7))])
+        .unwrap();
+    run_module(
+        &mut context,
+        "const mod = await import('./retry.mjs'); globalThis.retrySecond = mod.value;",
+    )
+    .unwrap();
+    assert_eq!(context.eval("retrySecond").unwrap(), Value::Int(7));
+
+    // Retrying a precompiled entry with the same ModuleBytecodeRef preserves
+    // the entry after a dependency load failure.
+    let entry = context
+        .compile_module_with_filename(
+            "import { answer } from 'late_entry.mjs'; globalThis.precompiledRetry = answer;",
+            "precompiled_entry.mjs",
+        )
+        .unwrap();
+    let first_attempt = context.execute_module(&entry).map(|_| ());
+    let first_error = thrown::<()>(&context, first_attempt);
+    assert!(
+        first_error.contains("could not load 'late_entry.mjs'"),
+        "{first_error}"
+    );
+    context
+        .define_module("late_entry.mjs", vec![("answer".into(), Value::Int(99))])
+        .unwrap();
+    let Value::Object(promise) = context.execute_module(&entry).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+        PromiseState::Fulfilled
+    );
+    assert_eq!(context.eval("precompiledRetry").unwrap(), Value::Int(99));
+}
+
+#[test]
+fn evicted_failed_module_records_are_collected_by_gc() {
+    use std::cell::Cell;
+
+    struct DropFlag(Rc<Cell<bool>>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    struct SentinelLoader {
+        root_dropped: Rc<Cell<bool>>,
+        cycle_dropped: Rc<Cell<bool>>,
+        sibling_dropped: Rc<Cell<bool>>,
+    }
+
+    impl ModuleLoader for SentinelLoader {
+        fn load(
+            &mut self,
+            scope: &mut ModuleScope<'_>,
+            name: &str,
+            _: &ModuleImportAttributes,
+        ) -> Result<ModuleSource, Value> {
+            let (text, flag) = match name {
+                "gc_root.mjs" => (
+                    "void import.meta; import './gc_sibling.mjs'; import './gc_cycle.mjs'; export * from 'missing:gc';",
+                    &self.root_dropped,
+                ),
+                "gc_cycle.mjs" => (
+                    "void import.meta; export * from './gc_root.mjs';",
+                    &self.cycle_dropped,
+                ),
+                "gc_sibling.mjs" => (
+                    "void import.meta; export const kept = 1;",
+                    &self.sibling_dropped,
+                ),
+                _ => {
+                    return Err(scope
+                        .new_native_error(
+                            NativeErrorKind::Reference,
+                            &format!("could not load '{name}'"),
+                        )
+                        .unwrap());
+                }
+            };
+            let sentinel = scope
+                .new_host_object(DropFlag(Rc::clone(flag)), None)
+                .map_err(|_| Value::Undefined)?;
+            Ok(ModuleSource::Source {
+                text: text.as_bytes().to_vec(),
+                import_meta: vec![("sentinel".into(), Value::Object(sentinel))],
+            })
+        }
+    }
+
+    let root_dropped = Rc::new(Cell::new(false));
+    let cycle_dropped = Rc::new(Cell::new(false));
+    let sibling_dropped = Rc::new(Cell::new(false));
+
+    let (runtime, mut context) = runtime();
+    runtime
+        .set_module_loader(SentinelLoader {
+            root_dropped: Rc::clone(&root_dropped),
+            cycle_dropped: Rc::clone(&cycle_dropped),
+            sibling_dropped: Rc::clone(&sibling_dropped),
+        })
+        .unwrap();
+
+    run_module(
+        &mut context,
+        "globalThis.gcLoadErr = '';\n\
+         try { await import('./gc_root.mjs'); } catch (e) { gcLoadErr = e.message; }",
+    )
+    .unwrap();
+    assert_eq!(
+        context.eval("gcLoadErr").unwrap(),
+        string("could not load 'missing:gc'")
+    );
+
+    runtime.run_gc().unwrap();
+    assert!(
+        root_dropped.get(),
+        "failed root module record stayed rooted after eviction"
+    );
+    assert!(
+        cycle_dropped.get(),
+        "evicted cyclic sibling module record stayed rooted after eviction"
+    );
+    assert!(
+        !sibling_dropped.get(),
+        "independent valid sibling module record should remain rooted"
+    );
+}
+
+#[test]
+fn preloaded_import_meta_values_are_released_once_module_loads() {
+    use std::cell::Cell;
+
+    struct DropFlag(Rc<Cell<bool>>);
+    impl Drop for DropFlag {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    let (runtime, context) = runtime();
+
+    // Direct load: deleting `import.meta.hold` allows GC to collect the host
+    // object once the module is cached in the core and the handle is dropped.
+    let direct_dropped = Rc::new(Cell::new(false));
+    let direct_hold = context
+        .new_host_object(DropFlag(Rc::clone(&direct_dropped)), None)
+        .unwrap();
+    let direct = context
+        .compile_module_bytes_with_import_meta(
+            b"delete import.meta.hold;",
+            "direct_release_meta.mjs",
+            vec![("hold".into(), Value::Object(direct_hold))],
+        )
+        .unwrap();
+    let Value::Object(promise) = context.execute_module(&direct).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+        PromiseState::Fulfilled
+    );
+    drop(promise);
+    drop(direct);
+    runtime.run_gc().unwrap();
+    assert!(
+        direct_dropped.get(),
+        "preloaded import.meta value stayed rooted after the module loaded"
+    );
+
+    // Failed load followed by retry: the preloaded entry stays alive across the
+    // failed attempt, then releases its `import.meta` values once retry succeeds.
+    let retry_dropped = Rc::new(Cell::new(false));
+    let retry_hold = context
+        .new_host_object(DropFlag(Rc::clone(&retry_dropped)), None)
+        .unwrap();
+    let retry = context
+        .compile_module_bytes_with_import_meta(
+            b"import { ok } from 'late_release.mjs'; delete import.meta.hold; globalThis.releaseRetry = ok;",
+            "retry_release_meta.mjs",
+            vec![("hold".into(), Value::Object(retry_hold))],
+        )
+        .unwrap();
+    let first_attempt = context.execute_module(&retry).map(|_| ());
+    let first_error = thrown::<()>(&context, first_attempt);
+    assert!(
+        first_error.contains("could not load module filename 'late_release.mjs'"),
+        "{first_error}"
+    );
+    runtime.run_gc().unwrap();
+    assert!(
+        !retry_dropped.get(),
+        "preloaded entry should stay alive until retry succeeds"
+    );
+
+    context
+        .define_module("late_release.mjs", vec![("ok".into(), Value::Int(123))])
+        .unwrap();
+    let Value::Object(promise) = context.execute_module(&retry).unwrap() else {
+        panic!("module evaluation did not return a promise");
+    };
+    runtime.run_jobs().unwrap();
+    assert_eq!(
+        runtime.promise_snapshot(&promise).unwrap().unwrap().state(),
+        PromiseState::Fulfilled
+    );
+    assert_eq!(context.eval("releaseRetry").unwrap(), Value::Int(123));
+    drop(promise);
+    drop(retry);
+    runtime.run_gc().unwrap();
+    assert!(
+        retry_dropped.get(),
+        "preloaded import.meta value stayed rooted after retry succeeded"
+    );
+}
+
+#[test]
 fn async_module_order_is_shared_across_interleaved_graphs() {
     struct Loader;
     impl ModuleLoader for Loader {

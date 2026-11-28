@@ -15,7 +15,9 @@
 //! top-level `await`). Modules load synchronously through the host's
 //! [`ModuleHost`] when they are first requested.
 
-use alloc::{borrow::ToOwned, boxed::Box, format, string::String, vec, vec::Vec};
+use alloc::{
+    borrow::ToOwned, boxed::Box, collections::BTreeMap, format, string::String, vec, vec::Vec,
+};
 
 use super::compile::{CompileError, Compiler};
 use super::native::CallSite;
@@ -211,6 +213,7 @@ pub struct ModuleHost {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Status {
+    Loading,
     Unlinked,
     Linking,
     Linked,
@@ -299,7 +302,32 @@ fn compile_error(cx: &mut Cx<'_>, failure: CompileError) -> Throw {
 
 /// The record of the module named `name`, loading and compiling it (and,
 /// recursively, what it requests) on first use.
+///
+/// Any module created during a failed load whose requests did not finish
+/// loading — together with any newly created module that transitively
+/// references one (for instance through a cycle back to the failing module) —
+/// is evicted so no half-built record remains reachable.
 fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<ObjectId, Throw> {
+    if let Some(&module) = cx.host.modules.get(name) {
+        return Ok(module);
+    }
+    let heap_mark = cx.heap.modules.len();
+    let mut created = Vec::new();
+    match load_inner(cx, name, attributes, &mut created) {
+        Ok(module) => Ok(module),
+        Err(throw) => {
+            evict_failed_load(cx, heap_mark, &created);
+            Err(throw)
+        }
+    }
+}
+
+fn load_inner(
+    cx: &mut Cx<'_>,
+    name: &str,
+    attributes: &[(String, String)],
+    created: &mut Vec<(String, ObjectId)>,
+) -> Result<ObjectId, Throw> {
     if let Some(&module) = cx.host.modules.get(name) {
         return Ok(module);
     }
@@ -332,6 +360,7 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
     };
     cx.heap.roots().truncate(mark);
     let module = result?;
+    created.push((name.to_owned(), module));
     // The requested modules, depth first.
     let requests = data(cx, module).tables.requests.clone();
     let mut requested = Vec::with_capacity(requests.len());
@@ -343,10 +372,71 @@ fn load(cx: &mut Cx<'_>, name: &str, attributes: &[(String, String)]) -> Result<
             &request.attributes,
         );
         let normalized = normalized.map_err(|failure| compile_error(cx, failure))?;
-        requested.push(load(cx, &normalized, &request.attributes)?);
+        requested.push(load_inner(cx, &normalized, &request.attributes, created)?);
     }
-    data_mut(cx, module).requested = requested;
+    let record = data_mut(cx, module);
+    record.requested = requested;
+    record.status = Status::Unlinked;
     Ok(module)
+}
+
+#[cold]
+#[inline(never)]
+fn evict_failed_load(cx: &mut Cx<'_>, heap_mark: usize, created: &[(String, ObjectId)]) {
+    if created.is_empty() {
+        return;
+    }
+    let mut positions = BTreeMap::new();
+    for (pos, &(_, module)) in created.iter().enumerate() {
+        positions.insert(module.index(), pos);
+    }
+    let mut dependents = vec![Vec::new(); created.len()];
+    let mut tainted = vec![false; created.len()];
+    let mut worklist = Vec::new();
+    for (pos, &(_, module)) in created.iter().enumerate() {
+        let record = data(cx, module);
+        if record.status == Status::Loading {
+            tainted[pos] = true;
+            worklist.push(pos);
+        } else {
+            for required in &record.requested {
+                if let Some(&req_pos) = positions.get(&required.index()) {
+                    dependents[req_pos].push(pos);
+                }
+            }
+        }
+    }
+    while let Some(pos) = worklist.pop() {
+        for &dependent in &dependents[pos] {
+            if !tainted[dependent] {
+                tainted[dependent] = true;
+                worklist.push(dependent);
+            }
+        }
+    }
+    let mut any_tainted = false;
+    for ((name, _), &is_tainted) in created.iter().zip(&tainted) {
+        if is_tainted {
+            cx.host.modules.remove(name.as_str());
+            any_tainted = true;
+        }
+    }
+    if !any_tainted {
+        return;
+    }
+    let mut keep = heap_mark;
+    for read in heap_mark..cx.heap.modules.len() {
+        let entry = cx.heap.modules[read];
+        let is_tainted = entry
+            .as_object()
+            .and_then(|module| positions.get(&module.index()).copied())
+            .is_some_and(|pos| tainted[pos]);
+        if !is_tainted {
+            cx.heap.modules[keep] = entry;
+            keep += 1;
+        }
+    }
+    cx.heap.modules.truncate(keep);
 }
 
 /// A record for a freshly compiled module, with its environment: a cell per
@@ -459,7 +549,7 @@ fn create(
     let record = ModuleData {
         name: name.to_owned(),
         tables: source.tables,
-        status: Status::Unlinked,
+        status: Status::Loading,
         requested: Vec::new(),
         dfs_index: 0,
         dfs_ancestor_index: 0,
@@ -1326,6 +1416,11 @@ impl crate::Runtime {
     /// the name loads it again. Modules that imported it keep the record.
     pub fn forget_module(&mut self, name: &str) {
         self.native_cx().forget_module(name);
+    }
+
+    /// Whether a loaded module record named `name` is cached in the name map.
+    pub fn has_module(&self, name: &str) -> bool {
+        self.host.modules.contains_key(name)
     }
 
     /// Loads, links and evaluates the module named `name` (already

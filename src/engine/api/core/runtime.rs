@@ -58,6 +58,7 @@ pub struct Runtime {
 
 /// A module compiled by `Context::compile_module*` or defined by
 /// `Context::define_module`, waiting for the core to load it by name.
+#[derive(Clone)]
 pub(crate) enum Preloaded {
     Compiled {
         function: ObjectRef,
@@ -137,6 +138,14 @@ pub(crate) struct Entry<'a> {
 
 impl Drop for Entry<'_> {
     fn drop(&mut self) {
+        if !self.shared.poisoned.get()
+            && let Ok(mut modules) = self.shared.modules.try_borrow_mut()
+            && !modules.is_empty()
+        {
+            modules.retain(|name, _| !self.inner.core.has_module(name));
+            drop(modules);
+            self.shared.drain_released(&mut self.inner.core.native_cx());
+        }
         CURRENT.with(|current| current.borrow_mut().pop());
     }
 }
