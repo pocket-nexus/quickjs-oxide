@@ -1,0 +1,103 @@
+--- a/vm/bigint.rs
++++ b/vm/bigint.rs
+@@ -652,2 +652,4 @@
+             equal_prefix(limbs@, previous, limbs@.len());
++            assert(place((previous.len()-1) as nat) * (previous[previous.len()-1] as int) == 0);
++            reveal_with_fuel(digits, 2);
+             assert(digits(previous, previous.len()) == digits(previous, (previous.len()-1) as nat)); }
+@@ -669,2 +671,5 @@
+
++#[verus_spec(r => requires a@.len() < usize::MAX, b@.len() < usize::MAX,
++    ensures digits(r@, r@.len()) == digits(a@, a@.len()) + digits(b@, b@.len()),
++)]
+ fn add_mag(a: &[u64], b: &[u64]) -> Vec<u64> {
+@@ -673,10 +678,37 @@
+     let mut carry = false;
++    #[verus_spec(it => invariant
++        short@.len() <= long@.len(), long@.len() < usize::MAX,
++        out@.len() == it.index@,
++        digits(out@, out@.len()) + (if carry { place(out@.len()) } else { 0 })
++            == digits(long@, out@.len()) + digits(short@, out@.len()),
++    )]
+     for (index, &limb) in long.iter().enumerate() {
++        proof_decl! { let ghost previous = out@; }
++        proof_decl! { let ghost rhs = if index < short@.len() { short@[index as int] as int } else { 0 }; }
++        proof_decl! { let ghost incoming = if carry { 1int } else { 0int }; }
+         let (sum, first) = limb.overflowing_add(short.get(index).copied().unwrap_or(0));
++        proof! {
++            assert(if index < short@.len() { rhs == short@[index as int] } else { rhs == 0 });
++        }
++        proof_decl! { let ghost intermediate = sum; }
+         let (sum, second) = sum.overflowing_add(u64::from(carry));
+         out.push(sum);
++        proof! {
++            assert(limb == long@[index as int]);
++            assert(limb as int + rhs == intermediate as int + (if first { 0x10000000000000000int } else { 0int }));
++            assert(intermediate as int + incoming == sum as int + (if second { 0x10000000000000000int } else { 0int }));
++            let c = if first || second { 1int } else { 0int };
++            assert(limb as int + rhs + incoming == sum as int + 0x10000000000000000int * c);
++            carry_step(limb as int, rhs, incoming, sum as int, c, place(previous.len()));
++            equal_prefix(out@, previous, previous.len());
++            assert(digits(out@, out@.len()) == digits(previous, previous.len()) + place(previous.len()) * sum);
++        }
+         carry = first || second;
+     }
++    proof! { extra_zeroes(short@, long@.len()); }
++    proof_decl! { let ghost end = out@; }
+     if carry {
++        proof! { assert(place(out@.len()) * 1 == place(out@.len())); }
+         out.push(1);
++        proof! { equal_prefix(out@, end, end.len()); }
+     }
+@@ -686,2 +718,7 @@
+ /// `a - b` for `a >= b`.
++#[verus_spec(r => requires b@.len() <= a@.len(),
++    digits(a@, a@.len()) >= digits(b@, b@.len()),
++    ensures digits(r@, r@.len()) == digits(a@, a@.len()) - digits(b@, b@.len()),
++        r@.len() == 0 || r@.last() != 0,
++)]
+ fn sub_mag(a: &[u64], b: &[u64]) -> Vec<u64> {
+@@ -689,8 +726,29 @@
+     let mut borrow = false;
++    #[verus_spec(it => invariant
++        b@.len() <= a@.len(), digits(a@, a@.len()) >= digits(b@, b@.len()),
++        out@.len() == it.index@,
++        digits(out@, out@.len()) - (if borrow { place(out@.len()) } else { 0 })
++            == digits(a@, out@.len()) - digits(b@, out@.len()),
++    )]
+     for (index, &limb) in a.iter().enumerate() {
++        proof_decl! { let ghost previous = out@; }
++        proof_decl! { let ghost rhs = if index < b@.len() { b@[index as int] as int } else { 0 }; }
++        proof_decl! { let ghost incoming = if borrow { 1int } else { 0int }; }
+         let (difference, first) = limb.overflowing_sub(b.get(index).copied().unwrap_or(0));
++        proof_decl! { let ghost intermediate = difference; }
+         let (difference, second) = difference.overflowing_sub(u64::from(borrow));
+         out.push(difference);
++        proof! {
++            assert(limb == a@[index as int]);
++            assert(limb as int - rhs == intermediate as int - (if first { 0x10000000000000000int } else { 0int }));
++            assert(intermediate as int - incoming == difference as int - (if second { 0x10000000000000000int } else { 0int }));
++            let debt = if first || second { 1int } else { 0int };
++            assert(limb as int - rhs - incoming == difference as int - 0x10000000000000000int * debt);
++            borrow_step(limb as int, rhs, incoming, difference as int, debt, place(previous.len()));
++            equal_prefix(out@, previous, previous.len());
++            assert(digits(out@, out@.len()) == digits(previous, previous.len()) + place(previous.len()) * difference);
++        }
+         borrow = first || second;
+     }
++    proof! { extra_zeroes(b@, a@.len()); magnitude_bound(out@, out@.len()); }
+     debug_assert!(!borrow, "sub_mag underflow");
+--- a/bytecode/builder.rs
++++ b/bytecode/builder.rs
+@@ -122,2 +122,5 @@
+
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AConstRange,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: (count) as u8, c: ((count) >> 8u16) as u8, imm: first }),
++    )]
+     pub fn a_const_range(&mut self, op: Opcode, a: u8, first: u32, count: u16) -> u32 {
+@@ -216,2 +219,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AShortJump,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: value as u8, c: ((value as u16) >> 8u16) as u8, imm: target }),
++    )]
+     pub fn a_short_jump(&mut self, op: Opcode, a: u8, value: i16, target: u32) -> u32 {

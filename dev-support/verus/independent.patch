@@ -1,0 +1,534 @@
+--- a/heap/arena.rs
++++ b/heap/arena.rs
+@@ -10,2 +10,4 @@
+
++use vstd::prelude::*;
++include!("arena_proofs.rs");
+ use alloc::vec::Vec;
+@@ -16,2 +18,3 @@
+ /// A record stored in an [`Arena`].
++#[verus_verify]
+ pub trait Record {
+@@ -56,2 +59,3 @@
+
++#[verus_verify]
+ pub struct Arena<T> {
+@@ -74,2 +78,3 @@
+ #[inline]
++#[verus_spec(r => ensures r.0 == index / 64, r.1 == 1u64 << (index % 64))]
+ fn bit(index: u32) -> (usize, u64) {
+@@ -226,2 +231,7 @@
+     /// Records whose extra bytes change in place report it here.
++    #[verus_spec(requires old <= previous(self).extra_bytes_spec(),
++        previous(self).extra_bytes_spec() - old + new <= usize::MAX,
++        ensures final(self).extra_bytes_spec() == previous(self).extra_bytes_spec() - old + new,
++            final(self).same_except_extra(previous(self)),
++    )]
+     pub fn adjust_extra(&mut self, old: usize, new: usize) {
+--- a/heap/hash.rs
++++ b/heap/hash.rs
+@@ -3,2 +3,5 @@
+
++use vstd::prelude::*;
++include!("hash_proofs.rs");
++
+ use core::hash::{BuildHasherDefault, Hasher};
+@@ -6,2 +9,3 @@
+
++#[verus_verify]
+ const SEED: u64 = 0x51_7c_c1_b7_27_22_0a_95;
+@@ -9,2 +13,3 @@
+ #[derive(Default, Clone, Copy)]
++#[verus_verify]
+ pub struct FxHasher {
+@@ -15,2 +20,3 @@
+     #[inline]
++    #[verus_spec(ensures final(self)@ == mix(old(self)@, word))]
+     fn add(&mut self, word: u64) {
+@@ -20,8 +26,18 @@
+
++#[verus_verify]
+ impl Hasher for FxHasher {
+     #[inline]
++    #[verus_spec(ensures final(self)@ == blocks(old(self)@, bytes@, ((bytes@.len() + 7) / 8) as nat))]
+     fn write(&mut self, bytes: &[u8]) {
++        proof_decl! { let ghost initial = self.hash; }
++        #[verus_spec(it => invariant
++            self.hash == blocks(initial, bytes@, it.index@ as nat),
++        )]
+         for chunk in bytes.chunks(8) {
++            proof! { assert(chunk@ == block(bytes@, it.index@)); }
+             let mut word = [0u8; 8];
+             word[..chunk.len()].copy_from_slice(chunk);
++            proof! {
++                assert(word@ =~= padded(chunk@));
++            }
+             self.add(u64::from_le_bytes(word));
+@@ -31,2 +47,3 @@
+     #[inline]
++    #[verus_spec(ensures final(self)@ == mix(old(self)@, value as u64))]
+     fn write_u8(&mut self, value: u8) {
+@@ -36,2 +53,3 @@
+     #[inline]
++    #[verus_spec(ensures final(self)@ == mix(old(self)@, value as u64))]
+     fn write_u32(&mut self, value: u32) {
+@@ -41,2 +59,3 @@
+     #[inline]
++    #[verus_spec(ensures final(self)@ == mix(old(self)@, value))]
+     fn write_u64(&mut self, value: u64) {
+@@ -46,2 +65,3 @@
+     #[inline]
++    #[verus_spec(ensures final(self)@ == mix(old(self)@, value as u64))]
+     fn write_usize(&mut self, value: usize) {
+@@ -51,2 +71,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == self@)]
+     fn finish(&self) -> u64 {
+--- a/bytecode/opcode.rs
++++ b/bytecode/opcode.rs
+@@ -9,2 +9,3 @@
+ #[verus_verify]
++#[derive(Structural)]
+ pub enum Format {
+@@ -82,2 +83,4 @@
+
++            #[verus_verify(dual_spec)]
++            #[verus_spec(returns self.name())]
+             pub const fn name(self) -> &'static str {
+@@ -551,2 +554,4 @@
+     /// Whether control never falls through to the next instruction.
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.is_terminator())]
+     pub const fn is_terminator(self) -> bool {
+@@ -568 +573,3 @@
+ }
++
++include!("opcode_catalogue.rs");
+--- a/bytecode/mod.rs
++++ b/bytecode/mod.rs
+@@ -17,2 +17,3 @@
+
++use vstd::prelude::*;
+ use alloc::{boxed::Box, vec, vec::Vec};
+@@ -31,2 +32,3 @@
+ #[derive(Clone, Copy, PartialEq, Eq)]
++#[verus_verify]
+ pub struct Insn {
+@@ -47,2 +49,3 @@
+     #[inline]
++    #[verus_spec(returns (Insn { op, a, b, c, imm }))]
+     pub const fn new(op: Opcode, a: u8, b: u8, c: u8, imm: u32) -> Insn {
+@@ -86,2 +89,4 @@
+     #[inline]
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.has_target())]
+     pub const fn has_target(self) -> bool {
+@@ -129,2 +134,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub struct Handler {
+--- a/bytecode/builder.rs
++++ b/bytecode/builder.rs
+@@ -6,2 +6,4 @@
+
++use vstd::prelude::*;
++include!("builder_proofs.rs");
+ use alloc::{boxed::Box, string::String, vec::Vec};
+@@ -13,2 +15,3 @@
+ #[derive(Default)]
++#[verus_verify]
+ pub struct CodeBuilder {
+@@ -33,2 +36,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == self.instructions().len() as u32)]
+     pub fn pc(&self) -> u32 {
+@@ -38,2 +42,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, insn.op.format() == format,
++        ensures emitted(*old(self), *final(self), r, insn),
++    )]
+     fn push(&mut self, format: Format, insn: Insn) -> u32 {
+@@ -51,2 +58,5 @@
+     /// Any instruction, without the format check.
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX,
++        ensures emitted(*old(self), *final(self), r, insn),
++    )]
+     pub fn raw(&mut self, insn: Insn) -> u32 {
+@@ -57,2 +67,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::None,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a: 0, b: 0, c: 0, imm: 0 }),
++    )]
+     pub fn op(&mut self, op: Opcode) -> u32 {
+@@ -62,2 +75,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::A,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: 0 }),
++    )]
+     pub fn a(&mut self, op: Opcode, a: u8) -> u32 {
+@@ -67,2 +83,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AB,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b, c: 0, imm: 0 }),
++    )]
+     pub fn ab(&mut self, op: Opcode, a: u8, b: u8) -> u32 {
+@@ -72,2 +91,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ABC,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b, c, imm: 0 }),
++    )]
+     pub fn abc(&mut self, op: Opcode, a: u8, b: u8, c: u8) -> u32 {
+@@ -77,2 +99,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AInt,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: value as u32 }),
++    )]
+     pub fn a_int(&mut self, op: Opcode, a: u8, value: i32) -> u32 {
+@@ -82,2 +107,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ABInt,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b, c: 0, imm: value as u32 }),
++    )]
+     pub fn ab_int(&mut self, op: Opcode, a: u8, b: u8, value: i32) -> u32 {
+@@ -87,2 +115,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AConst,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: index }),
++    )]
+     pub fn a_const(&mut self, op: Opcode, a: u8, index: u32) -> u32 {
+@@ -97,2 +128,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::Key,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a: 0, b: 0, c: 0, imm: key@ }),
++    )]
+     pub fn key(&mut self, op: Opcode, key: PropertyKey) -> u32 {
+@@ -102,2 +136,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AKey,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: key@ }),
++    )]
+     pub fn a_key(&mut self, op: Opcode, a: u8, key: PropertyKey) -> u32 {
+@@ -107,2 +144,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ABKey,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b, c: 0, imm: key@ }),
++    )]
+     pub fn ab_key(&mut self, op: Opcode, a: u8, b: u8, key: PropertyKey) -> u32 {
+@@ -112,2 +152,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ACapture,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: capture }),
++    )]
+     pub fn a_capture(&mut self, op: Opcode, a: u8, capture: u32) -> u32 {
+@@ -117,2 +160,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ACount,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: count }),
++    )]
+     pub fn a_count(&mut self, op: Opcode, a: u8, count: u32) -> u32 {
+@@ -122,2 +168,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ABRange,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: first, c: 0, imm: count }),
++    )]
+     pub fn ab_range(&mut self, op: Opcode, a: u8, first: u8, count: u32) -> u32 {
+@@ -127,2 +176,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AChild,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: child }),
++    )]
+     pub fn a_child(&mut self, op: Opcode, a: u8, child: u32) -> u32 {
+@@ -132,2 +184,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::Call,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a: dst, b: callee, c: argc, imm: 0 }),
++    )]
+     pub fn call(&mut self, op: Opcode, dst: u8, callee: u8, argc: u8) -> u32 {
+@@ -137,2 +192,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::Jump,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a: 0, b: 0, c: 0, imm: target }),
++    )]
+     pub fn jump(&mut self, op: Opcode, target: u32) -> u32 {
+@@ -142,2 +200,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AJump,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: target }),
++    )]
+     pub fn a_jump(&mut self, op: Opcode, a: u8, target: u32) -> u32 {
+@@ -147,2 +208,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::ABJump,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b, c: 0, imm: target }),
++    )]
+     pub fn ab_jump(&mut self, op: Opcode, a: u8, b: u8, target: u32) -> u32 {
+@@ -158,2 +222,5 @@
+     #[track_caller]
++    #[verus_spec(r => requires old(self).instructions().len() < u32::MAX, op.format() == Format::AWide,
++        ensures emitted(*old(self), *final(self), r, Insn { op, a, b: 0, c: 0, imm: register }),
++    )]
+     pub fn a_wide(&mut self, op: Opcode, a: u8, register: u32) -> u32 {
+@@ -164,2 +231,5 @@
+     /// lowering's retargeting of a temporary into a local).
++    #[verus_spec(requires pc < old(self).instructions().len(),
++        ensures final(self).instructions() == old(self).instructions().update(pc as int, Insn { a, ..old(self).instructions()[pc as int] }),
++            final(self).exceptions() == old(self).exceptions())]
+     pub fn retarget(&mut self, pc: u32, a: u8) {
+@@ -171,2 +241,5 @@
+     #[track_caller]
++    #[verus_spec(requires pc < old(self).instructions().len(), old(self).instructions()[pc as int].has_target(),
++        ensures final(self).instructions() == old(self).instructions().update(pc as int, Insn { imm: target, ..old(self).instructions()[pc as int] }),
++            final(self).exceptions() == old(self).exceptions())]
+     pub fn patch_target(&mut self, pc: u32, target: u32) {
+@@ -179,2 +252,3 @@
+     /// them.
++    #[verus_spec(ensures final(self).instructions() == old(self).instructions(), final(self).exceptions() == old(self).exceptions().push(handler))]
+     pub fn handler(&mut self, handler: Handler) {
+@@ -183,2 +257,3 @@
+
++    #[verus_spec(r => ensures r@ == self.instructions())]
+     pub fn code(&self) -> &[Insn] {
+--- a/heap/values.rs
++++ b/heap/values.rs
+@@ -15,2 +15,4 @@
+
++use vstd::prelude::*;
++include!("slots_proofs.rs");
+ use alloc::vec::Vec;
+@@ -23,2 +25,3 @@
+ /// slot) is unused, so the sizes increase with the index.
++#[verus_verify]
+ const CLASSES: usize = 64;
+@@ -73,2 +76,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub struct Range {
+@@ -141,2 +145,3 @@
+
++#[verus_verify]
+ pub struct ValueHeap {
+@@ -441,2 +446,3 @@
+     #[track_caller]
++    #[verus_spec(r => requires self.contains(range), slot < range.len, ensures r == self.slots()[range.start + slot])]
+     pub fn get(&self, range: Range, slot: u32) -> Value {
+@@ -452,2 +458,3 @@
+     #[track_caller]
++    #[verus_spec(requires old(self).contains(range), slot < range.len, ensures final(self).slots() == old(self).slots().update(range.start + slot, value), final(self).space() == old(self).space())]
+     pub fn set(&mut self, range: Range, slot: u32, value: Value) {
+@@ -463,2 +470,3 @@
+     #[inline]
++    #[verus_spec(r => requires self.contains(range), ensures if slot < range.len { r == self.slots()[range.start + slot] } else { r@ == 0xfffa_0000_0000_0003u64 })]
+     pub fn get_or_empty(&self, range: Range, slot: u32) -> Value {
+@@ -473,2 +481,3 @@
+     #[inline]
++    #[verus_spec(r => requires index < self.slots().len(), ensures r == self.slots()[index as int])]
+     pub fn get_at(&self, index: u32) -> Value {
+@@ -478,2 +487,3 @@
+     #[inline]
++    #[verus_spec(requires index < old(self).slots().len(), ensures final(self).slots() == old(self).slots().update(index as int, value), final(self).space() == old(self).space())]
+     pub fn set_at(&mut self, index: u32, value: Value) {
+@@ -483,2 +493,3 @@
+     #[inline]
++    #[verus_spec(r => requires self.contains(range), ensures r@ == self.slots().subrange(range.start as int, range.start + range.len))]
+     pub fn slice(&self, range: Range) -> &[Value] {
+--- a/heap/string.rs
++++ b/heap/string.rs
+@@ -8,2 +8,4 @@
+
++use vstd::prelude::*;
++include!("string_proofs.rs");
+ use alloc::{boxed::Box, string::String, vec::Vec};
+@@ -15,2 +17,3 @@
+ #[derive(Clone, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub enum StringRepr {
+@@ -37,2 +40,3 @@
+
++    #[verus_spec(r => ensures r == self.text().len())]
+     pub fn len(&self) -> usize {
+@@ -44,2 +48,3 @@
+
++    #[verus_spec(r => ensures r == (self.text().len() == 0))]
+     pub fn is_empty(&self) -> bool {
+@@ -48,2 +53,3 @@
+
++    #[verus_spec(r => requires index < self.text().len(), ensures r == self.text()[index as int])]
+     pub fn unit(&self, index: usize) -> u16 {
+@@ -103,5 +109,10 @@
+
++#[verus_spec(r => requires units.obeys_prophetic_iter_laws(), units.decrease() is Some,
++    ensures r == hash_prefix(units.remaining(), units.remaining().len()),
++)]
+ pub fn content_hash(units: impl Iterator<Item = u16>) -> u32 {
+     let mut hash: u32 = 0x811C_9DC5;
++    #[verus_spec(it => invariant it.iter.obeys_prophetic_iter_laws(), it.iter.decrease() is Some, it.seq() == units.remaining(), hash == hash_prefix(it.seq(), it.index@ as nat))]
+     for unit in units {
++        proof! { assert(unit == it.seq()[it.index@]); }
+         hash = (hash ^ u32::from(unit)).wrapping_mul(0x0100_0193);
+--- a/vm/bigint.rs
++++ b/vm/bigint.rs
+@@ -4,2 +4,4 @@
+
++use vstd::prelude::*;
++include!("bigint_proofs.rs");
+ use alloc::{
+@@ -13,2 +15,3 @@
+ #[derive(Clone, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub(crate) struct Big {
+@@ -34,3 +37,5 @@
+
++#[verus_verify]
+ impl Big {
++    #[verus_spec(r => ensures canonical(r), signed_value(r) == 0, count(r) == 0)]
+     pub fn zero() -> Big {
+@@ -42,2 +47,6 @@
+
++    #[verus_spec(r => ensures
++        canonical(r), count(r) <= limbs@.len(),
++        signed_value(r) == if negative { -digits(limbs@, limbs@.len()) } else { digits(limbs@, limbs@.len()) },
++    )]
+     pub fn new(negative: bool, mut limbs: Vec<u64>) -> Big {
+@@ -48,2 +57,5 @@
+
++}
++
++impl Big {
+     pub fn from_i64(value: i64) -> Big {
+@@ -81,2 +93,3 @@
+
++    #[verus_spec(r => ensures r == (count(*self) == 0))]
+     pub fn is_zero(&self) -> bool {
+@@ -623,5 +636,19 @@
+
++#[verus_spec(ensures
++    final(limbs)@.len() <= old(limbs)@.len(),
++    final(limbs)@.len() == 0 || final(limbs)@.last() != 0,
++    digits(final(limbs)@, final(limbs)@.len()) == digits(old(limbs)@, old(limbs)@.len()),
++)]
+ fn trim(limbs: &mut Vec<u64>) {
++    #[verus_spec(invariant
++        limbs@.len() <= old(limbs)@.len(),
++        digits(limbs@, limbs@.len()) == digits(old(limbs)@, old(limbs)@.len()),
++        decreases limbs@.len(),
++    )]
+     while limbs.last() == Some(&0) {
++        proof_decl! { let ghost previous = limbs@; }
+         limbs.pop();
++        proof! { assert(previous.len() > 0 && previous[previous.len()-1] == 0);
++            equal_prefix(limbs@, previous, limbs@.len());
++            assert(digits(previous, previous.len()) == digits(previous, (previous.len()-1) as nat)); }
+     }
+--- a/builtins/base64.rs
++++ b/builtins/base64.rs
+@@ -3,2 +3,4 @@
+
++use vstd::prelude::*;
++include!("base64_proofs.rs");
+ use alloc::string::String;
+@@ -45,2 +47,7 @@
+ /// `DecodeBase64Chunk`; `None` when strict and the padding bits are set.
++#[verus_spec(r => requires 2 <= chunk@.len() <= 4,
++    forall|i:int| 0 <= i < chunk@.len() ==> chunk@[i] < 64,
++    ensures r == (!strict || zero_pad_bits(chunk@)),
++        final(out)@ == if r { old(out)@ + decoded_group(chunk@) } else { old(out)@ },
++)]
+ fn decode_chunk(chunk: &[u32], strict: bool, out: &mut Vec<u8>) -> bool {
+@@ -48,2 +55,3 @@
+     padded[..chunk.len()].copy_from_slice(chunk);
++    proof! { unpack(padded[0], padded[1], padded[2], padded[3]); }
+     let triple = padded[0] << 18 | padded[1] << 12 | padded[2] << 6 | padded[3];
+@@ -65,2 +73,3 @@
+     }
++    proof! { assert(out@ =~= old(out)@ + decoded_group(chunk@)); }
+     true
+--- a/builtins/date/mod.rs
++++ b/builtins/date/mod.rs
+@@ -5,2 +5,3 @@
+
++use vstd::prelude::*;
+ use alloc::string::String;
+@@ -32,2 +33,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub(crate) enum DateStringMethod {
+@@ -45,2 +47,4 @@
+     /// Whether the fields are decomposed in host local time.
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.uses_local_time())]
+     const fn uses_local_time(self) -> bool {
+--- a/builtins/date/parse.rs
++++ b/builtins/date/parse.rs
+@@ -7,3 +7,7 @@
+
++use vstd::prelude::*;
++
++#[verus_verify]
+ const PARSE_BUFFER_LEN: usize = 128;
++#[verus_verify]
+ const PARSE_INPUT_LIMIT: usize = PARSE_BUFFER_LEN - 1;
+@@ -61,2 +65,3 @@
+
++#[verus_spec(r => ensures r == if unit < 256 { unit as u8 } else if unit == 0x2212 { 45 } else { 120 })]
+ fn map_code_unit(unit: u16) -> u8 {
+@@ -86,3 +91,12 @@
+
++#[verus_spec(r => requires *old(cursor) < 128, bytes[127] == 0,
++    ensures *old(cursor) <= *final(cursor) < 128, r == bytes[*final(cursor) as int],
++        !(r == 32),
++        forall|k:int| *old(cursor) <= k < *final(cursor) ==> bytes[k] == 32,
++)]
+ fn skip_spaces(bytes: &[u8; PARSE_BUFFER_LEN], cursor: &mut usize) -> u8 {
++    #[verus_spec(invariant *old(cursor) <= *cursor < 128, bytes[127] == 0,
++        forall|k:int| *old(cursor) <= k < *cursor ==> bytes[k] == 32,
++        decreases 128 - *cursor,
++    )]
+     while bytes[*cursor] == b' ' {
+@@ -93,3 +107,12 @@
+
++#[verus_spec(r => requires *old(cursor) < 128, bytes[127] == 0,
++    ensures *old(cursor) <= *final(cursor) < 128, r == bytes[*final(cursor) as int],
++        !((r == 45 || r == 47 || r == 46 || r == 44)),
++        forall|k:int| *old(cursor) <= k < *final(cursor) ==> (bytes[k] == 45 || bytes[k] == 47 || bytes[k] == 46 || bytes[k] == 44),
++)]
+ fn skip_separators(bytes: &[u8; PARSE_BUFFER_LEN], cursor: &mut usize) -> u8 {
++    #[verus_spec(invariant *old(cursor) <= *cursor < 128, bytes[127] == 0,
++        forall|k:int| *old(cursor) <= k < *cursor ==> (bytes[k] == 45 || bytes[k] == 47 || bytes[k] == 46 || bytes[k] == 44),
++        decreases 128 - *cursor,
++    )]
+     while matches!(bytes[*cursor], b'-' | b'/' | b'.' | b',') {
+--- a/builtins/date/format.rs
++++ b/builtins/date/format.rs
+@@ -6,2 +6,4 @@
+
++use vstd::prelude::*;
++include!("date_format_proofs.rs");
+ use alloc::borrow::ToOwned;
+@@ -20,2 +22,4 @@
+ impl DateStringMethod {
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.format())]
+     const fn format(self) -> Format {
+@@ -29,2 +33,4 @@
+
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.part())]
+     const fn part(self) -> Part {
+@@ -39,2 +45,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ enum Format {
+@@ -47,2 +54,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ enum Part {
+@@ -54,2 +62,4 @@
+ impl Part {
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.has_date())]
+     const fn has_date(self) -> bool {
+@@ -58,2 +68,4 @@
+
++    #[verus_verify(dual_spec)]
++    #[verus_spec(returns self.has_time())]
+     const fn has_time(self) -> bool {

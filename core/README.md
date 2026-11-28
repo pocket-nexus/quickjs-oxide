@@ -46,6 +46,13 @@ rustup target add thumbv7em-none-eabi
 cargo check --locked -p quickjs-oxide-core --lib --target thumbv7em-none-eabi
 ```
 
+[Verus checks](../dev-support/verus/README.md) cover the UTF-16 decoder shared
+by `decodeURI` and `decodeURIComponent`, including exact results on malformed
+input and a round trip from canonical percent-encoded UTF-8. They also cover
+value and property-key encodings, root and handle operations, and the VM's
+numeric comparison table. The [independent-module report](../dev-support/verus/independent.zh-CN.md)
+records the production contracts, tool boundaries, and outstanding goals for all eleven projects.
+
 ## Layout
 
 | Module | Content |

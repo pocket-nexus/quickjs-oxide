@@ -1,0 +1,708 @@
+--- a/lib.rs
++++ b/lib.rs
+@@ -5,2 +5,4 @@
+
++#![feature(const_convert, const_trait_impl)]
++#![feature(proc_macro_hygiene)]
+ #![no_std]
+@@ -41 +43,4 @@
+ pub use vm::{ErrorKind, Output, Throw};
++
++#[allow(unused_imports)]
++use vstd::prelude::*;
+--- a/value.rs
++++ b/value.rs
+@@ -16,10 +16,20 @@
+
++use vstd::prelude::*;
++use vstd::std_specs::convert::FromSpec;
++include!("value_proofs.rs");
+ use core::fmt;
+
++#[verus_verify]
+ const TAG_SHIFT: u32 = 48;
++#[verus_verify]
+ const TAG_INT32: u64 = 0xFFF9;
++#[verus_verify]
+ const TAG_SPECIAL: u64 = 0xFFFA;
++#[verus_verify]
+ const TAG_OBJECT: u64 = 0xFFFB;
++#[verus_verify]
+ const TAG_STRING: u64 = 0xFFFC;
++#[verus_verify]
+ const TAG_SYMBOL: u64 = 0xFFFD;
++#[verus_verify]
+ const TAG_BIGINT: u64 = 0xFFFE;
+@@ -27,2 +37,3 @@
+ /// Lowest boxed bit pattern; everything below it is a double.
++#[verus_verify]
+ const BOXED_MIN: u64 = TAG_INT32 << TAG_SHIFT;
+@@ -31,8 +42,14 @@
+
++#[verus_verify]
+ const SPECIAL_BOOL: u64 = 0;
++#[verus_verify]
+ const SPECIAL_UNDEFINED: u64 = 1;
++#[verus_verify]
+ const SPECIAL_NULL: u64 = 2;
++#[verus_verify]
+ const SPECIAL_EMPTY: u64 = 3;
++#[verus_verify]
+ const SPECIAL_TRUE_BIT: u64 = 1 << 2;
+
++#[verus_spec(r => ensures r == (tag << 48u32) | (payload as u64))]
+ const fn boxed(tag: u64, payload: u32) -> u64 {
+@@ -44,2 +61,3 @@
+ #[repr(u8)]
++#[verus_verify]
+ pub enum Kind {
+@@ -60,2 +78,3 @@
+ /// Indices 12..=15 are never produced.
++#[verus_verify]
+ const KIND_TABLE: [Kind; 16] = [
+@@ -86,2 +105,3 @@
+ #[derive(Clone, Copy, PartialEq, Eq, Hash)]
++#[verus_verify]
+ pub struct Value(u64);
+@@ -92,6 +112,15 @@
+ impl Value {
++    verify_special! { 0xfffa_0000_0000_0001u64;
+     pub const UNDEFINED: Value = Value(boxed(TAG_SPECIAL, SPECIAL_UNDEFINED as u32));
++    }
++    verify_special! { 0xfffa_0000_0000_0002u64;
+     pub const NULL: Value = Value(boxed(TAG_SPECIAL, SPECIAL_NULL as u32));
++    }
++    verify_special! { 0xfffa_0000_0000_0004u64;
+     pub const TRUE: Value = Value(boxed(TAG_SPECIAL, (SPECIAL_BOOL | SPECIAL_TRUE_BIT) as u32));
++    }
++    verify_special! { 0xfffa_0000_0000_0000u64;
+     pub const FALSE: Value = Value(boxed(TAG_SPECIAL, SPECIAL_BOOL as u32));
++    }
++    verify_special! { 0xfffa_0000_0000_0003u64;
+     /// The internal hole marker: array holes, uninitialized bindings, empty
+@@ -99,2 +128,3 @@
+     pub const EMPTY: Value = Value(boxed(TAG_SPECIAL, SPECIAL_EMPTY as u32));
++    }
+
+@@ -126,3 +156,5 @@
+     #[inline]
++    #[verus_spec(returns Value::encoded(0xfff9_0000_0000_0000u64 | ((value as u32) as u64)))]
+     pub const fn int32(value: i32) -> Value {
++        proof! { assert((TAG_INT32 << TAG_SHIFT) == 0xfff9_0000_0000_0000u64) by(compute); }
+         Value(boxed(TAG_INT32, value as u32))
+@@ -131,2 +163,3 @@
+     #[inline]
++    #[verus_spec(returns Value::encoded(if value { 0xfffa_0000_0000_0004u64 } else { 0xfffa_0000_0000_0000u64 }))]
+     pub const fn bool(value: bool) -> Value {
+@@ -136,3 +169,5 @@
+     #[inline]
++    #[verus_spec(returns Value::encoded(0xfffb_0000_0000_0000u64 | (id@ as u64)))]
+     pub const fn object(id: ObjectId) -> Value {
++        proof! { assert((TAG_OBJECT << TAG_SHIFT) == 0xfffb_0000_0000_0000u64) by(compute); }
+         Value(boxed(TAG_OBJECT, id.0))
+@@ -141,3 +176,5 @@
+     #[inline]
++    #[verus_spec(returns Value::encoded(0xfffc_0000_0000_0000u64 | (id@ as u64)))]
+     pub const fn string(id: StringId) -> Value {
++        proof! { assert((TAG_STRING << TAG_SHIFT) == 0xfffc_0000_0000_0000u64) by(compute); }
+         Value(boxed(TAG_STRING, id.0))
+@@ -146,3 +183,5 @@
+     #[inline]
++    #[verus_spec(returns Value::encoded(0xfffd_0000_0000_0000u64 | (id@ as u64)))]
+     pub const fn symbol(id: SymbolId) -> Value {
++        proof! { assert((TAG_SYMBOL << TAG_SHIFT) == 0xfffd_0000_0000_0000u64) by(compute); }
+         Value(boxed(TAG_SYMBOL, id.0))
+@@ -151,3 +190,5 @@
+     #[inline]
++    #[verus_spec(returns Value::encoded(0xfffe_0000_0000_0000u64 | (id@ as u64)))]
+     pub const fn bigint(id: BigIntId) -> Value {
++        proof! { assert((TAG_BIGINT << TAG_SHIFT) == 0xfffe_0000_0000_0000u64) by(compute); }
+         Value(boxed(TAG_BIGINT, id.0))
+@@ -157,2 +198,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == self@)]
+     pub const fn bits(self) -> u64 {
+@@ -161,2 +203,8 @@
+
++    #[verus_spec(r =>
++        requires
++            <usize as FromSpec<bool>>::obeys_from_spec(),
++            forall|b: bool| #[trigger] <usize as FromSpec<bool>>::from_spec(b) == if b { 1usize } else { 0usize },
++        ensures r == specified_kind(self@)
++    )]
+     #[inline]
+@@ -164,2 +212,7 @@
+         let tag = (self.0 >> TAG_SHIFT) as u32;
++        proof! {
++            let bits = self.0;
++            assert((bits >> 48u32) <= 0xffffu64) by(bit_vector);
++            assert(bits & 3u64 <= 3u64) by(bit_vector);
++        }
+         // 0 for every double, 1..=7 for the boxed tags.
+@@ -168,2 +221,8 @@
+         let special = usize::from(tag == TAG_SPECIAL as u32) * (6 + (self.0 & 3) as usize);
++        proof! {
++            assert(index <= 7 && special <= 9);
++            assert(index + special <= 11);
++            let i = (index + special) as usize;
++            assert(i <= 11 ==> (i & 15usize) == i) by(bit_vector);
++        }
+         KIND_TABLE[(index + special) & 15]
+@@ -173,3 +232,5 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (self@ < 0xfffa_0000_0000_0000u64))]
+     pub const fn is_number(self) -> bool {
++        proof! { assert((TAG_SPECIAL << TAG_SHIFT) == 0xfffa_0000_0000_0000u64) by(compute); }
+         self.0 < (TAG_SPECIAL << TAG_SHIFT)
+@@ -178,3 +239,5 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (self@ < 0xfff9_0000_0000_0000u64))]
+     pub const fn is_double(self) -> bool {
++        proof! { assert(BOXED_MIN == 0xfff9_0000_0000_0000u64) by(compute); }
+         self.0 < BOXED_MIN
+@@ -183,2 +246,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (self@ >> 48u32 == 0xfff9u64))]
+     pub const fn is_int32(self) -> bool {
+@@ -188,2 +252,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (self@ == 0xfffa_0000_0000_0003u64))]
+     pub const fn is_empty(self) -> bool {
+@@ -193,2 +258,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (self@ == 0xfffa_0000_0000_0001u64))]
+     pub const fn is_undefined(self) -> bool {
+@@ -198,2 +264,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (self@ == 0xfffa_0000_0000_0002u64))]
+     pub const fn is_null(self) -> bool {
+@@ -215,2 +282,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == if self@ >> 48u32 == 0xfff9u64 { Some(self@ as u32 as i32) } else { None })]
+     pub const fn as_int32(self) -> Option<i32> {
+@@ -224,3 +292,16 @@
+     #[inline]
++    #[verus_spec(r => ensures r == match self@ {
++        0xfffa_0000_0000_0000u64 => Some(false),
++        0xfffa_0000_0000_0004u64 => Some(true),
++        _ => None,
++    })]
+     pub const fn as_bool(self) -> Option<bool> {
++        proof! {
++            let x = self.0;
++            assert(((x >> 3 == 0xfffa_0000_0000_0000u64 >> 3) && (x & 3 == 0))
++                == (x == 0xfffa_0000_0000_0000u64 || x == 0xfffa_0000_0000_0004u64)) by(bit_vector);
++            assert(0xfffa_0000_0000_0000u64 & 4u64 == 0u64) by(compute);
++            assert(0xfffa_0000_0000_0004u64 & 4u64 == 4u64) by(compute);
++            assert(SPECIAL_TRUE_BIT == 4u64) by(compute);
++        }
+         if self.0 >> 3 == Value::FALSE.0 >> 3 && self.0 & 3 == SPECIAL_BOOL {
+@@ -233,2 +314,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == if self@ >> 48u32 == tag { Some(self@ as u32) } else { None })]
+     const fn payload_if(self, tag: u64) -> Option<u32> {
+@@ -242,2 +324,3 @@
+     #[inline]
++    #[verus_spec(r => ensures if self@ >> 48u32 == 0xfffbu64 { r is Some && r.unwrap()@ == self@ as u32 } else { r is None })]
+     pub const fn as_object(self) -> Option<ObjectId> {
+@@ -250,2 +333,3 @@
+     #[inline]
++    #[verus_spec(r => ensures if self@ >> 48u32 == 0xfffcu64 { r is Some && r.unwrap()@ == self@ as u32 } else { r is None })]
+     pub const fn as_string(self) -> Option<StringId> {
+@@ -258,2 +342,3 @@
+     #[inline]
++    #[verus_spec(r => ensures if self@ >> 48u32 == 0xfffdu64 { r is Some && r.unwrap()@ == self@ as u32 } else { r is None })]
+     pub const fn as_symbol(self) -> Option<SymbolId> {
+@@ -266,2 +351,3 @@
+     #[inline]
++    #[verus_spec(r => ensures if self@ >> 48u32 == 0xfffeu64 { r is Some && r.unwrap()@ == self@ as u32 } else { r is None })]
+     pub const fn as_bigint(self) -> Option<BigIntId> {
+@@ -275,3 +361,9 @@
+     #[inline]
++    #[verus_spec(r => ensures r == (0xfffb_0000_0000_0000u64 <= self@ && self@ < 0xffff_0000_0000_0000u64))]
+     pub const fn is_heap(self) -> bool {
++        proof! {
++            let x = self.0;
++            assert(((x >> 48u32) >= 0xfffbu64 && (x >> 48u32) <= 0xfffeu64)
++                == (0xfffb_0000_0000_0000u64 <= x && x < 0xffff_0000_0000_0000u64)) by(bit_vector);
++        }
+         let tag = self.0 >> TAG_SHIFT;
+@@ -302,3 +394,19 @@
+         #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
++        #[verus_verify]
+         pub struct $name(pub(crate) u32);
++
++        verus! {
++            impl View for $name {
++                type V = u32;
++                closed spec fn view(&self) -> u32 { self.0 }
++            }
++        }
++
++        verus! {
++            impl $name {
++                pub(crate) proof fn reveal_index(self)
++                    ensures self@ == self.0,
++                {}
++            }
++        }
+
+--- a/heap/atom.rs
++++ b/heap/atom.rs
+@@ -15,2 +15,4 @@
+
++use vstd::prelude::*;
++include!("key_proofs.rs");
+ use alloc::{vec, vec::Vec};
+@@ -23,8 +25,13 @@
+
++#[verus_verify]
+ const INDEX_TAG: u32 = 1 << 31;
++#[verus_verify]
+ const SYMBOL_TAG: u32 = 1 << 30;
++closed_const! {
+ /// Exclusive bound on string and symbol indices that fit in a key.
+ pub const KEY_INDEX_LIMIT: u32 = SYMBOL_TAG;
++}
+
+ #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
++#[verus_verify]
+ pub struct PropertyKey(u32);
+@@ -32,2 +39,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub enum KeyKind {
+@@ -41,3 +49,7 @@
+     #[inline]
++    #[verus_spec(returns if index < 0x8000_0000u32 {
++        Some(PropertyKey::encoded(index | 0x8000_0000u32))
++    } else { None })]
+     pub const fn index(index: u32) -> Option<PropertyKey> {
++        proof! { key_tags(); }
+         if index < INDEX_TAG {
+@@ -52,3 +64,6 @@
+     #[inline]
++    #[verus_spec(requires id@ < 0x4000_0000u32
++        returns PropertyKey::encoded(id@))]
+     pub fn atom(id: StringId) -> PropertyKey {
++        proof! { key_tags(); id.reveal_index(); }
+         assert!(id.0 < KEY_INDEX_LIMIT, "atom index out of key range");
+@@ -58,3 +73,6 @@
+     #[inline]
++    #[verus_spec(requires id@ < 0x4000_0000u32
++        returns PropertyKey::encoded(id@ | 0x4000_0000u32))]
+     pub fn symbol(id: SymbolId) -> PropertyKey {
++        proof! { key_tags(); id.reveal_index(); }
+         assert!(id.0 < KEY_INDEX_LIMIT, "symbol index out of key range");
+@@ -64,3 +82,9 @@
+     #[inline]
++    #[verus_spec(r => ensures key_kind_agrees(self@, r))]
+     pub const fn kind(self) -> KeyKind {
++        proof! {
++            key_partition(self.0);
++            StringId(self.0).reveal_index();
++            SymbolId(self.0 & !SYMBOL_TAG).reveal_index();
++        }
+         if self.0 & INDEX_TAG != 0 {
+@@ -75,2 +99,3 @@
+     #[inline]
++    #[verus_spec(r => ensures r == self@)]
+     pub const fn raw(self) -> u32 {
+@@ -82,2 +107,3 @@
+     #[inline]
++    #[verus_spec(returns PropertyKey::encoded(bits))]
+     pub const fn from_raw(bits: u32) -> PropertyKey {
+@@ -88,3 +114,5 @@
+     #[inline]
++    #[verus_spec(r => ensures r == key_value(self@))]
+     pub const fn to_value(self) -> Value {
++        proof! { key_partition(self.0); }
+         match self.kind() {
+@@ -98,3 +126,7 @@
+     #[inline]
++    #[verus_spec(r => ensures r == if self@ >= 0x8000_0000u32 {
++        None
++    } else { Some(key_value(self@)) })]
+     pub const fn heap_value(self) -> Option<Value> {
++        proof! { key_partition(self.0); }
+         match self.kind() {
+--- a/heap/gc.rs
++++ b/heap/gc.rs
+@@ -7,2 +7,3 @@
+
++use vstd::prelude::*;
+ use alloc::{vec, vec::Vec};
+@@ -25,2 +26,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub struct RootMark(usize);
+@@ -30,2 +32,3 @@
+ #[derive(Default)]
++#[verus_verify]
+ pub struct RootStack {
+@@ -34,4 +37,7 @@
+
++include!("root_proofs.rs");
++
+ impl RootStack {
+     #[inline]
++    #[verus_spec(r => ensures r@ == self@.len())]
+     pub fn mark(&self) -> RootMark {
+@@ -41,2 +47,3 @@
+     #[inline]
++    #[verus_spec(ensures final(self)@ == old(self)@.push(value))]
+     pub fn push(&mut self, value: Value) {
+@@ -47,2 +54,3 @@
+     /// Drops the last root.
++    #[verus_spec(ensures final(self)@ == if old(self)@.len() == 0 { old(self)@ } else { old(self)@.drop_last() })]
+     pub fn pop_one(&mut self) {
+@@ -51,2 +59,3 @@
+
++    #[verus_spec(requires mark@ <= old(self)@.len() ensures final(self)@ == old(self)@.take(mark@ as int))]
+     pub fn truncate(&mut self, mark: RootMark) {
+@@ -57,2 +66,3 @@
+     #[inline]
++    #[verus_spec(r => requires index < self@.len() ensures r == self@[index as int])]
+     pub fn get(&self, index: usize) -> Value {
+@@ -62,2 +72,3 @@
+     #[inline]
++    #[verus_spec(requires index < old(self)@.len() ensures final(self)@ == old(self)@.update(index as int, value))]
+     pub fn set(&mut self, index: usize, value: Value) {
+@@ -66,2 +77,3 @@
+
++    #[verus_spec(r => ensures r == self@.len())]
+     pub fn len(&self) -> usize {
+@@ -70,2 +82,3 @@
+
++    #[verus_spec(r => ensures r == (self@.len() == 0))]
+     pub fn is_empty(&self) -> bool {
+@@ -74,2 +87,3 @@
+
++    #[verus_spec(r => ensures r@ == self@)]
+     pub fn values(&self) -> &[Value] {
+@@ -81,2 +95,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
++#[verus_verify]
+ pub struct Handle(u32);
+@@ -84,2 +99,3 @@
+ #[derive(Default)]
++#[verus_verify]
+ pub struct Handles {
+@@ -90,2 +106,16 @@
+ impl Handles {
++    #[verus_spec(r =>
++        requires old(self).well_formed(), value@ != EMPTY_BITS,
++            old(self).free_ids().len() == 0 ==> old(self).entries().len() < u32::MAX,
++        ensures
++            final(self).well_formed(), final(self).active(r), final(self).entries()[r@ as int] == value,
++            if old(self).free_ids().len() == 0 {
++                &&& r@ == old(self).entries().len()
++                &&& final(self).entries() == old(self).entries().push(value)
++                &&& final(self).free_ids() == old(self).free_ids()
++            } else {
++                &&& r@ == old(self).free_ids().last()
++                &&& final(self).entries() == old(self).entries().update(r@ as int, value)
++                &&& final(self).free_ids() == old(self).free_ids().drop_last()
++            })]
+     pub fn create(&mut self, value: Value) -> Handle {
+@@ -94,2 +124,6 @@
+             self.slots[index as usize] = value;
++            proof! {
++                assert(old(self).free_ids() =~= self.free@.push(index));
++                pushed_members(self.free@, index);
++            }
+             return Handle(index);
+@@ -101,2 +135,4 @@
+     #[track_caller]
++    #[verus_spec(r => requires self.active(handle)
++        ensures r == self.entries()[handle@ as int])]
+     pub fn get(&self, handle: Handle) -> Value {
+@@ -107,2 +143,6 @@
+
++    #[verus_spec(requires old(self).well_formed(), old(self).active(handle), value@ != EMPTY_BITS,
++        ensures final(self).well_formed(),
++            final(self).entries() == old(self).entries().update(handle@ as int, value),
++            final(self).free_ids() == old(self).free_ids())]
+     pub fn set(&mut self, handle: Handle, value: Value) {
+@@ -112,2 +152,8 @@
+
++    #[verus_spec(requires old(self).well_formed(), old(self).active(handle),
++        ensures final(self).well_formed(), !final(self).active(handle),
++            final(self).entries().len() == old(self).entries().len(),
++            final(self).free_ids() == old(self).free_ids().push(handle@),
++            forall|i: int| 0 <= i < old(self).entries().len() && i != handle@
++                ==> #[trigger] final(self).entries()[i] == old(self).entries()[i])]
+     pub fn release(&mut self, handle: Handle) {
+@@ -116,2 +162,3 @@
+         *slot = Value::EMPTY;
++        proof! { pushed_members(self.free@, handle.0); }
+         self.free.push(handle.0);
+@@ -119,3 +166,6 @@
+
++    #[verus_spec(r => requires self.well_formed(),
++        ensures r == self.entries().len() - self.free_ids().len())]
+     pub fn live_count(&self) -> usize {
++        proof! { self.free_count_bounded(); }
+         self.slots.len() - self.free.len()
+--- a/bytecode/opcode.rs
++++ b/bytecode/opcode.rs
+@@ -1,2 +1,5 @@
+ //! The opcode table: one line per opcode with its operand format.
++
++use vstd::prelude::*;
++include!("opcode_proofs.rs");
+
+@@ -5,2 +8,3 @@
+ #[derive(Clone, Copy, Debug, PartialEq, Eq)]
++#[verus_verify]
+ pub enum Format {
+@@ -58,2 +62,3 @@
+         #[repr(u8)]
++        #[verus_verify]
+         pub enum Opcode {
+@@ -63,6 +68,10 @@
+         impl Opcode {
++            verify_opcode_list! {
+             /// Every opcode, in discriminant order.
+             pub const ALL: &'static [Opcode] = &[$(Opcode::$name,)*];
++            }
+
+             #[inline]
++            #[verus_verify(dual_spec)]
++            #[verus_spec(returns self.format())]
+             pub const fn format(self) -> Format {
+--- a/vm/interp.rs
++++ b/vm/interp.rs
+@@ -36,2 +36,5 @@
+ use crate::value::{BytecodeId, ObjectId, ScopeId, ShapeId, Value};
++
++use vstd::prelude::*;
++include!("jump_proofs.rs");
+
+@@ -3319,9 +3322,15 @@
+
++#[verus_verify]
+ const LESS: u8 = 1 << 0;
++#[verus_verify]
+ const EQUAL: u8 = 1 << 1;
++#[verus_verify]
+ const GREATER: u8 = 1 << 2;
++#[verus_verify]
+ const UNORDERED: u8 = 1 << 3;
+ /// A compare-jump's right operand is the `i16` literal.
++#[verus_verify]
+ const IMMEDIATE: u8 = 1 << 4;
+
++verify_jump_masks! {
+ /// Per opcode, the orders of two numbers for which a compare-jump is taken or
+@@ -3332,2 +3341,9 @@
+     let mut index = 0;
++    #[verus_spec(
++        invariant
++            index <= Opcode::listed().len(),
++            forall|i: int| 0 <= i < 256 ==>
++                #[trigger] masks[i] == mask_for_byte(i, index as nat),
++        decreases Opcode::listed().len() - index,
++    )]
+     while index < Opcode::ALL.len() {
+@@ -3362,3 +3378,15 @@
+         };
++        proof! {
++            mask_facts();
++            assert(mask == accepted_orders(op));
++            assert(mask | 0u8 == mask) by(bit_vector);
++            assert(mask | immediate == expected_mask(op));
++        }
+         masks[op as usize] = mask | immediate;
++        proof! {
++            assert forall|i: int| 0 <= i < 256 implies
++                #[trigger] masks[i] == mask_for_byte(i, (index + 1) as nat) by {
++                reveal_with_fuel(mask_for_byte, 2);
++            }
++        }
+         index += 1;
+@@ -3367,2 +3395,3 @@
+ };
++}
+
+--- a/builtins/uri.rs
++++ b/builtins/uri.rs
+@@ -10,4 +10,7 @@
+ use crate::vm::{Cx, Throw, error};
+
++use vstd::prelude::*;
++include!("uri_proofs.rs");
++
+ const HEX: &[u8; 16] = b"0123456789ABCDEF";
+
+@@ -29,4 +32,5 @@
+
+ #[derive(Clone, Copy, Debug, Eq, PartialEq)]
++#[verus_verify]
+ enum UriCodecError {
+     ExpectingPercent,
+@@ -131,9 +135,20 @@
+
+ /// `decodeURI` (`component == false`) or `decodeURIComponent`.
++#[verus_spec(r => requires units@.len() <= usize::MAX - 3, ensures result_text(r) == decode_from(units@, 0, component))]
+ fn decode(units: &[u16], component: bool) -> Result<Vec<u16>, UriCodecError> {
+     let mut output = Vec::with_capacity(units.len());
+     let mut index = 0;
++    #[verus_spec(invariant
++        units@.len() <= usize::MAX - 3, index <= units.len(),
++        append(output@, decode_from(units@, index as int, component)) == decode_from(units@, 0, component),
++        decreases units.len()-index)]
+     while index < units.len() {
++        proof_decl! { let ghost start = index as int; let ghost prefix = output@; }
++        proof! { reveal_with_fuel(decode_from, 2); }
+         if units[index] != u16::from(b'%') {
++            proof! {
++                append_assoc(prefix, seq![units@[start]], decode_from(units@, start+1, component));
++                assert(prefix.push(units@[start]) =~= prefix + seq![units@[start]]);
++            }
+             output.push(units[index]);
+             index += 1;
+@@ -151,4 +166,10 @@
+                 output.push(u16::from(first));
+             }
++            proof! {
++                let piece = if !component && reserved(first) { units@.subrange(start,start+3) }
++                    else { seq![first as u16] };
++                assert(output@ =~= prefix + piece);
++                append_assoc(prefix, piece, decode_from(units@,start+3,component));
++            }
+             continue;
+         }
+@@ -159,7 +180,44 @@
+             _ => (0, 1, 0),
+         };
++        proof! {
++            assert(first & 31 == first % 32) by(bit_vector);
++            assert(first & 15 == first % 16) by(bit_vector);
++            assert(first & 7 == first % 8) by(bit_vector);
++            assert(code_point == payload(first));
++        }
++        #[verus_spec(it => invariant
++            units@.len() <= usize::MAX - 3, start >= 0,
++            continuations == width(first) - 1, 0 <= continuations <= 3,
++            minimum == scalar_min(width(first)), 1 <= minimum,
++            output@ == prefix, start < index <= units@.len(),
++            invariant_except_break
++            index == start + 3 * (1 + it.index@),
++            code_point < (if it.index@ == 0 { 32int } else if it.index@ == 1 { 2048 }
++                else if it.index@ == 2 { 131072 } else { 8388608 }),
++            append(prefix, join(scalar_tail(units@,index as int,continuations - it.index@,
++                code_point as int, minimum as int),
++                decode_from(units@,start + 3 * width(first),component))) == decode_from(units@,0,component),
++            ensures
++                start < index <= units@.len(),
++                if code_point < minimum || code_point > 0x10ffff || 0xd800 <= code_point <= 0xdfff {
++                    decode_from(units@,0,component) == Err(UriCodecError::MalformedUtf8)
++                } else {
++                    &&& index == start + 3 * width(first)
++                    &&& append(prefix, append(utf16(code_point as int),
++                        decode_from(units@,index as int,component))) == decode_from(units@,0,component)
++                },
++        )]
+         for _ in 0..continuations {
++            proof! { reveal_with_fuel(scalar_tail, 2); }
+             let byte = decode_percent_byte(units, index)?;
+             index += 3;
++            proof! {
++                assert((byte & 0xc0 == 0x80) == (128 <= byte < 192)) by(bit_vector);
++                if 128 <= byte < 192 {
++                    assert((code_point << 6 | (byte & 0x3fu8) as u32)
++                        == code_point * 64 + (byte - 128) as u32) by(bit_vector)
++                        requires code_point < 131072, 128 <= byte < 192;
++                }
++            }
+             if byte & 0xc0 != 0x80 {
+                 code_point = 0;
+@@ -172,4 +230,7 @@
+             return Err(UriCodecError::MalformedUtf8);
+         }
++        proof! {
++            append_assoc(prefix, utf16(code_point as int), decode_from(units@,index as int,component));
++        }
+         push_code_point(&mut output, code_point);
+     }
+@@ -207,4 +268,5 @@
+ }
+
++#[verus_spec(r => requires index <= usize::MAX - 3, ensures r == octet(units@,index as int), r.is_ok() ==> index + 3 <= units@.len())]
+ fn decode_percent_byte(units: &[u16], index: usize) -> Result<u8, UriCodecError> {
+     if units.get(index).copied() != Some(u16::from(b'%')) {
+@@ -214,12 +276,36 @@
+         return Err(UriCodecError::ExpectingHexDigit);
+     };
++    proof! {
++        assert(digits@ == units@.subrange(index+1,index+3));
++        assert(digits@[0] == units@[index+1] && digits@[1] == units@[index+2]);
++        assert(hex_pair(digits@[0],digits@[1]) matches Some(n) ==> n <= 255);
++    }
++    specify_octet_conversion! {
+     decode_hex_units(digits)
+         .and_then(|value| u8::try_from(value).ok())
+         .ok_or(UriCodecError::ExpectingHexDigit)
++    }
++
+ }
+
++#[verus_spec(r => requires units@.len() == 2, ensures r == hex_pair(units@[0], units@[1]))]
+ fn decode_hex_units(units: &[u16]) -> Option<u16> {
+     let mut value = 0_u16;
++    #[verus_spec(it => invariant
++        units@.len() == 2,
++        it.index@ == 0 ==> value == 0,
++        it.index@ >= 1 ==> digit(units@[0]) == Some(if it.index@ == 1 { value as u8 } else { (value / 16) as u8 }),
++        it.index@ == 1 ==> value < 16,
++        it.index@ == 2 ==> Some(value) == hex_pair(units@[0], units@[1]),
++    )]
+     for &unit in units {
++        proof! {
++            assert(unit == units@[it.index@]);
++            if let Some(l) = digit(unit) {
++                assert(l < 16);
++                assert((value << 4 | l as u16) == value * 16 + l as u16)
++                    by(bit_vector) requires value < 16, l < 16;
++            }
++        }
+         value = (value << 4) | u16::from(hex_value(unit)?);
+     }
+@@ -227,4 +313,5 @@
+ }
+
++#[verus_spec(r => ensures r == digit(unit), r matches Some(v) ==> v < 16)]
+ fn hex_value(unit: u16) -> Option<u8> {
+     match unit {
+@@ -236,5 +323,7 @@
+ }
+
++#[verus_spec(r => ensures r == reserved(byte))]
+ fn is_uri_reserved(byte: u8) -> bool {
++    proof! { reserved_bytes(byte); }
+     b";/?:@&=+$,#".contains(&byte)
+ }
+@@ -264,4 +353,5 @@
+ }
+
++#[verus_spec(requires code_point <= 0x10ffff, ensures final(output)@ == old(output)@ + utf16(code_point as int))]
+ fn push_code_point(output: &mut Vec<u16>, code_point: u32) {
+     if code_point < 0x1_0000 {
+@@ -269,4 +359,8 @@
+     } else {
+         let scalar = code_point - 0x1_0000;
++        proof! {
++            assert(scalar >> 10 == scalar / 1024) by(bit_vector);
++            assert(scalar & 0x3ff == scalar % 1024) by(bit_vector);
++        }
+         output.push(
+             u16::try_from(0xd800 + (scalar >> 10))
+@@ -278,5 +372,7 @@
+         );
+     }
++    proof! { assert(output@ =~= old(output)@ + utf16(code_point as int)); }
++
+ }
+
+ fn push_utf8_percent_encoding(output: &mut Vec<u16>, code_point: u32) {
