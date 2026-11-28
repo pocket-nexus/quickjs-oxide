@@ -696,7 +696,7 @@ fn failed_module_loads_do_not_leave_half_built_records_reachable() {
         )
         .unwrap();
     let first_attempt = context.execute_module(&entry).map(|_| ());
-    let first_error = thrown::<()>(&mut context, first_attempt);
+    let first_error = thrown::<()>(&context, first_attempt);
     assert!(
         first_error.contains("could not load 'late_entry.mjs'"),
         "{first_error}"
